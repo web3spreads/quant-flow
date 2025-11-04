@@ -49,14 +49,6 @@ python main_multi_agent.py        # 多 Agent 模式（推荐）
   独立决策                   分层汇总               定投决策
 ```
 
-## 🛠️ 故障排查
-
-```bash
-python check_oi_caps.py           # 检查开放利益上限
-python test_leverage_fix.py       # 测试杠杆设置
-python test_multi_agent_imports.py # 测试多 Agent 导入
-```
-
 **常见问题:**
 - ❌ OI 上限 → 切换交易对
 - ❌ 杠杆错误 → 检查资产限制（ETH 最大 25x）
