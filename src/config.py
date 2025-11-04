@@ -51,9 +51,9 @@ class Config:
 
     def _init_openai_config(self):
         """初始化 OpenAI API 配置"""
-        self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+        self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4")
+        self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
 
         if not self.openai_api_key:
             raise ValueError(
