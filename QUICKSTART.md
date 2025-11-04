@@ -225,8 +225,6 @@ cat TROUBLESHOOTING.md
 - 网络连接是否正常
 - 查看 `logs/` 目录的错误日志
 
-📖 **详细故障排除:** 请查看 [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
-
 ## 安全建议
 
 1. ✅ 先用测试网测试至少1-2天
@@ -240,7 +238,6 @@ cat TROUBLESHOOTING.md
 ## 支持
 
 - 📚 查看 `README.md` 了解详细信息
-- 📝 查看 `CHANGELOG_v0.4.0.md` 了解更新
 - 🔗 访问 [Hyperliquid 文档](https://hyperliquid.gitbook.io/)
 
 ---
