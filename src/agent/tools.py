@@ -16,7 +16,8 @@ class TradingTools:
         sell_callback: Callable[[str], str],
         sell_short_callback: Callable[[str], str],
         buy_to_cover_callback: Callable[[str], str],
-        do_nothing_callback: Callable[[str], str]
+        do_nothing_callback: Callable[[str], str],
+        buy_spot_callback: Optional[Callable[[str], str]] = None
     ):
         """
         初始化交易工具
@@ -27,12 +28,14 @@ class TradingTools:
             sell_short_callback: 卖空开空回调函数，接收 symbol，返回执行结果
             buy_to_cover_callback: 买入平空回调函数，接收 symbol，返回执行结果
             do_nothing_callback: 不操作回调函数，接收 reason，返回确认信息
+            buy_spot_callback: 现货买入回调函数（可选），接收 symbol，返回执行结果
         """
         self.buy_callback = buy_callback
         self.sell_callback = sell_callback
         self.sell_short_callback = sell_short_callback
         self.buy_to_cover_callback = buy_to_cover_callback
         self.do_nothing_callback = do_nothing_callback
+        self.buy_spot_callback = buy_spot_callback
 
     def create_buy_tool(self) -> Tool:
         """
@@ -181,20 +184,79 @@ class TradingTools:
             func=self.do_nothing_callback
         )
 
+    def create_buy_spot_tool(self) -> Tool:
+        """
+        创建现货买入工具（用于长期持有）
+
+        Returns:
+            LangChain Tool 对象
+        """
+        if not self.buy_spot_callback:
+            # 如果没有提供回调，返回一个空操作工具
+            return Tool(
+                name="buy_spot",
+                description="现货买入功能未启用",
+                func=lambda x: "现货买入功能未启用"
+            )
+
+        return Tool(
+            name="buy_spot",
+            description="""
+            执行现货买入操作（长期持有策略）。当市场出现长期阴跌趋势，发现优质定投点位时使用此工具。
+
+            使用条件:
+            - 检测到市场处于持续阴跌趋势（多周期下跌）
+            - 资产价格已从高点回撤显著（建议 20%+）
+            - RSI 处于超卖区域（< 30）
+            - 多个时间周期趋势一致向下，但出现企稳迹象
+            - 成交量开始萎缩或出现底部放量
+
+            定投策略特点:
+            - 现货买入，无杠杆风险
+            - 用于长期持有，不设置止盈止损
+            - 适合优质资产的长期配置
+            - 分散风险的定投点位
+
+            参数:
+            - symbol: 交易对，如 'BTC', 'ETH'
+
+            系统会自动:
+            - 使用配置的金额买入现货
+            - 不设置杠杆（1x）
+            - 不设置止盈止损（长期持有）
+            - 记录为现货持仓
+
+            注意: 这是长期投资工具，请确保:
+            1. 市场处于明显的下跌趋势
+            2. 价格已有充分回撤
+            3. 技术指标显示超卖
+            4. 资产基本面良好
+
+            返回: 执行结果描述
+            """,
+            func=self.buy_spot_callback
+        )
+
     def get_all_tools(self) -> list:
         """
         获取所有工具
 
         Returns:
-            工具列表（包含做多和做空工具）
+            工具列表（包含做多、做空和现货工具）
         """
-        return [
+        tools = [
             self.create_buy_tool(),          # 买入开多
             self.create_sell_tool(),         # 卖出平多
             self.create_sell_short_tool(),   # 卖空开空
             self.create_buy_to_cover_tool(), # 买入平空
             self.create_do_nothing_tool()    # 不操作
         ]
+
+        # 如果提供了现货买入回调，添加现货工具
+        if self.buy_spot_callback:
+            tools.append(self.create_buy_spot_tool())  # 现货买入
+
+        return tools
 
 
 def create_mock_callbacks():

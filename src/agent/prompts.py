@@ -44,7 +44,8 @@ def create_trading_prompt(
     volume_change = market_data.get('volume_change', 0)
 
     # 判断是否已持有该币种
-    has_position = any(pos.get('symbol') == symbol for pos in current_positions)
+    # 注意：Hyperliquid 持仓数据使用 'coin' 键，不是 'symbol'
+    has_position = any(pos.get('coin') == symbol for pos in current_positions)
     position_count = len(current_positions)
 
     prompt = f"""你是一位经验丰富的加密货币量化交易专家。你的任务是根据市场数据和技术指标，做出理性的交易决策。
@@ -233,7 +234,7 @@ def create_batch_trading_prompt(
 
 ## 📋 持仓状态
 - 当前持仓数量: {position_count}/{max_positions}
-- 持仓详情: {', '.join([f"{pos['symbol']}" for pos in current_positions]) if current_positions else '空仓'}
+- 持仓详情: {', '.join([f"{pos['coin']}" for pos in current_positions]) if current_positions else '空仓'}
 
 ## 📊 市场数据分析
 
@@ -241,6 +242,19 @@ def create_batch_trading_prompt(
 
     # 为每个交易对添加详细数据
     for idx, data in enumerate(symbols_data, 1):
+        # 📝 添加验证：确保数据结构正确
+        if not isinstance(data, dict):
+            print(f"⚠️  警告：symbols_data[{idx-1}] 不是字典，类型为 {type(data)}")
+            continue
+
+        if 'symbol' not in data:
+            print(f"⚠️  警告：symbols_data[{idx-1}] 缺少 'symbol' 键，keys={list(data.keys())}")
+            continue
+
+        if 'market_data' not in data:
+            print(f"⚠️  警告：symbols_data[{idx-1}] 缺少 'market_data' 键，keys={list(data.keys())}")
+            continue
+
         symbol = data['symbol']
         market_data = data['market_data']
         trends = data.get('multi_timeframe_trends', {})
@@ -264,7 +278,8 @@ def create_batch_trading_prompt(
         volume_change = market_data.get('volume_change', 0)
 
         # 判断是否已持有该币种
-        has_position = any(pos.get('symbol') == symbol for pos in current_positions)
+        # 注意：Hyperliquid 持仓数据使用 'coin' 键，不是 'symbol'
+        has_position = any(pos.get('coin') == symbol for pos in current_positions)
 
         prompt += f"""
 ### {idx}. {symbol}
@@ -292,41 +307,59 @@ def create_batch_trading_prompt(
 
     prompt += """
 ## 🎯 你的任务
-对每个交易对分别做出决策，必须为每个交易对调用一次工具（buy、sell、sell_short、buy_to_cover 或 do_nothing）。
+对每个交易对分别做出决策，必须为每个交易对调用一次工具（buy、sell、sell_short、buy_to_cover、buy_spot 或 do_nothing）。
 
 ## 🛠️ 可用工具
-你有以下五个工具可以使用（必须为每个交易对选择其中一个）:
+你有以下六个工具可以使用（必须为每个交易对选择其中一个）:
 
-### 做多操作（Long Position）:
+### 做多操作（Long Position - 杠杆合约）:
 
-1. **buy** - 买入开多
+1. **buy** - 买入开多（合约）
    - 使用场景: 当市场出现明确的看涨信号时
    - 参数: symbol (交易对)
    - 注意: 系统会自动设置止盈（+5%）和止损（-2%）
    - 前提: 未持有该币种的多头仓位
+   - 特点: 有杠杆，适合短期波段交易
 
-2. **sell** - 卖出平多
+2. **sell** - 卖出平多（合约）
    - 使用场景: 当已持有多头仓位，且出现卖出信号时
    - 参数: symbol (交易对)
    - 注意: 只有在已持有多头仓位的情况下才能使用
 
-### 做空操作（Short Position）:
+### 做空操作（Short Position - 杠杆合约）:
 
-3. **sell_short** - 卖空开空
+3. **sell_short** - 卖空开空（合约）
    - 使用场景: 当市场出现明确的看跌信号时
    - 参数: symbol (交易对)
    - 注意: 系统会自动设置止盈（-5%）和止损（+2%）
    - 前提: 未持有该币种的空头仓位
-   - 备注: 现货账户模式下为模拟做空
+   - 特点: 有杠杆，适合短期波段交易
 
-4. **buy_to_cover** - 买入平空
+4. **buy_to_cover** - 买入平空（合约）
    - 使用场景: 当已持有空头仓位，且出现平仓信号时
    - 参数: symbol (交易对)
    - 注意: 只有在已持有空头仓位的情况下才能使用
 
+### 现货定投操作（Spot DCA - 长期投资）:
+
+5. **buy_spot** - 现货买入（定投）
+   - 使用场景: 当检测到优质资产的长期定投机会时
+   - 参数: symbol (交易对)
+   - 特点:
+     * 无杠杆，现货持有
+     * 长期持有，无止盈止损
+     * 适合熊市底部区域定投
+     * 风险低，适合价值投资
+   - 前提:
+     * 市场处于持续阴跌趋势
+     * RSI < 30（深度超卖）
+     * 多周期一致下跌
+     * 价格从高点显著回撤（建议 20%+）
+   - ⚠️ 重要: 这是长期投资工具，应谨慎使用！
+
 ### 观望操作:
 
-5. **do_nothing** - 不操作
+6. **do_nothing** - 不操作
    - 使用场景: 当市场信号不明确或不满足交易条件时
    - 参数: reason (不操作的原因，必须包含交易对名称)
 
@@ -366,6 +399,45 @@ def create_batch_trading_prompt(
 4. **均线分析**: 价格突破 MA(7) 且 MA(7) > MA(25)
 5. **布林带**: 价格接近或触及下轨
 
+### 现货定投信号（需非常谨慎，满足严格条件）:
+⚠️ **这是长期投资工具，应当极度谨慎使用！只在明确的熊市底部区域使用！**
+
+必须**同时满足以下所有条件**才能考虑现货定投:
+
+1. **多周期一致下跌**:
+   - 日线、4小时、1小时趋势**全部**显示下跌
+   - 至少持续多个周期的持续阴跌趋势
+
+2. **深度超卖**:
+   - RSI < 30（深度超卖区域）
+   - 最好 RSI < 25
+
+3. **价格显著回撤**:
+   - 从近期高点回撤建议 > 20%
+   - 价格远低于所有主要均线（MA7, MA25, MA99）
+
+4. **布林带位置**:
+   - 价格在布林带下轨或跌破下轨
+   - 布林带宽度扩大（表示波动加剧）
+
+5. **成交量特征**:
+   - 成交量萎缩（恐慌抛售结束）
+   - 或者出现底部放量（可能是抄底资金入场）
+
+6. **MACD 状态**:
+   - MACD 在零轴下方且柱状图负值收窄
+   - 可能出现底背离
+
+7. **优质资产**:
+   - 仅对 BTC、ETH 等主流优质资产使用
+   - 不对小市值山寨币使用
+
+⚠️ **决策思路**:
+- 现货定投不是抄底，而是在熊市阴跌中分批建仓
+- 应当将其视为长期价值投资，而非短期交易
+- 如果不是非常明确的定投机会，宁可 do_nothing
+- 普通的下跌不构成定投信号，必须是持续的熊市阴跌
+
 ### 不操作的情况:
 1. 市场信号不明确（技术指标相互矛盾）
 2. RSI 在 45-55 之间（中性区域）
@@ -374,6 +446,7 @@ def create_batch_trading_prompt(
 5. 成交量萎缩（变化 < 10%）
 6. 多周期趋势不一致或相互矛盾
 7. 同时满足做多和做空信号（信号冲突）
+8. **对于现货定投**: 任何不满足严格定投条件的情况
 
 ## ⚠️ 重要约束
 1. **绝对不能** 在未持有多头仓位的情况下执行 sell 操作
@@ -382,10 +455,16 @@ def create_batch_trading_prompt(
 4. **绝对不能** 在已持有空头仓位的情况下重复执行 sell_short 操作
 5. **绝对不能** 在持仓已满的情况下执行 buy 或 sell_short 操作
 6. **绝对不能** 同时持有同一币种的多头和空头仓位
-7. **必须** 为每个交易对调用一次工具
-8. **必须** 提供清晰的决策理由
-9. **必须** 基于技术指标和多周期趋势综合判断
-10. **必须** 考虑当前时间和市场环境
+7. **buy_spot 使用限制**:
+   - 仅在极度超卖且多周期一致下跌时使用
+   - 仅对 BTC、ETH 等主流资产使用
+   - 必须满足所有现货定投条件
+   - 宁可不用也不要滥用！
+8. **必须** 为每个交易对调用一次工具
+9. **必须** 提供清晰的决策理由
+10. **必须** 基于技术指标和多周期趋势综合判断
+11. **必须** 考虑当前时间和市场环境
+12. **必须** 区分短期合约交易（buy/sell_short）和长期现货投资（buy_spot）
 
 ## 💭 决策流程
 请按以下步骤对每个交易对进行分析:
@@ -405,14 +484,24 @@ def create_batch_trading_prompt(
    - 逐一检查卖空开空信号的所有条件
    - 逐一检查卖出平多信号的所有条件
    - 逐一检查买入平空信号的所有条件
+   - **特别检查现货定投条件**（需极度谨慎）:
+     * 是否多周期一致深度下跌
+     * RSI是否 < 30
+     * 价格是否显著回撤
+     * 是否为优质主流资产（BTC/ETH）
    - 特别关注多周期趋势的一致性
 
 4. **做出最终决策**:
-   - 如果满足买入开多条件且未持有多头，使用 buy 工具
-   - 如果满足卖出平多条件且持有多头，使用 sell 工具
-   - 如果满足卖空开空条件且未持有空头，使用 sell_short 工具
-   - 如果满足买入平空条件且持有空头，使用 buy_to_cover 工具
-   - 否则，使用 do_nothing 工具并说明原因
+   - 优先考虑平仓信号（如果持有仓位）:
+     * 如果满足卖出平多条件且持有多头，使用 sell 工具
+     * 如果满足买入平空条件且持有空头，使用 buy_to_cover 工具
+   - 然后考虑开仓信号:
+     * 如果满足买入开多条件且未持有多头，使用 buy 工具
+     * 如果满足卖空开空条件且未持有空头，使用 sell_short 工具
+   - **谨慎考虑现货定投**（仅在非常明确的熊市底部）:
+     * 如果**同时满足所有现货定投条件**，考虑使用 buy_spot 工具
+     * 这应该是极少使用的工具！
+   - 其他情况，使用 do_nothing 工具并说明原因
 
 ## 🚀 现在，请为每个交易对做出决策！
 

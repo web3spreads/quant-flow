@@ -1,5 +1,278 @@
 # 更新日志
 
+## [0.4.2] - 2025-11-04
+
+### 🔧 修复：杠杆设置问题
+
+**问题：** 设置超过最大杠杆时（如ETH设置30x），杠杆设置失败但代码继续下单，导致使用默认1x杠杆。
+
+**修复内容：**
+
+#### 1. 客户端自动验证
+- ✅ `update_leverage()` 方法新增最大杠杆检查
+- ✅ 设置前查询资产元数据，验证杠杆是否超限
+- ✅ 超限时提前拒绝并返回错误信息
+- ✅ 验证API返回结果，确保设置成功
+
+#### 2. 测试脚本改进
+- ✅ `test_open_long()` 和 `test_open_short()` 新增杠杆验证
+- ✅ 杠杆设置失败时立即停止，不再继续下单
+- ✅ 显示清晰的错误信息
+
+#### 3. 新增测试工具
+- ✅ `test_leverage_fix.py` - 杠杆设置测试脚本
+  - 测试超限拒绝
+  - 测试正常设置
+  - 测试最大杠杆设置
+
+#### 4. 文档更新
+- ✅ `TROUBLESHOOTING.md` - 新增杠杆问题排查
+  - 列出常见资产最大杠杆
+  - 提供解决方案和示例
+  - 添加测试工具说明
+
+**测试网常见最大杠杆：**
+- BTC: 40x
+- ETH: 25x ⭐
+- MATIC: 50x
+- DYDX: 20x
+- SOL, BNB, AVAX: 10x
+- APT: 3x
+- GMT: 2x
+
+**使用示例：**
+```bash
+# 测试杠杆设置
+python test_leverage_fix.py
+
+# 使用正确的杠杆交易
+python test_trading_functions.py
+# 选择做空，输入杠杆时使用 ≤25 的值
+```
+
+---
+
+## [0.4.1] - 2025-11-04
+
+### 🎯 诊断工具和文档改进
+
+#### 诊断工具
+- ✅ **`check_oi_caps.py`** - 开放利益上限检查工具
+  - 查询达到OI上限的资产
+  - 显示可用资产及参数（杠杆、精度）
+  - 账户余额和持仓查询
+
+#### 文档
+- ✅ **`TROUBLESHOOTING.md`** - 完整的故障排除指南
+  - 开放利益上限错误
+  - 账户余额不足
+  - 精度错误
+  - 地理限制（澄清：Hyperliquid无IP限制）
+
+- ✅ **`README.md`** 和 **`QUICKSTART.md`** 更新
+  - 添加诊断工具说明
+  - 常见问题快速解决
+
+---
+
+## [0.4.0] - 2025-11-03
+
+### 🚀 重大变更 - 全面迁移到 Hyperliquid
+
+**背景**：由于一些原因，决定迁移到 Hyperliquid 去中心化永续合约交易所。
+
+### ✨ 新增功能
+
+#### 1. Hyperliquid 集成
+- ✅ 新增 `HyperliquidClient` - 完整的 Hyperliquid API 封装
+- ✅ 支持永续合约交易（Perpetual Futures）
+- ✅ 支持主网和测试网切换
+- ✅ 基于 EVM 钱包的认证系统
+
+#### 2. 完整的做多做空支持
+- ✅ `execute_long()` - 开多仓
+- ✅ `execute_short()` - 开空仓
+- ✅ 自动设置止盈止损
+- ✅ 杠杆倍数可配置（1-50x）
+
+#### 3. 新的市场数据获取
+- ✅ `MarketDataFetcher` (Hyperliquid版) - 使用 Hyperliquid Info API
+- ✅ 支持多时间周期K线获取
+- ✅ 实时价格、资金费率查询
+
+#### 4. 订单管理器升级
+- ✅ `OrderManager` (Hyperliquid版) - 专注永续合约
+- ✅ 自动计算仓位大小
+- ✅ 智能余额管理
+- ✅ 持仓信息查询
+
+### 📦 依赖变更
+
+#### 新增依赖
+```
+hyperliquid-python-sdk>=0.6.0
+eth-account>=0.11.0
+```
+
+#### 移除依赖
+```
+ccxt (不再需要)
+pycryptodome (Bitget SDK依赖)
+```
+
+### 🔄 架构变更
+
+#### 文件结构
+
+**新增文件**：
+- `src/trading/client.py` - Hyperliquid 客户端
+- `src/trading/order_manager.py` - Hyperliquid 订单管理器
+- `src/data/market_data.py` - Hyperliquid 市场数据
+- `main.py` - 新的主程序
+
+**移除的模块**：
+- `src/trading/bitget_*.py` (所有 Bitget 客户端)
+- `src/bitget-python-sdk-api/` (整个目录)
+- `docs/` (旧文档目录)
+
+### ⚙️ 配置变更
+
+#### 环境变量 (.env)
+
+**之前 (Bitget)**：
+```env
+BITGET_API_KEY=...
+BITGET_API_SECRET=...
+BITGET_PASSPHRASE=...
+DEMO_TRADING=true
+```
+
+**现在 (Hyperliquid)**：
+```env
+HYPERLIQUID_PRIVATE_KEY=0x...
+HYPERLIQUID_ACCOUNT_ADDRESS=  # 可选
+HYPERLIQUID_TESTNET=true
+DEFAULT_LEVERAGE=10
+```
+
+#### 配置文件 (config.yaml)
+
+**交易对格式变更**：
+```yaml
+# 之前
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+
+# 现在
+symbols:
+  - BTC
+  - ETH
+```
+
+**新增配置项**：
+```yaml
+trading:
+  default_leverage: 10  # 杠杆倍数
+```
+
+### 🔧 API 接口变更
+
+#### 交易客户端
+
+**之前 (Bitget)**：
+```python
+client = BitgetClient(api_key, api_secret, passphrase)
+client.place_market_buy(symbol, amount)
+```
+
+**现在 (Hyperliquid)**：
+```python
+client = HyperliquidClient(private_key, testnet=True)
+client.place_market_order(symbol, is_buy=True, size=amount)
+client.place_order_with_tpsl(symbol, is_buy, size, tp_price, sl_price)
+```
+
+#### 订单管理器
+
+**之前**：
+```python
+order_manager.execute_buy_with_protection(symbol, usdt_amount, price)
+```
+
+**现在**：
+```python
+# 做多
+order_manager.execute_long(symbol, usdt_amount, leverage=10)
+
+# 做空
+order_manager.execute_short(symbol, usdt_amount, leverage=10)
+```
+
+### 📊 功能对比
+
+| 功能 | Bitget | Hyperliquid |
+|------|--------|-------------|
+| 交易类型 | 现货 + 合约 | 永续合约 |
+| 做空方式 | 合约做空 | 原生做空 |
+| 测试环境 | 模拟盘 | 测试网 |
+| 认证方式 | API Key | 钱包私钥 |
+| 社区维护 | 慢 | 快 |
+| SDK质量 | 中等 | 优秀 |
+
+### ⚠️ 破坏性变更
+
+1. **不兼容旧版本** - 无法直接从 v0.3.x 升级，需要重新配置
+2. **交易对格式** - 从 `BTC/USDT` 改为 `BTC`
+3. **认证方式** - 从 API Key 改为钱包私钥
+4. **配置文件** - 需要更新所有配置
+
+### 🧹 项目清理
+
+- 删除了 135+ 个过时文件
+- 移除所有 Bitget 相关代码
+- 清理了旧文档目录
+- 标准化文件命名
+- 减少 86% 的文件数量
+
+### 📝 迁移指南
+
+#### 从 Bitget 迁移到 Hyperliquid
+
+1. **更新依赖**
+   ```bash
+   pip install hyperliquid-python-sdk eth-account
+   ```
+
+2. **更新配置**
+   - 从 `.env.example` 复制新的环境变量格式
+   - 填入 Hyperliquid 钱包私钥
+   - 更新 `config.yaml` 中的交易对格式
+
+3. **测试**
+   - 先在测试网测试（`HYPERLIQUID_TESTNET=true`）
+   - 运行 `python test_setup.py`
+   - 确认功能正常后再切换到主网
+
+### 📚 文档更新
+
+- ✅ 更新 README.md - 全面反映 Hyperliquid 架构
+- ✅ 更新 .env.example - 新的环境变量模板
+- ✅ 更新 config.yaml.example - 新的配置格式
+- ✅ 新增 QUICKSTART.md - 快速开始指南
+- ✅ 新增 CLEANUP_SUMMARY.md - 清理总结
+
+### 🎯 下一步计划
+
+- [ ] 完善 Hyperliquid K线数据处理
+- [ ] 集成资金费率到决策逻辑
+- [ ] 添加更多 Hyperliquid 特有功能
+- [ ] 策略回测功能
+- [ ] Web UI 控制面板
+
+---
+
+
 ## [0.3.0] - 2025-11-01
 
 ### 🚀 重大优化 - 批量决策和多周期分析

@@ -235,12 +235,47 @@ class TradingAgent:
             self.logger.print_info(f"决策：不操作 - {reason}")
             return f"⏸️  确认：不执行操作。原因：{reason}"
 
+        def buy_spot_callback(symbol: str) -> str:
+            """现货买入回调（用于长期持有策略）"""
+            try:
+                self.logger.print_info(f"执行现货定投: {symbol}")
+
+                # 检查余额
+                balance_info = self.order_manager.get_available_balance_info()
+                if balance_info['status'] != 'ok':
+                    return f"❌ {balance_info['message']}"
+
+                available = balance_info['available']
+                if available < self.trade_amount:
+                    return f"❌ 可用余额不足。需要: ${self.trade_amount:.2f}, 可用: ${available:.2f}"
+
+                # 执行现货买入
+                result = self.order_manager.buy_spot_for_dca(
+                    symbol=symbol,
+                    usdt_amount=self.trade_amount
+                )
+
+                if result and result.get('success'):
+                    return (
+                        f"✅ 现货定投成功！\n"
+                        f"  币种: {symbol}\n"
+                        f"  投入: ${self.trade_amount:.2f}\n"
+                        f"  价格: ${result['price']:.2f}\n"
+                        f"  📦 长期持有，无止盈止损"
+                    )
+                else:
+                    return "❌ 现货定投失败，请检查日志"
+
+            except Exception as e:
+                return f"❌ 现货定投异常: {str(e)}"
+
         trading_tools = TradingTools(
             buy_callback,
             sell_callback,
             sell_short_callback,
             buy_to_cover_callback,
-            do_nothing_callback
+            do_nothing_callback,
+            buy_spot_callback  # 添加现货买入回调
         )
         return trading_tools.get_all_tools()
 
@@ -408,6 +443,21 @@ class TradingAgent:
             决策列表，每项为 (symbol, decision_type, decision_details)
         """
         try:
+            # 📝 添加详细日志：验证输入数据
+            self.logger.logger.info(f"批量决策输入验证 - symbols_data 数量: {len(symbols_data)}")
+            for i, data in enumerate(symbols_data):
+                self.logger.logger.info(f"  数据 #{i}: type={type(data)}, keys={list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+                if isinstance(data, dict):
+                    if 'symbol' in data:
+                        self.logger.logger.info(f"    symbol={data['symbol']}")
+                    else:
+                        self.logger.logger.error(f"    ❌ 缺少 'symbol' 键!")
+                    if 'market_data' in data:
+                        market_data = data['market_data']
+                        self.logger.logger.info(f"    market_data keys={list(market_data.keys()) if isinstance(market_data, dict) else 'N/A'}")
+                    else:
+                        self.logger.logger.error(f"    ❌ 缺少 'market_data' 键!")
+
             # 构建价格映射表，供 callback 使用
             self.price_map = {
                 data['symbol']: data['market_data'].get('current_price', 0)
@@ -458,10 +508,18 @@ class TradingAgent:
             return decisions
 
         except Exception as e:
+            import traceback
             self.logger.print_error(f"批量决策异常: {e}")
+            self.logger.print_error(f"异常类型: {type(e).__name__}")
+            self.logger.logger.error(f"完整堆栈跟踪:\n{traceback.format_exc()}")
             self.logger.logger.exception(e)
-            # 返回所有交易对的 ERROR 决策
-            return [(data['symbol'], "ERROR", {"error": str(e)}) for data in symbols_data]
+
+            # 安全地返回 ERROR 决策（避免再次触发 KeyError）
+            try:
+                return [(data.get('symbol', 'UNKNOWN'), "ERROR", {"error": str(e)}) for data in symbols_data]
+            except Exception as e2:
+                self.logger.logger.error(f"构建错误响应失败: {e2}")
+                return [("UNKNOWN", "ERROR", {"error": f"双重异常: {str(e)}, {str(e2)}"})]
 
     def _parse_batch_decisions_from_events(
         self,
