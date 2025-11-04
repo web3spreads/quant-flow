@@ -689,7 +689,7 @@ trading:
 
 ### ✨ 核心特性
 
-- **AI 驱动决策**: 使用 GPT-4 或其他 OpenAI 兼容 LLM 进行智能交易决策
+- **AI 驱动决策**: 使用 Deepseek 或其他 OpenAI 兼容 LLM 进行智能交易决策
 - **LangGraph 集成**: 使用最新的 LangGraph 1.0+ 创建 ReAct Agent
 - **技术指标分析**: 集成 RSI、MACD、MA、布林带等多种技术指标
 - **风险控制**: 自动设置止盈止损，内置熔断机制

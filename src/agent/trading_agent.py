@@ -24,7 +24,7 @@ class TradingAgent:
         logger: TradingLogger,
         openai_api_base: str,
         openai_api_key: str,
-        openai_model: str = "gpt-4",
+        openai_model: str,
         temperature: float = 0.1,
         max_iterations: int = 5,
         max_token_limit: int = 2000,
@@ -594,79 +594,4 @@ class TradingAgent:
             self.logger.logger.error(f"解析批量决策失败: {e}")
             # 返回所有交易对的 DO_NOTHING 决策
             return [(data['symbol'], "DO_NOTHING", {"error": str(e)}) for data in symbols_data]
-
-
-def test_trading_agent():
-    """测试交易 Agent（需要有效的 API Key）"""
-    print("=== 测试交易 Agent (LangGraph 版本) ===\n")
-    print("注意：这是一个集成测试，需要有效的 OpenAI API Key")
-    print("如果你没有配置 API Key，此测试将失败\n")
-
-    from src.config import get_config
-    from src.trading.bitget_client import BitgetClient
-    from src.utils.logger import get_logger
-
-    try:
-        # 加载配置
-        config = get_config("config.yaml")
-
-        # 创建组件
-        logger = get_logger()
-        client = BitgetClient(
-            api_key=config.bitget_api_key or "test",
-            api_secret=config.bitget_api_secret or "test",
-            passphrase=config.bitget_passphrase or "test",
-            demo_trading=True  # 使用模拟盘
-        )
-        order_manager = OrderManager(
-            client=client,
-            take_profit_ratio=config.take_profit_ratio,
-            stop_loss_ratio=config.stop_loss_ratio
-        )
-
-        # 创建 Agent
-        agent = TradingAgent(
-            order_manager=order_manager,
-            logger=logger,
-            openai_api_base=config.openai_api_base,
-            openai_api_key=config.openai_api_key,
-            openai_model=config.openai_model,
-            trade_amount=config.trade_amount
-        )
-
-        # 模拟市场数据
-        market_data = {
-            'current_price': 60000,
-            'rsi': 35,
-            'macd': 100,
-            'macd_signal': 80,
-            'macd_hist': 20,
-            'ma_7': 59500,
-            'ma_25': 58000,
-            'ma_99': 55000,
-            'bb_upper': 62000,
-            'bb_middle': 60000,
-            'bb_lower': 58000,
-            'bb_position': 0.3,
-            'volume_change': 25.5
-        }
-
-        # 做出决策
-        decision, details = agent.make_decision(
-            symbol='BTC/USDT',
-            market_data=market_data,
-            current_positions=[],
-            max_positions=2
-        )
-
-        print(f"\n决策结果: {decision}")
-        print(f"详情: {details.get('output', '')}")
-
-    except Exception as e:
-        print(f"测试失败: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-if __name__ == "__main__":
-    test_trading_agent()
+        
