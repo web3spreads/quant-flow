@@ -1,15 +1,16 @@
 # ==========================================
-# Quant Flow - 交易机器人配置文件
+# Quant Flow - 交易机器人配置文件 (Hyperliquid 永续合约)
 # ==========================================
 
 # 交易配置
 trading:
-  # 要交易的币种对（支持多个）
+  # 要交易的币种符号（Hyperliquid 永续合约，支持多个）
+  # 注意：Hyperliquid 使用简单符号，如 'BTC', 'ETH' 而不是 'BTC/USDT'
   symbols:
-    - BTC/USDT
-    - ETH/USDT
+    - BTC
+    - ETH
 
-  # 每次交易的金额（USDT）
+  # 每次交易的金额（USD）
   trade_amount: 100
 
   # 止盈比例（5% = 0.05）
@@ -20,6 +21,9 @@ trading:
 
   # 最大持仓数量（同时持有的币种数量）
   max_positions: 2
+
+  # 默认杠杆倍数（1-50倍，具体取决于交易对）
+  default_leverage: 10
 
 # 调度配置
 scheduler:

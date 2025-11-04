@@ -1,7 +1,7 @@
 [project]
 name = "quant-flow"
-version = "0.3.0"
-description = "基于 LangChain Agent 的 AI 驱动加密货币自动交易机器人"
+version = "0.4.0"
+description = "基于 LangChain Agent 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -11,7 +11,8 @@ dependencies = [
     "langchain-community>=0.4.1",
     "langgraph>=1.0.2",
     "openai>=1.60.0",
-    "ccxt>=4.4.0",
+    "hyperliquid-python-sdk>=0.6.0",
+    "eth-account>=0.11.0",
     "pandas>=2.2.0",
     "numpy>=2.0.0",
     "pyyaml>=6.0.2",
@@ -19,7 +20,6 @@ dependencies = [
     "apscheduler>=3.10.4",
     "colorama>=0.4.6",
     "rich>=13.9.0",
-    "pycryptodome>=3.20.0",  # Bitget 官方 SDK 依赖
 ]
 
 [build-system]

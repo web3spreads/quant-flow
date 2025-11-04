@@ -29,7 +29,7 @@ class Config:
 
         # 初始化各配置项
         self._init_openai_config()
-        self._init_bitget_config()
+        self._init_hyperliquid_config()
         self._init_trading_config()
         self._init_scheduler_config()
         self._init_data_config()
@@ -61,32 +61,28 @@ class Config:
                 "请在 .env 文件中设置或使用环境变量"
             )
 
-    def _init_bitget_config(self):
-        """初始化 Bitget API 配置"""
-        self.bitget_api_key = os.getenv("BITGET_API_KEY")
-        self.bitget_api_secret = os.getenv("BITGET_API_SECRET")
-        self.bitget_passphrase = os.getenv("BITGET_PASSPHRASE")
+    def _init_hyperliquid_config(self):
+        """初始化 Hyperliquid 配置"""
+        self.hyperliquid_private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY")
+        self.hyperliquid_account_address = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", "")
+        self.hyperliquid_testnet = os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
 
-        # 模拟盘模式（默认为模拟盘，更安全）
-        self.demo_trading = os.getenv("DEMO_TRADING", "true").lower() == "true"
-
-        # 检查 API 配置
-        if not all([self.bitget_api_key, self.bitget_api_secret, self.bitget_passphrase]):
-            mode_desc = "模拟盘" if self.demo_trading else "实盘"
+        # 检查私钥配置
+        if not self.hyperliquid_private_key:
             raise ValueError(
-                f"{mode_desc}模式下必须设置所有 Bitget API 配置！\n"
-                "BITGET_API_KEY, BITGET_API_SECRET, BITGET_PASSPHRASE\n"
-                f"{'请在 Bitget 网站创建模拟盘 API Key' if self.demo_trading else '请在 Bitget 网站创建实盘 API Key'}"
+                "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n"
+                "请在 .env 文件中设置钱包私钥"
             )
 
     def _init_trading_config(self):
         """初始化交易配置"""
         trading = self.config_data.get("trading", {})
-        self.symbols: List[str] = trading.get("symbols", ["BTC/USDT"])
+        self.symbols: List[str] = trading.get("symbols", ["BTC", "ETH"])
         self.trade_amount: float = float(trading.get("trade_amount", 100))
         self.take_profit_ratio: float = float(trading.get("take_profit_ratio", 0.05))
         self.stop_loss_ratio: float = float(trading.get("stop_loss_ratio", 0.02))
         self.max_positions: int = int(trading.get("max_positions", 2))
+        self.default_leverage: int = int(trading.get("default_leverage", 10))
 
     def _init_scheduler_config(self):
         """初始化调度器配置"""
@@ -175,19 +171,17 @@ class Config:
     def __str__(self) -> str:
         """返回配置摘要（不包含敏感信息）"""
         # 确定运行模式
-        if self.demo_trading:
-            mode = "Bitget 模拟盘模式 🧪"
-        else:
-            mode = "实盘模式 ⚠️"
+        mode = "Hyperliquid 测试网 🧪" if self.hyperliquid_testnet else "Hyperliquid 主网 ⚠️"
 
         return f"""
         === Quant Flow 配置摘要 ===
         OpenAI API Base: {self.openai_api_base}
         OpenAI Model: {self.openai_model}
-        交易平台: Bitget（官方 SDK）
+        交易平台: Hyperliquid（永续合约）
         运行模式: {mode}
         交易对: {', '.join(self.symbols)}
-        交易金额: {self.trade_amount} USDT
+        交易金额: {self.trade_amount} USD
+        杠杆倍数: {self.default_leverage}x
         止盈比例: {self.take_profit_ratio * 100}%
         止损比例: {self.stop_loss_ratio * 100}%
         决策间隔: {self.interval_minutes} 分钟
