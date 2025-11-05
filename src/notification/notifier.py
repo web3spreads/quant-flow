@@ -332,11 +332,14 @@ class Notifier:
             lines.append("")  # 空行
             lines.append(f"【开仓理由】{reason}")
         
-        # 添加订单哈希
+        # 添加订单哈希和浏览器链接
         if order_hash:
             lines.append("")  # 空行
             lines.append(f"【交易哈希】{order_hash}")
-        
+            # Hyperliquid 浏览器链接
+            explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
+            lines.append(f"【查看详情】{explorer_url}")
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.TRADE_OPENED, title, message)
 
@@ -484,7 +487,8 @@ class Notifier:
         symbol: str,
         quantity: float,
         price: float,
-        amount: float
+        amount: float,
+        order_hash: Optional[str] = None
     ):
         """
         发送现货定投通知
@@ -494,14 +498,26 @@ class Notifier:
             quantity: 数量
             price: 价格
             amount: 投资金额
+            order_hash: 订单哈希
         """
         title = f"💎 现货定投: {symbol}"
-        message = (
-            f"交易对: {symbol}\n"
-            f"数量: {quantity}\n"
-            f"价格: {price}\n"
-            f"金额: {amount} USD"
-        )
+
+        lines = [
+            f"【交易对】{symbol}",
+            f"【数量】{quantity:,.4f}",
+            f"【价格】${price:,.4f}" if price < 1 else f"【价格】${price:,.2f}",
+            f"【金额】${amount:,.2f}"
+        ]
+
+        # 添加订单哈希和浏览器链接
+        if order_hash:
+            lines.append("")  # 空行
+            lines.append(f"【交易哈希】{order_hash}")
+            # Hyperliquid 浏览器链接
+            explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
+            lines.append(f"【查看详情】{explorer_url}")
+
+        message = "\n".join(lines)
         self.notify(NotificationEvent.SPOT_INVESTMENT, title, message)
 
     def notify_error(

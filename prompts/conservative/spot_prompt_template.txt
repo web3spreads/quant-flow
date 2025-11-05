@@ -22,6 +22,8 @@
 **多时间周期趋势:**
 {multi_timeframe_trends}
 
+{balance_info}
+
 ## 💰 投资权限
 - 单笔定投金额上限: ${max_trade_amount} USD
 - **重要**: 你可以根据市场恐慌程度自主决定实际定投金额：

@@ -98,7 +98,8 @@ class PromptManager:
         max_positions: int,
         max_trade_amount: float,
         max_leverage: int,
-        historical_summary: Optional[str] = None
+        historical_summary: Optional[str] = None,
+        balance_info: Optional[Dict[str, float]] = None
     ) -> str:
         """
         格式化交易决策 Prompt
@@ -112,6 +113,7 @@ class PromptManager:
             max_trade_amount: 单笔交易金额上限
             max_leverage: 最大杠杆倍数
             historical_summary: 历史决策汇总
+            balance_info: 账户余额信息 {'total': float, 'occupied': float, 'available': float}
 
         Returns:
             格式化后的 Prompt
@@ -159,6 +161,25 @@ class PromptManager:
 **提示:** 以上是你过去的决策记录汇总，可以帮助你理解市场演变和之前的策略。但请基于当前市场数据做出独立判断。
 """
 
+        # 格式化账户余额信息
+        balance_text = ""
+        if balance_info:
+            total = balance_info.get('total', 0)
+            occupied = balance_info.get('occupied', 0)
+            available = balance_info.get('available', 0)
+            balance_text = f"""
+## 💰 账户余额（实时）
+
+- **账户总价值**: ${total:.2f}
+- **已占用保证金**: ${occupied:.2f}
+- **可用余额**: ${available:.2f}
+
+**重要提示**:
+- 你必须根据可用余额决定是否开仓
+- 如果可用余额不足以支持交易，必须选择 do_nothing
+- 建议保留一定比例的可用余额作为风险缓冲
+"""
+
         # 格式化 Prompt
         prompt = self.trading_prompt_template.format(
             symbol=symbol,
@@ -182,7 +203,8 @@ class PromptManager:
             has_short="是 ✅" if has_short else "否 ❌",
             max_trade_amount=f"{max_trade_amount:.2f}",
             max_leverage=max_leverage,
-            historical_summary=historical_text
+            historical_summary=historical_text,
+            balance_info=balance_text
         )
 
         return prompt
@@ -194,7 +216,8 @@ class PromptManager:
         multi_timeframe_trends: Dict[str, str],
         recommendation: Dict[str, Any],
         current_spot_holdings: list,
-        max_trade_amount: float
+        max_trade_amount: float,
+        balance_info: Optional[Dict[str, float]] = None
     ) -> str:
         """
         格式化现货定投决策 Prompt
@@ -206,6 +229,7 @@ class PromptManager:
             recommendation: 推荐信息
             current_spot_holdings: 当前现货持仓
             max_trade_amount: 单笔定投金额上限
+            balance_info: 账户余额信息 {'total': float, 'occupied': float, 'available': float}
 
         Returns:
             格式化后的 Prompt
@@ -229,6 +253,25 @@ class PromptManager:
             trend = multi_timeframe_trends.get(timeframe, '未知')
             trends_text += f"- {timeframe}: {trend}\n"
 
+        # 格式化账户余额信息
+        balance_text = ""
+        if balance_info:
+            total = balance_info.get('total', 0)
+            occupied = balance_info.get('occupied', 0)
+            available = balance_info.get('available', 0)
+            balance_text = f"""
+## 💰 账户余额（实时）
+
+- **账户总价值**: ${total:.2f}
+- **已占用保证金**: ${occupied:.2f}
+- **可用余额**: ${available:.2f}
+
+**重要提示**:
+- 你必须根据可用余额决定是否定投
+- 如果可用余额不足，必须选择 do_nothing
+- 建议保留一定比例的可用余额作为风险缓冲
+"""
+
         # 格式化 Prompt
         prompt = self.spot_prompt_template.format(
             symbol=symbol,
@@ -244,7 +287,8 @@ class PromptManager:
             bb_position=f"{bb_position:.2%}",
             volume_change=f"{volume_change:.2f}",
             multi_timeframe_trends=trends_text,
-            max_trade_amount=f"{max_trade_amount:.2f}"
+            max_trade_amount=f"{max_trade_amount:.2f}",
+            balance_info=balance_text
         )
 
         return prompt

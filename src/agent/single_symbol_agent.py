@@ -618,6 +618,16 @@ class SingleSymbolAgent:
             # 更新当前价格
             self.current_price = market_data.get('current_price', 0)
 
+            # 获取实时余额信息
+            balance_info = self.order_manager.get_available_balance_info()
+            balance_dict = None
+            if balance_info.get('status') == 'ok':
+                balance_dict = {
+                    'total': balance_info['total'],
+                    'occupied': balance_info['occupied'],
+                    'available': balance_info['available']
+                }
+
             # 创建 Prompt - 如果有 PromptManager 则使用它，否则使用硬编码函数
             if self.prompt_manager:
                 prompt = self.prompt_manager.format_trading_prompt(
@@ -628,7 +638,8 @@ class SingleSymbolAgent:
                     max_positions=max_positions,
                     max_trade_amount=self.trade_amount,
                     max_leverage=self.max_leverage,
-                    historical_summary=historical_summary
+                    historical_summary=historical_summary,
+                    balance_info=balance_dict
                 )
             else:
                 prompt = create_single_symbol_prompt(

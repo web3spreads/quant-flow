@@ -22,6 +22,8 @@
 - {symbol} 多头持仓: {has_long}
 - {symbol} 空头持仓: {has_short}
 
+{balance_info}
+
 ## 💰 交易权限（激进策略）
 - 单笔交易金额上限: ${max_trade_amount} USD
 - 最大杠杆倍数: {max_leverage}x
