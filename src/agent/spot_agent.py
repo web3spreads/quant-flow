@@ -215,7 +215,8 @@ class SpotAgent:
         openai_model: str,
         temperature: float = 0.05,  # 更低的温度，更保守
         trade_amount: float = 100.0,
-        notifier=None
+        notifier=None,
+        prompt_manager=None
     ):
         """
         初始化现货定投 Agent
@@ -234,6 +235,7 @@ class SpotAgent:
         self.logger = logger
         self.trade_amount = trade_amount
         self.notifier = notifier
+        self.prompt_manager = prompt_manager
 
         # 初始化 LLM（更保守的参数）
         self.llm = ChatOpenAI(
@@ -252,8 +254,12 @@ class SpotAgent:
             tools=self.tools
         )
 
-        # 系统提示词
-        self.system_message = SystemMessage(content=SPOT_AGENT_SYSTEM_PROMPT)
+        # 系统提示词 - 如果有 PromptManager 则使用它，否则使用硬编码
+        if self.prompt_manager:
+            system_prompt_text = self.prompt_manager.get_spot_system_prompt()
+        else:
+            system_prompt_text = SPOT_AGENT_SYSTEM_PROMPT
+        self.system_message = SystemMessage(content=system_prompt_text)
 
         # 当前价格缓存
         self.current_price = 0.0
@@ -262,10 +268,20 @@ class SpotAgent:
     def _create_tools(self) -> list:
         """创建工具集（仅包含现货买入和不操作）"""
 
-        def buy_spot_callback(symbol: str) -> str:
+        def buy_spot_callback(symbol: str, amount: float = None) -> str:
             """现货买入回调"""
             try:
-                self.logger.print_info(f"[现货Agent] 执行现货定投: {symbol}")
+                # 确定实际定投金额
+                actual_amount = amount if amount is not None else self.trade_amount
+
+                # 验证金额不超过上限
+                if actual_amount > self.trade_amount:
+                    return f"❌ 定投金额 ${actual_amount:.2f} 超过上限 ${self.trade_amount:.2f}"
+
+                if actual_amount <= 0:
+                    return f"❌ 定投金额必须大于 0"
+
+                self.logger.print_info(f"[现货Agent] 执行现货定投: {symbol}, 金额: ${actual_amount:.2f}")
 
                 # 检查余额
                 balance_info = self.order_manager.get_available_balance_info()
@@ -273,13 +289,13 @@ class SpotAgent:
                     return f"❌ {balance_info['message']}"
 
                 available = balance_info['available']
-                if available < self.trade_amount:
-                    return f"❌ 可用余额不足。需要: ${self.trade_amount:.2f}, 可用: ${available:.2f}"
+                if available < actual_amount:
+                    return f"❌ 可用余额不足。需要: ${actual_amount:.2f}, 可用: ${available:.2f}"
 
                 # 执行现货买入
                 result = self.order_manager.buy_spot_for_dca(
                     symbol=symbol,
-                    usdt_amount=self.trade_amount
+                    usdt_amount=actual_amount
                 )
 
                 if result and result.get('success'):
@@ -289,13 +305,14 @@ class SpotAgent:
                             symbol=symbol,
                             quantity=result.get('amount', 0),
                             price=result['price'],
-                            amount=self.trade_amount
+                            amount=actual_amount,
+                            order_hash=result.get('hash', '')
                         )
 
                     return (
                         f"✅ 现货定投执行成功！\n"
                         f"  币种: {symbol}\n"
-                        f"  投入: ${self.trade_amount:.2f}\n"
+                        f"  投入: ${actual_amount:.2f}\n"
                         f"  价格: ${result['price']:.2f}\n"
                         f"  数量: {result.get('amount', 0):.6f}\n"
                         f"  📦 长期持有，无止盈止损"
@@ -352,14 +369,35 @@ class SpotAgent:
             self.current_price = market_data.get('current_price', 0)
             self.current_symbol = symbol
 
-            # 创建 Prompt
-            prompt = create_spot_agent_prompt(
-                symbol=symbol,
-                market_data=market_data,
-                multi_timeframe_trends=multi_timeframe_trends,
-                recommendation=recommendation,
-                current_spot_holdings=current_spot_holdings
-            )
+            # 获取实时余额信息
+            balance_info = self.order_manager.get_available_balance_info()
+            balance_dict = None
+            if balance_info.get('status') == 'ok':
+                balance_dict = {
+                    'total': balance_info['total'],
+                    'occupied': balance_info['occupied'],
+                    'available': balance_info['available']
+                }
+
+            # 创建 Prompt - 使用 PromptManager 或硬编码函数
+            if self.prompt_manager:
+                prompt = self.prompt_manager.format_spot_prompt(
+                    symbol=symbol,
+                    market_data=market_data,
+                    multi_timeframe_trends=multi_timeframe_trends,
+                    recommendation=recommendation,
+                    current_spot_holdings=current_spot_holdings,
+                    max_trade_amount=self.trade_amount,
+                    balance_info=balance_dict
+                )
+            else:
+                prompt = create_spot_agent_prompt(
+                    symbol=symbol,
+                    market_data=market_data,
+                    multi_timeframe_trends=multi_timeframe_trends,
+                    recommendation=recommendation,
+                    current_spot_holdings=current_spot_holdings
+                )
 
             # 显示 Prompt
             self.logger.print_section(f"[现货Agent] 评估 {symbol} 定投推荐", style="bold blue")

@@ -22,6 +22,7 @@ from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
 from src.notification import Notifier
+from src.prompt_manager import PromptManager
 
 
 class QuantFlowBot:
@@ -58,12 +59,23 @@ class QuantFlowBot:
         """初始化所有组件"""
         self.logger.print_section("🔧 初始化多 Agent 架构", style="bold yellow")
 
-        # 0. 通知系统（优先初始化，以便其他组件可以使用）
+        # 0. Prompt 管理器（最优先初始化）
+        self.logger.print_info("初始化 Prompt 管理器...")
+        try:
+            self.prompt_manager = PromptManager(
+                config_file=getattr(self.config, 'prompt_config_file', 'prompts/prompts.yaml'),
+                prompt_set=getattr(self.config, 'prompt_set', 'default')
+            )
+        except Exception as e:
+            self.logger.print_warning(f"Prompt 管理器初始化失败，将使用硬编码 Prompt: {e}")
+            self.prompt_manager = None
+
+        # 1. 通知系统（优先初始化，以便其他组件可以使用）
         self.logger.print_info("初始化通知系统...")
         notifications_config = getattr(self.config, 'notifications', {'enabled': False})
         self.notifier = Notifier(notifications_config)
 
-        # 1. 市场数据获取器
+        # 2. 市场数据获取器
         self.logger.print_info("初始化市场数据获取器...")
         self.market_fetcher = MarketDataFetcher(
             testnet=self.config.hyperliquid_testnet
@@ -114,8 +126,10 @@ class QuantFlowBot:
                 openai_model=self.config.openai_model,
                 temperature=self.config.agent_temperature,
                 max_iterations=self.config.agent_max_iterations,
-                trade_amount=self.config.trade_amount,
-                notifier=self.notifier
+                trade_amount=self.config.max_trade_amount,
+                max_leverage=self.config.max_leverage,
+                notifier=self.notifier,
+                prompt_manager=self.prompt_manager
             )
             self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
         
@@ -128,8 +142,9 @@ class QuantFlowBot:
             openai_api_key=self.config.openai_api_key,
             openai_model=self.config.openai_model,
             temperature=0.05,  # 更保守
-            trade_amount=self.config.trade_amount,
-            notifier=self.notifier
+            trade_amount=self.config.max_trade_amount,
+            notifier=self.notifier,
+            prompt_manager=self.prompt_manager
         )
         
         self.logger.print_info(f"✅ 多 Agent 架构初始化完成！")

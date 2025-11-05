@@ -3,8 +3,30 @@ LangChain 工具定义
 为 AI Agent 提供买入、卖出和不操作的工具
 """
 
-from langchain_core.tools import Tool
+from langchain_core.tools import Tool, StructuredTool
 from typing import Callable, Optional
+from pydantic import BaseModel, Field
+import json
+
+
+class BuyInput(BaseModel):
+    """买入工具的输入模式"""
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    amount: Optional[float] = Field(default=None, description="交易金额（USD），不填则使用配置上限")
+    leverage: Optional[int] = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
+
+
+class SellShortInput(BaseModel):
+    """卖空工具的输入模式"""
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    amount: Optional[float] = Field(default=None, description="交易金额（USD），不填则使用配置上限")
+    leverage: Optional[int] = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
+
+
+class BuySpotInput(BaseModel):
+    """现货买入工具的输入模式"""
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    amount: Optional[float] = Field(default=None, description="定投金额（USD），不填则使用配置上限")
 
 
 class TradingTools:
@@ -12,23 +34,23 @@ class TradingTools:
 
     def __init__(
         self,
-        buy_callback: Callable[[str], str],
+        buy_callback: Callable[[str, Optional[float], Optional[int]], str],
         sell_callback: Callable[[str], str],
-        sell_short_callback: Callable[[str], str],
+        sell_short_callback: Callable[[str, Optional[float], Optional[int]], str],
         buy_to_cover_callback: Callable[[str], str],
         do_nothing_callback: Callable[[str], str],
-        buy_spot_callback: Optional[Callable[[str], str]] = None
+        buy_spot_callback: Optional[Callable[[str, Optional[float]], str]] = None
     ):
         """
         初始化交易工具
 
         Args:
-            buy_callback: 买入开多回调函数，接收 symbol，返回执行结果
+            buy_callback: 买入开多回调函数，接收 (symbol, amount, leverage)，返回执行结果
             sell_callback: 卖出平多回调函数，接收 symbol，返回执行结果
-            sell_short_callback: 卖空开空回调函数，接收 symbol，返回执行结果
+            sell_short_callback: 卖空开空回调函数，接收 (symbol, amount, leverage)，返回执行结果
             buy_to_cover_callback: 买入平空回调函数，接收 symbol，返回执行结果
             do_nothing_callback: 不操作回调函数，接收 reason，返回确认信息
-            buy_spot_callback: 现货买入回调函数（可选），接收 symbol，返回执行结果
+            buy_spot_callback: 现货买入回调函数（可选），接收 (symbol, amount)，返回执行结果
         """
         self.buy_callback = buy_callback
         self.sell_callback = sell_callback
@@ -37,34 +59,60 @@ class TradingTools:
         self.do_nothing_callback = do_nothing_callback
         self.buy_spot_callback = buy_spot_callback
 
-    def create_buy_tool(self) -> Tool:
+    def _parse_tool_input(self, input_str: str) -> dict:
+        """
+        解析工具输入参数
+
+        支持两种格式：
+        1. JSON 格式: '{"symbol": "BTC", "amount": 50, "leverage": 5}'
+        2. 简单字符串: 'BTC' (向后兼容)
+
+        Args:
+            input_str: 输入字符串
+
+        Returns:
+            解析后的参数字典
+        """
+        # 尝试解析 JSON
+        try:
+            params = json.loads(input_str)
+            if isinstance(params, dict):
+                return params
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # 向后兼容：如果不是 JSON，当作 symbol 处理
+        return {"symbol": input_str.strip()}
+
+    def create_buy_tool(self) -> StructuredTool:
         """
         创建买入开多工具
 
         Returns:
-            LangChain Tool 对象
+            LangChain StructuredTool 对象
         """
-        return Tool(
+        def buy_func(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
+            """执行买入开多操作"""
+            return self.buy_callback(symbol, amount, leverage)
+
+        return StructuredTool.from_function(
+            func=buy_func,
             name="buy",
-            description="""
-            执行买入开多操作。当市场出现明确的做多信号时使用此工具。
+            description="""执行买入开多操作。当市场出现明确的做多信号时使用此工具。
 
-            使用条件:
-            - 未持有该币种的多头仓位
-            - 未达到最大持仓数量
-            - 技术指标显示看涨信号
+使用条件:
+- 未持有该币种的多头仓位
+- 未达到最大持仓数量
+- 技术指标显示看涨信号
 
-            参数:
-            - symbol: 交易对，如 'BTC/USDT'
+你的权限:
+- 可以根据信号强度自主决定交易金额（不超过配置上限）
+- 可以根据风险承受力选择杠杆倍数（1到配置最大值之间）
 
-            系统会自动:
-            - 使用配置的金额买入（开多仓）
-            - 设置止盈单（价格上涨 5%）
-            - 设置止损单（价格下跌 2%）
-
-            返回: 执行结果描述
-            """,
-            func=self.buy_callback
+系统会自动:
+- 设置止盈单（价格上涨 5%）
+- 设置止损单（价格下跌 2%）""",
+            args_schema=BuyInput
         )
 
     def create_sell_tool(self) -> Tool:
@@ -95,36 +143,37 @@ class TradingTools:
             func=self.sell_callback
         )
 
-    def create_sell_short_tool(self) -> Tool:
+    def create_sell_short_tool(self) -> StructuredTool:
         """
         创建卖空开空工具
 
         Returns:
-            LangChain Tool 对象
+            LangChain StructuredTool 对象
         """
-        return Tool(
+        def sell_short_func(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
+            """执行卖空开空操作"""
+            return self.sell_short_callback(symbol, amount, leverage)
+
+        return StructuredTool.from_function(
+            func=sell_short_func,
             name="sell_short",
-            description="""
-            执行卖空开空操作。当市场出现明确的做空信号时使用此工具。
+            description="""执行卖空开空操作。当市场出现明确的做空信号时使用此工具。
 
-            使用条件:
-            - 未持有该币种的空头仓位
-            - 未达到最大持仓数量
-            - 技术指标显示看跌信号
+使用条件:
+- 未持有该币种的空头仓位
+- 未达到最大持仓数量
+- 技术指标显示看跌信号
 
-            参数:
-            - symbol: 交易对，如 'BTC/USDT'
+你的权限:
+- 可以根据信号强度自主决定交易金额（不超过配置上限）
+- 可以根据风险承受力选择杠杆倍数（1到配置最大值之间）
 
-            系统会自动:
-            - 使用配置的金额卖空（开空仓）
-            - 设置止盈单（价格下跌 5%）
-            - 设置止损单（价格上涨 2%）
+系统会自动:
+- 设置止盈单（价格下跌 5%）
+- 设置止损单（价格上涨 2%）
 
-            注意: 现货账户模式下为模拟做空，仅记录持仓信息
-
-            返回: 执行结果描述
-            """,
-            func=self.sell_short_callback
+注意: 现货账户模式下为模拟做空，仅记录持仓信息""",
+            args_schema=SellShortInput
         )
 
     def create_buy_to_cover_tool(self) -> Tool:
@@ -184,57 +233,62 @@ class TradingTools:
             func=self.do_nothing_callback
         )
 
-    def create_buy_spot_tool(self) -> Tool:
+    def create_buy_spot_tool(self) -> StructuredTool:
         """
         创建现货买入工具（用于长期持有）
 
         Returns:
-            LangChain Tool 对象
+            LangChain StructuredTool 对象
         """
         if not self.buy_spot_callback:
             # 如果没有提供回调，返回一个空操作工具
-            return Tool(
+            def disabled_func(symbol: str, amount: Optional[float] = None) -> str:
+                return "现货买入功能未启用"
+
+            return StructuredTool.from_function(
+                func=disabled_func,
                 name="buy_spot",
                 description="现货买入功能未启用",
-                func=lambda x: "现货买入功能未启用"
+                args_schema=BuySpotInput
             )
 
-        return Tool(
+        def buy_spot_func(symbol: str, amount: Optional[float] = None) -> str:
+            """执行现货买入操作"""
+            return self.buy_spot_callback(symbol, amount)
+
+        return StructuredTool.from_function(
+            func=buy_spot_func,
             name="buy_spot",
-            description="""
-            执行现货买入操作（长期持有策略）。当市场出现长期阴跌趋势，发现优质定投点位时使用此工具。
+            description="""执行现货买入操作（长期持有策略）。当市场出现长期阴跌趋势，发现优质定投点位时使用此工具。
 
-            使用条件:
-            - 检测到市场处于持续阴跌趋势（多周期下跌）
-            - 资产价格已从高点回撤显著（建议 20%+）
-            - RSI 处于超卖区域（< 30）
-            - 多个时间周期趋势一致向下，但出现企稳迹象
-            - 成交量开始萎缩或出现底部放量
+使用条件:
+- 检测到市场处于持续阴跌趋势（多周期下跌）
+- 资产价格已从高点回撤显著（建议 20%+）
+- RSI 处于超卖区域（< 30）
+- 多个时间周期趋势一致向下，但出现企稳迹象
+- 成交量开始萎缩或出现底部放量
 
-            定投策略特点:
-            - 现货买入，无杠杆风险
-            - 用于长期持有，不设置止盈止损
-            - 适合优质资产的长期配置
-            - 分散风险的定投点位
+定投策略特点:
+- 现货买入，无杠杆风险
+- 用于长期持有，不设置止盈止损
+- 适合优质资产的长期配置
+- 分散风险的定投点位
 
-            参数:
-            - symbol: 交易对，如 'BTC', 'ETH'
+你的权限:
+- 可以根据市场恐慌程度自主决定定投金额（不超过配置上限）
+- 极度恐慌时可以使用更大金额，一般恐慌时使用较小金额
 
-            系统会自动:
-            - 使用配置的金额买入现货
-            - 不设置杠杆（1x）
-            - 不设置止盈止损（长期持有）
-            - 记录为现货持仓
+系统会自动:
+- 不设置杠杆（1x）
+- 不设置止盈止损（长期持有）
+- 记录为现货持仓
 
-            注意: 这是长期投资工具，请确保:
-            1. 市场处于明显的下跌趋势
-            2. 价格已有充分回撤
-            3. 技术指标显示超卖
-            4. 资产基本面良好
-
-            返回: 执行结果描述
-            """,
-            func=self.buy_spot_callback
+注意: 这是长期投资工具，请确保:
+1. 市场处于明显的下跌趋势
+2. 价格已有充分回撤
+3. 技术指标显示超卖
+4. 资产基本面良好""",
+            args_schema=BuySpotInput
         )
 
     def get_all_tools(self) -> list:

@@ -10,8 +10,9 @@ trading:
     - BTC
     - ETH
 
-  # 每次交易的金额（USD）
-  trade_amount: 100
+  # 单笔交易金额上限（USD）
+  # AI 可以根据市场情况自主决定实际交易金额，但不超过此上限
+  max_trade_amount: 100
 
   # 止盈比例（5% = 0.05）
   take_profit_ratio: 0.05
@@ -22,8 +23,9 @@ trading:
   # 最大持仓数量（同时持有的币种数量）
   max_positions: 2
 
-  # 默认杠杆倍数（1-50倍，具体取决于交易对）
-  default_leverage: 10
+  # 最大杠杆倍数（1-50倍，具体取决于交易对）
+  # AI 可以根据市场情况自主选择 1 到此上限之间的任何杠杆倍数
+  max_leverage: 10
 
 # 调度配置
 scheduler:
@@ -81,6 +83,16 @@ agent:
 
   # Agent 超时时间（秒）
   timeout: 60
+
+# Prompt 配置
+prompt:
+  # 使用的 Prompt 集合名称
+  # 可选值: default, conservative, aggressive 或自定义名称
+  # Prompt 集合在 prompts/prompts.yaml 中定义
+  set: default
+
+  # Prompt 配置文件路径
+  config_file: prompts/prompts.yaml
 
 # 风控配置
 risk_management:
