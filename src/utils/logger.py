@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.markdown import Markdown
 from rich import box
 import numpy as np
 import pandas as pd
@@ -122,14 +123,15 @@ class TradingLogger:
 
     def print_header(self, text: str):
         """打印标题"""
-        self.console.print(f"\n{'='*80}", style="bold cyan")
-        self.console.print(f"{text:^80}", style="bold cyan")
-        self.console.print(f"{'='*80}\n", style="bold cyan")
+        from rich.align import Align
+        self.console.print()  # 空行
+        self.console.rule(text, style="bold cyan")
+        self.console.print()  # 空行
 
     def print_section(self, title: str, content: str = None, style: str = "bold yellow"):
         """打印章节"""
-        self.console.print(f"\n[{style}]{'─'*80}[/{style}]")
-        self.console.print(f"[{style}]{title}[/{style}]")
+        self.console.print()  # 空行
+        self.console.rule(title, style=style, align="left")
         if content:
             self.console.print(content)
 
@@ -165,7 +167,8 @@ class TradingLogger:
             prompt,
             title="🤖 AI Agent Prompt",
             border_style="blue",
-            padding=(1, 2)
+            padding=(1, 2),
+            box=box.ROUNDED
         ))
 
     def print_agent_thought(self, thought: str):
@@ -179,8 +182,54 @@ class TradingLogger:
             thought,
             title="💭 Agent 思考链",
             border_style="magenta",
-            padding=(1, 2)
+            padding=(1, 2),
+            box=box.ROUNDED
         ))
+
+    def print_ai_response(self, response: str, title: str = "🤖 AI 回复"):
+        """
+        打印 AI 响应内容（支持 Markdown 渲染）
+
+        Args:
+            response: AI 响应内容（Markdown 格式）
+            title: 面板标题
+        """
+        # 如果响应内容看起来像 Markdown，则渲染为 Markdown
+        # 否则作为普通文本显示
+        if self._is_likely_markdown(response):
+            content = Markdown(response)
+        else:
+            content = response
+
+        self.console.print(Panel(
+            content,
+            title=title,
+            border_style="cyan",
+            padding=(1, 2),
+            box=box.DOUBLE
+        ))
+
+    def _is_likely_markdown(self, text: str) -> bool:
+        """
+        检测文本是否可能是 Markdown 格式
+
+        Args:
+            text: 待检测文本
+
+        Returns:
+            是否可能是 Markdown
+        """
+        # 简单检测：包含常见 Markdown 标记
+        markdown_indicators = [
+            '# ', '## ', '### ',  # 标题
+            '- ', '* ', '+ ',     # 列表
+            '```', '`',           # 代码
+            '**', '__',           # 粗体
+            '*', '_',             # 斜体
+            '[', '](', '![',      # 链接和图片
+            '>', '|'              # 引用和表格
+        ]
+        return any(indicator in text for indicator in markdown_indicators)
 
     def print_decision(self, decision: str, details: Dict[str, Any] = None):
         """
@@ -210,7 +259,8 @@ class TradingLogger:
             content,
             title="⚡ 决策结果",
             border_style=color,
-            padding=(1, 2)
+            padding=(1, 2),
+            box=box.HEAVY
         ))
 
     def print_execution_result(self, success: bool, message: str, order_id: str = None):
@@ -233,7 +283,8 @@ class TradingLogger:
             content,
             title="📋 执行结果",
             border_style=style,
-            padding=(1, 2)
+            padding=(1, 2),
+            box=box.HEAVY
         ))
 
     def print_error(self, error: str):
