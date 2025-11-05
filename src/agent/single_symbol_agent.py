@@ -407,11 +407,35 @@ class SingleSymbolAgent:
                         # Hyperliquid API 字段说明：
                         # 'entryPx' - 入场价格 (entry price)
                         # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
+                        # 'leverage' - 杠杆信息 (leverage info)
                         entry_price = position.get('entryPx', 0)
                         exit_price = self.current_price
                         size = abs(position.get('szi', 0))
-                        pnl = result.get('pnl', 0)
-                        pnl_percent = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+                        pnl = float(result.get('pnl', 0))
+
+                        # 获取杠杆值以计算实际收益率
+                        # 尝试从 position 数据中提取杠杆值，支持多种格式
+                        leverage_info = position.get('leverage', {})
+                        if isinstance(leverage_info, dict):
+                            leverage = float(leverage_info.get('value', 1))
+                        elif leverage_info:
+                            leverage = float(leverage_info)
+                            self.logger.print_info(f"[{self.symbol}Agent] Leverage格式非预期: {leverage_info}")
+                        else:
+                            leverage = 1
+
+                        # 计算实际收益率（基于保证金）
+                        # 仓位价值 = size * entry_price
+                        # 保证金 = 仓位价值 / 杠杆
+                        # 收益率 = pnl / 保证金 * 100
+                        entry_price_float = float(entry_price) if entry_price else 0
+                        position_value = size * entry_price_float
+
+                        if position_value > 0 and leverage > 0:
+                            margin = position_value / leverage
+                            pnl_percent = (pnl / margin) * 100
+                        else:
+                            pnl_percent = 0
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
@@ -501,13 +525,35 @@ class SingleSymbolAgent:
                         # Hyperliquid API 字段说明：
                         # 'entryPx' - 入场价格 (entry price)
                         # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
+                        # 'leverage' - 杠杆信息 (leverage info)
                         entry_price = position.get('entryPx', 0)
                         exit_price = self.current_price
                         size = abs(position.get('szi', 0))
-                        pnl = result.get('pnl', 0)
-                        # Use leverage from position if available, default to 1
-                        leverage = position.get('leverage', 1)
-                        pnl_percent = ((entry_price - exit_price) / entry_price * leverage * 100) if entry_price > 0 else 0
+                        pnl = float(result.get('pnl', 0))
+
+                        # 获取杠杆值以计算实际收益率
+                        # 尝试从 position 数据中提取杠杆值，支持多种格式
+                        leverage_info = position.get('leverage', {})
+                        if isinstance(leverage_info, dict):
+                            leverage = float(leverage_info.get('value', 1))
+                        elif leverage_info:
+                            leverage = float(leverage_info)
+                            self.logger.print_info(f"[{self.symbol}Agent] Leverage格式非预期: {leverage_info}")
+                        else:
+                            leverage = 1
+
+                        # 计算实际收益率（基于保证金）
+                        # 仓位价值 = size * entry_price
+                        # 保证金 = 仓位价值 / 杠杆
+                        # 收益率 = pnl / 保证金 * 100
+                        entry_price_float = float(entry_price) if entry_price else 0
+                        position_value = size * entry_price_float
+
+                        if position_value > 0 and leverage > 0:
+                            margin = position_value / leverage
+                            pnl_percent = (pnl / margin) * 100
+                        else:
+                            pnl_percent = 0
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
