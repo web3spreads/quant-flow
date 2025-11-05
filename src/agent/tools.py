@@ -5,6 +5,7 @@ LangChain 工具定义
 
 from langchain_core.tools import Tool
 from typing import Callable, Optional
+import json
 
 
 class TradingTools:
@@ -12,23 +13,23 @@ class TradingTools:
 
     def __init__(
         self,
-        buy_callback: Callable[[str], str],
+        buy_callback: Callable[[str, Optional[float], Optional[int]], str],
         sell_callback: Callable[[str], str],
-        sell_short_callback: Callable[[str], str],
+        sell_short_callback: Callable[[str, Optional[float], Optional[int]], str],
         buy_to_cover_callback: Callable[[str], str],
         do_nothing_callback: Callable[[str], str],
-        buy_spot_callback: Optional[Callable[[str], str]] = None
+        buy_spot_callback: Optional[Callable[[str, Optional[float]], str]] = None
     ):
         """
         初始化交易工具
 
         Args:
-            buy_callback: 买入开多回调函数，接收 symbol，返回执行结果
+            buy_callback: 买入开多回调函数，接收 (symbol, amount, leverage)，返回执行结果
             sell_callback: 卖出平多回调函数，接收 symbol，返回执行结果
-            sell_short_callback: 卖空开空回调函数，接收 symbol，返回执行结果
+            sell_short_callback: 卖空开空回调函数，接收 (symbol, amount, leverage)，返回执行结果
             buy_to_cover_callback: 买入平空回调函数，接收 symbol，返回执行结果
             do_nothing_callback: 不操作回调函数，接收 reason，返回确认信息
-            buy_spot_callback: 现货买入回调函数（可选），接收 symbol，返回执行结果
+            buy_spot_callback: 现货买入回调函数（可选），接收 (symbol, amount)，返回执行结果
         """
         self.buy_callback = buy_callback
         self.sell_callback = sell_callback
@@ -37,6 +38,31 @@ class TradingTools:
         self.do_nothing_callback = do_nothing_callback
         self.buy_spot_callback = buy_spot_callback
 
+    def _parse_tool_input(self, input_str: str) -> dict:
+        """
+        解析工具输入参数
+
+        支持两种格式：
+        1. JSON 格式: '{"symbol": "BTC", "amount": 50, "leverage": 5}'
+        2. 简单字符串: 'BTC' (向后兼容)
+
+        Args:
+            input_str: 输入字符串
+
+        Returns:
+            解析后的参数字典
+        """
+        # 尝试解析 JSON
+        try:
+            params = json.loads(input_str)
+            if isinstance(params, dict):
+                return params
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # 向后兼容：如果不是 JSON，当作 symbol 处理
+        return {"symbol": input_str.strip()}
+
     def create_buy_tool(self) -> Tool:
         """
         创建买入开多工具
@@ -44,6 +70,14 @@ class TradingTools:
         Returns:
             LangChain Tool 对象
         """
+        def buy_wrapper(input_str: str) -> str:
+            """包装函数，解析参数并调用回调"""
+            params = self._parse_tool_input(input_str)
+            symbol = params.get("symbol")
+            amount = params.get("amount")
+            leverage = params.get("leverage")
+            return self.buy_callback(symbol, amount, leverage)
+
         return Tool(
             name="buy",
             description="""
@@ -54,17 +88,27 @@ class TradingTools:
             - 未达到最大持仓数量
             - 技术指标显示看涨信号
 
-            参数:
-            - symbol: 交易对，如 'BTC/USDT'
+            参数格式（JSON字符串）:
+            {
+                "symbol": "BTC",         # 必填：交易对
+                "amount": 50,            # 可选：交易金额(USD)，不填则使用配置上限
+                "leverage": 5            # 可选：杠杆倍数，不填则使用配置最大杠杆
+            }
+
+            或简单格式（向后兼容）:
+            "BTC"  # 只传symbol，使用默认金额和杠杆
+
+            你的权限:
+            - 可以根据信号强度自主决定交易金额（不超过配置上限）
+            - 可以根据风险承受力选择杠杆倍数（1到配置最大值之间）
 
             系统会自动:
-            - 使用配置的金额买入（开多仓）
             - 设置止盈单（价格上涨 5%）
             - 设置止损单（价格下跌 2%）
 
             返回: 执行结果描述
             """,
-            func=self.buy_callback
+            func=buy_wrapper
         )
 
     def create_sell_tool(self) -> Tool:
@@ -102,6 +146,14 @@ class TradingTools:
         Returns:
             LangChain Tool 对象
         """
+        def sell_short_wrapper(input_str: str) -> str:
+            """包装函数，解析参数并调用回调"""
+            params = self._parse_tool_input(input_str)
+            symbol = params.get("symbol")
+            amount = params.get("amount")
+            leverage = params.get("leverage")
+            return self.sell_short_callback(symbol, amount, leverage)
+
         return Tool(
             name="sell_short",
             description="""
@@ -112,11 +164,21 @@ class TradingTools:
             - 未达到最大持仓数量
             - 技术指标显示看跌信号
 
-            参数:
-            - symbol: 交易对，如 'BTC/USDT'
+            参数格式（JSON字符串）:
+            {
+                "symbol": "BTC",         # 必填：交易对
+                "amount": 50,            # 可选：交易金额(USD)，不填则使用配置上限
+                "leverage": 5            # 可选：杠杆倍数，不填则使用配置最大杠杆
+            }
+
+            或简单格式（向后兼容）:
+            "BTC"  # 只传symbol，使用默认金额和杠杆
+
+            你的权限:
+            - 可以根据信号强度自主决定交易金额（不超过配置上限）
+            - 可以根据风险承受力选择杠杆倍数（1到配置最大值之间）
 
             系统会自动:
-            - 使用配置的金额卖空（开空仓）
             - 设置止盈单（价格下跌 5%）
             - 设置止损单（价格上涨 2%）
 
@@ -124,7 +186,7 @@ class TradingTools:
 
             返回: 执行结果描述
             """,
-            func=self.sell_short_callback
+            func=sell_short_wrapper
         )
 
     def create_buy_to_cover_tool(self) -> Tool:
@@ -199,6 +261,13 @@ class TradingTools:
                 func=lambda x: "现货买入功能未启用"
             )
 
+        def buy_spot_wrapper(input_str: str) -> str:
+            """包装函数，解析参数并调用回调"""
+            params = self._parse_tool_input(input_str)
+            symbol = params.get("symbol")
+            amount = params.get("amount")
+            return self.buy_spot_callback(symbol, amount)
+
         return Tool(
             name="buy_spot",
             description="""
@@ -217,11 +286,20 @@ class TradingTools:
             - 适合优质资产的长期配置
             - 分散风险的定投点位
 
-            参数:
-            - symbol: 交易对，如 'BTC', 'ETH'
+            参数格式（JSON字符串）:
+            {
+                "symbol": "BTC",         # 必填：交易对
+                "amount": 50             # 可选：定投金额(USD)，不填则使用配置上限
+            }
+
+            或简单格式（向后兼容）:
+            "BTC"  # 只传symbol，使用默认金额
+
+            你的权限:
+            - 可以根据市场恐慌程度自主决定定投金额（不超过配置上限）
+            - 极度恐慌时可以使用更大金额，一般恐慌时使用较小金额
 
             系统会自动:
-            - 使用配置的金额买入现货
             - 不设置杠杆（1x）
             - 不设置止盈止损（长期持有）
             - 记录为现货持仓
@@ -234,7 +312,7 @@ class TradingTools:
 
             返回: 执行结果描述
             """,
-            func=self.buy_spot_callback
+            func=buy_spot_wrapper
         )
 
     def get_all_tools(self) -> list:
