@@ -22,7 +22,7 @@ test_config = {
         {
             "type": "feishu",
             "enabled": False,  # 改为 True 并配置 token 后可测试
-            "token": "your_feishu_token_here"
+            "token": "your_Feishu_token_here"
         },
         # 邮件测试（需要替换为真实配置）
         {
