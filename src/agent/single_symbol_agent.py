@@ -435,9 +435,9 @@ class SingleSymbolAgent:
                         # Hyperliquid API 字段说明：
                         # 'entryPx' - 入场价格 (entry price)
                         # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
-                        entry_price = position.get('entryPx', 0)
+                        entry_price = float(position.get('entryPx', 0))
                         exit_price = self.current_price
-                        size = abs(position.get('szi', 0))
+                        size = abs(float(position.get('szi', 0)))
                         pnl = result.get('pnl', 0)
                         pnl_percent = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
 
@@ -546,9 +546,9 @@ class SingleSymbolAgent:
                         # Hyperliquid API 字段说明：
                         # 'entryPx' - 入场价格 (entry price)
                         # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
-                        entry_price = position.get('entryPx', 0)
+                        entry_price = float(position.get('entryPx', 0))
                         exit_price = self.current_price
-                        size = abs(position.get('szi', 0))
+                        size = abs(float(position.get('szi', 0)))
                         pnl = result.get('pnl', 0)
                         # Use leverage from position if available, default to 1
                         leverage = position.get('leverage', 1)
