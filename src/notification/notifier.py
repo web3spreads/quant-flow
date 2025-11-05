@@ -100,8 +100,10 @@ class Notifier:
         try:
             # 构建钉钉 URL - 对参数进行 URL 编码
             # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
-            api_key_encoded = quote(api_key, safe='')
+            # API key 通常只包含字母数字和连字符，保留连字符以提高调试时的可读性
+            api_key_encoded = quote(api_key, safe='-')
             if secret:
+                # Secret 可能包含特殊字符，需要完全编码
                 secret_encoded = quote(secret, safe='')
                 url = f"dingtalk://{secret_encoded}@{api_key_encoded}"
             else:
@@ -134,7 +136,8 @@ class Notifier:
         try:
             # 构建飞书 URL - 对 token 进行 URL 编码
             # 格式: feishu://{token}
-            token_encoded = quote(token, safe='')
+            # Token 通常包含字母数字、连字符和下划线，保留这些字符以提高可读性
+            token_encoded = quote(token, safe='-_')
             url = f"feishu://{token_encoded}"
 
             # 验证是否成功添加

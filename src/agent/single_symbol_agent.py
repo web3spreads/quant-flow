@@ -364,7 +364,8 @@ class SingleSymbolAgent:
                     # 发送开仓通知
                     if self.notifier:
                         quantity = result.get('quantity', 0)
-                        leverage = result.get('leverage', 10)
+                        # 从 order_manager 获取实际使用的杠杆，而不是使用硬编码默认值
+                        leverage = self.order_manager.default_leverage
                         self.notifier.notify_trade_opened(
                             symbol=self.symbol,
                             side="long",
@@ -403,6 +404,9 @@ class SingleSymbolAgent:
                 if result and result.get('status') == 'ok':
                     # 发送平仓通知
                     if self.notifier:
+                        # Hyperliquid API 字段说明：
+                        # 'entryPx' - 入场价格 (entry price)
+                        # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
                         entry_price = position.get('entryPx', 0)
                         exit_price = self.current_price
                         size = abs(position.get('szi', 0))
@@ -454,7 +458,8 @@ class SingleSymbolAgent:
                     # 发送开仓通知
                     if self.notifier:
                         quantity = result.get('quantity', 0)
-                        leverage = result.get('leverage', 10)
+                        # 从 order_manager 获取实际使用的杠杆，而不是使用硬编码默认值
+                        leverage = self.order_manager.default_leverage
                         self.notifier.notify_trade_opened(
                             symbol=self.symbol,
                             side="short",
@@ -493,6 +498,9 @@ class SingleSymbolAgent:
                 if result and result.get('status') == 'ok':
                     # 发送平仓通知
                     if self.notifier:
+                        # Hyperliquid API 字段说明：
+                        # 'entryPx' - 入场价格 (entry price)
+                        # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
                         entry_price = position.get('entryPx', 0)
                         exit_price = self.current_price
                         size = abs(position.get('szi', 0))
