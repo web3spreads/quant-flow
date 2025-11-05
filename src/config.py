@@ -35,6 +35,7 @@ class Config:
         self._init_data_config()
         self._init_indicators_config()
         self._init_agent_config()
+        self._init_prompt_config()
         self._init_risk_config()
         self._init_logging_config()
         self._init_notifications_config()
@@ -79,11 +80,26 @@ class Config:
         """初始化交易配置"""
         trading = self.config_data.get("trading", {})
         self.symbols: List[str] = trading.get("symbols", ["BTC", "ETH"])
-        self.trade_amount: float = float(trading.get("trade_amount", 100))
+
+        # 单笔交易金额上限（AI可自主决定实际金额，但不超过此上限）
+        # 向后兼容：支持旧字段名 trade_amount
+        self.max_trade_amount: float = float(
+            trading.get("max_trade_amount", trading.get("trade_amount", 100))
+        )
+        # 保留旧字段名用于兼容性
+        self.trade_amount: float = self.max_trade_amount
+
         self.take_profit_ratio: float = float(trading.get("take_profit_ratio", 0.05))
         self.stop_loss_ratio: float = float(trading.get("stop_loss_ratio", 0.02))
         self.max_positions: int = int(trading.get("max_positions", 2))
-        self.default_leverage: int = int(trading.get("default_leverage", 10))
+
+        # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
+        # 向后兼容：支持旧字段名 default_leverage
+        self.max_leverage: int = int(
+            trading.get("max_leverage", trading.get("default_leverage", 10))
+        )
+        # 保留旧字段名用于兼容性
+        self.default_leverage: int = self.max_leverage
 
     def _init_scheduler_config(self):
         """初始化调度器配置"""
@@ -124,6 +140,12 @@ class Config:
         self.agent_max_iterations: int = int(agent.get("max_iterations", 5))
         self.agent_timeout: int = int(agent.get("timeout", 60))
 
+    def _init_prompt_config(self):
+        """初始化 Prompt 配置"""
+        prompt = self.config_data.get("prompt", {})
+        self.prompt_set: str = prompt.get("set", "default")
+        self.prompt_config_file: str = prompt.get("config_file", "prompts/prompts.yaml")
+
     def _init_risk_config(self):
         """初始化风控配置"""
         risk = self.config_data.get("risk_management", {})
@@ -151,9 +173,9 @@ class Config:
         """验证配置的有效性"""
         errors = []
 
-        # 验证交易金额
-        if self.trade_amount <= 0:
-            errors.append("trade_amount 必须大于 0")
+        # 验证交易金额上限
+        if self.max_trade_amount <= 0:
+            errors.append("max_trade_amount 必须大于 0")
 
         # 验证止盈止损比例
         if self.take_profit_ratio <= 0:
@@ -185,8 +207,8 @@ class Config:
         交易平台: Hyperliquid（永续合约）
         运行模式: {mode}
         交易对: {', '.join(self.symbols)}
-        交易金额: {self.trade_amount} USD
-        杠杆倍数: {self.default_leverage}x
+        单笔交易金额上限: {self.max_trade_amount} USD
+        最大杠杆倍数: {self.max_leverage}x
         止盈比例: {self.take_profit_ratio * 100}%
         止损比例: {self.stop_loss_ratio * 100}%
         决策间隔: {self.interval_minutes} 分钟
