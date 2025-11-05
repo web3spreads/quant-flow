@@ -139,6 +139,9 @@ class QuantFlowBot:
         
         # 启动时检查账户余额
         self._check_and_display_balance()
+        
+        # 发送启动通知
+        self._send_startup_notification()
 
     def _check_and_display_balance(self):
         """检查并显示账户余额信息"""
@@ -168,8 +171,25 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"余额检查失败: {e}")
 
+    def _send_startup_notification(self):
+        """发送启动通知"""
+        try:
+            if self.notifier and self.notifier.enabled:
+                self.logger.print_info("发送启动通知...")
+                self.notifier.notify_startup(
+                    symbols=self.config.symbols,
+                    trade_amount=self.config.trade_amount,
+                    leverage=self.config.default_leverage,
+                    interval_minutes=self.config.interval_minutes,
+                    max_positions=self.config.max_positions,
+                    testnet=self.config.hyperliquid_testnet
+                )
+        except Exception as e:
+            self.logger.print_error(f"发送启动通知失败: {e}")
+
     def trading_cycle(self):
         """执行一轮交易决策循环（多 Agent 独立决策模式）"""
+        start_time = time.time()
         try:
             self.logger.print_header(f"🔄 多 Agent 交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
@@ -372,10 +392,12 @@ class QuantFlowBot:
                         self.logger.print_error(f"现货 Agent 评估 {symbol} 异常: {e}")
                         self.logger.logger.exception(e)
             
-            self.logger.print_header(f"✅ 多 Agent 交易周期完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            elapsed_time = time.time() - start_time
+            self.logger.print_header(f"✅ 多 Agent 交易周期完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (耗时: {elapsed_time:.1f}秒)")
             
         except Exception as e:
-            self.logger.print_error(f"交易周期异常: {e}")
+            elapsed_time = time.time() - start_time
+            self.logger.print_error(f"交易周期异常: {e} (耗时: {elapsed_time:.1f}秒)")
             self.logger.logger.exception(e)
 
             # 发送错误通知
@@ -400,7 +422,10 @@ class QuantFlowBot:
                 trigger=IntervalTrigger(minutes=self.config.interval_minutes),
                 id='trading_cycle',
                 name='多 Agent 交易决策循环',
-                replace_existing=True
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=60
             )
             
             # 如果配置了立即执行，先执行一次

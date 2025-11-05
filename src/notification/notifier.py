@@ -12,6 +12,7 @@ from apprise import Apprise
 
 class NotificationEvent(str, Enum):
     """通知事件类型"""
+    STARTUP = "startup"                     # 启动
     TRADE_OPENED = "trade_opened"           # 开仓
     TRADE_CLOSED = "trade_closed"           # 平仓
     STOP_LOSS = "stop_loss"                 # 止损
@@ -437,3 +438,37 @@ class Notifier:
             f"交易已暂停，请注意风险"
         )
         self.notify(NotificationEvent.CIRCUIT_BREAKER, title, message)
+
+    def notify_startup(
+        self,
+        symbols: List[str],
+        trade_amount: float,
+        leverage: int,
+        interval_minutes: int,
+        max_positions: int,
+        testnet: bool = False
+    ):
+        """
+        发送启动通知
+
+        Args:
+            symbols: 交易对列表
+            trade_amount: 交易金额
+            leverage: 杠杆倍数
+            interval_minutes: 决策间隔（分钟）
+            max_positions: 最大持仓数
+            testnet: 是否为测试网
+        """
+        env = "🔧 测试网" if testnet else "🚀 主网"
+        symbols_str = ", ".join(symbols)
+        title = f"✅ Quant Flow 启动成功 ({env})"
+        message = (
+            f"环境: {env}\n"
+            f"交易对: {symbols_str}\n"
+            f"交易金额: ${trade_amount}\n"
+            f"杠杆倍数: {leverage}x\n"
+            f"决策间隔: {interval_minutes} 分钟\n"
+            f"最大持仓: {max_positions}\n"
+            f"\n机器人已成功启动，开始监控市场..."
+        )
+        self.notify(NotificationEvent.STARTUP, title, message)
