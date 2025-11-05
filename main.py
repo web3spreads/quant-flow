@@ -338,9 +338,8 @@ class QuantFlowBot:
             if spot_recommendations:
                 self.logger.print_section("💎 现货定投 Agent 评估", style="bold blue")
                 
-                # 获取当前现货持仓（从持仓中筛选现货）
-                # TODO: 需要在 order_manager 中添加区分现货和合约的方法
-                current_spot_holdings = []  # 暂时为空，后续实现
+                # 获取当前现货持仓
+                current_spot_holdings = self.order_manager.get_spot_holdings()
                 
                 for recommendation in spot_recommendations:
                     try:

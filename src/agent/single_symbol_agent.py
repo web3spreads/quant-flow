@@ -412,7 +412,9 @@ class SingleSymbolAgent:
                         size = abs(position.get('szi', 0))
                         pnl = result.get('pnl', 0)
                         # Use leverage from position if available, default to 1
-                        leverage = position.get('leverage', 1)
+                        # leverage is a dict with structure: {"type": "cross"/"isolated", "value": int}
+                        leverage_dict = position.get('leverage', {})
+                        leverage = leverage_dict.get('value', 1) if isinstance(leverage_dict, dict) else 1
                         pnl_percent = ((exit_price - entry_price) / entry_price * leverage * 100) if entry_price > 0 else 0
 
                         self.notifier.notify_trade_closed(
@@ -508,7 +510,9 @@ class SingleSymbolAgent:
                         size = abs(position.get('szi', 0))
                         pnl = result.get('pnl', 0)
                         # Use leverage from position if available, default to 1
-                        leverage = position.get('leverage', 1)
+                        # leverage is a dict with structure: {"type": "cross"/"isolated", "value": int}
+                        leverage_dict = position.get('leverage', {})
+                        leverage = leverage_dict.get('value', 1) if isinstance(leverage_dict, dict) else 1
                         pnl_percent = ((entry_price - exit_price) / entry_price * leverage * 100) if entry_price > 0 else 0
 
                         self.notifier.notify_trade_closed(

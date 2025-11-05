@@ -112,12 +112,21 @@ class OrderManager:
 
     def get_current_positions(self) -> List[Dict[str, Any]]:
         """
-        获取当前持仓列表
+        获取当前合约持仓列表
         
         Returns:
-            持仓列表
+            合约持仓列表
         """
         return self.client.get_positions()
+
+    def get_spot_holdings(self) -> List[Dict[str, Any]]:
+        """
+        获取当前现货持仓列表
+        
+        Returns:
+            现货持仓列表 [{'coin': str, 'total': float, 'hold': float, 'available': float}, ...]
+        """
+        return self.client.get_spot_balances()
 
     def calculate_position_size(
         self,
