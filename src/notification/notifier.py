@@ -100,8 +100,8 @@ class Notifier:
         try:
             # 构建钉钉 URL - 对参数进行 URL 编码
             # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
-            # API key 通常只包含字母数字和连字符，保留连字符以提高调试时的可读性
-            api_key_encoded = quote(api_key, safe='-')
+            # API key 可能包含特殊字符，为安全起见应完全编码
+            api_key_encoded = quote(api_key, safe='')
             if secret:
                 # Secret 可能包含特殊字符，需要完全编码
                 secret_encoded = quote(secret, safe='')
