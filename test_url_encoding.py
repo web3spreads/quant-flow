@@ -53,11 +53,11 @@ def test_url_encoding():
     print("=" * 60)
 
     print("\n测试配置（包含特殊字符）：")
-    print(f"- 邮件用户: test+user@example.com")
-    print(f"- 邮件密码: p@ss:w0rd#123! (包含 @, :, #, !)")
-    print(f"- 钉钉 API Key: abc123/def456 (包含 /)")
-    print(f"- 钉钉 Secret: SEC@123#456 (包含 @, #)")
-    print(f"- 飞书 Token: token?with=special&chars (包含 ?, =, &)")
+    print("- 邮件用户: test+user@example.com")
+    print("- 邮件密码: p@ss:w0rd#123! (包含 @, :, #, !)")
+    print("- 钉钉 API Key: abc123/def456 (包含 /)")
+    print("- 钉钉 Secret: SEC@123#456 (包含 @, #)")
+    print("- 飞书 Token: token?with=special&chars (包含 ?, =, &)")
 
     try:
         # 初始化通知器
