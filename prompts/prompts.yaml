@@ -32,23 +32,22 @@ prompt_sets:
     spot_prompt_template_file: "default/spot_prompt_template.txt"
 
   # 保守策略（低风险）
-  # 可以复制 default 目录并修改参数来创建新策略
-  # conservative:
-  #   name: "保守策略"
-  #   description: "更严格的开仓条件，较低的杠杆使用"
-  #   system_prompt_file: "conservative/system_prompt.txt"
-  #   spot_system_prompt_file: "conservative/spot_system_prompt.txt"
-  #   trading_prompt_template_file: "conservative/trading_prompt_template.txt"
-  #   spot_prompt_template_file: "conservative/spot_prompt_template.txt"
+  conservative:
+    name: "保守策略"
+    description: "极度严格的开仓条件，极低的杠杆使用，资金安全优先"
+    system_prompt_file: "conservative/system_prompt.txt"
+    spot_system_prompt_file: "conservative/spot_system_prompt.txt"
+    trading_prompt_template_file: "conservative/trading_prompt_template.txt"
+    spot_prompt_template_file: "conservative/spot_prompt_template.txt"
 
   # 激进策略（高风险高收益）
-  # aggressive:
-  #   name: "激进策略"
-  #   description: "更宽松的开仓条件，更高的杠杆使用"
-  #   system_prompt_file: "aggressive/system_prompt.txt"
-  #   spot_system_prompt_file: "aggressive/spot_system_prompt.txt"
-  #   trading_prompt_template_file: "aggressive/trading_prompt_template.txt"
-  #   spot_prompt_template_file: "aggressive/spot_prompt_template.txt"
+  aggressive:
+    name: "激进策略"
+    description: "宽松的开仓条件，高杠杆使用，追求收益最大化"
+    system_prompt_file: "aggressive/system_prompt.txt"
+    spot_system_prompt_file: "aggressive/spot_system_prompt.txt"
+    trading_prompt_template_file: "aggressive/trading_prompt_template.txt"
+    spot_prompt_template_file: "aggressive/spot_prompt_template.txt"
 
 # 使用说明:
 # 1. 创建新的 Prompt 集合:
