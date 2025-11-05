@@ -344,18 +344,24 @@ class SingleSymbolAgent:
                 if has_long:
                     return f"❌ 已持有 {self.symbol} 的多头仓位"
 
-                order_info = self.order_manager.execute_buy_with_protection(
+                result = self.order_manager.execute_long(
                     symbol=self.symbol,
                     usdt_amount=self.trade_amount,
-                    current_price=self.current_price
+                    leverage=None,
+                    with_tpsl=True
                 )
 
-                if order_info:
+                if result and result.get('success'):
+                    # 获取市场订单信息
+                    market_order = result.get('market_order', {})
+                    entry_price = self.current_price
+                    tp_price = entry_price * 1.05  # 5% take profit
+                    sl_price = entry_price * 0.98  # 2% stop loss
                     return (
                         f"✅ 买入开多成功！\n"
-                        f"  入场价: ${order_info['entry_price']:.2f}\n"
-                        f"  止盈价: ${order_info['take_profit_price']:.2f}\n"
-                        f"  止损价: ${order_info['stop_loss_price']:.2f}"
+                        f"  入场价: ${entry_price:.2f}\n"
+                        f"  止盈价: ${tp_price:.2f}\n"
+                        f"  止损价: ${sl_price:.2f}"
                     )
                 return "❌ 买入开多失败"
 
@@ -373,13 +379,13 @@ class SingleSymbolAgent:
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的多头仓位"
 
-                sell_order = self.order_manager.execute_sell(
+                result = self.order_manager.close_position(
                     symbol=self.symbol,
-                    amount=position['amount']
+                    size=None  # Close entire position
                 )
 
-                if sell_order:
-                    return f"✅ 卖出平多成功！数量: {position['amount']:.6f}"
+                if result and result.get('status') == 'ok':
+                    return f"✅ 卖出平多成功！"
                 return "❌ 卖出平多失败"
 
             except Exception as e:
@@ -398,18 +404,23 @@ class SingleSymbolAgent:
                 if has_short:
                     return f"❌ 已持有 {self.symbol} 的空头仓位"
 
-                order_info = self.order_manager.execute_sell_short_with_protection(
+                result = self.order_manager.execute_short(
                     symbol=self.symbol,
                     usdt_amount=self.trade_amount,
-                    current_price=self.current_price
+                    leverage=None,
+                    with_tpsl=True
                 )
 
-                if order_info:
+                if result and result.get('success'):
+                    # 获取市场订单信息
+                    entry_price = self.current_price
+                    tp_price = entry_price * 0.95  # 5% take profit (下跌)
+                    sl_price = entry_price * 1.02  # 2% stop loss (上涨)
                     return (
                         f"✅ 卖空开空成功！\n"
-                        f"  入场价: ${order_info['entry_price']:.2f}\n"
-                        f"  止盈价: ${order_info['take_profit_price']:.2f}\n"
-                        f"  止损价: ${order_info['stop_loss_price']:.2f}"
+                        f"  入场价: ${entry_price:.2f}\n"
+                        f"  止盈价: ${tp_price:.2f}\n"
+                        f"  止损价: ${sl_price:.2f}"
                     )
                 return "❌ 卖空开空失败"
 
@@ -427,13 +438,13 @@ class SingleSymbolAgent:
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的空头仓位"
 
-                cover_order = self.order_manager.execute_buy_to_cover(
+                result = self.order_manager.close_position(
                     symbol=self.symbol,
-                    amount=position['amount']
+                    size=None  # Close entire position
                 )
 
-                if cover_order:
-                    return f"✅ 买入平空成功！数量: {position['amount']:.6f}"
+                if result and result.get('status') == 'ok':
+                    return f"✅ 买入平空成功！"
                 return "❌ 买入平空失败"
 
             except Exception as e:

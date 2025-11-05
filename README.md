@@ -22,32 +22,31 @@ cp .env.example .env
 cp config.yaml.example config.yaml
 # 编辑 .env 填入 API 密钥
 
-# 3. 运行（二选一）
-python main.py                    # 批量决策模式
-python main_multi_agent.py        # 多 Agent 模式（推荐）
+# 3. 运行
+python main.py
 ```
 
 [快速开始](./QUICKSTART.md) - 详细安装配置
 
-## 🎯 两种运行模式
+## 🏗️ 多 Agent 架构
 
-### 批量决策模式 (`main.py`)
-- ⚡ 快速执行（10-20秒）
-- 💰 低成本（~6k tokens）
-- 📦 简单直接，适合 1-3 个交易对
+采用多 Agent 模式实现智能交易：
+- 🎯 **单币 Agent** - 每个交易对独立分析决策
+- 📝 **汇总 Agent** - 智能历史汇总和上下文压缩
+- 💎 **现货 Agent** - 专注于现货定投双层审核
 
-### 多 Agent 模式 (`main_multi_agent.py`) ⭐ 推荐
-- 🎯 每个交易对独立分析
-- 📝 智能历史汇总（前10次 + 前10-20次）
-- 💎 现货定投双层审核
-- 🗜️ 上下文压缩技术
-
-**架构示意:**
+**架构流程:**
 ```
 单币Agent (BTC/ETH/...) → 汇总Agent (历史压缩) → 现货Agent (严格评估)
      ↓                         ↓                      ↓
   独立决策                   分层汇总               定投决策
 ```
+
+**优势:**
+- ⚡ 每个交易对独立上下文，互不干扰
+- 💰 上下文压缩技术，Token 减少 75%
+- 📦 专业分工，决策更精准
+- 🗜️ 智能汇总，成本降低 98%
 
 **常见问题:**
 - ❌ OI 上限 → 切换交易对
@@ -58,7 +57,7 @@ python main_multi_agent.py        # 多 Agent 模式（推荐）
 
 ```
 quant-flow/
-├── main.py / main_multi_agent.py    # 启动入口
+├── main.py                       # 启动入口
 ├── src/
 │   ├── agent/                       # AI Agent 模块
 │   │   ├── single_symbol_agent.py   # 单币 Agent

@@ -48,10 +48,27 @@ class OrderManager:
             return balance['totalRawUsd']
         return 0.0
 
+    def check_sufficient_balance(self, required_amount: float) -> bool:
+        """
+        检查余额是否充足
+
+        Args:
+            required_amount: 所需金额
+
+        Returns:
+            是否有足够余额
+        """
+        try:
+            available = self.get_available_balance()
+            return available >= required_amount
+        except Exception as e:
+            print(f"❌ 检查余额失败: {e}")
+            return False
+
     def get_available_balance_info(self) -> Dict[str, Any]:
         """
         获取详细的余额信息
-        
+
         Returns:
             {
                 'status': 'ok' | 'error',
@@ -71,11 +88,11 @@ class OrderManager:
                     'occupied': 0,
                     'available': 0
                 }
-            
+
             total = balance['accountValue']
             occupied = balance['totalMarginUsed']
             available = balance['totalRawUsd']
-            
+
             return {
                 'status': 'ok',
                 'total': total,
@@ -83,7 +100,7 @@ class OrderManager:
                 'available': available,
                 'message': f'总价值: ${total:.2f}, 可用: ${available:.2f}'
             }
-            
+
         except Exception as e:
             return {
                 'status': 'error',
