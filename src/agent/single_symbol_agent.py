@@ -411,7 +411,9 @@ class SingleSymbolAgent:
                         exit_price = self.current_price
                         size = abs(position.get('szi', 0))
                         pnl = result.get('pnl', 0)
-                        pnl_percent = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+                        # Use leverage from position if available, default to 1
+                        leverage = position.get('leverage', 1)
+                        pnl_percent = ((exit_price - entry_price) / entry_price * leverage * 100) if entry_price > 0 else 0
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
