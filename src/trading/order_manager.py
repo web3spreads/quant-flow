@@ -190,8 +190,8 @@ class OrderManager:
 
             # 3. 设置杠杆
             lev = leverage if leverage else self.default_leverage
-            print(f"   设置杠杆: {lev}x")
-            leverage_result = self.client.update_leverage(symbol, lev, is_cross=True)
+            print(f"   设置杠杆: {lev}x (逐仓模式)")
+            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
             # 检查杠杆设置是否成功
             if leverage_result.get('status') == 'error':
@@ -296,8 +296,8 @@ class OrderManager:
 
             # 3. 设置杠杆
             lev = leverage if leverage else self.default_leverage
-            print(f"   设置杠杆: {lev}x")
-            leverage_result = self.client.update_leverage(symbol, lev, is_cross=True)
+            print(f"   设置杠杆: {lev}x (逐仓模式)")
+            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
             # 检查杠杆设置是否成功
             if leverage_result.get('status') == 'error':

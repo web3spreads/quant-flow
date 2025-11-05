@@ -305,7 +305,8 @@ class SpotAgent:
                             symbol=symbol,
                             quantity=result.get('amount', 0),
                             price=result['price'],
-                            amount=actual_amount
+                            amount=actual_amount,
+                            order_hash=result.get('hash', '')
                         )
 
                     return (
@@ -368,6 +369,16 @@ class SpotAgent:
             self.current_price = market_data.get('current_price', 0)
             self.current_symbol = symbol
 
+            # 获取实时余额信息
+            balance_info = self.order_manager.get_available_balance_info()
+            balance_dict = None
+            if balance_info.get('status') == 'ok':
+                balance_dict = {
+                    'total': balance_info['total'],
+                    'occupied': balance_info['occupied'],
+                    'available': balance_info['available']
+                }
+
             # 创建 Prompt - 使用 PromptManager 或硬编码函数
             if self.prompt_manager:
                 prompt = self.prompt_manager.format_spot_prompt(
@@ -376,7 +387,8 @@ class SpotAgent:
                     multi_timeframe_trends=multi_timeframe_trends,
                     recommendation=recommendation,
                     current_spot_holdings=current_spot_holdings,
-                    max_trade_amount=self.trade_amount
+                    max_trade_amount=self.trade_amount,
+                    balance_info=balance_dict
                 )
             else:
                 prompt = create_spot_agent_prompt(
