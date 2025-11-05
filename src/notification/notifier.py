@@ -137,7 +137,7 @@ class Notifier:
             # 构建飞书 URL - 对 token 进行 URL 编码
             # 格式: feishu://{token}
             # Token 通常包含字母数字、连字符和下划线，保留这些字符以提高可读性
-            token_encoded = quote(token, safe='-_')
+            token_encoded = quote(token, safe='')
             url = f"feishu://{token_encoded}"
 
             # 验证是否成功添加
