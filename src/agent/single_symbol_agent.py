@@ -12,6 +12,7 @@ from src.agent.tools import TradingTools
 from src.agent.prompts import SYSTEM_PROMPT
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
+from src.prompt_manager import PromptManager
 
 
 def create_single_symbol_prompt(
@@ -286,7 +287,9 @@ class SingleSymbolAgent:
         temperature: float = 0.1,
         max_iterations: int = 5,
         trade_amount: float = 100.0,
-        notifier=None
+        max_leverage: int = 10,
+        notifier=None,
+        prompt_manager: Optional[PromptManager] = None
     ):
         """
         初始化单币种交易 Agent
@@ -300,16 +303,20 @@ class SingleSymbolAgent:
             openai_model: 模型名称
             temperature: 温度参数
             max_iterations: 最大迭代次数
-            trade_amount: 交易金额
+            trade_amount: 单笔交易金额上限
+            max_leverage: 最大杠杆倍数
             notifier: 通知管理器（可选）
+            prompt_manager: Prompt管理器（可选）
         """
         self.symbol = symbol
         self.order_manager = order_manager
         self.logger = logger
         self.trade_amount = trade_amount
+        self.max_leverage = max_leverage
         self.current_price = 0.0
         self.max_iterations = max_iterations
         self.notifier = notifier
+        self.prompt_manager = prompt_manager
 
         # 初始化 LLM
         self.llm = ChatOpenAI(
@@ -328,19 +335,33 @@ class SingleSymbolAgent:
             tools=self.tools
         )
 
-        # 系统提示词
-        self.system_message = SystemMessage(content=SYSTEM_PROMPT)
+        # 系统提示词 - 如果有 PromptManager 则使用它，否则使用硬编码
+        if self.prompt_manager:
+            system_prompt_text = self.prompt_manager.get_system_prompt()
+        else:
+            system_prompt_text = SYSTEM_PROMPT
+        self.system_message = SystemMessage(content=system_prompt_text)
 
     def _create_tools(self) -> list:
         """创建工具集"""
 
-        def buy_callback(symbol: str) -> str:
+        def buy_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
             """买入开多回调"""
             try:
-                self.logger.print_info(f"[{self.symbol}Agent] 执行买入开多")
+                # 使用 AI 指定的金额和杠杆，如果没有指定则使用默认上限
+                actual_amount = amount if amount is not None else self.trade_amount
+                actual_leverage = leverage if leverage is not None else self.max_leverage
 
-                if not self.order_manager.check_sufficient_balance(self.trade_amount):
-                    return f"❌ 余额不足，需要 {self.trade_amount} USDT"
+                # 验证参数
+                if actual_amount > self.trade_amount:
+                    return f"❌ 交易金额 ${actual_amount} 超过上限 ${self.trade_amount}"
+                if actual_leverage > self.max_leverage:
+                    return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
+
+                self.logger.print_info(f"[{self.symbol}Agent] 执行买入开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)")
+
+                if not self.order_manager.check_sufficient_balance(actual_amount):
+                    return f"❌ 余额不足，需要 {actual_amount} USDT"
 
                 positions = self.order_manager.get_current_positions()
                 has_long = any(p.get('coin') == self.symbol and p.get('side', 'long') == 'long' for p in positions)
@@ -349,8 +370,8 @@ class SingleSymbolAgent:
 
                 result = self.order_manager.execute_long(
                     symbol=self.symbol,
-                    usdt_amount=self.trade_amount,
-                    leverage=None,
+                    usdt_amount=actual_amount,
+                    leverage=actual_leverage,
                     with_tpsl=True
                 )
 
@@ -361,7 +382,7 @@ class SingleSymbolAgent:
                     tp_price = entry_price * 1.05  # 5% take profit
                     sl_price = entry_price * 0.98  # 2% stop loss
                     quantity = result.get('quantity', 0)
-                    leverage = self.order_manager.default_leverage
+                    leverage_used = actual_leverage
 
                     # 发送开仓通知
                     if self.notifier:
@@ -370,17 +391,19 @@ class SingleSymbolAgent:
                             side="long",
                             quantity=quantity,
                             price=entry_price,
-                            leverage=leverage,
+                            leverage=leverage_used,
                             stop_loss=sl_price,
                             take_profit=tp_price,
                             position_value=quantity * entry_price,
-                            margin=self.trade_amount,
-                            reason="AI 策略分析，多头信号确认",
+                            margin=actual_amount,
+                            reason=f"AI 策略分析，多头信号确认 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)",
                             order_hash=result.get('hash', '')
                         )
 
                     return (
                         f"✅ 买入开多成功！\n"
+                        f"  金额: ${actual_amount} USD\n"
+                        f"  杠杆: {actual_leverage}x\n"
                         f"  入场价: ${entry_price:.2f}\n"
                         f"  止盈价: ${tp_price:.2f}\n"
                         f"  止损价: ${sl_price:.2f}"
@@ -434,13 +457,23 @@ class SingleSymbolAgent:
             except Exception as e:
                 return f"❌ 卖出平多异常: {str(e)}"
 
-        def sell_short_callback(symbol: str) -> str:
+        def sell_short_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
             """卖空开空回调"""
             try:
-                self.logger.print_info(f"[{self.symbol}Agent] 执行卖空开空")
+                # 使用 AI 指定的金额和杠杆，如果没有指定则使用默认上限
+                actual_amount = amount if amount is not None else self.trade_amount
+                actual_leverage = leverage if leverage is not None else self.max_leverage
 
-                if not self.order_manager.check_sufficient_balance(self.trade_amount):
-                    return f"❌ 余额不足"
+                # 验证参数
+                if actual_amount > self.trade_amount:
+                    return f"❌ 交易金额 ${actual_amount} 超过上限 ${self.trade_amount}"
+                if actual_leverage > self.max_leverage:
+                    return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
+
+                self.logger.print_info(f"[{self.symbol}Agent] 执行卖空开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)")
+
+                if not self.order_manager.check_sufficient_balance(actual_amount):
+                    return f"❌ 余额不足，需要 {actual_amount} USDT"
 
                 positions = self.order_manager.get_current_positions()
                 has_short = any(p.get('coin') == self.symbol and p.get('side') == 'short' for p in positions)
@@ -449,8 +482,8 @@ class SingleSymbolAgent:
 
                 result = self.order_manager.execute_short(
                     symbol=self.symbol,
-                    usdt_amount=self.trade_amount,
-                    leverage=None,
+                    usdt_amount=actual_amount,
+                    leverage=actual_leverage,
                     with_tpsl=True
                 )
 
@@ -460,7 +493,7 @@ class SingleSymbolAgent:
                     tp_price = entry_price * 0.95  # 5% take profit (下跌)
                     sl_price = entry_price * 1.02  # 2% stop loss (上涨)
                     quantity = result.get('quantity', 0)
-                    leverage = self.order_manager.default_leverage
+                    leverage_used = actual_leverage
 
                     # 发送开仓通知
                     if self.notifier:
@@ -469,17 +502,19 @@ class SingleSymbolAgent:
                             side="short",
                             quantity=quantity,
                             price=entry_price,
-                            leverage=leverage,
+                            leverage=leverage_used,
                             stop_loss=sl_price,
                             take_profit=tp_price,
                             position_value=quantity * entry_price,
-                            margin=self.trade_amount,
-                            reason="AI 策略分析，空头信号确认",
+                            margin=actual_amount,
+                            reason=f"AI 策略分析，空头信号确认 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)",
                             order_hash=result.get('hash', '')
                         )
 
                     return (
                         f"✅ 卖空开空成功！\n"
+                        f"  金额: ${actual_amount} USD\n"
+                        f"  杠杆: {actual_leverage}x\n"
                         f"  入场价: ${entry_price:.2f}\n"
                         f"  止盈价: ${tp_price:.2f}\n"
                         f"  止损价: ${sl_price:.2f}"
@@ -540,10 +575,13 @@ class SingleSymbolAgent:
             self.logger.print_info(f"[{self.symbol}Agent] 不操作 - {reason}")
             return f"⏸️  确认：不执行操作。原因：{reason}"
 
-        def buy_spot_callback(symbol: str) -> str:
+        def buy_spot_callback(symbol: str, amount: Optional[float] = None) -> str:
             """现货定投推荐回调（仅推荐，不直接执行）"""
-            self.logger.print_info(f"[{self.symbol}Agent] 推荐现货定投，将交给现货 Agent 评估")
-            return f"📝 已推荐 {symbol} 现货定投，等待现货 Agent 评估"
+            actual_amount = amount if amount is not None else self.trade_amount
+            if actual_amount > self.trade_amount:
+                return f"❌ 定投金额 ${actual_amount} 超过上限 ${self.trade_amount}"
+            self.logger.print_info(f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})，将交给现货 Agent 评估")
+            return f"📝 已推荐 {symbol} 现货定投 (建议金额: ${actual_amount})，等待现货 Agent 评估"
 
         trading_tools = TradingTools(
             buy_callback,
@@ -580,15 +618,38 @@ class SingleSymbolAgent:
             # 更新当前价格
             self.current_price = market_data.get('current_price', 0)
 
-            # 创建 Prompt
-            prompt = create_single_symbol_prompt(
-                symbol=self.symbol,
-                market_data=market_data,
-                multi_timeframe_trends=multi_timeframe_trends,
-                current_positions=current_positions,
-                max_positions=max_positions,
-                historical_summary=historical_summary
-            )
+            # 获取实时余额信息
+            balance_info = self.order_manager.get_available_balance_info()
+            balance_dict = None
+            if balance_info.get('status') == 'ok':
+                balance_dict = {
+                    'total': balance_info['total'],
+                    'occupied': balance_info['occupied'],
+                    'available': balance_info['available']
+                }
+
+            # 创建 Prompt - 如果有 PromptManager 则使用它，否则使用硬编码函数
+            if self.prompt_manager:
+                prompt = self.prompt_manager.format_trading_prompt(
+                    symbol=self.symbol,
+                    market_data=market_data,
+                    multi_timeframe_trends=multi_timeframe_trends,
+                    current_positions=current_positions,
+                    max_positions=max_positions,
+                    max_trade_amount=self.trade_amount,
+                    max_leverage=self.max_leverage,
+                    historical_summary=historical_summary,
+                    balance_info=balance_dict
+                )
+            else:
+                prompt = create_single_symbol_prompt(
+                    symbol=self.symbol,
+                    market_data=market_data,
+                    multi_timeframe_trends=multi_timeframe_trends,
+                    current_positions=current_positions,
+                    max_positions=max_positions,
+                    historical_summary=historical_summary
+                )
 
             # 显示 Prompt
             self.logger.print_section(f"[{self.symbol}Agent] 独立决策分析", style="bold magenta")
