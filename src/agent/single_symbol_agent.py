@@ -517,8 +517,9 @@ class SingleSymbolAgent:
                     last_message = event["messages"][-1]
                     if hasattr(last_message, 'content'):
                         content = last_message.content
-                        if content and content != prompt:
-                            self.logger.console.print(f"[dim]{content}[/dim]")
+                        if content and content != prompt and content != agent_output:
+                            # 使用新的 AI 响应渲染方法（支持 Markdown）
+                            self.logger.print_ai_response(content, f"🎯 {self.symbol} Agent 分析中...")
                             agent_output = content
 
             # 解析结果
