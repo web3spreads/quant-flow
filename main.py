@@ -21,6 +21,7 @@ from src.trading.order_manager import OrderManager
 from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
+from src.notification import Notifier
 
 
 class QuantFlowBot:
@@ -56,7 +57,12 @@ class QuantFlowBot:
     def _initialize_components(self):
         """初始化所有组件"""
         self.logger.print_section("🔧 初始化多 Agent 架构", style="bold yellow")
-        
+
+        # 0. 通知系统（优先初始化，以便其他组件可以使用）
+        self.logger.print_info("初始化通知系统...")
+        notifications_config = getattr(self.config, 'notifications', {'enabled': False})
+        self.notifier = Notifier(notifications_config)
+
         # 1. 市场数据获取器
         self.logger.print_info("初始化市场数据获取器...")
         self.market_fetcher = MarketDataFetcher(
@@ -108,7 +114,8 @@ class QuantFlowBot:
                 openai_model=self.config.openai_model,
                 temperature=self.config.agent_temperature,
                 max_iterations=self.config.agent_max_iterations,
-                trade_amount=self.config.trade_amount
+                trade_amount=self.config.trade_amount,
+                notifier=self.notifier
             )
             self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
         
@@ -121,7 +128,8 @@ class QuantFlowBot:
             openai_api_key=self.config.openai_api_key,
             openai_model=self.config.openai_model,
             temperature=0.05,  # 更保守
-            trade_amount=self.config.trade_amount
+            trade_amount=self.config.trade_amount,
+            notifier=self.notifier
         )
         
         self.logger.print_info(f"✅ 多 Agent 架构初始化完成！")
@@ -370,6 +378,14 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"交易周期异常: {e}")
             self.logger.logger.exception(e)
+
+            # 发送错误通知
+            if self.notifier:
+                self.notifier.notify_error(
+                    title="交易周期异常",
+                    error_message=str(e),
+                    context="交易决策循环执行时发生错误"
+                )
 
     def start(self):
         """启动机器人"""

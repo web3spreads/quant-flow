@@ -285,7 +285,8 @@ class SingleSymbolAgent:
         openai_model: str,
         temperature: float = 0.1,
         max_iterations: int = 5,
-        trade_amount: float = 100.0
+        trade_amount: float = 100.0,
+        notifier=None
     ):
         """
         初始化单币种交易 Agent
@@ -300,6 +301,7 @@ class SingleSymbolAgent:
             temperature: 温度参数
             max_iterations: 最大迭代次数
             trade_amount: 交易金额
+            notifier: 通知管理器（可选）
         """
         self.symbol = symbol
         self.order_manager = order_manager
@@ -307,6 +309,7 @@ class SingleSymbolAgent:
         self.trade_amount = trade_amount
         self.current_price = 0.0
         self.max_iterations = max_iterations
+        self.notifier = notifier
 
         # 初始化 LLM
         self.llm = ChatOpenAI(
@@ -357,6 +360,20 @@ class SingleSymbolAgent:
                     entry_price = self.current_price
                     tp_price = entry_price * 1.05  # 5% take profit
                     sl_price = entry_price * 0.98  # 2% stop loss
+
+                    # 发送开仓通知
+                    if self.notifier:
+                        quantity = result.get('quantity', 0)
+                        # 从 order_manager 获取实际使用的杠杆，而不是使用硬编码默认值
+                        leverage = self.order_manager.default_leverage
+                        self.notifier.notify_trade_opened(
+                            symbol=self.symbol,
+                            side="long",
+                            quantity=quantity,
+                            price=entry_price,
+                            leverage=leverage
+                        )
+
                     return (
                         f"✅ 买入开多成功！\n"
                         f"  入场价: ${entry_price:.2f}\n"
@@ -385,6 +402,27 @@ class SingleSymbolAgent:
                 )
 
                 if result and result.get('status') == 'ok':
+                    # 发送平仓通知
+                    if self.notifier:
+                        # Hyperliquid API 字段说明：
+                        # 'entryPx' - 入场价格 (entry price)
+                        # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
+                        entry_price = position.get('entryPx', 0)
+                        exit_price = self.current_price
+                        size = abs(position.get('szi', 0))
+                        pnl = result.get('pnl', 0)
+                        pnl_percent = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+
+                        self.notifier.notify_trade_closed(
+                            symbol=self.symbol,
+                            side="long",
+                            quantity=size,
+                            entry_price=entry_price,
+                            exit_price=exit_price,
+                            pnl=pnl,
+                            pnl_percent=pnl_percent
+                        )
+
                     return f"✅ 卖出平多成功！"
                 return "❌ 卖出平多失败"
 
@@ -416,6 +454,20 @@ class SingleSymbolAgent:
                     entry_price = self.current_price
                     tp_price = entry_price * 0.95  # 5% take profit (下跌)
                     sl_price = entry_price * 1.02  # 2% stop loss (上涨)
+
+                    # 发送开仓通知
+                    if self.notifier:
+                        quantity = result.get('quantity', 0)
+                        # 从 order_manager 获取实际使用的杠杆，而不是使用硬编码默认值
+                        leverage = self.order_manager.default_leverage
+                        self.notifier.notify_trade_opened(
+                            symbol=self.symbol,
+                            side="short",
+                            quantity=quantity,
+                            price=entry_price,
+                            leverage=leverage
+                        )
+
                     return (
                         f"✅ 卖空开空成功！\n"
                         f"  入场价: ${entry_price:.2f}\n"
@@ -444,6 +496,29 @@ class SingleSymbolAgent:
                 )
 
                 if result and result.get('status') == 'ok':
+                    # 发送平仓通知
+                    if self.notifier:
+                        # Hyperliquid API 字段说明：
+                        # 'entryPx' - 入场价格 (entry price)
+                        # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
+                        entry_price = position.get('entryPx', 0)
+                        exit_price = self.current_price
+                        size = abs(position.get('szi', 0))
+                        pnl = result.get('pnl', 0)
+                        # Use leverage from position if available, default to 1
+                        leverage = position.get('leverage', 1)
+                        pnl_percent = ((entry_price - exit_price) / entry_price * leverage * 100) if entry_price > 0 else 0
+
+                        self.notifier.notify_trade_closed(
+                            symbol=self.symbol,
+                            side="short",
+                            quantity=size,
+                            entry_price=entry_price,
+                            exit_price=exit_price,
+                            pnl=pnl,
+                            pnl_percent=pnl_percent
+                        )
+
                     return f"✅ 买入平空成功！"
                 return "❌ 买入平空失败"
 
