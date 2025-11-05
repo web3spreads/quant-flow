@@ -6,6 +6,7 @@
 from enum import Enum
 from typing import Dict, List, Optional, Any
 import logging
+from urllib.parse import quote
 from apprise import Apprise
 
 
@@ -96,16 +97,19 @@ class Notifier:
             self.logger.error("❌ 钉钉渠道缺少 api_key 配置")
             return
 
-        # 构建钉钉 URL
+        # 构建钉钉 URL - 对参数进行 URL 编码
         # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
+        api_key_encoded = quote(api_key, safe='')
         if secret:
-            url = f"dingtalk://{secret}@{api_key}"
+            secret_encoded = quote(secret, safe='')
+            url = f"dingtalk://{secret_encoded}@{api_key_encoded}"
         else:
-            url = f"dingtalk://{api_key}"
+            url = f"dingtalk://{api_key_encoded}"
 
-        # 添加电话号码
+        # 添加电话号码（电话号码通常不含特殊字符，但为安全起见也编码）
         if phone_numbers:
-            url += "/" + "/".join(phone_numbers)
+            encoded_phones = [quote(str(phone), safe='') for phone in phone_numbers]
+            url += "/" + "/".join(encoded_phones)
 
         self.apprise.add(url)
         self.logger.info("✅ 钉钉通知渠道已添加")
@@ -118,9 +122,10 @@ class Notifier:
             self.logger.error("❌ 飞书渠道缺少 token 配置")
             return
 
-        # 构建飞书 URL
+        # 构建飞书 URL - 对 token 进行 URL 编码
         # 格式: feishu://{token}
-        url = f"feishu://{token}"
+        token_encoded = quote(token, safe='')
+        url = f"feishu://{token_encoded}"
 
         self.apprise.add(url)
         self.logger.info("✅ 飞书通知渠道已添加")
@@ -142,12 +147,17 @@ class Notifier:
             self.logger.error("❌ 邮件渠道缺少 to_emails 配置")
             return
 
-        # 构建邮件 URL
+        # 构建邮件 URL - 对所有参数进行 URL 编码以处理特殊字符
         # 格式: mailtos://{user}:{password}@{server}:{port}?from={from}&to={to1},{to2}
-        to_emails_str = ",".join(to_emails)
+        # URL 编码可防止密码或邮箱中的特殊字符（@, :, /, ?, # 等）破坏 URL 格式
+        smtp_user_encoded = quote(smtp_user, safe='')
+        smtp_password_encoded = quote(smtp_password, safe='')
+        from_email_encoded = quote(from_email, safe='')
+        to_emails_str = ",".join(quote(email, safe='') for email in to_emails)
+
         url = (
-            f"mailtos://{smtp_user}:{smtp_password}@{smtp_server}:{smtp_port}"
-            f"?from={from_email}&to={to_emails_str}"
+            f"mailtos://{smtp_user_encoded}:{smtp_password_encoded}@{smtp_server}:{smtp_port}"
+            f"?from={from_email_encoded}&to={to_emails_str}"
         )
 
         self.apprise.add(url)
