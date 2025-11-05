@@ -119,15 +119,6 @@ class OrderManager:
         """
         return self.client.get_positions()
 
-    def get_spot_holdings(self) -> List[Dict[str, Any]]:
-        """
-        获取当前现货持仓列表
-        
-        Returns:
-            现货持仓列表 [{'coin': str, 'total': float, 'hold': float, 'available': float}, ...]
-        """
-        return self.client.get_spot_balances()
-
     def calculate_position_size(
         self,
         symbol: str,
@@ -499,13 +490,9 @@ class OrderManager:
 
     def get_spot_holdings(self) -> List[Dict[str, Any]]:
         """
-        获取现货持仓列表
-
+        获取当前现货持仓列表
+        
         Returns:
-            现货持仓列表
+            现货持仓列表 [{'coin': str, 'total': float, 'hold': float, 'available': float}, ...]
         """
-        try:
-            return self.client.get_spot_balances()
-        except Exception as e:
-            print(f"❌ 获取现货持仓失败: {e}")
-            return []
+        return self.client.get_spot_balances()
