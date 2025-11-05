@@ -87,7 +87,7 @@ class Notifier:
             except Exception as e:
                 self.logger.error(f"❌ 初始化通知渠道失败: {e}", exc_info=True)
 
-    def _add_dingtalk_channel(self, channel: Dict[str, Any]):
+    def _add_dingtalk_channel(self, channel: Dict[str, Any]) -> None:
         """添加钉钉通知渠道"""
         api_key = channel.get("api_key")
         secret = channel.get("secret", "")
@@ -97,24 +97,33 @@ class Notifier:
             self.logger.error("❌ 钉钉渠道缺少 api_key 配置")
             return
 
-        # 构建钉钉 URL - 对参数进行 URL 编码
-        # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
-        api_key_encoded = quote(api_key, safe='')
-        if secret:
-            secret_encoded = quote(secret, safe='')
-            url = f"dingtalk://{secret_encoded}@{api_key_encoded}"
-        else:
-            url = f"dingtalk://{api_key_encoded}"
+        try:
+            # 构建钉钉 URL - 对参数进行 URL 编码
+            # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
+            api_key_encoded = quote(api_key, safe='')
+            if secret:
+                secret_encoded = quote(secret, safe='')
+                url = f"dingtalk://{secret_encoded}@{api_key_encoded}"
+            else:
+                url = f"dingtalk://{api_key_encoded}"
 
-        # 添加电话号码（电话号码通常不含特殊字符，但为安全起见也编码）
-        if phone_numbers:
-            encoded_phones = [quote(str(phone), safe='') for phone in phone_numbers]
-            url += "/" + "/".join(encoded_phones)
+            # 添加电话号码（电话号码通常不含特殊字符，但为安全起见也编码）
+            if phone_numbers:
+                encoded_phones = [quote(str(phone), safe='') for phone in phone_numbers]
+                url += "/" + "/".join(encoded_phones)
 
-        self.apprise.add(url)
-        self.logger.info("✅ 钉钉通知渠道已添加")
+            # 验证是否成功添加
+            if not self.apprise.add(url):
+                self.logger.error("❌ 钉钉通知渠道添加失败")
+                return
 
-    def _add_feishu_channel(self, channel: Dict[str, Any]):
+            self.logger.info("✅ 钉钉通知渠道已添加")
+
+        except Exception:
+            # 不记录敏感信息（token/secret）到日志
+            self.logger.error("❌ 钉钉通知渠道配置错误")
+
+    def _add_feishu_channel(self, channel: Dict[str, Any]) -> None:
         """添加飞书通知渠道"""
         token = channel.get("token")
 
@@ -122,15 +131,24 @@ class Notifier:
             self.logger.error("❌ 飞书渠道缺少 token 配置")
             return
 
-        # 构建飞书 URL - 对 token 进行 URL 编码
-        # 格式: feishu://{token}
-        token_encoded = quote(token, safe='')
-        url = f"feishu://{token_encoded}"
+        try:
+            # 构建飞书 URL - 对 token 进行 URL 编码
+            # 格式: feishu://{token}
+            token_encoded = quote(token, safe='')
+            url = f"feishu://{token_encoded}"
 
-        self.apprise.add(url)
-        self.logger.info("✅ 飞书通知渠道已添加")
+            # 验证是否成功添加
+            if not self.apprise.add(url):
+                self.logger.error("❌ 飞书通知渠道添加失败")
+                return
 
-    def _add_email_channel(self, channel: Dict[str, Any]):
+            self.logger.info("✅ 飞书通知渠道已添加")
+
+        except Exception:
+            # 不记录敏感信息（token）到日志
+            self.logger.error("❌ 飞书通知渠道配置错误")
+
+    def _add_email_channel(self, channel: Dict[str, Any]) -> None:
         """添加邮件通知渠道"""
         smtp_user = channel.get("smtp_user")
         smtp_password = channel.get("smtp_password")
@@ -147,21 +165,30 @@ class Notifier:
             self.logger.error("❌ 邮件渠道缺少 to_emails 配置")
             return
 
-        # 构建邮件 URL - 对所有参数进行 URL 编码以处理特殊字符
-        # 格式: mailtos://{user}:{password}@{server}:{port}?from={from}&to={to1},{to2}
-        # URL 编码可防止密码或邮箱中的特殊字符（@, :, /, ?, # 等）破坏 URL 格式
-        smtp_user_encoded = quote(smtp_user, safe='')
-        smtp_password_encoded = quote(smtp_password, safe='')
-        from_email_encoded = quote(from_email, safe='')
-        to_emails_str = ",".join(quote(email, safe='') for email in to_emails)
+        try:
+            # 构建邮件 URL - 对所有参数进行 URL 编码以处理特殊字符
+            # 格式: mailtos://{user}:{password}@{server}:{port}?from={from}&to={to1},{to2}
+            # URL 编码可防止密码或邮箱中的特殊字符（@, :, /, ?, # 等）破坏 URL 格式
+            smtp_user_encoded = quote(smtp_user, safe='')
+            smtp_password_encoded = quote(smtp_password, safe='')
+            from_email_encoded = quote(from_email, safe='')
+            to_emails_str = ",".join(quote(email, safe='') for email in to_emails)
 
-        url = (
-            f"mailtos://{smtp_user_encoded}:{smtp_password_encoded}@{smtp_server}:{smtp_port}"
-            f"?from={from_email_encoded}&to={to_emails_str}"
-        )
+            url = (
+                f"mailtos://{smtp_user_encoded}:{smtp_password_encoded}@{smtp_server}:{smtp_port}"
+                f"?from={from_email_encoded}&to={to_emails_str}"
+            )
 
-        self.apprise.add(url)
-        self.logger.info("✅ 邮件通知渠道已添加")
+            # 验证是否成功添加
+            if not self.apprise.add(url):
+                self.logger.error("❌ 邮件通知渠道添加失败")
+                return
+
+            self.logger.info("✅ 邮件通知渠道已添加")
+
+        except Exception:
+            # 不记录敏感信息（密码等）到日志
+            self.logger.error("❌ 邮件通知渠道配置错误")
 
     def should_notify(self, event: NotificationEvent) -> bool:
         """
@@ -407,16 +434,3 @@ class Notifier:
             f"交易已暂停，请注意风险"
         )
         self.notify(NotificationEvent.CIRCUIT_BREAKER, title, message)
-
-
-def get_notifier(config: Dict[str, Any]) -> Notifier:
-    """
-    获取通知管理器实例（工厂函数）
-
-    Args:
-        config: 通知配置字典
-
-    Returns:
-        Notifier 实例
-    """
-    return Notifier(config)
