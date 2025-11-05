@@ -424,7 +424,7 @@ class SingleSymbolAgent:
                         position_value = size * float(entry_price) if entry_price else 0
                         if position_value > 0 and leverage > 0:
                             margin = position_value / leverage
-                            pnl_percent = (pnl / margin) * 100 if margin > 0 else 0
+                            pnl_percent = (pnl / margin) * 100
                         else:
                             pnl_percent = 0
 
