@@ -67,7 +67,7 @@ def test_url_encoding():
         # 检查 Apprise URLs
         if notifier.apprise:
             # 使用 urls() 方法获取已添加的通知渠道列表
-            urls = notifier.apprise.urls() if callable(getattr(notifier.apprise, 'urls', None)) else []
+            urls = notifier.apprise.urls()
             if urls:
                 print(f"\n✅ 成功创建 {len(urls)} 个通知渠道")
                 print("所有特殊字符已正确编码到 URL 中")
