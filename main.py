@@ -139,6 +139,9 @@ class QuantFlowBot:
         
         # 启动时检查账户余额
         self._check_and_display_balance()
+        
+        # 发送启动通知
+        self._send_startup_notification()
 
     def _check_and_display_balance(self):
         """检查并显示账户余额信息"""
@@ -167,6 +170,36 @@ class QuantFlowBot:
                 
         except Exception as e:
             self.logger.print_error(f"余额检查失败: {e}")
+
+    def _send_startup_notification(self):
+        """发送系统启动通知"""
+        try:
+            if self.notifier and self.notifier.enabled:
+                self.logger.print_info("📤 发送启动通知...")
+                
+                # 获取余额信息
+                balance_info = self.order_manager.get_available_balance_info()
+                
+                # 准备配置信息
+                config_info = {
+                    'trade_amount': self.config.trade_amount,
+                    'max_positions': self.config.max_positions,
+                    'leverage': self.order_manager.default_leverage,
+                    'check_interval': self.config.interval_minutes,
+                }
+                
+                # 如果有余额信息，添加到配置
+                if balance_info['status'] == 'ok':
+                    config_info['available_balance'] = balance_info['available']
+                
+                self.notifier.notify_system_startup(
+                    version="v1.0.0",
+                    symbols=self.config.symbols,
+                    config_info=config_info
+                )
+                self.logger.print_info("✅ 启动通知已发送")
+        except Exception as e:
+            self.logger.print_error(f"发送启动通知失败: {e}")
 
     def trading_cycle(self):
         """执行一轮交易决策循环（多 Agent 独立决策模式）"""
@@ -417,17 +450,18 @@ class QuantFlowBot:
             
             # 启动调度器
             self.is_running = True
+            self.start_time = datetime.now()  # 记录启动时间
             self.logger.print_section("✅ 多 Agent 机器人已启动，按 Ctrl+C 停止", style="bold green")
             self.scheduler.start()
             
         except KeyboardInterrupt:
-            self.stop()
+            self.stop("用户手动停止 (Ctrl+C)")
         except Exception as e:
             self.logger.print_error(f"启动失败: {e}")
             self.logger.logger.exception(e)
             sys.exit(1)
 
-    def stop(self):
+    def stop(self, reason: str = "用户手动停止"):
         """停止机器人"""
         self.logger.print_section("🛑 停止多 Agent 交易机器人", style="bold red")
         self.is_running = False
@@ -435,7 +469,42 @@ class QuantFlowBot:
         if self.scheduler and self.scheduler.running:
             self.scheduler.shutdown()
         
+        # 发送关闭通知
+        self._send_shutdown_notification(reason)
+        
         self.logger.print_info("机器人已停止")
+
+    def _send_shutdown_notification(self, reason: str = "正常关闭"):
+        """发送系统关闭通知"""
+        try:
+            if self.notifier and self.notifier.enabled:
+                self.logger.print_info("📤 发送关闭通知...")
+                
+                # 计算运行时长
+                if hasattr(self, 'start_time'):
+                    from datetime import datetime
+                    runtime_seconds = (datetime.now() - self.start_time).total_seconds()
+                    hours = int(runtime_seconds // 3600)
+                    minutes = int((runtime_seconds % 3600) // 60)
+                    runtime = f"{hours}小时{minutes}分钟"
+                else:
+                    runtime = None
+                
+                # TODO: 可以添加统计信息（交易次数、盈亏等）
+                # statistics = {
+                #     'total_trades': 0,
+                #     'profitable_trades': 0,
+                #     'total_pnl': 0.0
+                # }
+                
+                self.notifier.notify_system_shutdown(
+                    reason=reason,
+                    runtime=runtime,
+                    statistics=None
+                )
+                self.logger.print_info("✅ 关闭通知已发送")
+        except Exception as e:
+            self.logger.print_error(f"发送关闭通知失败: {e}")
 
 
 def signal_handler(signum, frame):

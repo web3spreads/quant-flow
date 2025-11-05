@@ -204,6 +204,10 @@ class OrderManager:
                 tp_price = current_price * (1 + self.take_profit_ratio)
                 sl_price = current_price * (1 - self.stop_loss_ratio)
                 
+                # 格式化价格，避免精度问题
+                tp_price = self.client.format_price(symbol, tp_price)
+                sl_price = self.client.format_price(symbol, sl_price)
+                
                 print(f"   止盈价: ${tp_price:.2f} (+{self.take_profit_ratio*100}%)")
                 print(f"   止损价: ${sl_price:.2f} (-{self.stop_loss_ratio*100}%)")
                 
@@ -229,6 +233,28 @@ class OrderManager:
                     'stop_loss_order': None,
                     'errors': [] if market_order.get('status') == 'ok' else [market_order]
                 }
+            
+            # 添加交易信息到返回结果
+            if result:
+                result['quantity'] = size
+                result['price'] = current_price
+                result['leverage'] = lev
+                # 从 market_order 中提取 hash（支持多种格式）
+                order_hash = ''
+                if result.get('market_order') and isinstance(result['market_order'], dict):
+                    response = result['market_order'].get('response', {})
+                    data = response.get('data', {})
+                    statuses = data.get('statuses', [])
+                    if statuses and len(statuses) > 0:
+                        status = statuses[0]
+                        # 尝试多个可能的 hash 位置
+                        if 'filled' in status and isinstance(status['filled'], dict):
+                            order_hash = status['filled'].get('hash', '')
+                        if not order_hash:
+                            order_hash = status.get('hash', '')
+                        if not order_hash:
+                            order_hash = status.get('txHash', '')
+                result['hash'] = order_hash
             
             return result
             
@@ -284,6 +310,10 @@ class OrderManager:
                 tp_price = current_price * (1 - self.take_profit_ratio)  # 下跌时止盈
                 sl_price = current_price * (1 + self.stop_loss_ratio)    # 上涨时止损
                 
+                # 格式化价格，避免精度问题
+                tp_price = self.client.format_price(symbol, tp_price)
+                sl_price = self.client.format_price(symbol, sl_price)
+                
                 print(f"   止盈价: ${tp_price:.2f} (-{self.take_profit_ratio*100}%)")
                 print(f"   止损价: ${sl_price:.2f} (+{self.stop_loss_ratio*100}%)")
                 
@@ -309,6 +339,28 @@ class OrderManager:
                     'stop_loss_order': None,
                     'errors': [] if market_order.get('status') == 'ok' else [market_order]
                 }
+            
+            # 添加交易信息到返回结果
+            if result:
+                result['quantity'] = size
+                result['price'] = current_price
+                result['leverage'] = lev
+                # 从 market_order 中提取 hash（支持多种格式）
+                order_hash = ''
+                if result.get('market_order') and isinstance(result['market_order'], dict):
+                    response = result['market_order'].get('response', {})
+                    data = response.get('data', {})
+                    statuses = data.get('statuses', [])
+                    if statuses and len(statuses) > 0:
+                        status = statuses[0]
+                        # 尝试多个可能的 hash 位置
+                        if 'filled' in status and isinstance(status['filled'], dict):
+                            order_hash = status['filled'].get('hash', '')
+                        if not order_hash:
+                            order_hash = status.get('hash', '')
+                        if not order_hash:
+                            order_hash = status.get('txHash', '')
+                result['hash'] = order_hash
             
             return result
             

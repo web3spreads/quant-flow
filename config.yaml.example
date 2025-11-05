@@ -159,6 +159,10 @@ notifications:
 
   # 通知事件配置（控制哪些事件会触发通知）
   events:
+    # 系统启动通知
+    system_startup: true
+    # 系统关闭通知
+    system_shutdown: true
     # 开仓通知（买入/卖空开仓）
     trade_opened: true
     # 平仓通知（卖出/买入平仓）
