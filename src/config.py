@@ -37,6 +37,7 @@ class Config:
         self._init_agent_config()
         self._init_risk_config()
         self._init_logging_config()
+        self._init_notifications_config()
 
     def _load_yaml_config(self) -> Dict[str, Any]:
         """加载 YAML 配置文件"""
@@ -141,6 +142,10 @@ class Config:
 
         # 日志级别
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
+
+    def _init_notifications_config(self):
+        """初始化通知配置"""
+        self.notifications = self.config_data.get("notifications", {"enabled": False})
 
     def validate(self):
         """验证配置的有效性"""
