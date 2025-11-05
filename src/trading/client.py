@@ -451,6 +451,9 @@ class HyperliquidClient:
             订单结果
         """
         try:
+            # 格式化触发价格，避免精度问题
+            trigger_price = self.format_price(symbol, trigger_price)
+            
             # 构造触发单类型
             order_type = {
                 "trigger": {
@@ -465,6 +468,9 @@ class HyperliquidClient:
                 limit_price = trigger_price * 0.95 if not is_buy else trigger_price * 1.05
             else:
                 limit_price = trigger_price * 1.05 if not is_buy else trigger_price * 0.95
+            
+            # 格式化限价，避免精度问题
+            limit_price = self.format_price(symbol, limit_price)
             
             # 下单
             order_result = self.exchange.order(

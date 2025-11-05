@@ -360,18 +360,23 @@ class SingleSymbolAgent:
                     entry_price = self.current_price
                     tp_price = entry_price * 1.05  # 5% take profit
                     sl_price = entry_price * 0.98  # 2% stop loss
+                    quantity = result.get('quantity', 0)
+                    leverage = self.order_manager.default_leverage
 
                     # 发送开仓通知
                     if self.notifier:
-                        quantity = result.get('quantity', 0)
-                        # 从 order_manager 获取实际使用的杠杆，而不是使用硬编码默认值
-                        leverage = self.order_manager.default_leverage
                         self.notifier.notify_trade_opened(
                             symbol=self.symbol,
                             side="long",
                             quantity=quantity,
                             price=entry_price,
-                            leverage=leverage
+                            leverage=leverage,
+                            stop_loss=sl_price,
+                            take_profit=tp_price,
+                            position_value=quantity * entry_price,
+                            margin=self.trade_amount,
+                            reason="AI 策略分析，多头信号确认",
+                            order_hash=result.get('hash', '')
                         )
 
                     return (
@@ -454,18 +459,23 @@ class SingleSymbolAgent:
                     entry_price = self.current_price
                     tp_price = entry_price * 0.95  # 5% take profit (下跌)
                     sl_price = entry_price * 1.02  # 2% stop loss (上涨)
+                    quantity = result.get('quantity', 0)
+                    leverage = self.order_manager.default_leverage
 
                     # 发送开仓通知
                     if self.notifier:
-                        quantity = result.get('quantity', 0)
-                        # 从 order_manager 获取实际使用的杠杆，而不是使用硬编码默认值
-                        leverage = self.order_manager.default_leverage
                         self.notifier.notify_trade_opened(
                             symbol=self.symbol,
                             side="short",
                             quantity=quantity,
                             price=entry_price,
-                            leverage=leverage
+                            leverage=leverage,
+                            stop_loss=sl_price,
+                            take_profit=tp_price,
+                            position_value=quantity * entry_price,
+                            margin=self.trade_amount,
+                            reason="AI 策略分析，空头信号确认",
+                            order_hash=result.get('hash', '')
                         )
 
                     return (

@@ -12,6 +12,7 @@ from apprise import Apprise
 
 class NotificationEvent(str, Enum):
     """通知事件类型"""
+    SYSTEM_STARTUP = "system_startup"       # 系统启动
     TRADE_OPENED = "trade_opened"           # 开仓
     TRADE_CLOSED = "trade_closed"           # 平仓
     STOP_LOSS = "stop_loss"                 # 止损
@@ -19,6 +20,7 @@ class NotificationEvent(str, Enum):
     SPOT_INVESTMENT = "spot_investment"     # 现货定投
     ERROR = "error"                         # 错误
     CIRCUIT_BREAKER = "circuit_breaker"     # 熔断
+    SYSTEM_SHUTDOWN = "system_shutdown"     # 系统关闭
 
 
 class Notifier:
@@ -257,7 +259,13 @@ class Notifier:
         side: str,
         quantity: float,
         price: float,
-        leverage: int = 1
+        leverage: int = 1,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        position_value: Optional[float] = None,
+        margin: Optional[float] = None,
+        reason: Optional[str] = None,
+        order_hash: Optional[str] = None
     ):
         """
         发送开仓通知
@@ -268,16 +276,68 @@ class Notifier:
             quantity: 数量
             price: 价格
             leverage: 杠杆倍数
+            stop_loss: 止损价格
+            take_profit: 止盈价格
+            position_value: 持仓价值
+            margin: 保证金
+            reason: 开仓理由
+            order_hash: 订单哈希
         """
-        side_text = "做多" if side.lower() == "long" else "做空"
-        title = f"🔔 开仓通知: {symbol}"
-        message = (
-            f"交易对: {symbol}\n"
-            f"方向: {side_text}\n"
-            f"数量: {quantity}\n"
-            f"价格: {price}\n"
-            f"杠杆: {leverage}x"
-        )
+        side_text = "做多 📈" if side.lower() == "long" else "做空 📉"
+        title = f"🔔 开仓通知: {symbol} {side_text}"
+        
+        # 计算持仓价值和保证金
+        if position_value is None:
+            position_value = quantity * price
+        if margin is None and leverage > 0:
+            margin = position_value / leverage
+        
+        # 构建消息
+        lines = [
+            f"【交易对】{symbol}",
+            f"【方向】{side_text}",
+            f"【开仓价】${price:,.4f}" if price < 1 else f"【开仓价】${price:,.2f}",
+            f"【数量】{quantity:,.4f}",
+            f"【杠杆】{leverage}x",
+            f"",  # 空行
+            f"【持仓价值】${position_value:,.2f}",
+        ]
+        
+        if margin:
+            lines.append(f"【保证金】${margin:,.2f}")
+        
+        # 添加止盈止损信息
+        if stop_loss or take_profit:
+            lines.append("")  # 空行
+            
+        if stop_loss:
+            sl_diff_pct = abs((stop_loss - price) / price * 100)
+            lines.append(f"【止损价】${stop_loss:,.4f} ({sl_diff_pct:.2f}%)" if stop_loss < 1 
+                        else f"【止损价】${stop_loss:,.2f} (-{sl_diff_pct:.2f}%)")
+            
+        if take_profit:
+            tp_diff_pct = abs((take_profit - price) / price * 100)
+            lines.append(f"【止盈价】${take_profit:,.4f} (+{tp_diff_pct:.2f}%)" if take_profit < 1 
+                        else f"【止盈价】${take_profit:,.2f} (+{tp_diff_pct:.2f}%)")
+        
+        # 添加风险收益比
+        if stop_loss and take_profit:
+            risk = abs(price - stop_loss)
+            reward = abs(take_profit - price)
+            rr_ratio = reward / risk if risk > 0 else 0
+            lines.append(f"【风险收益比】1:{rr_ratio:.2f}")
+        
+        # 添加开仓理由
+        if reason:
+            lines.append("")  # 空行
+            lines.append(f"【开仓理由】{reason}")
+        
+        # 添加订单哈希
+        if order_hash:
+            lines.append("")  # 空行
+            lines.append(f"【交易哈希】{order_hash}")
+        
+        message = "\n".join(lines)
         self.notify(NotificationEvent.TRADE_OPENED, title, message)
 
     def notify_trade_closed(
@@ -288,7 +348,10 @@ class Notifier:
         entry_price: float,
         exit_price: float,
         pnl: float,
-        pnl_percent: float
+        pnl_percent: float,
+        leverage: Optional[int] = None,
+        holding_time: Optional[str] = None,
+        close_reason: Optional[str] = None
     ):
         """
         发送平仓通知
@@ -301,18 +364,63 @@ class Notifier:
             exit_price: 平仓价格
             pnl: 盈亏金额
             pnl_percent: 盈亏百分比
+            leverage: 杠杆倍数
+            holding_time: 持仓时间
+            close_reason: 平仓原因
         """
         side_text = "做多" if side.lower() == "long" else "做空"
-        pnl_emoji = "💰" if pnl >= 0 else "📉"
-        title = f"{pnl_emoji} 平仓通知: {symbol}"
-        message = (
-            f"交易对: {symbol}\n"
-            f"方向: {side_text}\n"
-            f"数量: {quantity}\n"
-            f"开仓价: {entry_price}\n"
-            f"平仓价: {exit_price}\n"
-            f"盈亏: {pnl:+.2f} USD ({pnl_percent:+.2f}%)"
-        )
+        
+        # 根据盈亏选择表情和颜色
+        if pnl > 0:
+            pnl_emoji = "🎉"
+            result_text = "盈利"
+        elif pnl < 0:
+            pnl_emoji = "😢"
+            result_text = "亏损"
+        else:
+            pnl_emoji = "➖"
+            result_text = "持平"
+        
+        title = f"{pnl_emoji} 平仓通知: {symbol} {result_text}"
+        
+        # 构建消息
+        lines = [
+            f"【交易对】{symbol}",
+            f"【方向】{side_text}",
+            f"【数量】{quantity:,.4f}",
+        ]
+        
+        if leverage:
+            lines.append(f"【杠杆】{leverage}x")
+        
+        lines.extend([
+            "",  # 空行
+            f"【开仓价】${entry_price:,.4f}" if entry_price < 1 else f"【开仓价】${entry_price:,.2f}",
+            f"【平仓价】${exit_price:,.4f}" if exit_price < 1 else f"【平仓价】${exit_price:,.2f}",
+            f"【价格变动】{pnl_percent:+.2f}%",
+            "",  # 空行
+            f"【盈亏金额】${pnl:+,.2f} USD",
+            f"【收益率】{pnl_percent:+.2f}%"
+        ])
+        
+        # 添加持仓时间
+        if holding_time:
+            lines.append(f"【持仓时长】{holding_time}")
+        
+        # 添加平仓原因
+        if close_reason:
+            lines.append("")  # 空行
+            lines.append(f"【平仓原因】{close_reason}")
+        
+        # 添加总结
+        if pnl > 0:
+            lines.append("")  # 空行
+            lines.append("✨ 恭喜盈利出场！")
+        elif pnl < 0:
+            lines.append("")  # 空行
+            lines.append("⚠️ 及时止损，保护资金")
+        
+        message = "\n".join(lines)
         self.notify(NotificationEvent.TRADE_CLOSED, title, message)
 
     def notify_stop_loss(
@@ -437,3 +545,94 @@ class Notifier:
             f"交易已暂停，请注意风险"
         )
         self.notify(NotificationEvent.CIRCUIT_BREAKER, title, message)
+
+    def notify_system_startup(
+        self,
+        version: Optional[str] = None,
+        symbols: Optional[list] = None,
+        config_info: Optional[Dict[str, Any]] = None
+    ):
+        """
+        发送系统启动通知
+
+        Args:
+            version: 系统版本
+            symbols: 监控的交易对列表
+            config_info: 配置信息
+        """
+        from datetime import datetime
+        
+        title = "🚀 交易系统启动成功"
+        
+        lines = [
+            f"【启动时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        ]
+        
+        if version:
+            lines.append(f"【系统版本】{version}")
+        
+        if symbols:
+            lines.append("")
+            lines.append(f"【监控币种】{', '.join(symbols)}")
+            lines.append(f"【币种数量】{len(symbols)} 个")
+        
+        if config_info:
+            lines.append("")
+            if 'trade_amount' in config_info:
+                lines.append(f"【单笔金额】${config_info['trade_amount']:.2f}")
+            if 'max_positions' in config_info:
+                lines.append(f"【最大持仓】{config_info['max_positions']} 个")
+            if 'leverage' in config_info:
+                lines.append(f"【杠杆倍数】{config_info['leverage']}x")
+            if 'check_interval' in config_info:
+                lines.append(f"【检查间隔】{config_info['check_interval']} 分钟")
+        
+        lines.append("")
+        lines.append("✅ 系统已就绪，开始监控市场")
+        
+        message = "\n".join(lines)
+        self.notify(NotificationEvent.SYSTEM_STARTUP, title, message)
+
+    def notify_system_shutdown(
+        self,
+        reason: Optional[str] = None,
+        runtime: Optional[str] = None,
+        statistics: Optional[Dict[str, Any]] = None
+    ):
+        """
+        发送系统关闭通知
+
+        Args:
+            reason: 关闭原因
+            runtime: 运行时长
+            statistics: 运行统计
+        """
+        from datetime import datetime
+        
+        title = "⏹️ 交易系统已关闭"
+        
+        lines = [
+            f"【关闭时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        ]
+        
+        if reason:
+            lines.append(f"【关闭原因】{reason}")
+        
+        if runtime:
+            lines.append(f"【运行时长】{runtime}")
+        
+        if statistics:
+            lines.append("")
+            lines.append("【运行统计】")
+            if 'total_trades' in statistics:
+                lines.append(f"  总交易次数: {statistics['total_trades']}")
+            if 'profitable_trades' in statistics:
+                lines.append(f"  盈利交易: {statistics['profitable_trades']}")
+            if 'total_pnl' in statistics:
+                lines.append(f"  总盈亏: ${statistics['total_pnl']:+.2f}")
+        
+        lines.append("")
+        lines.append("👋 系统已安全退出")
+        
+        message = "\n".join(lines)
+        self.notify(NotificationEvent.SYSTEM_SHUTDOWN, title, message)
