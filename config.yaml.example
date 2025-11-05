@@ -109,3 +109,67 @@ logging:
 
   # 决策日志格式（json 或 csv）
   decision_log_format: json
+
+# 通知配置
+notifications:
+  # 是否启用通知（总开关）
+  # 如果为 false，则所有通知都不会发送
+  enabled: false
+
+  # 通知渠道配置（支持多个渠道同时使用）
+  channels:
+    # 钉钉机器人通知
+    - type: dingtalk
+      enabled: false
+      # 钉钉机器人的 API Key（必填）
+      # 获取方式：登录钉钉管理后台 -> 应用开发 -> 机器人管理 -> 创建自定义机器人
+      api_key: "your_dingtalk_api_key_here"
+      # 钉钉机器人的 Secret（可选，用于加签验证）
+      secret: "your_dingtalk_secret_here"
+      # 接收通知的手机号列表（可选，留空则发送到群）
+      phone_numbers:
+        - "13800138000"
+        # - "13900139000"
+
+    # 飞书机器人通知
+    - type: feishu
+      enabled: false
+      # 飞书机器人的 Token（必填）
+      # 获取方式：登录飞书管理后台 -> 应用 -> 机器人 -> 创建自定义机器人 -> 获取 Webhook URL 中的 token
+      token: "your_feishu_token_here"
+
+    # 邮件通知
+    - type: email
+      enabled: false
+      # SMTP 服务器地址（必填）
+      smtp_server: "smtp.gmail.com"
+      # SMTP 端口（587 用于 TLS，465 用于 SSL）
+      smtp_port: 587
+      # SMTP 用户名（必填）
+      smtp_user: "your_email@gmail.com"
+      # SMTP 密码或应用专用密码（必填）
+      # Gmail 用户需要在账户安全设置中生成应用专用密码
+      smtp_password: "your_app_password_here"
+      # 发件人邮箱（可选，默认使用 smtp_user）
+      from_email: "your_email@gmail.com"
+      # 收件人邮箱列表（必填）
+      to_emails:
+        - "recipient1@example.com"
+        - "recipient2@example.com"
+
+  # 通知事件配置（控制哪些事件会触发通知）
+  events:
+    # 开仓通知（买入/卖空开仓）
+    trade_opened: true
+    # 平仓通知（卖出/买入平仓）
+    trade_closed: true
+    # 止损通知
+    stop_loss: true
+    # 止盈通知
+    take_profit: true
+    # 现货定投通知
+    spot_investment: true
+    # 错误通知（交易失败、系统异常等）
+    error: true
+    # 熔断机制触发通知
+    circuit_breaker: true

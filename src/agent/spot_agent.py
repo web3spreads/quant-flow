@@ -214,7 +214,8 @@ class SpotAgent:
         openai_api_key: str,
         openai_model: str,
         temperature: float = 0.05,  # 更低的温度，更保守
-        trade_amount: float = 100.0
+        trade_amount: float = 100.0,
+        notifier=None
     ):
         """
         初始化现货定投 Agent
@@ -227,10 +228,12 @@ class SpotAgent:
             openai_model: 模型名称
             temperature: 温度参数（建议较低）
             trade_amount: 定投金额
+            notifier: 通知管理器（可选）
         """
         self.order_manager = order_manager
         self.logger = logger
         self.trade_amount = trade_amount
+        self.notifier = notifier
 
         # 初始化 LLM（更保守的参数）
         self.llm = ChatOpenAI(
@@ -280,6 +283,15 @@ class SpotAgent:
                 )
 
                 if result and result.get('success'):
+                    # 发送现货定投通知
+                    if self.notifier:
+                        self.notifier.notify_spot_investment(
+                            symbol=symbol,
+                            quantity=result.get('amount', 0),
+                            price=result['price'],
+                            amount=self.trade_amount
+                        )
+
                     return (
                         f"✅ 现货定投执行成功！\n"
                         f"  币种: {symbol}\n"
