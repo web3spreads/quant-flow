@@ -407,11 +407,26 @@ class SingleSymbolAgent:
                         # Hyperliquid API 字段说明：
                         # 'entryPx' - 入场价格 (entry price)
                         # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
+                        # 'leverage' - 杠杆信息 (leverage info)
                         entry_price = position.get('entryPx', 0)
                         exit_price = self.current_price
                         size = abs(position.get('szi', 0))
                         pnl = result.get('pnl', 0)
-                        pnl_percent = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+                        
+                        # 获取杠杆值以计算实际收益率
+                        leverage_info = position.get('leverage', {})
+                        leverage = float(leverage_info.get('value', 1)) if isinstance(leverage_info, dict) else 1
+                        
+                        # 计算实际收益率（基于保证金）
+                        # 仓位价值 = size * entry_price
+                        # 保证金 = 仓位价值 / 杠杆
+                        # 收益率 = pnl / 保证金 * 100
+                        position_value = size * float(entry_price) if entry_price else 0
+                        if position_value > 0 and leverage > 0:
+                            margin = position_value / leverage
+                            pnl_percent = (pnl / margin) * 100 if margin > 0 else 0
+                        else:
+                            pnl_percent = 0
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
@@ -501,11 +516,26 @@ class SingleSymbolAgent:
                         # Hyperliquid API 字段说明：
                         # 'entryPx' - 入场价格 (entry price)
                         # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
+                        # 'leverage' - 杠杆信息 (leverage info)
                         entry_price = position.get('entryPx', 0)
                         exit_price = self.current_price
                         size = abs(position.get('szi', 0))
                         pnl = result.get('pnl', 0)
-                        pnl_percent = (entry_price - exit_price) / entry_price * 100 if entry_price > 0 else 0
+                        
+                        # 获取杠杆值以计算实际收益率
+                        leverage_info = position.get('leverage', {})
+                        leverage = float(leverage_info.get('value', 1)) if isinstance(leverage_info, dict) else 1
+                        
+                        # 计算实际收益率（基于保证金）
+                        # 仓位价值 = size * entry_price
+                        # 保证金 = 仓位价值 / 杠杆
+                        # 收益率 = pnl / 保证金 * 100
+                        position_value = size * float(entry_price) if entry_price else 0
+                        if position_value > 0 and leverage > 0:
+                            margin = position_value / leverage
+                            pnl_percent = (pnl / margin) * 100 if margin > 0 else 0
+                        else:
+                            pnl_percent = 0
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
