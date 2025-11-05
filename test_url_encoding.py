@@ -65,11 +65,16 @@ def test_url_encoding():
         notifier = Notifier(test_config_with_special_chars)
 
         # 检查 Apprise URLs
-        if notifier.apprise and hasattr(notifier.apprise, 'urls'):
-            print(f"\n✅ 成功创建 {len(notifier.apprise)} 个通知渠道")
-            print("所有特殊字符已正确编码到 URL 中")
+        if notifier.apprise:
+            # 使用 urls() 方法获取已添加的通知渠道列表
+            urls = notifier.apprise.urls() if callable(getattr(notifier.apprise, 'urls', None)) else []
+            if urls:
+                print(f"\n✅ 成功创建 {len(urls)} 个通知渠道")
+                print("所有特殊字符已正确编码到 URL 中")
+            else:
+                print("\n✅ 通知器初始化成功（渠道未启用）")
         else:
-            print("\n✅ 通知器初始化成功（渠道未启用）")
+            print("\n✅ 通知器初始化成功")
 
         print("\n" + "=" * 60)
         print("✅ URL 编码测试通过！")
