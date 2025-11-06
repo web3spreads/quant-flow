@@ -145,7 +145,7 @@ class OrderManager:
             user_address = self.client.wallet_address
             fills = self.client.info.user_fills(user_address)
 
-            if fills and len(fills) > 0:
+            if fills:
                 # 返回最新的fill的hash
                 return fills[0].get('hash')
             return None
