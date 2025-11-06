@@ -83,6 +83,8 @@ class Notifier:
                     self._add_dingtalk_channel(channel)
                 elif channel_type == "feishu":
                     self._add_feishu_channel(channel)
+                elif channel_type == "lark":
+                    self._add_lark_channel(channel)
                 elif channel_type == "email":
                     self._add_email_channel(channel)
                 else:
@@ -154,6 +156,32 @@ class Notifier:
         except Exception:
             # 不记录敏感信息（token）到日志
             self.logger.error("❌ 飞书通知渠道配置错误")
+
+    def _add_lark_channel(self, channel: Dict[str, Any]) -> None:
+        """添加lark通知渠道"""
+        token = channel.get("token")
+
+        if not token:
+            self.logger.error("❌ lark渠道缺少 token 配置")
+            return
+
+        try:
+            # 构建lark URL - 对 token 进行 URL 编码
+            # 格式: lark://{token}
+            # Token 通常包含字母数字、连字符和下划线，保留这些字符以提高可读性
+            token_encoded = quote(token, safe='')
+            url = f"lark://{token_encoded}"
+
+            # 验证是否成功添加
+            if not self.apprise.add(url):
+                self.logger.error("❌ lark通知渠道添加失败")
+                return
+
+            self.logger.info("✅ lark通知渠道已添加")
+
+        except Exception:
+            # 不记录敏感信息（token）到日志
+            self.logger.error("❌ lark通知渠道配置错误")
 
     def _add_email_channel(self, channel: Dict[str, Any]) -> None:
         """添加邮件通知渠道"""
