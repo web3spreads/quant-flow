@@ -147,7 +147,7 @@ class OrderManager:
 
             if fills and len(fills) > 0:
                 # 返回最新的fill的hash
-                return fills[0].get('hash', '')
+                return fills[0].get('hash')
             return None
         except Exception as e:
             print(f"⚠️ 获取交易哈希失败: {e}")
