@@ -517,7 +517,10 @@ class Notifier:
         # 添加订单哈希和浏览器链接
         if order_hash:
             lines.append("")  # 空行
-            lines.append(f"【交易哈希】{order_hash[:10]}...{order_hash[-8:]}")
+            if len(order_hash) >= 18:
+                lines.append(f"【交易哈希】{order_hash[:10]}...{order_hash[-8:]}")
+            else:
+                lines.append(f"【交易哈希】{order_hash}")
             # Hyperliquid 浏览器链接 - 根据testnet/mainnet使用不同URL
             if self.is_testnet:
                 explorer_url = f"https://app.hyperliquid-testnet.xyz/explorer/tx/{order_hash}"
