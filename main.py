@@ -73,7 +73,7 @@ class QuantFlowBot:
         # 1. 通知系统（优先初始化，以便其他组件可以使用）
         self.logger.print_info("初始化通知系统...")
         notifications_config = getattr(self.config, 'notifications', {'enabled': False})
-        self.notifier = Notifier(notifications_config)
+        self.notifier = Notifier(notifications_config, is_testnet=self.config.hyperliquid_testnet)
 
         # 2. 市场数据获取器
         self.logger.print_info("初始化市场数据获取器...")

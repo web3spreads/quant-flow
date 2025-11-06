@@ -34,17 +34,19 @@ class Notifier:
     - 作为配置项，用户配置则启用
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], is_testnet: bool = True):
         """
         初始化通知管理器
 
         Args:
             config: 通知配置字典
+            is_testnet: 是否为测试网（用于构建explorer URL）
         """
         self.logger = logging.getLogger(__name__)
         self.config = config
         self.enabled = config.get("enabled", False)
         self.apprise = Apprise()
+        self.is_testnet = is_testnet
 
         # 如果通知功能未启用，则不初始化
         if not self.enabled:
@@ -335,9 +337,12 @@ class Notifier:
         # 添加订单哈希和浏览器链接
         if order_hash:
             lines.append("")  # 空行
-            lines.append(f"【交易哈希】{order_hash}")
-            # Hyperliquid 浏览器链接
-            explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
+            lines.append(f"【交易哈希】{order_hash[:10]}...{order_hash[-8:]}")
+            # Hyperliquid 浏览器链接 - 根据testnet/mainnet使用不同URL
+            if self.is_testnet:
+                explorer_url = f"https://app.hyperliquid-testnet.xyz/explorer/tx/{order_hash}"
+            else:
+                explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
             lines.append(f"【查看详情】{explorer_url}")
 
         message = "\n".join(lines)
@@ -512,9 +517,12 @@ class Notifier:
         # 添加订单哈希和浏览器链接
         if order_hash:
             lines.append("")  # 空行
-            lines.append(f"【交易哈希】{order_hash}")
-            # Hyperliquid 浏览器链接
-            explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
+            lines.append(f"【交易哈希】{order_hash[:10]}...{order_hash[-8:]}")
+            # Hyperliquid 浏览器链接 - 根据testnet/mainnet使用不同URL
+            if self.is_testnet:
+                explorer_url = f"https://app.hyperliquid-testnet.xyz/explorer/tx/{order_hash}"
+            else:
+                explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
             lines.append(f"【查看详情】{explorer_url}")
 
         message = "\n".join(lines)
