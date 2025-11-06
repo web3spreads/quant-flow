@@ -4,7 +4,7 @@ LangChain 工具定义
 """
 
 from langchain_core.tools import Tool, StructuredTool
-from typing import Callable, Optional, Union
+from typing import Callable, Optional
 from pydantic import BaseModel, Field, field_validator
 import json
 
