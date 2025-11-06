@@ -142,7 +142,7 @@ class OrderManager:
             time.sleep(0.5)
 
             # 获取最近的fills
-            user_address = self.client.wallet_address
+            user_address = self.client.address
             fills = self.client.info.user_fills(user_address)
 
             if fills:
