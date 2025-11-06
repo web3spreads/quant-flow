@@ -656,7 +656,7 @@ class HyperliquidClient:
                 return {'status': 'error', 'message': f'{symbol} 仓位为 0'}
             
             # 计算平仓数量
-            close_size = abs(size) if size else abs(position_size)
+            close_size = abs(float(size)) if size else abs(position_size)
             is_buy = position_size < 0  # 如果是空仓，平仓就是买入
             
             # 下市价平仓单

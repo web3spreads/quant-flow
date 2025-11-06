@@ -167,17 +167,20 @@ class PromptManager:
             total = balance_info.get('total', 0)
             occupied = balance_info.get('occupied', 0)
             available = balance_info.get('available', 0)
+            unrealized_pnl = balance_info.get('unrealized_pnl', 0)
+            pnl_emoji = "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
             balance_text = f"""
 ## 💰 账户余额（实时）
 
 - **账户总价值**: ${total:.2f}
 - **已占用保证金**: ${occupied:.2f}
 - **可用余额**: ${available:.2f}
+- **未实现盈亏**: ${unrealized_pnl:+.2f} {pnl_emoji}
 
 **重要提示**:
 - 你必须根据可用余额决定是否开仓
 - 如果可用余额不足以支持交易，必须选择 do_nothing
-- 建议保留一定比例的可用余额作为风险缓冲
+- 关注未实现盈亏，如果亏损较大应更谨慎
 """
 
         # 格式化 Prompt
@@ -259,17 +262,20 @@ class PromptManager:
             total = balance_info.get('total', 0)
             occupied = balance_info.get('occupied', 0)
             available = balance_info.get('available', 0)
+            unrealized_pnl = balance_info.get('unrealized_pnl', 0)
+            pnl_emoji = "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
             balance_text = f"""
 ## 💰 账户余额（实时）
 
 - **账户总价值**: ${total:.2f}
 - **已占用保证金**: ${occupied:.2f}
 - **可用余额**: ${available:.2f}
+- **未实现盈亏**: ${unrealized_pnl:+.2f} {pnl_emoji}
 
 **重要提示**:
 - 你必须根据可用余额决定是否定投
 - 如果可用余额不足，必须选择 do_nothing
-- 建议保留一定比例的可用余额作为风险缓冲
+- 关注未实现盈亏，如果亏损较大应更谨慎
 """
 
         # 格式化 Prompt
