@@ -75,6 +75,7 @@ class OrderManager:
                 'total': float,  # 总价值
                 'occupied': float,  # 已占用
                 'available': float,  # 可用
+                'unrealized_pnl': float,  # 未实现盈亏
                 'message': str
             }
         """
@@ -86,19 +87,27 @@ class OrderManager:
                     'message': '无法获取余额信息',
                     'total': 0,
                     'occupied': 0,
-                    'available': 0
+                    'available': 0,
+                    'unrealized_pnl': 0
                 }
 
             total = balance['accountValue']
             occupied = balance['totalMarginUsed']
             available = balance['totalRawUsd']
 
+            # 计算未实现盈亏（从所有持仓汇总）
+            unrealized_pnl = 0
+            positions = self.client.get_positions()
+            for position in positions:
+                unrealized_pnl += float(position.get('unrealizedPnl', 0))
+
             return {
                 'status': 'ok',
                 'total': total,
                 'occupied': occupied,
                 'available': available,
-                'message': f'总价值: ${total:.2f}, 可用: ${available:.2f}'
+                'unrealized_pnl': unrealized_pnl,
+                'message': f'总价值: ${total:.2f}, 可用: ${available:.2f}, 未实现盈亏: ${unrealized_pnl:+.2f}'
             }
 
         except Exception as e:
@@ -107,17 +116,42 @@ class OrderManager:
                 'message': f'获取余额失败: {e}',
                 'total': 0,
                 'occupied': 0,
-                'available': 0
+                'available': 0,
+                'unrealized_pnl': 0
             }
 
     def get_current_positions(self) -> List[Dict[str, Any]]:
         """
         获取当前持仓列表
-        
+
         Returns:
             持仓列表
         """
         return self.client.get_positions()
+
+    def _get_latest_fill_hash(self) -> Optional[str]:
+        """
+        获取最近一笔成交的交易哈希
+
+        Returns:
+            交易哈希，如果无法获取则返回 None
+        """
+        try:
+            import time
+            # 等待一小段时间确保订单已成交
+            time.sleep(0.5)
+
+            # 获取最近的fills
+            user_address = self.client.wallet_address
+            fills = self.client.info.user_fills(user_address)
+
+            if fills:
+                # 返回最新的fill的hash
+                return fills[0].get('hash')
+            return None
+        except Exception as e:
+            print(f"⚠️ 获取交易哈希失败: {e}")
+            return None
 
     def calculate_position_size(
         self,
@@ -233,29 +267,16 @@ class OrderManager:
                     'stop_loss_order': None,
                     'errors': [] if market_order.get('status') == 'ok' else [market_order]
                 }
-            
+
             # 添加交易信息到返回结果
             if result:
                 result['quantity'] = size
                 result['price'] = current_price
                 result['leverage'] = lev
-                # 从 market_order 中提取 hash（支持多种格式）
-                order_hash = ''
-                if result.get('market_order') and isinstance(result['market_order'], dict):
-                    response = result['market_order'].get('response', {})
-                    data = response.get('data', {})
-                    statuses = data.get('statuses', [])
-                    if statuses and len(statuses) > 0:
-                        status = statuses[0]
-                        # 尝试多个可能的 hash 位置
-                        if 'filled' in status and isinstance(status['filled'], dict):
-                            order_hash = status['filled'].get('hash', '')
-                        if not order_hash:
-                            order_hash = status.get('hash', '')
-                        if not order_hash:
-                            order_hash = status.get('txHash', '')
-                result['hash'] = order_hash
-            
+                # 获取交易哈希：下单后查询最近的fills
+                order_hash = self._get_latest_fill_hash()
+                result['hash'] = order_hash if order_hash else ''
+
             return result
             
         except Exception as e:
@@ -339,29 +360,16 @@ class OrderManager:
                     'stop_loss_order': None,
                     'errors': [] if market_order.get('status') == 'ok' else [market_order]
                 }
-            
+
             # 添加交易信息到返回结果
             if result:
                 result['quantity'] = size
                 result['price'] = current_price
                 result['leverage'] = lev
-                # 从 market_order 中提取 hash（支持多种格式）
-                order_hash = ''
-                if result.get('market_order') and isinstance(result['market_order'], dict):
-                    response = result['market_order'].get('response', {})
-                    data = response.get('data', {})
-                    statuses = data.get('statuses', [])
-                    if statuses and len(statuses) > 0:
-                        status = statuses[0]
-                        # 尝试多个可能的 hash 位置
-                        if 'filled' in status and isinstance(status['filled'], dict):
-                            order_hash = status['filled'].get('hash', '')
-                        if not order_hash:
-                            order_hash = status.get('hash', '')
-                        if not order_hash:
-                            order_hash = status.get('txHash', '')
-                result['hash'] = order_hash
-            
+                # 获取交易哈希：下单后查询最近的fills
+                order_hash = self._get_latest_fill_hash()
+                result['hash'] = order_hash if order_hash else ''
+
             return result
             
         except Exception as e:

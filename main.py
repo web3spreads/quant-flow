@@ -7,7 +7,7 @@ Quant Flow - AI 驱动的加密货币自动交易机器人
 import sys
 import time
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -73,7 +73,7 @@ class QuantFlowBot:
         # 1. 通知系统（优先初始化，以便其他组件可以使用）
         self.logger.print_info("初始化通知系统...")
         notifications_config = getattr(self.config, 'notifications', {'enabled': False})
-        self.notifier = Notifier(notifications_config)
+        self.notifier = Notifier(notifications_config, is_testnet=self.config.hyperliquid_testnet)
 
         # 2. 市场数据获取器
         self.logger.print_info("初始化市场数据获取器...")
@@ -459,7 +459,7 @@ class QuantFlowBot:
             
             # 显示下次执行时间
             next_run = datetime.now().replace(second=0, microsecond=0)
-            next_run = next_run.replace(minute=next_run.minute + self.config.interval_minutes)
+            next_run = next_run + timedelta(minutes=self.config.interval_minutes)
             self.logger.print_info(f"下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
             self.logger.print_info(f"执行间隔: {self.config.interval_minutes} 分钟")
             

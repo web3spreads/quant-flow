@@ -5,7 +5,7 @@ LangChain 工具定义
 
 from langchain_core.tools import Tool, StructuredTool
 from typing import Callable, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import json
 
 
@@ -15,12 +15,32 @@ class BuyInput(BaseModel):
     amount: Optional[float] = Field(default=None, description="交易金额（USD），不填则使用配置上限")
     leverage: Optional[int] = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
 
+    @field_validator('leverage', mode='before')
+    @classmethod
+    def convert_leverage_to_int(cls, v):
+        """将浮点数杠杆转换为整数"""
+        if v is None:
+            return v
+        if isinstance(v, (int, float)):
+            return int(v)
+        return v
+
 
 class SellShortInput(BaseModel):
     """卖空工具的输入模式"""
     symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
     amount: Optional[float] = Field(default=None, description="交易金额（USD），不填则使用配置上限")
     leverage: Optional[int] = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
+
+    @field_validator('leverage', mode='before')
+    @classmethod
+    def convert_leverage_to_int(cls, v):
+        """将浮点数杠杆转换为整数"""
+        if v is None:
+            return v
+        if isinstance(v, (int, float)):
+            return int(v)
+        return v
 
 
 class BuySpotInput(BaseModel):
