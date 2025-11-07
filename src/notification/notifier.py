@@ -390,7 +390,8 @@ class Notifier:
         pnl_percent: float,
         leverage: Optional[int] = None,
         holding_time: Optional[str] = None,
-        close_reason: Optional[str] = None
+        close_reason: Optional[str] = None,
+        order_hash: Optional[str] = None
     ):
         """
         发送平仓通知
@@ -406,9 +407,10 @@ class Notifier:
             leverage: 杠杆倍数
             holding_time: 持仓时间
             close_reason: 平仓原因
+            order_hash: 交易哈希
         """
         side_text = "做多" if side.lower() == "long" else "做空"
-        
+
         # 根据盈亏选择表情和颜色
         if pnl > 0:
             pnl_emoji = "🎉"
@@ -419,19 +421,19 @@ class Notifier:
         else:
             pnl_emoji = "➖"
             result_text = "持平"
-        
+
         title = f"{pnl_emoji} 平仓通知: {symbol} {result_text}"
-        
+
         # 构建消息
         lines = [
             f"【交易对】{symbol}",
             f"【方向】{side_text}",
             f"【数量】{quantity:,.4f}",
         ]
-        
+
         if leverage:
             lines.append(f"【杠杆】{leverage}x")
-        
+
         lines.extend([
             "",  # 空行
             f"【开仓价】${entry_price:,.4f}" if entry_price < 1 else f"【开仓价】${entry_price:,.2f}",
@@ -441,16 +443,30 @@ class Notifier:
             f"【盈亏金额】${pnl:+,.2f} USD",
             f"【收益率】{pnl_percent:+.2f}%"
         ])
-        
+
         # 添加持仓时间
         if holding_time:
             lines.append(f"【持仓时长】{holding_time}")
-        
+
         # 添加平仓原因
         if close_reason:
             lines.append("")  # 空行
             lines.append(f"【平仓原因】{close_reason}")
-        
+
+        # 添加订单哈希和浏览器链接
+        if order_hash:
+            lines.append("")  # 空行
+            if len(order_hash) >= 18:
+                lines.append(f"【交易哈希】{order_hash[:10]}...{order_hash[-8:]}")
+            else:
+                lines.append(f"【交易哈希】{order_hash}")
+            # Hyperliquid 浏览器链接
+            if self.is_testnet:
+                explorer_url = f"https://app.hyperliquid-testnet.xyz/explorer/tx/{order_hash}"
+            else:
+                explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
+            lines.append(f"【查看详情】{explorer_url}")
+
         # 添加总结
         if pnl > 0:
             lines.append("")  # 空行
@@ -458,7 +474,7 @@ class Notifier:
         elif pnl < 0:
             lines.append("")  # 空行
             lines.append("⚠️ 及时止损，保护资金")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.TRADE_CLOSED, title, message)
 

@@ -379,16 +379,22 @@ class OrderManager:
     def close_position(self, symbol: str, size: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """
         平仓操作
-        
+
         Args:
             symbol: 交易对符号
             size: 平仓数量（None=全平）
-            
+
         Returns:
-            平仓结果
+            平仓结果（包含交易哈希）
         """
         try:
             result = self.client.close_position(symbol, size)
+
+            # 如果平仓成功，获取交易哈希
+            if result and result.get('status') == 'ok':
+                order_hash = self._get_latest_fill_hash()
+                result['hash'] = order_hash if order_hash else ''
+
             return result
         except Exception as e:
             print(f"❌ 平仓失败: {e}")
