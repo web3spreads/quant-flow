@@ -414,10 +414,56 @@ class SingleSymbolAgent:
                         f"  止盈价: ${tp_price:.2f}\n"
                         f"  止损价: ${sl_price:.2f}"
                     )
-                return "❌ 买入开多失败"
+
+                # 开仓失败 - 记录详细信息并发送通知
+                error_msg = "❌ 买入开多失败"
+                error_details = f"API 返回: {result}"
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
+                self.logger.print_error(f"[{self.symbol}Agent] 交易参数: 金额=${actual_amount}, 杠杆={actual_leverage}x, 价格=${self.current_price}")
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"交易金额: ${actual_amount}\n"
+                        f"杠杆倍数: {actual_leverage}x\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"API响应: {result}"
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 买入开多失败",
+                        error_message=error_details,
+                        context=context
+                    )
+
+                return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
-                return f"❌ 买入开多异常: {str(e)}"
+                import traceback
+                error_msg = f"❌ 买入开多异常: {str(e)}"
+                stack_trace = traceback.format_exc()
+
+                # 记录完整的异常信息
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] 堆栈跟踪:\n{stack_trace}")
+                self.logger.logger.exception(e)
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"堆栈跟踪: {stack_trace[:500]}"
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 买入开多异常",
+                        error_message=str(e),
+                        context=context
+                    )
+
+                return error_msg
 
         def sell_callback(symbol: str) -> str:
             """卖出平多回调"""
@@ -429,6 +475,9 @@ class SingleSymbolAgent:
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的多头仓位"
+
+                # 记录持仓详情以便调试
+                self.logger.print_info(f"[{self.symbol}Agent] 持仓详情: 币种={position.get('coin')}, 大小={position.get('szi')}, 入场价={position.get('entryPx')}")
 
                 result = self.order_manager.close_position(
                     symbol=self.symbol,
@@ -458,10 +507,57 @@ class SingleSymbolAgent:
                         )
 
                     return f"✅ 卖出平多成功！"
-                return "❌ 卖出平多失败"
+
+                # 平仓失败 - 记录详细信息并发送通知
+                error_msg = f"❌ 卖出平多失败"
+                error_details = f"API 返回: {result}"
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
+                self.logger.print_error(f"[{self.symbol}Agent] 持仓信息: {position}")
+                self.logger.print_error(f"[{self.symbol}Agent] 当前价格: ${self.current_price}")
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"持仓大小: {position.get('szi')}\n"
+                        f"入场价: ${position.get('entryPx')}\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"API响应: {result}"
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 卖出平多失败",
+                        error_message=error_details,
+                        context=context
+                    )
+
+                return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
-                return f"❌ 卖出平多异常: {str(e)}"
+                import traceback
+                error_msg = f"❌ 卖出平多异常: {str(e)}"
+                stack_trace = traceback.format_exc()
+
+                # 记录完整的异常信息
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] 堆栈跟踪:\n{stack_trace}")
+                self.logger.logger.exception(e)
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"堆栈跟踪: {stack_trace[:500]}"  # 限制长度
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 卖出平多异常",
+                        error_message=str(e),
+                        context=context
+                    )
+
+                return error_msg
 
         def sell_short_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
             """卖空开空回调"""
@@ -525,10 +621,56 @@ class SingleSymbolAgent:
                         f"  止盈价: ${tp_price:.2f}\n"
                         f"  止损价: ${sl_price:.2f}"
                     )
-                return "❌ 卖空开空失败"
+
+                # 开仓失败 - 记录详细信息并发送通知
+                error_msg = "❌ 卖空开空失败"
+                error_details = f"API 返回: {result}"
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
+                self.logger.print_error(f"[{self.symbol}Agent] 交易参数: 金额=${actual_amount}, 杠杆={actual_leverage}x, 价格=${self.current_price}")
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"交易金额: ${actual_amount}\n"
+                        f"杠杆倍数: {actual_leverage}x\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"API响应: {result}"
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 卖空开空失败",
+                        error_message=error_details,
+                        context=context
+                    )
+
+                return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
-                return f"❌ 卖空开空异常: {str(e)}"
+                import traceback
+                error_msg = f"❌ 卖空开空异常: {str(e)}"
+                stack_trace = traceback.format_exc()
+
+                # 记录完整的异常信息
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] 堆栈跟踪:\n{stack_trace}")
+                self.logger.logger.exception(e)
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"堆栈跟踪: {stack_trace[:500]}"
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 卖空开空异常",
+                        error_message=str(e),
+                        context=context
+                    )
+
+                return error_msg
 
         def buy_to_cover_callback(symbol: str) -> str:
             """买入平空回调"""
@@ -540,6 +682,9 @@ class SingleSymbolAgent:
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的空头仓位"
+
+                # 记录持仓详情以便调试
+                self.logger.print_info(f"[{self.symbol}Agent] 持仓详情: 币种={position.get('coin')}, 大小={position.get('szi')}, 入场价={position.get('entryPx')}")
 
                 result = self.order_manager.close_position(
                     symbol=self.symbol,
@@ -571,10 +716,57 @@ class SingleSymbolAgent:
                         )
 
                     return f"✅ 买入平空成功！"
-                return "❌ 买入平空失败"
+
+                # 平仓失败 - 记录详细信息并发送通知
+                error_msg = f"❌ 买入平空失败"
+                error_details = f"API 返回: {result}"
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
+                self.logger.print_error(f"[{self.symbol}Agent] 持仓信息: {position}")
+                self.logger.print_error(f"[{self.symbol}Agent] 当前价格: ${self.current_price}")
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"持仓大小: {position.get('szi')}\n"
+                        f"入场价: ${position.get('entryPx')}\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"API响应: {result}"
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 买入平空失败",
+                        error_message=error_details,
+                        context=context
+                    )
+
+                return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
-                return f"❌ 买入平空异常: {str(e)}"
+                import traceback
+                error_msg = f"❌ 买入平空异常: {str(e)}"
+                stack_trace = traceback.format_exc()
+
+                # 记录完整的异常信息
+                self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                self.logger.print_error(f"[{self.symbol}Agent] 堆栈跟踪:\n{stack_trace}")
+                self.logger.logger.exception(e)
+
+                # 发送即时错误通知
+                if self.notifier:
+                    context = (
+                        f"交易对: {self.symbol}\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"堆栈跟踪: {stack_trace[:500]}"  # 限制长度
+                    )
+                    self.notifier.notify_error(
+                        title=f"{self.symbol} 买入平空异常",
+                        error_message=str(e),
+                        context=context
+                    )
+
+                return error_msg
 
         def do_nothing_callback(reason: str) -> str:
             """不操作回调"""
