@@ -1,12 +1,14 @@
 """
 Prompt 管理模块
 负责加载和管理可配置的 Prompt 模板
+支持 Jinja2 模板引擎，可根据不同币种自定义 Prompt
 """
 
 import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
+from jinja2 import Environment, FileSystemLoader, Template
 
 
 class PromptManager:
@@ -24,15 +26,23 @@ class PromptManager:
         self.prompt_set_name = prompt_set
         self.prompts_dir = self.config_file.parent
 
+        # 初始化 Jinja2 环境
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(str(self.prompts_dir)),
+            autoescape=False,
+            trim_blocks=True,
+            lstrip_blocks=True
+        )
+
         # 加载 Prompt 配置
         self.config = self._load_config()
         self.prompt_set = self._get_prompt_set(prompt_set)
 
-        # 加载 Prompt 内容
+        # 加载 Prompt 内容（作为 Jinja2 模板）
         self.system_prompt = self._load_prompt_file(self.prompt_set["system_prompt_file"])
         self.spot_system_prompt = self._load_prompt_file(self.prompt_set["spot_system_prompt_file"])
-        self.trading_prompt_template = self._load_prompt_file(self.prompt_set["trading_prompt_template_file"])
-        self.spot_prompt_template = self._load_prompt_file(self.prompt_set["spot_prompt_template_file"])
+        self.trading_prompt_template = self._load_prompt_template(self.prompt_set["trading_prompt_template_file"])
+        self.spot_prompt_template = self._load_prompt_template(self.prompt_set["spot_prompt_template_file"])
 
         print(f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}")
 
@@ -62,7 +72,7 @@ class PromptManager:
 
     def _load_prompt_file(self, relative_path: str) -> str:
         """
-        加载 Prompt 文件内容
+        加载 Prompt 文件内容（用于简单的系统 Prompt，不需要模板功能）
 
         Args:
             relative_path: 相对于 prompts 目录的文件路径
@@ -80,6 +90,28 @@ class PromptManager:
 
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
+
+    def _load_prompt_template(self, relative_path: str) -> Template:
+        """
+        加载 Prompt 模板文件（作为 Jinja2 模板）
+
+        Args:
+            relative_path: 相对于 prompts 目录的文件路径
+
+        Returns:
+            Jinja2 Template 对象
+        """
+        file_path = self.prompts_dir / relative_path
+
+        if not file_path.exists():
+            raise FileNotFoundError(
+                f"Prompt 文件不存在: {file_path}\n"
+                f"请确保文件存在或检查 prompts.yaml 配置"
+            )
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            template_content = f.read()
+            return self.jinja_env.from_string(template_content)
 
     def get_system_prompt(self) -> str:
         """获取系统 Prompt"""
@@ -195,40 +227,84 @@ class PromptManager:
         breakeven_percent = f"{(total_fee / max_trade_amount) * 100:.2f}%"
         price_move_percent = f"{0.07 / max_leverage:.3f}%"
 
-        # 格式化 Prompt
-        prompt = self.trading_prompt_template.format(
-            symbol=symbol,
-            current_price=f"{current_price:.2f}",
-            rsi=f"{rsi:.2f}",
-            macd=f"{macd:.4f}",
-            macd_signal=f"{macd_signal:.4f}",
-            macd_hist=f"{macd_hist:.4f}",
-            ma_7=f"{ma_7:.2f}",
-            ma_25=f"{ma_25:.2f}",
-            ma_99=f"{ma_99:.2f}",
-            bb_upper=f"{bb_upper:.2f}",
-            bb_middle=f"{bb_middle:.2f}",
-            bb_lower=f"{bb_lower:.2f}",
-            bb_position=f"{bb_position:.2%}",
-            volume_change=f"{volume_change:.2f}",
-            multi_timeframe_trends=trends_text,
-            position_count=position_count,
-            max_positions=max_positions,
-            has_long="是 ✅" if has_long else "否 ❌",
-            has_short="是 ✅" if has_short else "否 ❌",
-            max_trade_amount=f"{max_trade_amount:.2f}",
-            max_leverage=max_leverage,
-            take_profit_ratio=f"{take_profit_ratio:.1%}",
-            stop_loss_ratio=f"{stop_loss_ratio:.1%}",
-            position_value=f"{position_value:.2f}",
-            open_fee=f"{open_fee:.2f}",
-            close_fee=f"{close_fee:.2f}",
-            total_fee=f"{total_fee:.2f}",
-            breakeven_percent=breakeven_percent,
-            price_move_percent=price_move_percent,
-            historical_summary=historical_text,
-            balance_info=balance_text
-        )
+        # 准备模板上下文（使用 Jinja2 渲染）
+        context = {
+            # 基础信息
+            'symbol': symbol,
+            'coin': symbol,  # 币种别名
+
+            # 币种类型判断（用于条件逻辑）
+            'is_BTC': symbol == 'BTC',
+            'is_ETH': symbol == 'ETH',
+            'is_SOL': symbol == 'SOL',
+            'is_major_coin': symbol in ['BTC', 'ETH'],  # 主流币
+            'is_altcoin': symbol not in ['BTC', 'ETH'],  # 山寨币
+
+            # 市场数据
+            'current_price': f"{current_price:.2f}",
+            'current_price_raw': current_price,
+            'rsi': f"{rsi:.2f}",
+            'rsi_raw': rsi,
+            'macd': f"{macd:.4f}",
+            'macd_raw': macd,
+            'macd_signal': f"{macd_signal:.4f}",
+            'macd_signal_raw': macd_signal,
+            'macd_hist': f"{macd_hist:.4f}",
+            'macd_hist_raw': macd_hist,
+            'ma_7': f"{ma_7:.2f}",
+            'ma_7_raw': ma_7,
+            'ma_25': f"{ma_25:.2f}",
+            'ma_25_raw': ma_25,
+            'ma_99': f"{ma_99:.2f}",
+            'ma_99_raw': ma_99,
+            'bb_upper': f"{bb_upper:.2f}",
+            'bb_upper_raw': bb_upper,
+            'bb_middle': f"{bb_middle:.2f}",
+            'bb_middle_raw': bb_middle,
+            'bb_lower': f"{bb_lower:.2f}",
+            'bb_lower_raw': bb_lower,
+            'bb_position': f"{bb_position:.2%}",
+            'bb_position_raw': bb_position,
+            'volume_change': f"{volume_change:.2f}",
+            'volume_change_raw': volume_change,
+            'multi_timeframe_trends': trends_text,
+
+            # 持仓信息
+            'position_count': position_count,
+            'max_positions': max_positions,
+            'has_long': "是 ✅" if has_long else "否 ❌",
+            'has_long_bool': has_long,
+            'has_short': "是 ✅" if has_short else "否 ❌",
+            'has_short_bool': has_short,
+
+            # 交易参数
+            'max_trade_amount': f"{max_trade_amount:.2f}",
+            'max_trade_amount_raw': max_trade_amount,
+            'max_leverage': max_leverage,
+            'take_profit_ratio': f"{take_profit_ratio:.1%}",
+            'take_profit_ratio_raw': take_profit_ratio,
+            'stop_loss_ratio': f"{stop_loss_ratio:.1%}",
+            'stop_loss_ratio_raw': stop_loss_ratio,
+
+            # 费用计算
+            'position_value': f"{position_value:.2f}",
+            'position_value_raw': position_value,
+            'open_fee': f"{open_fee:.2f}",
+            'open_fee_raw': open_fee,
+            'close_fee': f"{close_fee:.2f}",
+            'close_fee_raw': close_fee,
+            'total_fee': f"{total_fee:.2f}",
+            'total_fee_raw': total_fee,
+            'breakeven_percent': breakeven_percent,
+            'price_move_percent': price_move_percent,
+
+            # 历史和余额信息
+            'historical_summary': historical_text,
+            'balance_info': balance_text,
+        }
+
+        # 使用 Jinja2 渲染模板
+        prompt = self.trading_prompt_template.render(context)
 
         return prompt
 
@@ -298,24 +374,54 @@ class PromptManager:
 - 关注未实现盈亏，如果亏损较大应更谨慎
 """
 
-        # 格式化 Prompt
-        prompt = self.spot_prompt_template.format(
-            symbol=symbol,
-            recommendation_reason=recommendation.get('reason', '未提供原因'),
-            recommendation_timestamp=recommendation.get('timestamp', '未知时间'),
-            current_price=f"{current_price:.2f}",
-            has_spot="已持有 ✅" if has_spot else "未持有 ❌",
-            rsi=f"{rsi:.2f}",
-            macd_hist=f"{macd_hist:.4f}",
-            ma_7=f"{ma_7:.2f}",
-            ma_25=f"{ma_25:.2f}",
-            ma_99=f"{ma_99:.2f}",
-            bb_position=f"{bb_position:.2%}",
-            volume_change=f"{volume_change:.2f}",
-            multi_timeframe_trends=trends_text,
-            max_trade_amount=f"{max_trade_amount:.2f}",
-            balance_info=balance_text
-        )
+        # 准备模板上下文（使用 Jinja2 渲染）
+        context = {
+            # 基础信息
+            'symbol': symbol,
+            'coin': symbol,
+
+            # 币种类型判断
+            'is_BTC': symbol == 'BTC',
+            'is_ETH': symbol == 'ETH',
+            'is_SOL': symbol == 'SOL',
+            'is_major_coin': symbol in ['BTC', 'ETH'],
+            'is_altcoin': symbol not in ['BTC', 'ETH'],
+
+            # 推荐信息
+            'recommendation_reason': recommendation.get('reason', '未提供原因'),
+            'recommendation_timestamp': recommendation.get('timestamp', '未知时间'),
+
+            # 市场数据
+            'current_price': f"{current_price:.2f}",
+            'current_price_raw': current_price,
+            'has_spot': "已持有 ✅" if has_spot else "未持有 ❌",
+            'has_spot_bool': has_spot,
+            'rsi': f"{rsi:.2f}",
+            'rsi_raw': rsi,
+            'macd_hist': f"{macd_hist:.4f}",
+            'macd_hist_raw': macd_hist,
+            'ma_7': f"{ma_7:.2f}",
+            'ma_7_raw': ma_7,
+            'ma_25': f"{ma_25:.2f}",
+            'ma_25_raw': ma_25,
+            'ma_99': f"{ma_99:.2f}",
+            'ma_99_raw': ma_99,
+            'bb_position': f"{bb_position:.2%}",
+            'bb_position_raw': bb_position,
+            'volume_change': f"{volume_change:.2f}",
+            'volume_change_raw': volume_change,
+            'multi_timeframe_trends': trends_text,
+
+            # 交易参数
+            'max_trade_amount': f"{max_trade_amount:.2f}",
+            'max_trade_amount_raw': max_trade_amount,
+
+            # 余额信息
+            'balance_info': balance_text,
+        }
+
+        # 使用 Jinja2 渲染模板
+        prompt = self.spot_prompt_template.render(context)
 
         return prompt
 

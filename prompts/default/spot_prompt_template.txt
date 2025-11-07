@@ -2,30 +2,30 @@
 
 ## 📊 推荐信息
 
-**来自:** 单币 Agent ({symbol})
-**推荐原因:** {recommendation_reason}
-**推荐时间:** {recommendation_timestamp}
+**来自:** 单币 Agent ({{ symbol }})
+**推荐原因:** {{ recommendation_reason }}
+**推荐时间:** {{ recommendation_timestamp }}
 
-## 📈 {symbol} 市场数据
+## 📈 {{ symbol }} 市场数据
 
 **基础信息:**
-- 当前价格: ${current_price}
-- 现货持仓: {has_spot}
+- 当前价格: ${{ current_price }}
+- 现货持仓: {{ has_spot }}
 
 **技术指标 (15分钟):**
-- RSI(14): {rsi}
-- MACD 柱状图: {macd_hist}
-- MA(7): ${ma_7} | MA(25): ${ma_25} | MA(99): ${ma_99}
-- 布林带位置: {bb_position} (0=下轨, 1=上轨)
-- 成交量变化: {volume_change}%
+- RSI(14): {{ rsi }}
+- MACD 柱状图: {{ macd_hist }}
+- MA(7): ${{ ma_7 }} | MA(25): ${{ ma_25 }} | MA(99): ${{ ma_99 }}
+- 布林带位置: {{ bb_position }} (0=下轨, 1=上轨)
+- 成交量变化: {{ volume_change }}%
 
 **多时间周期趋势:**
-{multi_timeframe_trends}
+{{ multi_timeframe_trends }}
 
-{balance_info}
+{{ balance_info }}
 
 ## 💰 投资权限
-- 单笔定投金额上限: ${max_trade_amount} USD
+- 单笔定投金额上限: ${{ max_trade_amount }} USD
 - **重要**: 你可以根据市场恐慌程度自主决定实际定投金额：
   * 极度恐慌（RSI < 20）: 建议 80-100% 上限金额
   * 深度超卖（RSI 20-25）: 建议 50-80% 上限金额
