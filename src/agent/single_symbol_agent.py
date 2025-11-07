@@ -228,9 +228,6 @@ class SingleSymbolAgent:
                 if result and result.get('status') == 'ok':
                     # 发送平仓通知
                     if self.notifier:
-                        # Hyperliquid API 字段说明：
-                        # 'entryPx' - 入场价格 (entry price)
-                        # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
                         entry_price = float(position.get('entryPx', 0))
                         exit_price = self.current_price
                         size = abs(float(position.get('szi', 0)))
@@ -244,7 +241,8 @@ class SingleSymbolAgent:
                             entry_price=entry_price,
                             exit_price=exit_price,
                             pnl=pnl,
-                            pnl_percent=pnl_percent
+                            pnl_percent=pnl_percent,
+                            order_hash=result.get('hash', '')
                         )
 
                     return f"✅ 卖出平多成功！"
@@ -435,14 +433,10 @@ class SingleSymbolAgent:
                 if result and result.get('status') == 'ok':
                     # 发送平仓通知
                     if self.notifier:
-                        # Hyperliquid API 字段说明：
-                        # 'entryPx' - 入场价格 (entry price)
-                        # 'szi' - 仓位大小 (position size)，正数表示多头，负数表示空头
                         entry_price = float(position.get('entryPx', 0))
                         exit_price = self.current_price
                         size = abs(float(position.get('szi', 0)))
                         pnl = result.get('pnl', 0)
-                        # Use leverage from position if available, default to 1
                         leverage = position.get('leverage', 1)
                         pnl_percent = ((entry_price - exit_price) / entry_price * leverage * 100) if entry_price > 0 else 0
 
@@ -453,7 +447,8 @@ class SingleSymbolAgent:
                             entry_price=entry_price,
                             exit_price=exit_price,
                             pnl=pnl,
-                            pnl_percent=pnl_percent
+                            pnl_percent=pnl_percent,
+                            order_hash=result.get('hash', '')
                         )
 
                     return f"✅ 买入平空成功！"
