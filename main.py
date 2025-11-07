@@ -128,6 +128,8 @@ class QuantFlowBot:
                 max_iterations=self.config.agent_max_iterations,
                 trade_amount=self.config.max_trade_amount,
                 max_leverage=self.config.max_leverage,
+                take_profit_ratio=self.config.take_profit_ratio,
+                stop_loss_ratio=self.config.stop_loss_ratio,
                 notifier=self.notifier,
                 prompt_manager=self.prompt_manager
             )

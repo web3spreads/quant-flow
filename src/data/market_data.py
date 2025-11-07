@@ -40,23 +40,31 @@ class MarketDataFetcher:
     ) -> Optional[pd.DataFrame]:
         """
         获取 OHLCV K线数据
-        
+
         Args:
             symbol: 交易对符号（如 'ETH'）
             timeframe: 时间周期（1m, 5m, 15m, 1h, 4h, 1d）
-            limit: 获取的K线数量
-            
+            limit: 获取的K线数据量
+
         Returns:
             DataFrame with columns: timestamp, open, high, low, close, volume
         """
         try:
+            # 验证交易对是否存在
+            if not self.is_symbol_available(symbol):
+                print(f"❌ Hyperliquid 不支持交易对 '{symbol}'")
+                available = self.get_available_symbols()
+                if available:
+                    print(f"💡 可用的交易对示例: {', '.join(available[:10])}")
+                return None
+
             # 计算时间范围
             end_time = int(datetime.now().timestamp() * 1000)
-            
+
             # 根据 timeframe 计算开始时间
             timeframe_minutes = self._parse_timeframe(timeframe)
             start_time = end_time - (timeframe_minutes * 60 * 1000 * limit)
-            
+
             # 获取K线数据
             candles = self.info.candles_snapshot(
                 name=symbol,
@@ -192,7 +200,7 @@ class MarketDataFetcher:
     def get_available_symbols(self) -> List[str]:
         """
         获取所有可用的交易对
-        
+
         Returns:
             交易对列表
         """
@@ -204,6 +212,23 @@ class MarketDataFetcher:
         except Exception as e:
             print(f"❌ 获取交易对列表失败: {e}")
             return []
+
+    def is_symbol_available(self, symbol: str) -> bool:
+        """
+        验证交易对是否可用
+
+        Args:
+            symbol: 交易对符号
+
+        Returns:
+            True 如果交易对可用，否则 False
+        """
+        try:
+            available_symbols = self.get_available_symbols()
+            return symbol in available_symbols
+        except Exception as e:
+            print(f"❌ 验证交易对失败: {e}")
+            return False
 
     def get_funding_rate(self, symbol: str) -> Optional[float]:
         """

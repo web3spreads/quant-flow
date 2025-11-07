@@ -288,6 +288,8 @@ class SingleSymbolAgent:
         max_iterations: int = 5,
         trade_amount: float = 100.0,
         max_leverage: int = 10,
+        take_profit_ratio: float = 0.05,
+        stop_loss_ratio: float = 0.02,
         notifier=None,
         prompt_manager: Optional[PromptManager] = None
     ):
@@ -305,6 +307,8 @@ class SingleSymbolAgent:
             max_iterations: 最大迭代次数
             trade_amount: 单笔交易金额上限
             max_leverage: 最大杠杆倍数
+            take_profit_ratio: 止盈比例
+            stop_loss_ratio: 止损比例
             notifier: 通知管理器（可选）
             prompt_manager: Prompt管理器（可选）
         """
@@ -313,6 +317,8 @@ class SingleSymbolAgent:
         self.logger = logger
         self.trade_amount = trade_amount
         self.max_leverage = max_leverage
+        self.take_profit_ratio = take_profit_ratio
+        self.stop_loss_ratio = stop_loss_ratio
         self.current_price = 0.0
         self.max_iterations = max_iterations
         self.notifier = notifier
@@ -638,6 +644,8 @@ class SingleSymbolAgent:
                     max_positions=max_positions,
                     max_trade_amount=self.trade_amount,
                     max_leverage=self.max_leverage,
+                    take_profit_ratio=self.take_profit_ratio,
+                    stop_loss_ratio=self.stop_loss_ratio,
                     historical_summary=historical_summary,
                     balance_info=balance_dict
                 )

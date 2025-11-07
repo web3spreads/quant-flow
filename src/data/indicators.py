@@ -243,36 +243,77 @@ class TechnicalIndicators:
             'volume': latest['volume'],
         }
 
-        # 添加 MA
+        # 添加 MA - 处理 nan 值
         for col in df.columns:
             if col.startswith('ma_'):
-                indicators[col] = latest[col]
+                value = latest[col]
+                # 如果 MA 是 nan，使用当前价格作为替代
+                if pd.isna(value) or np.isnan(value):
+                    indicators[col] = latest['close']
+                else:
+                    indicators[col] = value
 
-        # 添加 RSI
+        # 添加 RSI - 处理 nan 值
         if 'rsi' in df.columns:
-            indicators['rsi'] = latest['rsi']
+            rsi_value = latest['rsi']
+            # 如果 RSI 是 nan，使用中性值 50
+            if pd.isna(rsi_value) or np.isnan(rsi_value):
+                indicators['rsi'] = 50.0
+            else:
+                indicators['rsi'] = rsi_value
 
-        # 添加 MACD
+        # 添加 MACD - 处理 nan 值
         if 'macd' in df.columns:
-            indicators['macd'] = latest['macd']
-            indicators['macd_signal'] = latest['macd_signal']
-            indicators['macd_hist'] = latest['macd_hist']
+            macd_value = latest['macd']
+            macd_signal_value = latest['macd_signal']
+            macd_hist_value = latest['macd_hist']
 
-        # 添加布林带
+            # 如果 MACD 是 nan，使用 0
+            indicators['macd'] = 0.0 if pd.isna(macd_value) or np.isnan(macd_value) else macd_value
+            indicators['macd_signal'] = 0.0 if pd.isna(macd_signal_value) or np.isnan(macd_signal_value) else macd_signal_value
+            indicators['macd_hist'] = 0.0 if pd.isna(macd_hist_value) or np.isnan(macd_hist_value) else macd_hist_value
+
+        # 添加布林带 - 处理 nan 值
         if 'bb_upper' in df.columns:
-            indicators['bb_upper'] = latest['bb_upper']
-            indicators['bb_middle'] = latest['bb_middle']
-            indicators['bb_lower'] = latest['bb_lower']
+            bb_upper_value = latest['bb_upper']
+            bb_middle_value = latest['bb_middle']
+            bb_lower_value = latest['bb_lower']
+            current_price = latest['close']
 
-            # 计算价格在布林带中的位置（0-1）
-            bb_range = latest['bb_upper'] - latest['bb_lower']
-            if bb_range > 0:
-                indicators['bb_position'] = (latest['close'] - latest['bb_lower']) / bb_range
+            # 如果布林带是 nan，使用当前价格作为所有轨道的默认值
+            if pd.isna(bb_middle_value) or np.isnan(bb_middle_value):
+                indicators['bb_upper'] = current_price
+                indicators['bb_middle'] = current_price
+                indicators['bb_lower'] = current_price
+                indicators['bb_position'] = 0.5  # 中性位置
+            else:
+                indicators['bb_upper'] = bb_upper_value
+                indicators['bb_middle'] = bb_middle_value
+                indicators['bb_lower'] = bb_lower_value
 
-        # 添加成交量指标
+                # 计算价格在布林带中的位置（0-1）
+                bb_range = bb_upper_value - bb_lower_value
+                if bb_range > 0 and not np.isnan(bb_range):
+                    indicators['bb_position'] = (current_price - bb_lower_value) / bb_range
+                else:
+                    indicators['bb_position'] = 0.5  # 如果范围为0，返回中性位置
+
+        # 添加成交量指标 - 处理 nan 和 inf 值
         if 'volume_ma_20' in df.columns:
-            indicators['volume_ma_20'] = latest['volume_ma_20']
-            indicators['volume_change'] = latest['volume_change']
+            volume_ma_value = latest['volume_ma_20']
+            volume_change_value = latest['volume_change']
+
+            # 处理成交量均线 nan
+            if pd.isna(volume_ma_value) or np.isnan(volume_ma_value):
+                indicators['volume_ma_20'] = latest['volume']
+            else:
+                indicators['volume_ma_20'] = volume_ma_value
+
+            # 处理成交量变化 nan 或 inf
+            if pd.isna(volume_change_value) or np.isnan(volume_change_value) or np.isinf(volume_change_value):
+                indicators['volume_change'] = 0.0  # 使用0表示无变化
+            else:
+                indicators['volume_change'] = volume_change_value
 
         return indicators
 

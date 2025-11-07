@@ -98,6 +98,8 @@ class PromptManager:
         max_positions: int,
         max_trade_amount: float,
         max_leverage: int,
+        take_profit_ratio: float,
+        stop_loss_ratio: float,
         historical_summary: Optional[str] = None,
         balance_info: Optional[Dict[str, float]] = None
     ) -> str:
@@ -112,6 +114,8 @@ class PromptManager:
             max_positions: 最大持仓数
             max_trade_amount: 单笔交易金额上限
             max_leverage: 最大杠杆倍数
+            take_profit_ratio: 止盈比例（如 0.05 = 5%）
+            stop_loss_ratio: 止损比例（如 0.02 = 2%）
             historical_summary: 历史决策汇总
             balance_info: 账户余额信息 {'total': float, 'occupied': float, 'available': float}
 
@@ -183,6 +187,14 @@ class PromptManager:
 - 关注未实现盈亏，如果亏损较大应更谨慎
 """
 
+        # 计算手续费相关的值
+        position_value = max_trade_amount * max_leverage
+        open_fee = position_value * 0.00035
+        close_fee = position_value * 0.00035
+        total_fee = open_fee + close_fee
+        breakeven_percent = f"{(total_fee / max_trade_amount) * 100:.2f}%"
+        price_move_percent = f"{0.07 / max_leverage:.3f}%"
+
         # 格式化 Prompt
         prompt = self.trading_prompt_template.format(
             symbol=symbol,
@@ -206,6 +218,14 @@ class PromptManager:
             has_short="是 ✅" if has_short else "否 ❌",
             max_trade_amount=f"{max_trade_amount:.2f}",
             max_leverage=max_leverage,
+            take_profit_ratio=f"{take_profit_ratio:.1%}",
+            stop_loss_ratio=f"{stop_loss_ratio:.1%}",
+            position_value=f"{position_value:.2f}",
+            open_fee=f"{open_fee:.2f}",
+            close_fee=f"{close_fee:.2f}",
+            total_fee=f"{total_fee:.2f}",
+            breakeven_percent=breakeven_percent,
+            price_move_percent=price_move_percent,
             historical_summary=historical_text,
             balance_info=balance_text
         )
