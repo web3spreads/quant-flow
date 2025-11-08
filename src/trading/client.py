@@ -256,51 +256,31 @@ class HyperliquidClient:
         is_buy: bool,
         size: float,
         reduce_only: bool = False,
-        slippage: float = 0.05
+        slippage: float = 0.01
     ) -> Optional[Dict[str, Any]]:
         """
-        下市价单（使用 IoC 限价单模拟）
+        下市价单
 
         Args:
             symbol: 交易对符号（如 'ETH'）
             is_buy: True=买入（做多），False=卖出（做空）
             size: 下单数量（合约数量）
-            reduce_only: 是否只减仓
-            slippage: 滑点容忍度（默认 5%）
+            reduce_only: 是否只减仓（注意：market_open 不直接支持此参数）
+            slippage: 滑点容忍度（默认 1%，官方推荐）
 
         Returns:
             订单结果
         """
         try:
-            # 获取当前价格
-            current_price = self.get_current_price(symbol)
-            if not current_price:
-                return {'status': 'error', 'message': f'无法获取 {symbol} 当前价格'}
-
-            # 计算市价单的限价（加入滑点保护）
-            # 对于 IoC 订单，价格应该设置得比当前价格更优，以确保快速成交
-            if is_buy:
-                # 买入时，限价高于市价
-                limit_price = current_price * (1 + slippage)
-            else:
-                # 卖出时，限价低于市价
-                limit_price = current_price * (1 - slippage)
-
-            # 格式化价格到合适的精度
-            limit_price = self.format_price(symbol, limit_price)
-
-            # 确保价格为正数
-            if limit_price <= 0:
-                return {'status': 'error', 'message': f'计算的限价无效: {limit_price}'}
-
-            # 下单
-            order_result = self.exchange.order(
+            # 使用官方的 market_open 方法
+            # 注意：market_open 不直接支持 reduce_only 参数
+            # 如果需要 reduce_only，应该在调用前验证持仓
+            order_result = self.exchange.market_open(
                 symbol,
                 is_buy,
                 size,
-                limit_price,
-                {"limit": {"tif": "Ioc"}},  # Immediate-or-Cancel
-                reduce_only=reduce_only
+                None,      # px=None 表示使用当前市价
+                slippage   # 滑点容忍度
             )
 
             return order_result
@@ -351,18 +331,18 @@ class HyperliquidClient:
         size: float,
         take_profit_price: Optional[float] = None,
         stop_loss_price: Optional[float] = None,
-        slippage: float = 0.05
+        slippage: float = 0.01
     ) -> Dict[str, Any]:
         """
-        下带止盈止损的市价单
-        
+        下带止盈止损的市价单（使用官方 market_open 方法）
+
         Args:
             symbol: 交易对符号
             is_buy: True=买入，False=卖出
             size: 下单数量
             take_profit_price: 止盈价格
             stop_loss_price: 止损价格
-            slippage: 滑点容忍度
+            slippage: 滑点容忍度（默认 1%，官方推荐）
             
         Returns:
             {
@@ -633,42 +613,51 @@ class HyperliquidClient:
 
     def close_position(self, symbol: str, size: Optional[float] = None) -> Dict[str, Any]:
         """
-        平仓
-        
+        平仓（使用官方 market_close 或 market_open 方法）
+
         Args:
             symbol: 交易对符号
             size: 平仓数量（None=全平）
-            
+
         Returns:
             平仓结果
         """
         try:
-            # 获取当前持仓
-            positions = self.get_positions()
-            position = next((p for p in positions if p['coin'] == symbol), None)
-            
-            if not position:
-                return {'status': 'error', 'message': f'没有 {symbol} 的持仓'}
-            
-            # 获取持仓数量和方向
-            position_size = float(position['szi'])
-            if position_size == 0:
-                return {'status': 'error', 'message': f'{symbol} 仓位为 0'}
-            
-            # 计算平仓数量
-            close_size = abs(float(size)) if size else abs(position_size)
-            is_buy = position_size < 0  # 如果是空仓，平仓就是买入
-            
-            # 下市价平仓单
-            result = self.place_market_order(
-                symbol=symbol,
-                is_buy=is_buy,
-                size=close_size,
-                reduce_only=True
-            )
-            
-            return result
-            
+            if size is None:
+                # 全仓平仓 - 使用官方 market_close 方法（最简单最可靠）
+                print(f"🔴 市价全平 {symbol}")
+                result = self.exchange.market_close(symbol)
+                return result
+            else:
+                # 部分平仓 - 需要判断持仓方向
+                positions = self.get_positions()
+                position = next((p for p in positions if p['coin'] == symbol), None)
+
+                if not position:
+                    return {'status': 'error', 'message': f'没有 {symbol} 的持仓'}
+
+                # 获取持仓数量和方向
+                position_size = float(position['szi'])
+                if position_size == 0:
+                    return {'status': 'error', 'message': f'{symbol} 仓位为 0'}
+
+                # 判断平仓方向：持仓为正(多仓)则卖出平仓，持仓为负(空仓)则买入平仓
+                is_buy = position_size < 0
+                close_size = abs(float(size))
+
+                print(f"🔴 市价部分平仓 {symbol}: {'买入' if is_buy else '卖出'} {close_size}")
+
+                # 使用官方 market_open 方法，配合 1% 滑点
+                result = self.exchange.market_open(
+                    symbol,
+                    is_buy,
+                    close_size,
+                    None,    # px=None 使用市价
+                    0.01     # 1% 滑点（官方推荐，比原来的5%更合理）
+                )
+
+                return result
+
         except Exception as e:
             print(f"❌ 平仓失败: {e}")
             return {'status': 'error', 'message': str(e)}
