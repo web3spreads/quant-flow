@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Quant Flow - AI 驱动的加密货币自动交易机器人
-多 Agent 架构：为每个交易对维护独立上下文，配合汇总 Agent 和现货 Agent
+Quant Flow - AI-Powered Cryptocurrency Auto Trading Bot
+Multi-Agent Architecture: Maintains independent context for each trading pair, with aggregation agents and spot agents
 """
 
 import sys
-import time
 import signal
 from datetime import datetime, timedelta
+from typing import Dict, Any
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
