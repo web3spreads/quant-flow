@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Quant Flow - AI 驱动的加密货币自动交易机器人
-多 Agent 架构：为每个交易对维护独立上下文，配合汇总 Agent 和现货 Agent
+Quant Flow - AI-Powered Cryptocurrency Auto Trading Bot
+Multi-Agent Architecture: Maintains independent context for each trading pair, with aggregation agents and spot agents
 """
 
 import sys
-import time
 import signal
 from datetime import datetime, timedelta
+from typing import Dict, Any
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -54,6 +54,14 @@ class QuantFlowBot:
         # 调度器
         self.scheduler = None
         self.is_running = False
+
+        # 交易统计
+        self.statistics = {
+            'total_trades': 0,
+            'profitable_trades': 0,
+            'total_pnl': 0.0,
+            'start_time': None
+        }
 
     def _initialize_components(self):
         """初始化所有组件"""
@@ -388,9 +396,8 @@ class QuantFlowBot:
             if spot_recommendations:
                 self.logger.print_section("💎 现货定投 Agent 评估", style="bold blue")
                 
-                # 获取当前现货持仓（从持仓中筛选现货）
-                # TODO: 需要在 order_manager 中添加区分现货和合约的方法
-                current_spot_holdings = []  # 暂时为空，后续实现
+                # 获取当前现货持仓
+                current_spot_holdings = self.order_manager.get_spot_holdings()
                 
                 for recommendation in spot_recommendations:
                     try:
@@ -441,7 +448,10 @@ class QuantFlowBot:
         """启动机器人"""
         try:
             self.logger.print_section("🚀 启动多 Agent 交易机器人", style="bold green")
-            
+
+            # 记录启动时间
+            self.statistics['start_time'] = datetime.now()
+
             # 创建调度器
             self.scheduler = BlockingScheduler()
             
@@ -491,12 +501,44 @@ class QuantFlowBot:
         
         self.logger.print_info("机器人已停止")
 
+    def _gather_statistics(self) -> Dict[str, Any]:
+        """收集交易统计信息"""
+        try:
+            # 获取用户的交易填充历史
+            user_address = self.hyperliquid_client.address
+            fills = self.hyperliquid_client.info.user_fills(user_address)
+
+            if not fills:
+                return self.statistics
+
+            # 过滤出本次运行期间的交易
+            if self.statistics['start_time']:
+                start_timestamp = int(self.statistics['start_time'].timestamp() * 1000)
+                recent_fills = [f for f in fills if f.get('time', 0) >= start_timestamp]
+            else:
+                recent_fills = fills
+
+            # 统计交易信息
+            total_trades = len(recent_fills)
+            total_pnl = sum(float(f.get('closedPnl', 0)) for f in recent_fills)
+            profitable_trades = sum(1 for f in recent_fills if float(f.get('closedPnl', 0)) > 0)
+
+            self.statistics['total_trades'] = total_trades
+            self.statistics['total_pnl'] = total_pnl
+            self.statistics['profitable_trades'] = profitable_trades
+
+            return self.statistics
+
+        except Exception as e:
+            self.logger.print_warning(f"收集统计信息失败: {e}")
+            return self.statistics
+
     def _send_shutdown_notification(self, reason: str = "正常关闭"):
         """发送系统关闭通知"""
         try:
             if self.notifier and self.notifier.enabled:
                 self.logger.print_info("📤 发送关闭通知...")
-                
+
                 # 计算运行时长
                 if hasattr(self, 'start_time'):
                     from datetime import datetime
@@ -506,18 +548,14 @@ class QuantFlowBot:
                     runtime = f"{hours}小时{minutes}分钟"
                 else:
                     runtime = None
-                
-                # TODO: 可以添加统计信息（交易次数、盈亏等）
-                # statistics = {
-                #     'total_trades': 0,
-                #     'profitable_trades': 0,
-                #     'total_pnl': 0.0
-                # }
-                
+
+                # 收集交易统计信息
+                statistics = self._gather_statistics()
+
                 self.notifier.notify_system_shutdown(
                     reason=reason,
                     runtime=runtime,
-                    statistics=None
+                    statistics=statistics if statistics['total_trades'] > 0 else None
                 )
                 self.logger.print_info("✅ 关闭通知已发送")
         except Exception as e:
