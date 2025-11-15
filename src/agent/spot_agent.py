@@ -271,6 +271,10 @@ class SpotAgent:
         def buy_spot_callback(symbol: str, amount: float = None) -> str:
             """现货买入回调"""
             try:
+                # 检查是否允许定投（trade_amount > 0 表示允许）
+                if self.trade_amount <= 0:
+                    return f"❌ 当前余额不足，无法进行现货定投。"
+
                 # 确定实际定投金额
                 actual_amount = amount if amount is not None else self.trade_amount
 
