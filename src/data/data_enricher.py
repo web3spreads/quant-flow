@@ -75,7 +75,12 @@ class MarketDataEnricher:
         oi_and_funding = self._get_oi_and_funding(symbol)
         enriched.update(oi_and_funding)
 
-        # 6. 格式化数据为字符串(用于prompt模板)
+        # 6. 添加指标分析文本(帮助AI理解数据)
+        if df_15m is not None and not df_15m.empty:
+            analysis = self._analyze_indicators(enriched, df_15m, df_4h)
+            enriched.update(analysis)
+
+        # 7. 格式化数据为字符串(用于prompt模板)
         enriched = self._format_for_template(enriched)
 
         return enriched
@@ -197,6 +202,141 @@ class MarketDataEnricher:
                 'oi_average': 0,
                 'funding_rate': 0,
             }
+
+    def _analyze_indicators(
+        self,
+        enriched: Dict[str, Any],
+        df_15m: pd.DataFrame,
+        df_4h: Optional[pd.DataFrame] = None
+    ) -> Dict[str, str]:
+        """
+        分析指标数据,生成文本性结论
+
+        Args:
+            enriched: 已增强的数据字典
+            df_15m: 15分钟K线DataFrame
+            df_4h: 4小时K线DataFrame
+
+        Returns:
+            包含分析结论的字典
+        """
+        analysis = {}
+
+        # 1. 分析价格趋势
+        if 'mid_prices_raw' in enriched and len(enriched['mid_prices_raw']) >= 5:
+            prices = enriched['mid_prices_raw']
+            price_change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
+
+            if price_change_pct > 1.0:
+                trend = f"上升趋势(+{price_change_pct:.2f}%)"
+            elif price_change_pct < -1.0:
+                trend = f"下降趋势({price_change_pct:.2f}%)"
+            else:
+                trend = f"横盘整理({price_change_pct:.2f}%)"
+
+            analysis['price_trend_analysis'] = trend
+
+        # 2. 分析MACD
+        current_macd = enriched.get('current_macd', 0)
+        macd_signal = df_15m.iloc[-1].get('macd_signal', 0) if not df_15m.empty else 0
+
+        if current_macd > macd_signal and current_macd > 0:
+            macd_status = "金叉且位于零轴上方(强势多头)"
+        elif current_macd > macd_signal and current_macd <= 0:
+            macd_status = "金叉但位于零轴下方(多头转强)"
+        elif current_macd < macd_signal and current_macd < 0:
+            macd_status = "死叉且位于零轴下方(强势空头)"
+        elif current_macd < macd_signal and current_macd >= 0:
+            macd_status = "死叉但位于零轴上方(空头转强)"
+        else:
+            macd_status = f"MACD={current_macd:.4f}"
+
+        analysis['macd_analysis'] = macd_status
+
+        # 3. 分析RSI
+        current_rsi = enriched.get('current_rsi', 50)
+
+        if current_rsi >= 70:
+            rsi_status = f"超买区({current_rsi:.1f})"
+        elif current_rsi <= 30:
+            rsi_status = f"超卖区({current_rsi:.1f})"
+        elif current_rsi >= 60:
+            rsi_status = f"偏强({current_rsi:.1f})"
+        elif current_rsi <= 40:
+            rsi_status = f"偏弱({current_rsi:.1f})"
+        else:
+            rsi_status = f"中性({current_rsi:.1f})"
+
+        analysis['rsi_analysis'] = rsi_status
+
+        # 4. 分析EMA关系
+        current_price = df_15m.iloc[-1]['close'] if not df_15m.empty else 0
+        current_ema20 = enriched.get('current_ema20', current_price)
+
+        if current_price > current_ema20 * 1.01:
+            ema_status = f"价格在EMA20上方({((current_price/current_ema20 - 1) * 100):.2f}%)"
+        elif current_price < current_ema20 * 0.99:
+            ema_status = f"价格在EMA20下方({((current_price/current_ema20 - 1) * 100):.2f}%)"
+        else:
+            ema_status = "价格接近EMA20"
+
+        analysis['ema_analysis'] = ema_status
+
+        # 5. 分析成交量
+        if not df_15m.empty and 'volume' in df_15m.columns:
+            current_volume = df_15m.iloc[-1]['volume']
+            avg_volume = df_15m['volume'].tail(20).mean()
+
+            if current_volume > avg_volume * 1.5:
+                volume_status = f"明显放量({(current_volume/avg_volume):.1f}倍)"
+            elif current_volume > avg_volume * 1.2:
+                volume_status = f"温和放量({(current_volume/avg_volume):.1f}倍)"
+            elif current_volume < avg_volume * 0.5:
+                volume_status = f"明显缩量({(current_volume/avg_volume):.1f}倍)"
+            else:
+                volume_status = f"成交量正常({(current_volume/avg_volume):.1f}倍)"
+
+            analysis['volume_analysis'] = volume_status
+
+        # 6. 分析4小时趋势
+        if df_4h is not None and not df_4h.empty:
+            h4_price = df_4h.iloc[-1]['close']
+            h4_ema20 = enriched.get('ema_20_4h', h4_price)
+            h4_ema50 = enriched.get('ema_50_4h', h4_price)
+
+            if h4_price > h4_ema20 and h4_ema20 > h4_ema50:
+                h4_trend = "4小时多头排列(强势)"
+            elif h4_price < h4_ema20 and h4_ema20 < h4_ema50:
+                h4_trend = "4小时空头排列(弱势)"
+            elif h4_price > h4_ema20:
+                h4_trend = "4小时偏多"
+            elif h4_price < h4_ema20:
+                h4_trend = "4小时偏空"
+            else:
+                h4_trend = "4小时震荡"
+
+            analysis['h4_trend_analysis'] = h4_trend
+
+        # 7. 综合分析
+        signals = []
+        if 'macd_analysis' in analysis and '金叉' in analysis['macd_analysis']:
+            signals.append("MACD多头")
+        elif 'macd_analysis' in analysis and '死叉' in analysis['macd_analysis']:
+            signals.append("MACD空头")
+
+        if current_rsi >= 70:
+            signals.append("RSI超买")
+        elif current_rsi <= 30:
+            signals.append("RSI超卖")
+
+        if current_price > current_ema20:
+            signals.append("价格在EMA上方")
+        else:
+            signals.append("价格在EMA下方")
+
+        analysis['综合信号'] = ', '.join(signals) if signals else "无明显信号"
+
+        return analysis
 
     def _format_for_template(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """格式化数据为模板友好的字符串格式"""
