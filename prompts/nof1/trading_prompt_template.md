@@ -22,7 +22,29 @@
 - 持仓量 (Open Interest): 最新: {{ oi_latest }} | 平均: {{ oi_average }}
 - 资金费率 (Funding Rate): {{ funding_rate }}
 
-**技术指标分析:**
+**日内序列 (按分钟, 最旧 → 最新):**
+
+中间价格: {{ mid_prices }}
+
+EMA指标 (20周期): {{ ema_indicators }}
+
+MACD指标: {{ macd_indicators }}
+
+RSI指标 (7周期): {{ rsi_7_indicators }}
+
+RSI指标 (14周期): {{ rsi_14_indicators }}
+
+**长期背景 (4小时时间框架):**
+
+- 20周期EMA: {{ ema_20_4h }} vs. 50周期EMA: {{ ema_50_4h }}
+- 3周期ATR: {{ atr_3_4h }} vs. 14周期ATR: {{ atr_14_4h }}
+- 当前成交量: {{ current_volume }} vs. 平均成交量: {{ avg_volume }}
+
+MACD指标 (4小时): {{ macd_4h_indicators }}
+
+RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
+
+**📊 技术指标分析 (程序已为你解读):**
 
 - 价格趋势: {{ price_trend_analysis }}
 - MACD状态: {{ macd_analysis }}

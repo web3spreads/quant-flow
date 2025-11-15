@@ -353,7 +353,7 @@ class MarketDataEnricher:
             if field in formatted and isinstance(formatted[field], (int, float)):
                 formatted[f'{field}_formatted'] = f"{formatted[field]:.2f}"
 
-        # 格式化序列为逗号分隔字符串
+        # 格式化序列为逗号分隔字符串(直接替换列表字段)
         list_fields = [
             'mid_prices', 'ema_indicators', 'macd_indicators',
             'rsi_7_indicators', 'rsi_14_indicators',
@@ -362,7 +362,8 @@ class MarketDataEnricher:
 
         for field in list_fields:
             if field in formatted and isinstance(formatted[field], list):
-                formatted[f'{field}_str'] = ', '.join(map(str, formatted[field]))
+                # 直接替换为逗号分隔字符串,更易读
+                formatted[field] = ', '.join(map(str, formatted[field]))
 
         # 资金费率格式化为科学计数法
         if 'funding_rate' in formatted:
@@ -392,7 +393,16 @@ class MarketDataEnricher:
             available = balance_info.get('available', 0)
 
             # 计算总回报率
-            total_return_pct = ((total - initial_balance) / initial_balance) * 100 if initial_balance > 0 else 0
+            # 如果initial_balance明显不合理(比当前余额大太多),说明配置错误,不计算回报率
+            if initial_balance > 0 and total > 0:
+                # 如果initial_balance是当前余额的10倍以上,说明配置有误
+                if initial_balance > total * 10:
+                    # 使用当前余额作为基准,回报率为0
+                    total_return_pct = 0.0
+                else:
+                    total_return_pct = ((total - initial_balance) / initial_balance) * 100
+            else:
+                total_return_pct = 0.0
 
             account_data.update({
                 'total_return_pct': total_return_pct,
