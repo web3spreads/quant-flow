@@ -131,6 +131,30 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
+    def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """
+        计算平均真实波幅 (Average True Range)
+
+        Args:
+            df: OHLCV DataFrame
+            period: ATR 周期，默认 14
+
+        Returns:
+            添加了 ATR 列的 DataFrame
+        """
+        # 计算真实波幅 (True Range)
+        high_low = df['high'] - df['low']
+        high_close = abs(df['high'] - df['close'].shift())
+        low_close = abs(df['low'] - df['close'].shift())
+
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+
+        # 计算 ATR (使用 EMA)
+        df[f'atr_{period}'] = tr.ewm(span=period, adjust=False).mean()
+
+        return df
+
+    @staticmethod
     def calculate_volume_analysis(df: pd.DataFrame) -> pd.DataFrame:
         """
         计算成交量相关指标
@@ -169,7 +193,9 @@ class TechnicalIndicators:
         ma_periods: List[int] = [7, 25, 99],
         rsi_period: int = 14,
         macd_params: Dict[str, int] = None,
-        bollinger_params: Dict[str, Any] = None
+        bollinger_params: Dict[str, Any] = None,
+        ema_periods: List[int] = [20, 50],
+        atr_periods: List[int] = [3, 14]
     ) -> pd.DataFrame:
         """
         计算所有技术指标
@@ -180,6 +206,8 @@ class TechnicalIndicators:
             rsi_period: RSI 周期
             macd_params: MACD 参数 {'fast': 12, 'slow': 26, 'signal': 9}
             bollinger_params: 布林带参数 {'period': 20, 'std_dev': 2.0}
+            ema_periods: EMA 周期列表
+            atr_periods: ATR 周期列表
 
         Returns:
             添加了所有指标列的 DataFrame
@@ -195,6 +223,10 @@ class TechnicalIndicators:
 
         # 计算移动平均线
         df = TechnicalIndicators.calculate_ma(df, ma_periods)
+
+        # 计算 EMA
+        for period in ema_periods:
+            df[f'ema_{period}'] = TechnicalIndicators.calculate_ema(df['close'], period)
 
         # 计算 RSI
         df = TechnicalIndicators.calculate_rsi(df, rsi_period)
@@ -213,6 +245,10 @@ class TechnicalIndicators:
             bollinger_params['period'],
             bollinger_params['std_dev']
         )
+
+        # 计算 ATR
+        for period in atr_periods:
+            df = TechnicalIndicators.calculate_atr(df, period)
 
         # 计算成交量指标
         df = TechnicalIndicators.calculate_volume_analysis(df)
@@ -316,6 +352,49 @@ class TechnicalIndicators:
                 indicators['volume_change'] = volume_change_value
 
         return indicators
+
+    @staticmethod
+    def get_historical_series(df: pd.DataFrame, period: int = 10) -> Dict[str, List]:
+        """
+        获取最近N个周期的历史序列数据
+
+        Args:
+            df: 计算好指标的 DataFrame
+            period: 获取的历史周期数,默认10
+
+        Returns:
+            包含历史序列的字典
+        """
+        if df.empty or len(df) < period:
+            period = len(df)
+
+        if period == 0:
+            return {}
+
+        # 获取最近N条数据
+        recent_df = df.tail(period)
+
+        series = {
+            'mid_prices': recent_df['close'].tolist(),
+            'volumes': recent_df['volume'].tolist(),
+            'timestamps': recent_df.index.tolist() if isinstance(recent_df.index, pd.DatetimeIndex) else []
+        }
+
+        # 添加EMA序列
+        if 'ema_20' in recent_df.columns:
+            series['ema_20'] = recent_df['ema_20'].fillna(recent_df['close']).tolist()
+
+        # 添加MACD序列
+        if 'macd' in recent_df.columns:
+            series['macd'] = recent_df['macd'].fillna(0).tolist()
+            series['macd_signal'] = recent_df['macd_signal'].fillna(0).tolist()
+            series['macd_hist'] = recent_df['macd_hist'].fillna(0).tolist()
+
+        # 添加RSI序列
+        if 'rsi' in recent_df.columns:
+            series['rsi'] = recent_df['rsi'].fillna(50).tolist()
+
+        return series
 
     @staticmethod
     def analyze_trend(df: pd.DataFrame, ma_short: int = 7, ma_long: int = 25) -> str:
