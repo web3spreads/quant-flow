@@ -533,7 +533,8 @@ class SingleSymbolAgent:
         multi_timeframe_trends: Dict[str, str],
         current_positions: list,
         max_positions: int,
-        historical_summary: Optional[str] = None
+        historical_summary: Optional[str] = None,
+        enriched_data: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, Dict[str, Any]]:
         """
         做出交易决策
@@ -577,7 +578,8 @@ class SingleSymbolAgent:
                 take_profit_ratio=self.take_profit_ratio,
                 stop_loss_ratio=self.stop_loss_ratio,
                 historical_summary=historical_summary,
-                balance_info=balance_dict
+                balance_info=balance_dict,
+                enriched_data=enriched_data
             )
 
             # 显示 Prompt
