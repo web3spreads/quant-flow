@@ -11,6 +11,34 @@ This guide explains how to deploy the Quant Flow trading bot using Docker and Do
 
 ## Quick Start
 
+### 方法一：自动化部署（推荐 ⭐）
+
+使用自动初始化脚本，一键完成所有设置：
+
+```bash
+# 1. 运行初始化脚本（自动设置权限和配置）
+./init-deployment.sh
+
+# 2. 编辑配置文件
+vim .env          # 配置 API 密钥
+vim config.yaml   # 配置交易参数
+
+# 3. 构建并启动容器
+docker-compose up -d --build
+
+# 4. 查看日志
+docker-compose logs -f
+```
+
+初始化脚本会自动：
+- ✅ 创建必要的目录结构
+- ✅ 设置正确的文件权限（避免权限错误）
+- ✅ 复制配置文件模板
+- ✅ 检查 Docker 环境
+- ✅ 提供详细的下一步指引
+
+### 方法二：手动部署
+
 ### 1. Clone the Repository
 
 ```bash
@@ -18,7 +46,27 @@ git clone <repository-url>
 cd quant-flow
 ```
 
-### 2. Configure Environment Variables
+### 2. 设置日志目录权限（重要！）
+
+**这一步非常重要，避免权限错误：**
+
+```bash
+# 创建日志目录
+mkdir -p logs/decisions logs/trades
+
+# 设置权限（允许容器写入）
+chmod -R 777 logs/
+```
+
+**为什么需要这一步？**
+
+Docker 容器内使用 `quantflow` 用户（UID 1000）运行，需要写入权限才能创建日志文件。不设置权限会导致以下错误：
+
+```
+PermissionError: [Errno 13] Permission denied: '/app/logs/trading_20251115.log'
+```
+
+### 3. Configure Environment Variables
 
 Create a `.env` file from the example:
 
@@ -264,6 +312,75 @@ This keeps a maximum of 30MB of Docker logs (3 files × 10MB).
 
 ## Troubleshooting
 
+### ❌ 权限错误（最常见问题）
+
+**问题：** 容器启动后不断重启，日志显示：
+
+```
+PermissionError: [Errno 13] Permission denied: '/app/logs/trading_20251115.log'
+```
+
+**原因：** Docker 容器内的 `quantflow` 用户（UID 1000）无法写入宿主机的 `logs/` 目录。
+
+**解决方案（按推荐顺序）：**
+
+#### 方案 1：使用初始化脚本（最简单）
+
+```bash
+# 停止容器
+docker-compose down
+
+# 运行初始化脚本
+./init-deployment.sh
+
+# 重新启动
+docker-compose up -d
+```
+
+#### 方案 2：手动修复权限
+
+```bash
+# 停止容器
+docker-compose down
+
+# 修复权限
+chmod -R 777 logs/
+
+# 重新启动
+docker-compose up -d
+```
+
+#### 方案 3：删除并重建（彻底清理）
+
+```bash
+# 停止并删除容器
+docker-compose down
+
+# 删除旧的 logs 目录
+rm -rf logs/
+
+# 重新创建并设置权限
+mkdir -p logs/decisions logs/trades
+chmod -R 777 logs/
+
+# 重新启动
+docker-compose up -d
+```
+
+#### 验证修复成功
+
+```bash
+# 查看容器状态（应该是 Up 状态）
+docker-compose ps
+
+# 查看日志（不应该有权限错误）
+docker-compose logs --tail 50
+
+# 检查日志文件是否生成
+ls -la logs/
+# 应该看到 trading_YYYYMMDD.log 文件
+```
+
 ### Container Won't Start
 
 Check logs for errors:
@@ -276,6 +393,7 @@ Common issues:
 - Missing `.env` file
 - Invalid API keys
 - Missing `config.yaml`
+- **权限问题**（见上面的详细说明）
 - Port conflicts (unlikely for this bot)
 
 ### Container Exits Immediately
