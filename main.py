@@ -261,22 +261,32 @@ class QuantFlowBot:
                 min_trade_amount=10.0,
                 balance_info=balance_info
             )
-            
-            if not suggestion['can_trade']:
+
+            can_open_new_positions = suggestion['can_trade']
+
+            # 如果余额不足开新仓，但有现有持仓需要管理
+            if not can_open_new_positions:
                 self.logger.print_warning(f"⚠️ {suggestion['reason']}")
-                self.logger.print_warning("跳过本次交易周期")
-                return
-            
-            adjusted_amount = suggestion['suggested_amount']
-            if adjusted_amount != self.config.trade_amount:
-                self.logger.print_warning(f"⚠️ {suggestion['reason']}")
-            
+
+                # 如果没有任何持仓，则跳过整个周期
+                if len(current_positions) == 0:
+                    self.logger.print_warning("⚠️ 无持仓且余额不足，跳过本次交易周期")
+                    return
+
+                # 有持仓时继续执行，但禁止开新仓
+                self.logger.print_info("✅ 检测到现有持仓，继续分析以管理持仓（止盈/止损）")
+                adjusted_amount = 0  # 设为 0 表示不能开新仓
+            else:
+                # 余额充足，可以开新仓
+                adjusted_amount = suggestion['suggested_amount']
+                if adjusted_amount != self.config.trade_amount:
+                    self.logger.print_warning(f"⚠️ {suggestion['reason']}")
+                self.logger.print_info(f"本次交易金额: ${adjusted_amount:.2f}")
+
             # 更新所有 Agent 的交易金额
             for agent in self.symbol_agents.values():
                 agent.trade_amount = adjusted_amount
             self.spot_agent.trade_amount = adjusted_amount
-            
-            self.logger.print_info(f"本次交易金额: ${adjusted_amount:.2f}")
             
             # 第二步：为每个交易对独立决策
             self.logger.print_section("🤖 多 Agent 独立决策", style="bold magenta")

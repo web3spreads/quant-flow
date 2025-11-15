@@ -95,6 +95,10 @@ class SingleSymbolAgent:
         def buy_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
             """买入开多回调"""
             try:
+                # 检查是否允许开新仓（trade_amount > 0 表示允许）
+                if self.trade_amount <= 0:
+                    return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+
                 # 使用 AI 指定的金额和杠杆，如果没有指定则使用默认上限
                 actual_amount = amount if amount is not None else self.trade_amount
                 actual_leverage = leverage if leverage is not None else self.max_leverage
@@ -301,6 +305,10 @@ class SingleSymbolAgent:
         def sell_short_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
             """卖空开空回调"""
             try:
+                # 检查是否允许开新仓（trade_amount > 0 表示允许）
+                if self.trade_amount <= 0:
+                    return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+
                 # 使用 AI 指定的金额和杠杆，如果没有指定则使用默认上限
                 actual_amount = amount if amount is not None else self.trade_amount
                 actual_leverage = leverage if leverage is not None else self.max_leverage
@@ -511,6 +519,10 @@ class SingleSymbolAgent:
 
         def buy_spot_callback(symbol: str, amount: Optional[float] = None) -> str:
             """现货定投推荐回调（仅推荐，不直接执行）"""
+            # 检查是否允许开新仓
+            if self.trade_amount <= 0:
+                return f"❌ 当前余额不足，无法进行现货定投。"
+
             actual_amount = amount if amount is not None else self.trade_amount
             if actual_amount > self.trade_amount:
                 return f"❌ 定投金额 ${actual_amount} 超过上限 ${self.trade_amount}"
