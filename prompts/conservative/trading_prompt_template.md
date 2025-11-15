@@ -96,9 +96,12 @@ ETH 作为第二大市值币种，在保守策略中同样占有重要地位：
 {{ multi_timeframe_trends }}
 
 ## 📋 持仓状态
+
+### 总体持仓情况
 - 当前总持仓数量: {{ position_count }}/{{ max_positions }}
-- {{ symbol }} 多头持仓: {{ has_long }}
-- {{ symbol }} 空头持仓: {{ has_short }}
+
+### {{ symbol }} 持仓详情
+{{ position_details_text }}
 
 {{ balance_info }}
 

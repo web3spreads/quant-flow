@@ -14,6 +14,154 @@ from jinja2 import Environment, FileSystemLoader, Template
 class PromptManager:
     """Prompt 管理器 - 支持从配置文件加载和切换不同的 Prompt 集合"""
 
+    @staticmethod
+    def format_position_details(symbol: str, current_positions: list, current_price: float) -> Dict[str, Any]:
+        """
+        格式化当前币种的持仓详情
+
+        Args:
+            symbol: 交易对
+            current_positions: 所有持仓列表
+            current_price: 当前价格
+
+        Returns:
+            包含持仓详情的字典，包括：
+            - has_position: 是否有持仓
+            - position_side: 持仓方向 (long/short/none)
+            - entry_price: 入场价格
+            - position_size: 持仓数量（绝对值）
+            - position_value: 持仓价值
+            - leverage: 杠杆倍数
+            - unrealized_pnl: 未实现盈亏（USD）
+            - unrealized_pnl_percent: 未实现盈亏百分比
+            - margin_used: 使用的保证金
+            - liquidation_price: 清算价格（如果有）
+            - price_change_percent: 价格变化百分比
+            - distance_from_entry: 距离入场价的距离百分比
+            - position_text: 格式化的持仓信息文本
+        """
+        # 查找当前币种的持仓
+        position = None
+        for pos in current_positions:
+            if pos.get('coin') == symbol:
+                position = pos
+                break
+
+        # 如果没有持仓，返回空信息
+        if not position:
+            return {
+                'has_position': False,
+                'position_side': 'none',
+                'entry_price': 0,
+                'position_size': 0,
+                'position_value': 0,
+                'leverage': 0,
+                'unrealized_pnl': 0,
+                'unrealized_pnl_percent': 0,
+                'margin_used': 0,
+                'liquidation_price': 0,
+                'price_change_percent': 0,
+                'distance_from_entry': 0,
+                'position_text': f'**{symbol} 持仓状态**: 无持仓 ❌'
+            }
+
+        # 提取持仓数据
+        szi = float(position.get('szi', 0))
+        entry_price = float(position.get('entryPx', 0))
+        position_value = abs(float(position.get('positionValue', 0)))
+        unrealized_pnl = float(position.get('unrealizedPnl', 0))
+
+        # 确定方向
+        position_side = 'long' if szi > 0 else 'short'
+        position_size = abs(szi)
+
+        # 获取杠杆信息
+        leverage_info = position.get('leverage', {})
+        if isinstance(leverage_info, dict):
+            leverage = int(leverage_info.get('value', 1))
+        else:
+            leverage = int(leverage_info) if leverage_info else 1
+
+        # 计算盈亏百分比
+        if entry_price > 0:
+            if position_side == 'long':
+                # 多头：(当前价 - 入场价) / 入场价 * 杠杆
+                price_change_percent = ((current_price - entry_price) / entry_price) * 100
+                unrealized_pnl_percent = price_change_percent * leverage
+            else:
+                # 空头：(入场价 - 当前价) / 入场价 * 杠杆
+                price_change_percent = ((entry_price - current_price) / entry_price) * 100
+                unrealized_pnl_percent = price_change_percent * leverage
+
+            distance_from_entry = abs(price_change_percent)
+        else:
+            price_change_percent = 0
+            unrealized_pnl_percent = 0
+            distance_from_entry = 0
+
+        # 计算保证金（仓位价值 / 杠杆）
+        margin_used = position_value / leverage if leverage > 0 else position_value
+
+        # 获取清算价格（如果有）
+        liquidation_price = float(position.get('liquidationPx', 0))
+
+        # 计算距离清算价的距离
+        if liquidation_price > 0 and current_price > 0:
+            if position_side == 'long':
+                distance_to_liquidation = ((current_price - liquidation_price) / current_price) * 100
+            else:
+                distance_to_liquidation = ((liquidation_price - current_price) / current_price) * 100
+        else:
+            distance_to_liquidation = 0
+
+        # 格式化持仓信息文本
+        side_emoji = "📈" if position_side == 'long' else "📉"
+        pnl_emoji = "✅" if unrealized_pnl > 0 else ("❌" if unrealized_pnl < 0 else "➖")
+
+        position_text = f"""**{symbol} 持仓详情** {side_emoji}:
+
+**基础信息**:
+- 持仓方向: {'做多 (Long)' if position_side == 'long' else '做空 (Short)'} {side_emoji}
+- 持仓数量: {position_size:.4f} {symbol}
+- 入场价格: ${entry_price:.2f}
+- 当前价格: ${current_price:.2f}
+- 杠杆倍数: {leverage}x
+
+**盈亏状况** {pnl_emoji}:
+- 价格变化: {price_change_percent:+.2f}% (距离入场价)
+- 未实现盈亏: ${unrealized_pnl:+.2f} ({unrealized_pnl_percent:+.2f}%) {pnl_emoji}
+- 持仓价值: ${position_value:.2f}
+- 使用保证金: ${margin_used:.2f}"""
+
+        if liquidation_price > 0:
+            position_text += f"""
+- 清算价格: ${liquidation_price:.2f}
+- 距离清算: {distance_to_liquidation:.2f}%"""
+
+        position_text += f"""
+
+**重要提示**:
+- 当前{'盈利' if unrealized_pnl > 0 else '亏损'}状态，请根据市场情况决定是否止盈/止损
+- 杠杆倍数为 {leverage}x，风险{'较高' if leverage >= 10 else '适中'}
+- 请关注价格走势，及时调整策略"""
+
+        return {
+            'has_position': True,
+            'position_side': position_side,
+            'entry_price': entry_price,
+            'position_size': position_size,
+            'position_value': position_value,
+            'leverage': leverage,
+            'unrealized_pnl': unrealized_pnl,
+            'unrealized_pnl_percent': unrealized_pnl_percent,
+            'margin_used': margin_used,
+            'liquidation_price': liquidation_price,
+            'price_change_percent': price_change_percent,
+            'distance_from_entry': distance_from_entry,
+            'distance_to_liquidation': distance_to_liquidation if liquidation_price > 0 else 0,
+            'position_text': position_text
+        }
+
     def __init__(self, config_file: str = "prompts/prompts.yaml", prompt_set: str = "default"):
         """
         初始化 Prompt 管理器
@@ -170,15 +318,12 @@ class PromptManager:
         bb_position = market_data.get('bb_position', 0.5)
         volume_change = market_data.get('volume_change', 0)
 
-        # 判断持仓状态
-        has_long = any(
-            pos.get('coin') == symbol and pos.get('side', 'long') == 'long'
-            for pos in current_positions
-        )
-        has_short = any(
-            pos.get('coin') == symbol and pos.get('side') == 'short'
-            for pos in current_positions
-        )
+        # 获取详细持仓信息
+        position_details = self.format_position_details(symbol, current_positions, current_price)
+
+        # 判断持仓状态（保持向后兼容）
+        has_long = position_details['has_position'] and position_details['position_side'] == 'long'
+        has_short = position_details['has_position'] and position_details['position_side'] == 'short'
         position_count = len(current_positions)
 
         # 格式化多周期趋势
@@ -270,13 +415,39 @@ class PromptManager:
             'volume_change_raw': volume_change,
             'multi_timeframe_trends': trends_text,
 
-            # 持仓信息
+            # 持仓信息（基础）
             'position_count': position_count,
             'max_positions': max_positions,
             'has_long': "是 ✅" if has_long else "否 ❌",
             'has_long_bool': has_long,
             'has_short': "是 ✅" if has_short else "否 ❌",
             'has_short_bool': has_short,
+
+            # 当前币种详细持仓信息
+            'has_position': position_details['has_position'],
+            'position_side': position_details['position_side'],
+            'entry_price': f"{position_details['entry_price']:.2f}",
+            'entry_price_raw': position_details['entry_price'],
+            'position_size': f"{position_details['position_size']:.4f}",
+            'position_size_raw': position_details['position_size'],
+            'position_value': f"{position_details['position_value']:.2f}",
+            'position_value_raw': position_details['position_value'],
+            'position_leverage': position_details['leverage'],
+            'position_unrealized_pnl': f"{position_details['unrealized_pnl']:+.2f}",
+            'position_unrealized_pnl_raw': position_details['unrealized_pnl'],
+            'position_unrealized_pnl_percent': f"{position_details['unrealized_pnl_percent']:+.2f}",
+            'position_unrealized_pnl_percent_raw': position_details['unrealized_pnl_percent'],
+            'position_margin_used': f"{position_details['margin_used']:.2f}",
+            'position_margin_used_raw': position_details['margin_used'],
+            'position_liquidation_price': f"{position_details['liquidation_price']:.2f}",
+            'position_liquidation_price_raw': position_details['liquidation_price'],
+            'position_price_change_percent': f"{position_details['price_change_percent']:+.2f}",
+            'position_price_change_percent_raw': position_details['price_change_percent'],
+            'position_distance_from_entry': f"{position_details['distance_from_entry']:.2f}",
+            'position_distance_from_entry_raw': position_details['distance_from_entry'],
+            'position_distance_to_liquidation': f"{position_details['distance_to_liquidation']:.2f}",
+            'position_distance_to_liquidation_raw': position_details['distance_to_liquidation'],
+            'position_details_text': position_details['position_text'],
 
             # 交易参数
             'max_trade_amount': f"{max_trade_amount:.2f}",

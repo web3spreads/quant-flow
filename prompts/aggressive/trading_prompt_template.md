@@ -98,9 +98,12 @@ ETH 波动性高，是激进交易者的理想标的：
 {{ multi_timeframe_trends }}
 
 ## 📋 持仓状态
+
+### 总体持仓情况
 - 当前总持仓数量: {{ position_count }}/{{ max_positions }}
-- {{ symbol }} 多头持仓: {{ has_long }}
-- {{ symbol }} 空头持仓: {{ has_short }}
+
+### {{ symbol }} 持仓详情
+{{ position_details_text }}
 
 {{ balance_info }}
 

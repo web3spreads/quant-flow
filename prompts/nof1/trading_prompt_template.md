@@ -65,7 +65,8 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 **当前账户价值:** ${{ account_value }}
 
 **当前持仓及表现:**
-{{ current_positions }}
+
+{{ position_details_text }}
 
 **夏普比率 (Sharpe Ratio):** {{ sharpe_ratio }}
 
