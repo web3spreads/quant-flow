@@ -73,7 +73,12 @@ class PromptManager:
         unrealized_pnl = float(position.get('unrealizedPnl', 0))
 
         # 确定方向
-        position_side = 'long' if szi > 0 else 'short'
+        if szi == 0:
+            position_side = 'none'
+        elif szi > 0:
+            position_side = 'long'
+        else:
+            position_side = 'short'
         position_size = abs(szi)
 
         # 获取杠杆信息
