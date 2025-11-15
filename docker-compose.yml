@@ -36,6 +36,8 @@ services:
       - ./prompts:/app/prompts:ro
 
       # Logs directory (persistent, read-write)
+      # IMPORTANT: Run ./init-deployment.sh first to set correct permissions
+      # Or manually: chmod -R 777 ./logs
       - ./logs:/app/logs
 
       # Optional: Mount .env file if you prefer file-based config

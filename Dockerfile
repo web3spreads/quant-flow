@@ -35,6 +35,10 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY --chown=quantflow:quantflow . .
 
+# Copy and set permissions for entrypoint script
+COPY --chown=quantflow:quantflow docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Switch to non-root user
 USER quantflow
 
@@ -47,5 +51,5 @@ ENV PYTHONUNBUFFERED=1 \
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD pgrep -f "python main.py" || exit 1
 
-# Run the application
-CMD ["python", "main.py"]
+# Use entrypoint script to handle permissions and startup
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
