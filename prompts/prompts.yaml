@@ -52,7 +52,7 @@ prompt_sets:
   # Alpha Arena博客复刻版
   nof1:
     name: "nof1.ai复刻策略"
-    description: "基于nof1.ai的prompt结构，中文版本，尽可能接近原版"
+    description: "nof1.ai风格的prompt，模仿其交易逻辑和风格"
     system_prompt_file: "nof1/system_prompt.md"
     spot_system_prompt_file: "nof1/spot_system_prompt.md"
     trading_prompt_template_file: "nof1/trading_prompt_template.md"
@@ -61,7 +61,7 @@ prompt_sets:
   # Alpha Arena 重制版
   nof1-improved:
     name: "nof1.ai改进策略"
-    description: "基于nof1.ai实战经验改进的prompt，解决了数据顺序、手续费意识、exit plan等问题"
+    description: "nof1.ai风格的改进版prompt，优化了部分交易逻辑"
     system_prompt_file: "nof1-improved/system_prompt.md"
     spot_system_prompt_file: "nof1-improved/spot_system_prompt.md"
     trading_prompt_template_file: "nof1-improved/trading_prompt_template.md"
