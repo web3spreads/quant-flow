@@ -376,8 +376,8 @@ cp -r logs/ backups/$(date +%Y%m%d)/
 
 ```bash
 # Restore configuration
-cp backups/20240315/.env .
-cp backups/20240315/config.yaml .
+cp backups/<backup-date>/.env .
+cp backups/<backup-date>/config.yaml .
 
 # Restart bot
 docker-compose restart
