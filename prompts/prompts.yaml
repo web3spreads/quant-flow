@@ -49,23 +49,23 @@ prompt_sets:
     trading_prompt_template_file: "aggressive/trading_prompt_template.md"
     spot_prompt_template_file: "aggressive/spot_prompt_template.md"
 
-  # Alpha Arena博客复刻版（中文）
-  blog-replica:
-    name: "博客复刻策略"
-    description: "基于nof1.ai Alpha Arena博客的prompt结构，中文版本，尽可能接近原版"
-    system_prompt_file: "blog-replica/system_prompt.md"
-    spot_system_prompt_file: "blog-replica/spot_system_prompt.md"
-    trading_prompt_template_file: "blog-replica/trading_prompt_template.md"
-    spot_prompt_template_file: "blog-replica/spot_prompt_template.md"
+  # Alpha Arena博客复刻版
+  nof1:
+    name: "nof1.ai复刻策略"
+    description: "基于nof1.ai的prompt结构，中文版本，尽可能接近原版"
+    system_prompt_file: "nof1/system_prompt.md"
+    spot_system_prompt_file: "nof1/spot_system_prompt.md"
+    trading_prompt_template_file: "nof1/trading_prompt_template.md"
+    spot_prompt_template_file: "nof1/spot_prompt_template.md"
 
-  # Alpha Arena博客改进版（中文）
-  blog-improved:
-    name: "博客改进策略"
-    description: "基于Alpha Arena实战经验改进的prompt，解决了数据顺序、手续费意识、exit plan等问题"
-    system_prompt_file: "blog-improved/system_prompt.md"
-    spot_system_prompt_file: "blog-improved/spot_system_prompt.md"
-    trading_prompt_template_file: "blog-improved/trading_prompt_template.md"
-    spot_prompt_template_file: "blog-improved/spot_prompt_template.md"
+  # Alpha Arena 重制版
+  nof1-improved:
+    name: "nof1.ai改进策略"
+    description: "基于nof1.ai实战经验改进的prompt，解决了数据顺序、手续费意识、exit plan等问题"
+    system_prompt_file: "nof1-improved/system_prompt.md"
+    spot_system_prompt_file: "nof1-improved/spot_system_prompt.md"
+    trading_prompt_template_file: "nof1-improved/trading_prompt_template.md"
+    spot_prompt_template_file: "nof1-improved/spot_prompt_template.md"
 
 # 使用说明:
 # 1. 创建新的 Prompt 集合:
