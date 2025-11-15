@@ -16,6 +16,7 @@ from src.utils.logger import get_logger
 from src.utils.banner import print_startup_banner
 from src.data.market_data import MarketDataFetcher
 from src.data.indicators import TechnicalIndicators
+from src.data.data_enricher import MarketDataEnricher
 from src.trading.client import HyperliquidClient
 from src.trading.order_manager import OrderManager
 from src.agent.single_symbol_agent import SingleSymbolAgent
@@ -37,20 +38,23 @@ class QuantFlowBot:
         """
         # 加载配置
         self.config = get_config(config_path)
-        
+
+        # 记录程序启动时间（用于数据增强器）
+        self.start_time = datetime.now()
+
         # 初始化日志
         self.logger = get_logger(
             log_level=self.config.log_level,
             console_color=self.config.console_color,
             decision_log_format=self.config.decision_log_format
         )
-        
+
         # 打印启动信息
         print_startup_banner(config=self.config, console=self.logger.console)
-        
+
         # 初始化组件
         self._initialize_components()
-        
+
         # 调度器
         self.scheduler = None
         self.is_running = False
@@ -88,8 +92,15 @@ class QuantFlowBot:
         self.market_fetcher = MarketDataFetcher(
             testnet=self.config.hyperliquid_testnet
         )
-        
-        # 2. Hyperliquid 交易客户端
+
+        # 2.5 数据增强器（为nof1和nof1-improved prompts提供额外数据）
+        self.logger.print_info("初始化数据增强器...")
+        self.data_enricher = MarketDataEnricher(
+            market_fetcher=self.market_fetcher,
+            start_time=self.start_time
+        )
+
+        # 3. Hyperliquid 交易客户端
         self.logger.print_info("初始化 Hyperliquid 交易客户端...")
         self.hyperliquid_client = HyperliquidClient(
             private_key=self.config.hyperliquid_private_key,
@@ -309,12 +320,54 @@ class QuantFlowBot:
                     multi_timeframe_trends = TechnicalIndicators.get_multi_timeframe_trend(
                         self.market_fetcher, symbol
                     )
-                    
+
                     # 显示市场数据
                     self.logger.print_market_data(symbol, market_data)
                     trend_info = " | ".join([f"{tf}: {trend}" for tf, trend in multi_timeframe_trends.items()])
                     self.logger.print_info(f"多周期趋势: {trend_info}")
-                    
+
+                    # 获取4小时数据（用于数据增强）
+                    df_4h = self.market_fetcher.fetch_ohlcv(
+                        symbol=symbol,
+                        timeframe="4h",
+                        limit=100
+                    )
+
+                    if df_4h is not None and not df_4h.empty:
+                        # 计算4小时数据的指标（包括EMA和ATR）
+                        df_4h = TechnicalIndicators.calculate_all_indicators(
+                            df_4h,
+                            ema_periods=[20, 50],
+                            atr_periods=[3, 14],
+                            ma_periods=self.config.ma_periods,
+                            rsi_period=self.config.rsi_period,
+                            macd_params={
+                                'fast': self.config.macd_fast,
+                                'slow': self.config.macd_slow,
+                                'signal': self.config.macd_signal
+                            },
+                            bollinger_params={
+                                'period': self.config.bollinger_period,
+                                'std_dev': self.config.bollinger_std
+                            }
+                        )
+
+                    # 增强市场数据（添加额外字段供nof1/nof1-improved prompts使用）
+                    enriched_data = self.data_enricher.enrich_market_data(
+                        symbol=symbol,
+                        market_data=market_data,
+                        df_15m=df,
+                        df_4h=df_4h
+                    )
+
+                    # 增强账户数据
+                    initial_balance = getattr(self.config, 'initial_balance', 10000.0)
+                    account_enriched = self.data_enricher.enrich_account_data(
+                        balance_info=balance_info if balance_info['status'] == 'ok' else None,
+                        initial_balance=initial_balance
+                    )
+                    enriched_data.update(account_enriched)
+
                     # 生成历史汇总（如果有足够的历史记录）
                     historical_summary = None
                     history_count = self.decision_history.get_history_count(symbol)
@@ -352,7 +405,8 @@ class QuantFlowBot:
                         multi_timeframe_trends=multi_timeframe_trends,
                         current_positions=current_positions,
                         max_positions=self.config.max_positions,
-                        historical_summary=historical_summary
+                        historical_summary=historical_summary,
+                        enriched_data=enriched_data
                     )
                     
                     # 显示决策

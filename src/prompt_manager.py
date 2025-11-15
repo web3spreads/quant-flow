@@ -133,7 +133,8 @@ class PromptManager:
         take_profit_ratio: float,
         stop_loss_ratio: float,
         historical_summary: Optional[str] = None,
-        balance_info: Optional[Dict[str, float]] = None
+        balance_info: Optional[Dict[str, float]] = None,
+        enriched_data: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         格式化交易决策 Prompt
@@ -302,6 +303,37 @@ class PromptManager:
             'historical_summary': historical_text,
             'balance_info': balance_text,
         }
+
+        # 添加enriched_data中的额外字段（用于nof1和nof1-improved prompts）
+        if enriched_data:
+            # 直接合并所有enriched_data字段
+            context.update(enriched_data)
+
+            # 确保关键字段有默认值
+            context.setdefault('elapsed_minutes', 0)
+            context.setdefault('mid_prices', [])
+            context.setdefault('ema_indicators', [])
+            context.setdefault('macd_indicators', [])
+            context.setdefault('rsi_7_indicators', [])
+            context.setdefault('rsi_14_indicators', [])
+            context.setdefault('current_ema20', current_price)
+            context.setdefault('current_rsi', rsi)
+            context.setdefault('oi_latest', 0)
+            context.setdefault('oi_average', 0)
+            context.setdefault('funding_rate', 0)
+            context.setdefault('ema_20_4h', current_price)
+            context.setdefault('ema_50_4h', current_price)
+            context.setdefault('atr_3_4h', 0)
+            context.setdefault('atr_14_4h', 0)
+            context.setdefault('current_volume', 0)
+            context.setdefault('avg_volume', 0)
+            context.setdefault('macd_4h_indicators', [])
+            context.setdefault('rsi_14_4h_indicators', [])
+            context.setdefault('total_return_pct', 0)
+            context.setdefault('account_value', 10000)
+            context.setdefault('available_cash', balance_info.get('available', 0) if balance_info else 0)
+            context.setdefault('sharpe_ratio', 0)
+            context.setdefault('current_positions', str(current_positions))
 
         # 使用 Jinja2 渲染模板
         prompt = self.trading_prompt_template.render(context)
