@@ -141,7 +141,7 @@ class PromptManager:
         position_text += f"""
 
 **重要提示**:
-- 当前{'盈利' if unrealized_pnl > 0 else '亏损'}状态，请根据市场情况决定是否止盈/止损
+- 当前{'盈利' if unrealized_pnl > 0 else ('持平' if unrealized_pnl == 0 else '亏损')}状态，请根据市场情况决定是否止盈/止损
 - 杠杆倍数为 {leverage}x，风险{'较高' if leverage >= 10 else '适中'}
 - 请关注价格走势，及时调整策略"""
 
