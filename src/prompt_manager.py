@@ -63,6 +63,7 @@ class PromptManager:
                 'liquidation_price': 0,
                 'price_change_percent': 0,
                 'distance_from_entry': 0,
+                'distance_to_liquidation': 0,
                 'position_text': f'**{symbol} 持仓状态**: 无持仓 ❌'
             }
 
