@@ -125,9 +125,8 @@ ATR(14, 4H): {{ atr_14_4h }}
 ```
 
 **当前持仓:**
-```
-{{ current_positions }}
-```
+
+{{ position_details_text }}
 
 **风险指标:**
 ```
