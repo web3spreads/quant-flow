@@ -5,7 +5,7 @@
 """
 
 import pandas as pd
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from datetime import datetime
 
 class MarketDataEnricher:
