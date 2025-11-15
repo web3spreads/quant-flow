@@ -1,0 +1,77 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Python cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs (will be mounted as volume)
+logs/
+*.log
+
+# Environment files (will be provided via docker-compose)
+.env
+.env.*
+
+# Documentation
+*.md
+docs/
+QUICKSTART.md
+README.md
+CHANGES.md
+INTEGRATION_GUIDE.md
+FLEXIBLE_CONFIG_GUIDE.md
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Configuration examples
+config.yaml.example
+.env.example
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Other
+.python-version
+*.bak
+*.tmp
