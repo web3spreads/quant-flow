@@ -48,10 +48,9 @@ logs/
 .env.*
 
 # Documentation
-*.md
+# README.md is needed for package metadata
 docs/
 QUICKSTART.md
-README.md
 CHANGES.md
 INTEGRATION_GUIDE.md
 FLEXIBLE_CONFIG_GUIDE.md
