@@ -44,7 +44,7 @@ MACD指标 (4小时): {{ macd_4h_indicators }}
 
 RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 
-**📊 技术指标分析 (程序已为你解读):**
+**📊 技术指标分析 (基础解读仅供参考):**
 
 - 价格趋势: {{ price_trend_analysis }}
 - MACD状态: {{ macd_analysis }}
