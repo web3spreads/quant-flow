@@ -13,6 +13,8 @@
 
 ## 🚀 快速开始
 
+### 传统方式部署
+
 ```bash
 # 1. 安装
 pip install -e .
@@ -26,7 +28,24 @@ cp config.yaml.example config.yaml
 python main.py
 ```
 
-[快速开始](./QUICKSTART.md) - 详细安装配置
+### 🐳 Docker 部署（推荐）
+
+```bash
+# 1. 配置环境
+cp .env.example .env
+cp config.yaml.example config.yaml
+# 编辑 .env 和 config.yaml
+
+# 2. 启动容器
+docker-compose up -d
+
+# 3. 查看日志
+docker-compose logs -f
+```
+
+**相关文档:**
+- [快速开始](./QUICKSTART.md) - 详细安装配置
+- [Docker 部署指南](./DOCKER_DEPLOYMENT.md) - 容器化部署完整文档
 
 ## 🏗️ 多 Agent 架构
 
