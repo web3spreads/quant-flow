@@ -38,6 +38,7 @@ class PromptManager:
             - liquidation_price: 清算价格（如果有）
             - price_change_percent: 价格变化百分比
             - distance_from_entry: 距离入场价的距离百分比
+            - distance_to_liquidation: 距离清算价的距离百分比
             - position_text: 格式化的持仓信息文本
         """
         # 查找当前币种的持仓
