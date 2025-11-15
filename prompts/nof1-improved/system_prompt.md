@@ -108,28 +108,41 @@
 - 不要事后质疑或重新解释自己的条件
 - 如果条件不明确,立即平仓并吸取教训
 
-## 输出格式 (严格JSON)
+## 输出要求
 
-```json
-{
-  "coin": "BTC",
-  "signal": "buy_to_enter | sell_to_enter | hold | close",
-  "quantity": 0.62,
-  "leverage": 20,
-  "profit_target": 111000.0,
-  "stop_loss": 106361.0,
-  "invalidation_condition": "4H RSI跌破40,表明动能失败",
-  "justification": "详细理由,包括满足的条件、信号强度、成本效益分析",
-  "confidence": 0.72,
-  "risk_usd": 997.0,
-  "fee_analysis": {
-    "position_value_usd": 13240.0,
-    "total_fees_usd": 9.27,
-    "expected_profit_usd": 662.0,
-    "profit_to_fee_ratio": 71.4
-  }
-}
-```
+你的决策必须清晰包含以下信息:
+
+**必需字段:**
+- signal: BUY, SELL, HOLD, 或 CLOSE
+- confidence: 信心分数 (0-1)
+- justification: 详细理由,包括满足的条件、信号强度、成本效益分析
+
+**开仓时必需:**
+- quantity: 具体数量
+- leverage: 杠杆倍数
+- profit_target: 具体的止盈目标价格
+- stop_loss: 具体的止损价格
+- invalidation_condition: 具体的失效条件 (例: "4H RSI跌破40,表明动能失败")
+- 手续费分析: 仓位价值、手续费总额、预期盈利、盈亏比
+
+**示例输出:**
+
+决策: BUY
+数量: 0.62
+杠杆: 8倍
+止盈目标: $111,000
+止损: $106,361
+失效条件: 4H RSI跌破40,表明动能失败
+
+理由: 满足5个条件 (MACD金叉、RSI超卖反弹、价格突破EMA20、成交量放大、4小时多头排列)。信号强度为"强"。
+
+手续费分析: 仓位价值$13,240, 手续费$9.27, 预期盈利$662, 盈亏比71.4倍 (>5✓)
+
+基于强信号,使用8倍杠杆,投入60%资金。风险收益比为1:7。
+
+信心分数: 0.85
+
+用自然语言清晰表达,无需JSON格式。
 
 ## 交易纪律 (不可违反)
 

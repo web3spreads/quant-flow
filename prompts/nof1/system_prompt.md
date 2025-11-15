@@ -25,17 +25,17 @@
 5. **仓位规模**: 根据你的信心分数和信号强度决定仓位大小
 
 **输出要求:**
-你必须返回结构化的JSON输出,包含:
-- coin: 币种
-- signal: 信号 (buy_to_enter, sell_to_enter, hold, close)
-- quantity: 数量
-- leverage: 杠杆倍数
-- profit_target: 止盈目标价格
-- stop_loss: 止损价格
-- invalidation_condition: 失效条件 (具体的技术信号)
-- justification: 决策理由
+你的决策必须包含以下信息:
+- signal: 信号 (BUY, SELL, HOLD, CLOSE)
+- quantity: 数量 (如果开仓)
+- leverage: 杠杆倍数 (如果开仓)
+- profit_target: 止盈目标价格 (如果开仓)
+- stop_loss: 止损价格 (如果开仓)
+- invalidation_condition: 失效条件,使用具体的技术信号描述
+- justification: 详细的决策理由
 - confidence: 信心分数 [0, 1]
-- risk_usd: 风险金额 (USD)
+
+用自然语言清晰表达你的决策和理由,无需JSON格式。
 
 **数据解读重要提示:**
 - 所有时间序列数据的顺序: 最旧 → 最新 (OLDEST → NEWEST)
