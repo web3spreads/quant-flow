@@ -20,34 +20,52 @@ prompt_sets:
     description: "平衡的交易策略，适合大多数市场环境"
 
     # 系统 Prompt（定义 AI 角色）
-    system_prompt_file: "default/system_prompt.txt"
+    system_prompt_file: "default/system_prompt.md"
 
     # 现货系统 Prompt
-    spot_system_prompt_file: "default/spot_system_prompt.txt"
+    spot_system_prompt_file: "default/spot_system_prompt.md"
 
     # 交易决策 Prompt 模板
-    trading_prompt_template_file: "default/trading_prompt_template.txt"
+    trading_prompt_template_file: "default/trading_prompt_template.md"
 
     # 现货定投 Prompt 模板
-    spot_prompt_template_file: "default/spot_prompt_template.txt"
+    spot_prompt_template_file: "default/spot_prompt_template.md"
 
   # 保守策略（低风险）
   conservative:
     name: "保守策略"
     description: "极度严格的开仓条件，极低的杠杆使用，资金安全优先"
-    system_prompt_file: "conservative/system_prompt.txt"
-    spot_system_prompt_file: "conservative/spot_system_prompt.txt"
-    trading_prompt_template_file: "conservative/trading_prompt_template.txt"
-    spot_prompt_template_file: "conservative/spot_prompt_template.txt"
+    system_prompt_file: "conservative/system_prompt.md"
+    spot_system_prompt_file: "conservative/spot_system_prompt.md"
+    trading_prompt_template_file: "conservative/trading_prompt_template.md"
+    spot_prompt_template_file: "conservative/spot_prompt_template.md"
 
   # 激进策略（高风险高收益）
   aggressive:
     name: "激进策略"
     description: "宽松的开仓条件，高杠杆使用，追求收益最大化"
-    system_prompt_file: "aggressive/system_prompt.txt"
-    spot_system_prompt_file: "aggressive/spot_system_prompt.txt"
-    trading_prompt_template_file: "aggressive/trading_prompt_template.txt"
-    spot_prompt_template_file: "aggressive/spot_prompt_template.txt"
+    system_prompt_file: "aggressive/system_prompt.md"
+    spot_system_prompt_file: "aggressive/spot_system_prompt.md"
+    trading_prompt_template_file: "aggressive/trading_prompt_template.md"
+    spot_prompt_template_file: "aggressive/spot_prompt_template.md"
+
+  # Alpha Arena博客复刻版（中文）
+  blog-replica:
+    name: "博客复刻策略"
+    description: "基于nof1.ai Alpha Arena博客的prompt结构，中文版本，尽可能接近原版"
+    system_prompt_file: "blog-replica/system_prompt.md"
+    spot_system_prompt_file: "blog-replica/spot_system_prompt.md"
+    trading_prompt_template_file: "blog-replica/trading_prompt_template.md"
+    spot_prompt_template_file: "blog-replica/spot_prompt_template.md"
+
+  # Alpha Arena博客改进版（中文）
+  blog-improved:
+    name: "博客改进策略"
+    description: "基于Alpha Arena实战经验改进的prompt，解决了数据顺序、手续费意识、exit plan等问题"
+    system_prompt_file: "blog-improved/system_prompt.md"
+    spot_system_prompt_file: "blog-improved/spot_system_prompt.md"
+    trading_prompt_template_file: "blog-improved/trading_prompt_template.md"
+    spot_prompt_template_file: "blog-improved/spot_prompt_template.md"
 
 # 使用说明:
 # 1. 创建新的 Prompt 集合:
