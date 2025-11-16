@@ -222,19 +222,24 @@ class MarketDataEnricher:
         """
         analysis = {}
 
-        # 1. 分析价格趋势
+        # 1. 分析价格趋势（防止除零错误）
         if 'mid_prices_raw' in enriched and len(enriched['mid_prices_raw']) >= 5:
             prices = enriched['mid_prices_raw']
-            price_change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
+            # 检查起始价格是否为0
+            if prices[0] != 0:
+                price_change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
 
-            if price_change_pct > 1.0:
-                trend = f"上升趋势(+{price_change_pct:.2f}%)"
-            elif price_change_pct < -1.0:
-                trend = f"下降趋势({price_change_pct:.2f}%)"
+                if price_change_pct > 1.0:
+                    trend = f"上升趋势(+{price_change_pct:.2f}%)"
+                elif price_change_pct < -1.0:
+                    trend = f"下降趋势({price_change_pct:.2f}%)"
+                else:
+                    trend = f"横盘整理({price_change_pct:.2f}%)"
+
+                analysis['price_trend_analysis'] = trend
             else:
-                trend = f"横盘整理({price_change_pct:.2f}%)"
-
-            analysis['price_trend_analysis'] = trend
+                # 起始价格为0，无法计算趋势
+                analysis['price_trend_analysis'] = "价格数据异常(起始价为0)"
 
         # 2. 分析MACD
         current_macd = enriched.get('current_macd', 0)
@@ -269,32 +274,40 @@ class MarketDataEnricher:
 
         analysis['rsi_analysis'] = rsi_status
 
-        # 4. 分析EMA关系
+        # 4. 分析EMA关系（防止除零错误）
         current_price = df_15m.iloc[-1]['close'] if not df_15m.empty else 0
         current_ema20 = enriched.get('current_ema20', current_price)
 
-        if current_price > current_ema20 * 1.01:
-            ema_status = f"价格在EMA20上方({((current_price/current_ema20 - 1) * 100):.2f}%)"
-        elif current_price < current_ema20 * 0.99:
-            ema_status = f"价格在EMA20下方({((current_price/current_ema20 - 1) * 100):.2f}%)"
+        # 检查EMA20是否为0
+        if current_ema20 != 0 and current_price > 0:
+            if current_price > current_ema20 * 1.01:
+                ema_status = f"价格在EMA20上方({((current_price/current_ema20 - 1) * 100):.2f}%)"
+            elif current_price < current_ema20 * 0.99:
+                ema_status = f"价格在EMA20下方({((current_price/current_ema20 - 1) * 100):.2f}%)"
+            else:
+                ema_status = "价格接近EMA20"
         else:
-            ema_status = "价格接近EMA20"
+            ema_status = "EMA数据异常(价格或EMA为0)"
 
         analysis['ema_analysis'] = ema_status
 
-        # 5. 分析成交量
+        # 5. 分析成交量（防止除零错误）
         if not df_15m.empty and 'volume' in df_15m.columns:
             current_volume = df_15m.iloc[-1]['volume']
             avg_volume = df_15m['volume'].tail(20).mean()
 
-            if current_volume > avg_volume * 1.5:
-                volume_status = f"明显放量({(current_volume/avg_volume):.1f}倍)"
-            elif current_volume > avg_volume * 1.2:
-                volume_status = f"温和放量({(current_volume/avg_volume):.1f}倍)"
-            elif current_volume < avg_volume * 0.5:
-                volume_status = f"明显缩量({(current_volume/avg_volume):.1f}倍)"
+            # 检查平均成交量是否为0
+            if avg_volume != 0:
+                if current_volume > avg_volume * 1.5:
+                    volume_status = f"明显放量({(current_volume/avg_volume):.1f}倍)"
+                elif current_volume > avg_volume * 1.2:
+                    volume_status = f"温和放量({(current_volume/avg_volume):.1f}倍)"
+                elif current_volume < avg_volume * 0.5:
+                    volume_status = f"明显缩量({(current_volume/avg_volume):.1f}倍)"
+                else:
+                    volume_status = f"成交量正常({(current_volume/avg_volume):.1f}倍)"
             else:
-                volume_status = f"成交量正常({(current_volume/avg_volume):.1f}倍)"
+                volume_status = "成交量数据异常(平均成交量为0)"
 
             analysis['volume_analysis'] = volume_status
 
@@ -392,7 +405,7 @@ class MarketDataEnricher:
             total = balance_info.get('total', 0)
             available = balance_info.get('available', 0)
 
-            # 计算总回报率
+            # 计算总回报率（防止除零错误）
             # 如果initial_balance明显不合理(比当前余额大太多),说明配置错误,不计算回报率
             if initial_balance > 0 and total > 0:
                 # 如果initial_balance是当前余额的10倍以上,说明配置有误
@@ -402,6 +415,7 @@ class MarketDataEnricher:
                 else:
                     total_return_pct = ((total - initial_balance) / initial_balance) * 100
             else:
+                # 如果初始余额为0或当前余额为0，回报率设为0
                 total_return_pct = 0.0
 
             account_data.update({

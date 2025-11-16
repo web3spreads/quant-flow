@@ -89,8 +89,8 @@ class PromptManager:
         else:
             leverage = int(leverage_info) if leverage_info else 1
 
-        # 计算盈亏百分比
-        if entry_price > 0:
+        # 计算盈亏百分比（防止除零错误）
+        if entry_price > 0 and current_price > 0:
             if position_side == 'long':
                 # 多头：(当前价 - 入场价) / 入场价 * 杠杆
                 price_change_percent = ((current_price - entry_price) / entry_price) * 100
@@ -102,6 +102,7 @@ class PromptManager:
 
             distance_from_entry = abs(price_change_percent)
         else:
+            # 如果价格为0，所有百分比计算都重置为0
             price_change_percent = 0
             unrealized_pnl_percent = 0
             distance_from_entry = 0
@@ -372,13 +373,22 @@ class PromptManager:
 - 关注未实现盈亏，如果亏损较大应更谨慎
 """
 
-        # 计算手续费相关的值
+        # 计算手续费相关的值（防止除零错误）
         position_value = max_trade_amount * max_leverage
         open_fee = position_value * 0.00035
         close_fee = position_value * 0.00035
         total_fee = open_fee + close_fee
-        breakeven_percent = f"{(total_fee / max_trade_amount) * 100:.2f}%"
-        price_move_percent = f"{0.07 / max_leverage:.3f}%"
+
+        # 防止除零错误
+        if max_trade_amount > 0:
+            breakeven_percent = f"{(total_fee / max_trade_amount) * 100:.2f}%"
+        else:
+            breakeven_percent = "0.00%"
+
+        if max_leverage > 0:
+            price_move_percent = f"{0.07 / max_leverage:.3f}%"
+        else:
+            price_move_percent = "0.000%"
 
         # 准备模板上下文（使用 Jinja2 渲染）
         context = {
