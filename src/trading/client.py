@@ -272,6 +272,14 @@ class HyperliquidClient:
             订单结果
         """
         try:
+            # 格式化数量，根据交易对的 szDecimals 精度要求
+            asset_info = self.get_asset_info(symbol)
+            if asset_info and 'szDecimals' in asset_info:
+                decimals = asset_info['szDecimals']
+                size = round(size, decimals)
+            else:
+                size = round(size, 3)
+
             # 使用官方的 market_open 方法
             # 注意：market_open 不直接支持 reduce_only 参数
             # 如果需要 reduce_only，应该在调用前验证持仓
@@ -299,18 +307,29 @@ class HyperliquidClient:
     ) -> Optional[Dict[str, Any]]:
         """
         下限价单
-        
+
         Args:
             symbol: 交易对符号（如 'ETH'）
             is_buy: True=买入，False=卖出
             size: 下单数量
             price: 限价
             reduce_only: 是否只减仓
-            
+
         Returns:
             订单结果
         """
         try:
+            # 格式化数量，根据交易对的 szDecimals 精度要求
+            asset_info = self.get_asset_info(symbol)
+            if asset_info and 'szDecimals' in asset_info:
+                decimals = asset_info['szDecimals']
+                size = round(size, decimals)
+            else:
+                size = round(size, 3)
+
+            # 格式化价格
+            price = self.format_price(symbol, price)
+
             order_result = self.exchange.order(
                 symbol,
                 is_buy,
@@ -419,21 +438,29 @@ class HyperliquidClient:
     ) -> Dict[str, Any]:
         """
         下止盈或止损单
-        
+
         Args:
             symbol: 交易对符号
             trigger_price: 触发价格
             is_buy: True=买入，False=卖出
             size: 数量
             is_tp: True=止盈单，False=止损单
-            
+
         Returns:
             订单结果
         """
         try:
             # 格式化触发价格，避免精度问题
             trigger_price = self.format_price(symbol, trigger_price)
-            
+
+            # 格式化数量，根据交易对的 szDecimals 精度要求
+            asset_info = self.get_asset_info(symbol)
+            if asset_info and 'szDecimals' in asset_info:
+                decimals = asset_info['szDecimals']
+                size = round(size, decimals)
+            else:
+                size = round(size, 3)
+
             # 构造触发单类型
             order_type = {
                 "trigger": {
@@ -442,16 +469,16 @@ class HyperliquidClient:
                     "tpsl": "tp" if is_tp else "sl"
                 }
             }
-            
+
             # 计算限价（止盈止损单的备用限价）
             if is_tp:
                 limit_price = trigger_price * 0.95 if not is_buy else trigger_price * 1.05
             else:
                 limit_price = trigger_price * 1.05 if not is_buy else trigger_price * 0.95
-            
+
             # 格式化限价，避免精度问题
             limit_price = self.format_price(symbol, limit_price)
-            
+
             # 下单
             order_result = self.exchange.order(
                 symbol,
@@ -461,9 +488,9 @@ class HyperliquidClient:
                 order_type,
                 reduce_only=True
             )
-            
+
             return order_result
-            
+
         except Exception as e:
             print(f"❌ 下止盈止损单失败: {e}")
             return {'status': 'error', 'message': str(e)}

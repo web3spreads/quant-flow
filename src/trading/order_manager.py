@@ -161,12 +161,12 @@ class OrderManager:
     ) -> Optional[float]:
         """
         根据 USDT 金额计算合约数量
-        
+
         Args:
             symbol: 交易对符号（如 'ETH'）
             usdt_amount: 投入的 USDT 金额
             leverage: 杠杆倍数（None=使用默认）
-            
+
         Returns:
             合约数量
         """
@@ -174,18 +174,26 @@ class OrderManager:
             current_price = self.client.get_current_price(symbol)
             if not current_price:
                 return None
-            
+
             lev = leverage if leverage else self.default_leverage
-            
+
             # 合约数量 = (投入金额 * 杠杆) / 价格
             size = (usdt_amount * lev) / current_price
-            
-            # Hyperliquid 对数量精度有要求，保留合理的小数位
-            # 一般保留到 0.001 的精度
-            size = round(size, 3)
-            
+
+            # 获取交易对的精度信息
+            asset_info = self.client.get_asset_info(symbol)
+            if asset_info and 'szDecimals' in asset_info:
+                # 根据交易对的精度要求格式化数量
+                decimals = asset_info['szDecimals']
+                size = round(size, decimals)
+                print(f"   数量精度: {decimals} 位小数 -> {size}")
+            else:
+                # 如果无法获取精度，默认保留 3 位小数
+                size = round(size, 3)
+                print(f"   数量精度: 默认 3 位小数 -> {size}")
+
             return size
-            
+
         except Exception as e:
             print(f"❌ 计算仓位大小失败: {e}")
             return None
