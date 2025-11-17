@@ -482,7 +482,7 @@ class HyperliquidClient:
                 limit_price = float(trigger_price) * 1.05 if not is_buy else float(trigger_price) * 0.95
 
             # 格式化限价，避免精度问题
-            limit_price = float(self.format_price(symbol, limit_price))
+            limit_price = self.format_price(symbol, limit_price)
 
             # 下单 - 使用命名参数确保类型正确
             order_result = self.exchange.order(
