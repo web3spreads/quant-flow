@@ -450,6 +450,9 @@ class HyperliquidClient:
             订单结果
         """
         try:
+            # 确保 trigger_price 是 float 类型
+            trigger_price = float(trigger_price)
+
             # 格式化触发价格，避免精度问题
             trigger_price = self.format_price(symbol, trigger_price)
 
@@ -457,31 +460,31 @@ class HyperliquidClient:
             asset_info = self.get_asset_info(symbol)
             if asset_info and 'szDecimals' in asset_info:
                 decimals = asset_info['szDecimals']
-                size = round(size, decimals)
+                size = float(round(size, decimals))
             else:
-                size = round(size, 3)
+                size = float(round(size, 3))
 
             # 构造触发单类型
-            # 注意：triggerPx 必须是字符串
+            # 注意：triggerPx 必须是字符串，格式化为固定小数位
             # 官方文档: https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/examples/basic_tpsl.py
             order_type = {
                 "trigger": {
                     "isMarket": True,
-                    "triggerPx": str(trigger_price),
+                    "triggerPx": f"{float(trigger_price):.1f}",
                     "tpsl": "tp" if is_tp else "sl"
                 }
             }
 
             # 计算限价（止盈止损单的备用限价）
             if is_tp:
-                limit_price = trigger_price * 0.95 if not is_buy else trigger_price * 1.05
+                limit_price = float(trigger_price) * 0.95 if not is_buy else float(trigger_price) * 1.05
             else:
-                limit_price = trigger_price * 1.05 if not is_buy else trigger_price * 0.95
+                limit_price = float(trigger_price) * 1.05 if not is_buy else float(trigger_price) * 0.95
 
             # 格式化限价，避免精度问题
-            limit_price = self.format_price(symbol, limit_price)
+            limit_price = float(self.format_price(symbol, limit_price))
 
-            # 下单
+            # 下单 - 使用命名参数确保类型正确
             order_result = self.exchange.order(
                 symbol,
                 is_buy,
