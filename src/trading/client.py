@@ -462,11 +462,14 @@ class HyperliquidClient:
                 size = round(size, 3)
 
             # 构造触发单类型
+            # 注意：triggerPx 必须是字符串，order_type 需要 "t" 包装
             order_type = {
-                "trigger": {
-                    "triggerPx": trigger_price,
-                    "isMarket": True,
-                    "tpsl": "tp" if is_tp else "sl"
+                "t": {
+                    "trigger": {
+                        "isMarket": True,
+                        "triggerPx": str(trigger_price),
+                        "tpsl": "tp" if is_tp else "sl"
+                    }
                 }
             }
 
