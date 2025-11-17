@@ -470,7 +470,7 @@ class HyperliquidClient:
             order_type = {
                 "trigger": {
                     "isMarket": True,
-                    "triggerPx": f"{float(trigger_price):.1f}",
+                    "triggerPx": f"{trigger_price:.1f}",
                     "tpsl": "tp" if is_tp else "sl"
                 }
             }
