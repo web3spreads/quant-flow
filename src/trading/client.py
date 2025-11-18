@@ -400,7 +400,11 @@ class HyperliquidClient:
                 )
                 result['take_profit_order'] = tp_result
                 if tp_result.get('status') != 'ok':
-                    result['errors'].append(f"止盈单失败: {tp_result}")
+                    # 包含请求参数以便调试
+                    error_msg = f"止盈单失败: {tp_result.get('message', 'Unknown error')}"
+                    if 'request_params' in tp_result:
+                        error_msg += f"\n请求参数: {tp_result['request_params']}"
+                    result['errors'].append(error_msg)
             
             # 3. 下止损单（如果提供）
             if stop_loss_price:
@@ -413,7 +417,11 @@ class HyperliquidClient:
                 )
                 result['stop_loss_order'] = sl_result
                 if sl_result.get('status') != 'ok':
-                    result['errors'].append(f"止损单失败: {sl_result}")
+                    # 包含请求参数以便调试
+                    error_msg = f"止损单失败: {sl_result.get('message', 'Unknown error')}"
+                    if 'request_params' in sl_result:
+                        error_msg += f"\n请求参数: {sl_result['request_params']}"
+                    result['errors'].append(error_msg)
             
             # 判断整体成功
             result['success'] = (
@@ -526,13 +534,37 @@ class HyperliquidClient:
                 reduce_only=True
             )
 
+            # 如果失败，添加请求参数到结果中便于调试
+            if order_result and order_result.get('status') != 'ok':
+                order_result['request_params'] = {
+                    'symbol': symbol,
+                    'is_buy': is_buy,
+                    'size': size,
+                    'limit_price': limit_price,
+                    'trigger_price': trigger_price_float,
+                    'order_type': order_type,
+                    'reduce_only': True,
+                    'is_tp': is_tp,
+                    'slippage': slippage
+                }
+
             return order_result
 
         except Exception as e:
             print(f"❌ 下止盈止损单失败: {e}")
             import traceback
             traceback.print_exc()
-            return {'status': 'error', 'message': str(e)}
+            return {
+                'status': 'error',
+                'message': str(e),
+                'request_params': {
+                    'symbol': symbol,
+                    'trigger_price': trigger_price,
+                    'is_buy': is_buy,
+                    'size': size,
+                    'is_tp': is_tp
+                }
+            }
 
     def cancel_order(self, symbol: str, oid: int) -> Dict[str, Any]:
         """
