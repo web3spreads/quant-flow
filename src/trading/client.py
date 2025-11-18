@@ -480,21 +480,38 @@ class HyperliquidClient:
             }
 
             # 计算限价（止盈止损单的备用限价）
-            # 策略：
-            # - 止盈：使用小滑点（1%），已经盈利，不需要太着急成交
-            # - 止损：使用大滑点（5%），正在亏损，需要快速止损
+            #
+            # 关键区别：
+            # - 止盈(TP)：已经盈利，可以要求更好的价格（限价朝有利方向）
+            # - 止损(SL)：正在亏损，需要快速成交（限价朝不利方向）
+            #
+            # 根据 Hyperliquid SDK 示例 (basic_tpsl.py)：
+            # - TP平多(卖): limit > trigger（要求更高的卖价）
+            # - TP平空(买): limit < trigger（要求更低的买价）
+            # - SL平多(卖): limit < trigger（接受更低的卖价以快速止损）
+            # - SL平空(买): limit > trigger（接受更高的买价以快速止损）
             if is_tp:
                 slippage = 0.01  # 止盈：1% 滑点
             else:
                 slippage = 0.05  # 止损：5% 滑点
 
-            # 根据平仓方向计算限价
-            if not is_buy:
-                # 卖出平仓：限价低于触发价
-                limit_price = trigger_price_float * (1 - slippage)
+            # 根据订单类型和平仓方向计算限价
+            if is_tp:
+                # 止盈：限价朝有利方向（要求更好的价格）
+                if not is_buy:
+                    # 卖出平仓：限价高于触发价（要求更高的卖价）
+                    limit_price = trigger_price_float * (1 + slippage)
+                else:
+                    # 买入平仓：限价低于触发价（要求更低的买价）
+                    limit_price = trigger_price_float * (1 - slippage)
             else:
-                # 买入平仓：限价高于触发价
-                limit_price = trigger_price_float * (1 + slippage)
+                # 止损：限价朝不利方向（接受更差的价格以确保成交）
+                if not is_buy:
+                    # 卖出平仓：限价低于触发价（接受更低的卖价）
+                    limit_price = trigger_price_float * (1 - slippage)
+                else:
+                    # 买入平仓：限价高于触发价（接受更高的买价）
+                    limit_price = trigger_price_float * (1 + slippage)
 
             # 格式化限价，避免精度问题
             limit_price = self.format_price(symbol, limit_price)
