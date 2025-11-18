@@ -464,18 +464,17 @@ class HyperliquidClient:
             else:
                 size = float(round(size, 3))
 
-            # 确保 trigger_price 绝对是 float 类型，然后转为字符串
-            # 使用 str(round(...)) 而不是 f-string 避免类型错误
+            # 确保 trigger_price 是 float 类型
+            # SDK 会自动将数字转换为字符串发送给 API
             trigger_price_float = float(trigger_price)
-            trigger_px_str = str(round(trigger_price_float, 1))
 
             # 构造触发单类型
-            # 注意：triggerPx 必须是字符串，格式化为固定小数位
             # 官方文档: https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/examples/basic_tpsl.py
+            # SDK 接受数字类型的 triggerPx，会自动转换为字符串
             order_type = {
                 "trigger": {
                     "isMarket": True,
-                    "triggerPx": trigger_px_str,
+                    "triggerPx": trigger_price_float,  # 使用 float 类型，符合官方示例
                     "tpsl": "tp" if is_tp else "sl"
                 }
             }
@@ -488,8 +487,6 @@ class HyperliquidClient:
 
             # 格式化限价，避免精度问题
             limit_price = self.format_price(symbol, limit_price)
-            # 确保 limit_price 是 float 类型
-            limit_price = float(limit_price)
 
             # 下单 - 使用命名参数确保类型正确
             order_result = self.exchange.order(
