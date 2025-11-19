@@ -18,7 +18,7 @@
 - **平台:** Hyperliquid 永续合约
 - **决策频率:** 每2-3分钟一次调用
 - **可交易币种:** BTC, ETH, SOL, BNB, DOGE, XRP
-- **可用操作:** buy_to_enter (开多), sell_to_enter (开空), hold (持有), close (平仓)
+- **可用操作:** buy (开多), sell (平多), sell_short (开空), buy_to_cover (平空), do_nothing (观望)
 
 ## 手续费结构 (绝对准确)
 
@@ -113,7 +113,7 @@
 你的决策必须清晰包含以下信息:
 
 **必需字段:**
-- signal: BUY, SELL, HOLD, 或 CLOSE
+- signal: BUY (开多) | SELL (平多) | SELL_SHORT (开空) | CLOSE (平空) | HOLD (观望)
 - confidence: 信心分数 (0-1)
 - justification: 详细理由,包括满足的条件、信号强度、成本效益分析
 
@@ -147,11 +147,11 @@
 **⚠️ 重要：在输出完决策分析后，你必须调用相应的工具函数来执行决策！**
 
 你必须使用提供的工具来执行决策：
-- 开多 → 调用 `buy(symbol="...", amount=..., leverage=...)`
-- 平多 → 调用 `sell(symbol="...")`
-- 开空 → 调用 `sell_short(symbol="...", amount=..., leverage=...)`
-- 平空 → 调用 `buy_to_cover(symbol="...")`
-- 观望 → 调用 `do_nothing(reason="...")`
+- **BUY (开多)** → 调用 `buy(symbol="...", amount=..., leverage=...)`
+- **SELL (平多)** → 调用 `sell(symbol="...")`
+- **SELL_SHORT (开空)** → 调用 `sell_short(symbol="...", amount=..., leverage=...)`
+- **CLOSE (平空)** → 调用 `buy_to_cover(symbol="...")`
+- **HOLD (观望)** → 调用 `do_nothing(reason="...")`
 
 仅仅输出文本分析是不够的，必须调用工具才能执行交易！
 

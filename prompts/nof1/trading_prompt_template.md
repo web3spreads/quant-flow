@@ -136,10 +136,10 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 **步骤2：调用相应的工具函数（必须执行）**
 - **必须调用其中一个工具来执行你的决策**
 - 根据你的分析调用对应的工具：
-  * 做多 → 调用 `buy(symbol="...", amount=..., leverage=...)`
-  * 平多 → 调用 `sell(symbol="...")`
-  * 做空 → 调用 `sell_short(symbol="...", amount=..., leverage=...)`
-  * 平空 → 调用 `buy_to_cover(symbol="...")`
-  * 观望 → 调用 `do_nothing(reason="...")`
+  * **BUY (开多)** → 调用 `buy(symbol="...", amount=..., leverage=...)`
+  * **SELL (平多)** → 调用 `sell(symbol="...")`
+  * **SELL_SHORT (开空)** → 调用 `sell_short(symbol="...", amount=..., leverage=...)`
+  * **CLOSE (平空)** → 调用 `buy_to_cover(symbol="...")`
+  * **HOLD (观望)** → 调用 `do_nothing(reason="...")`
 - **仅仅输出文本分析是不够的，必须调用工具才能执行交易！**
 

@@ -246,7 +246,7 @@ ATR(14, 4H): {{ atr_14_4h }}
 
 **币种:** {{ symbol }}
 
-**决策:** [BUY | SELL | HOLD | CLOSE]
+**决策:** [BUY (开多) | SELL (平多) | SELL_SHORT (开空) | CLOSE (平空) | HOLD (观望)]
 
 **如果开仓,提供:**
 - 数量: __.__
@@ -303,12 +303,11 @@ ATR(14, 4H): {{ atr_14_4h }}
 **步骤2：调用相应的工具函数（必须执行）**
 - **必须调用其中一个工具来执行你的决策**
 - 根据你的分析调用对应的工具：
-  * 如果决策是 BUY → 调用 `buy(symbol="...", amount=..., leverage=...)`
-  * 如果决策是 SELL → 调用 `sell(symbol="...")`
-  * 如果决策是 SELL_SHORT → 调用 `sell_short(symbol="...", amount=..., leverage=...)`
-  * 如果决策是 CLOSE (平空) → 调用 `buy_to_cover(symbol="...")`
-  * 如果决策是 CLOSE (平多) → 调用 `sell(symbol="...")`
-  * 如果决策是 HOLD → 调用 `do_nothing(reason="...")`
+  * 如果决策是 **BUY (开多)** → 调用 `buy(symbol="...", amount=..., leverage=...)`
+  * 如果决策是 **SELL (平多)** → 调用 `sell(symbol="...")`
+  * 如果决策是 **SELL_SHORT (开空)** → 调用 `sell_short(symbol="...", amount=..., leverage=...)`
+  * 如果决策是 **CLOSE (平空)** → 调用 `buy_to_cover(symbol="...")`
+  * 如果决策是 **HOLD (观望)** → 调用 `do_nothing(reason="...")`
 - **仅仅输出文本分析是不够的，必须调用工具才能执行交易！**
 
 **激进交易员的行动准则:**
