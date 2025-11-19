@@ -336,7 +336,8 @@ class OrderManager:
 
             # 4. 计算止盈止损价格（做空时方向相反）
             if with_tpsl:
-                tp_price = current_price * (1 - self.take_profit_ratio)  # 下跌时止盈
+                # Use abs() to ensure price is always positive, even if ratio is misconfigured
+                tp_price = current_price * abs(1 - self.take_profit_ratio)  # 下跌时止盈
                 sl_price = current_price * (1 + self.stop_loss_ratio)    # 上涨时止损
                 
                 # 格式化价格，避免精度问题
