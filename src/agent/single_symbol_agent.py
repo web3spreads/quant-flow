@@ -642,6 +642,8 @@ class SingleSymbolAgent:
         """
         从事件中解析决策类型
 
+        优先从工具调用中解析，如果没有则从文本内容中推断决策意图
+
         Args:
             events: LangGraph 事件列表
 
@@ -649,6 +651,7 @@ class SingleSymbolAgent:
             决策类型
         """
         try:
+            # 首先尝试从正式的工具调用中解析
             for event in reversed(events):
                 if "messages" not in event:
                     continue
@@ -682,6 +685,50 @@ class SingleSymbolAgent:
                         elif message.name == "buy_spot":
                             return "BUY_SPOT_RECOMMEND"
                         elif message.name == "do_nothing":
+                            return "DO_NOTHING"
+
+            # 后备方案：从文本内容中推断决策意图
+            # 当 LLM 在文本中表达了明确的决策但没有正式调用工具时使用
+            import re
+            for event in reversed(events):
+                if "messages" not in event:
+                    continue
+
+                for message in reversed(event["messages"]):
+                    if hasattr(message, 'content') and isinstance(message.content, str):
+                        content = message.content.lower()
+
+                        # 查找明确的决策关键词
+                        # 优先级：CLOSE/BUY_TO_COVER > SELL_SHORT > SELL > BUY > DO_NOTHING
+
+                        # 检测平空决策
+                        if re.search(r'(决策[：:]\s*(close|平空|买入平空))|buy_to_cover\s*\(', content):
+                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: BUY_TO_COVER")
+                            return "BUY_TO_COVER"
+
+                        # 检测开空决策
+                        if re.search(r'(决策[：:]\s*(sell_short|开空|卖空开空))|sell_short\s*\(', content):
+                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: SELL_SHORT")
+                            return "SELL_SHORT"
+
+                        # 检测平多决策
+                        if re.search(r'(决策[：:]\s*(sell|平多|卖出平多))(?!.*short)', content):
+                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: SELL")
+                            return "SELL"
+
+                        # 检测开多决策
+                        if re.search(r'(决策[：:]\s*(buy|开多|买入开多))|(?<!to_)buy\s*\(', content):
+                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: BUY")
+                            return "BUY"
+
+                        # 检测现货推荐
+                        if re.search(r'(决策[：:]\s*buy_spot)|buy_spot\s*\(', content):
+                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: BUY_SPOT_RECOMMEND")
+                            return "BUY_SPOT_RECOMMEND"
+
+                        # 检测观望决策
+                        if re.search(r'(决策[：:]\s*(hold|观望|do_nothing))|do_nothing\s*\(', content):
+                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: DO_NOTHING")
                             return "DO_NOTHING"
 
             return "DO_NOTHING"

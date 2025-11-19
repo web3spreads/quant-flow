@@ -450,6 +450,8 @@ class SpotAgent:
         """
         从事件中解析决策类型
 
+        优先从工具调用中解析，如果没有则从文本内容中推断决策意图
+
         Args:
             events: LangGraph 事件列表
 
@@ -457,6 +459,7 @@ class SpotAgent:
             决策类型 (BUY_SPOT, DO_NOTHING, ERROR)
         """
         try:
+            # 首先尝试从正式的工具调用中解析
             for event in reversed(events):
                 if "messages" not in event:
                     continue
@@ -476,6 +479,26 @@ class SpotAgent:
                         if message.name == "buy_spot":
                             return "BUY_SPOT"
                         elif message.name == "do_nothing":
+                            return "DO_NOTHING"
+
+            # 后备方案：从文本内容中推断决策意图
+            import re
+            for event in reversed(events):
+                if "messages" not in event:
+                    continue
+
+                for message in reversed(event["messages"]):
+                    if hasattr(message, 'content') and isinstance(message.content, str):
+                        content = message.content.lower()
+
+                        # 检测现货买入决策
+                        if re.search(r'(决策[：:]\s*(buy_spot|现货买入))|buy_spot\s*\(', content):
+                            self.logger.print_info(f"[现货Agent] 从文本推断决策: BUY_SPOT")
+                            return "BUY_SPOT"
+
+                        # 检测观望决策
+                        if re.search(r'(决策[：:]\s*(hold|观望|do_nothing))|do_nothing\s*\(', content):
+                            self.logger.print_info(f"[现货Agent] 从文本推断决策: DO_NOTHING")
                             return "DO_NOTHING"
 
             return "DO_NOTHING"
