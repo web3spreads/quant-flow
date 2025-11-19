@@ -461,12 +461,6 @@ class HyperliquidClient:
             # 确保 trigger_price 是 float 类型
             trigger_price = float(trigger_price)
 
-            # CRITICAL FIX: Ensure trigger_price is always positive
-            # Negative prices are invalid and cause 422 deserialization errors
-            if trigger_price < 0:
-                print(f"⚠️ 检测到负数触发价格 {trigger_price}，转换为正数 {abs(trigger_price)}")
-                trigger_price = abs(trigger_price)
-
             # 格式化触发价格，避免精度问题
             trigger_price = self.format_price(symbol, trigger_price)
 
