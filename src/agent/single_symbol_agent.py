@@ -10,6 +10,7 @@ from langgraph.prebuilt import create_react_agent
 
 from src.agent.tools import TradingTools
 from src.agent.prompts import SYSTEM_PROMPT
+from src.agent.execution_agent import ExecutionAgent
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
 from src.prompt_manager import PromptManager
@@ -74,8 +75,19 @@ class SingleSymbolAgent:
             temperature=temperature,
         )
 
+        # 初始化执行 Agent（用于解析决策文本并执行）
+        self.execution_agent = ExecutionAgent(
+            openai_api_base=openai_api_base,
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
+            temperature=0.0  # 执行 Agent 使用零温度确保确定性
+        )
+
         # 创建工具
         self.tools = self._create_tools()
+
+        # 保存工具回调以供执行 Agent 使用
+        self.tools_callbacks = self._get_tool_callbacks()
 
         self.agent_executor = create_react_agent(
             model=self.llm,
@@ -537,7 +549,32 @@ class SingleSymbolAgent:
             do_nothing_callback,
             buy_spot_callback
         )
+
+        # 保存回调函数引用以供后续使用
+        self._buy_callback = buy_callback
+        self._sell_callback = sell_callback
+        self._sell_short_callback = sell_short_callback
+        self._buy_to_cover_callback = buy_to_cover_callback
+        self._do_nothing_callback = do_nothing_callback
+        self._buy_spot_callback = buy_spot_callback
+
         return trading_tools.get_all_tools()
+
+    def _get_tool_callbacks(self) -> Dict[str, Any]:
+        """
+        获取工具回调函数字典
+
+        Returns:
+            工具回调函数字典
+        """
+        return {
+            'buy': self._buy_callback,
+            'sell': self._sell_callback,
+            'sell_short': self._sell_short_callback,
+            'buy_to_cover': self._buy_to_cover_callback,
+            'do_nothing': self._do_nothing_callback,
+            'buy_spot': self._buy_spot_callback
+        }
 
     def make_decision(
         self,
@@ -642,7 +679,7 @@ class SingleSymbolAgent:
         """
         从事件中解析决策类型
 
-        优先从工具调用中解析，如果没有则从文本内容中推断决策意图
+        优先从工具调用中解析，如果没有则使用 ExecutionAgent 解析文本并执行
 
         Args:
             events: LangGraph 事件列表
@@ -687,49 +724,48 @@ class SingleSymbolAgent:
                         elif message.name == "do_nothing":
                             return "DO_NOTHING"
 
-            # 后备方案：从文本内容中推断决策意图
-            # 当 LLM 在文本中表达了明确的决策但没有正式调用工具时使用
-            import re
+            # 后备方案：使用 ExecutionAgent 解析文本并执行
+            # 提取 Agent 的决策文本
+            decision_text = ""
             for event in reversed(events):
                 if "messages" not in event:
                     continue
-
                 for message in reversed(event["messages"]):
                     if hasattr(message, 'content') and isinstance(message.content, str):
-                        content = message.content.lower()
+                        decision_text = message.content
+                        break
+                if decision_text:
+                    break
 
-                        # 查找明确的决策关键词
-                        # 优先级：CLOSE/BUY_TO_COVER > SELL_SHORT > SELL > BUY > DO_NOTHING
+            if decision_text:
+                self.logger.print_info(f"[{self.symbol}Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本")
 
-                        # 检测平空决策
-                        if re.search(r'(决策[：:]\s*(close|平空|买入平空))|buy_to_cover\s*\(', content):
-                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: BUY_TO_COVER")
-                            return "BUY_TO_COVER"
+                # 使用 ExecutionAgent 解析决策
+                execution_plan = self.execution_agent.parse_decision(
+                    decision_text=decision_text,
+                    symbol=self.symbol,
+                    logger=self.logger
+                )
 
-                        # 检测开空决策
-                        if re.search(r'(决策[：:]\s*(sell_short|开空|卖空开空))|sell_short\s*\(', content):
-                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: SELL_SHORT")
-                            return "SELL_SHORT"
+                # 执行计划
+                result = self.execution_agent.execute_plan(
+                    execution_plan=execution_plan,
+                    tools_callbacks=self.tools_callbacks,
+                    logger=self.logger
+                )
 
-                        # 检测平多决策
-                        if re.search(r'(决策[：:]\s*(sell|平多|卖出平多))(?!.*short)', content):
-                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: SELL")
-                            return "SELL"
+                self.logger.print_info(f"[ExecutionAgent] 执行结果: {result}")
 
-                        # 检测开多决策
-                        if re.search(r'(决策[：:]\s*(buy|开多|买入开多))|(?<!to_)buy\s*\(', content):
-                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: BUY")
-                            return "BUY"
-
-                        # 检测现货推荐
-                        if re.search(r'(决策[：:]\s*buy_spot)|buy_spot\s*\(', content):
-                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: BUY_SPOT_RECOMMEND")
-                            return "BUY_SPOT_RECOMMEND"
-
-                        # 检测观望决策
-                        if re.search(r'(决策[：:]\s*(hold|观望|do_nothing))|do_nothing\s*\(', content):
-                            self.logger.print_info(f"[{self.symbol}Agent] 从文本推断决策: DO_NOTHING")
-                            return "DO_NOTHING"
+                # 返回决策类型
+                decision_map = {
+                    "BUY": "BUY",
+                    "SELL": "SELL",
+                    "SELL_SHORT": "SELL_SHORT",
+                    "BUY_TO_COVER": "BUY_TO_COVER",
+                    "BUY_SPOT": "BUY_SPOT_RECOMMEND",
+                    "DO_NOTHING": "DO_NOTHING"
+                }
+                return decision_map.get(execution_plan.decision.value, "DO_NOTHING")
 
             return "DO_NOTHING"
 

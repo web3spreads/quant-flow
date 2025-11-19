@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 from src.agent.tools import TradingTools
+from src.agent.execution_agent import ExecutionAgent
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
 
@@ -245,8 +246,19 @@ class SpotAgent:
             temperature=temperature,
         )
 
+        # 初始化执行 Agent
+        self.execution_agent = ExecutionAgent(
+            openai_api_base=openai_api_base,
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
+            temperature=0.0
+        )
+
         # 创建工具
         self.tools = self._create_tools()
+
+        # 保存工具回调
+        self.tools_callbacks = self._get_tool_callbacks()
 
         # 使用 LangGraph 创建 ReAct Agent
         self.agent_executor = create_react_agent(
@@ -341,11 +353,22 @@ class SpotAgent:
             buy_spot_callback=buy_spot_callback
         )
 
+        # 保存回调函数引用
+        self._buy_spot_callback = buy_spot_callback
+        self._do_nothing_callback = do_nothing_callback
+
         # 只返回现货买入和不操作工具
         return [
             trading_tools.create_buy_spot_tool(),
             trading_tools.create_do_nothing_tool()
         ]
+
+    def _get_tool_callbacks(self) -> Dict[str, Any]:
+        """获取工具回调函数字典"""
+        return {
+            'buy_spot': self._buy_spot_callback,
+            'do_nothing': self._do_nothing_callback
+        }
 
     def evaluate_spot_recommendation(
         self,
@@ -450,7 +473,7 @@ class SpotAgent:
         """
         从事件中解析决策类型
 
-        优先从工具调用中解析，如果没有则从文本内容中推断决策意图
+        优先从工具调用中解析，如果没有则使用 ExecutionAgent
 
         Args:
             events: LangGraph 事件列表
@@ -481,25 +504,39 @@ class SpotAgent:
                         elif message.name == "do_nothing":
                             return "DO_NOTHING"
 
-            # 后备方案：从文本内容中推断决策意图
-            import re
+            # 后备方案：使用 ExecutionAgent 解析文本
+            decision_text = ""
             for event in reversed(events):
                 if "messages" not in event:
                     continue
-
                 for message in reversed(event["messages"]):
                     if hasattr(message, 'content') and isinstance(message.content, str):
-                        content = message.content.lower()
+                        decision_text = message.content
+                        break
+                if decision_text:
+                    break
 
-                        # 检测现货买入决策
-                        if re.search(r'(决策[：:]\s*(buy_spot|现货买入))|buy_spot\s*\(', content):
-                            self.logger.print_info(f"[现货Agent] 从文本推断决策: BUY_SPOT")
-                            return "BUY_SPOT"
+            if decision_text:
+                self.logger.print_info(f"[现货Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本")
 
-                        # 检测观望决策
-                        if re.search(r'(决策[：:]\s*(hold|观望|do_nothing))|do_nothing\s*\(', content):
-                            self.logger.print_info(f"[现货Agent] 从文本推断决策: DO_NOTHING")
-                            return "DO_NOTHING"
+                execution_plan = self.execution_agent.parse_decision(
+                    decision_text=decision_text,
+                    symbol=self.current_symbol,
+                    logger=self.logger
+                )
+
+                result = self.execution_agent.execute_plan(
+                    execution_plan=execution_plan,
+                    tools_callbacks=self.tools_callbacks,
+                    logger=self.logger
+                )
+
+                self.logger.print_info(f"[ExecutionAgent] 执行结果: {result}")
+
+                if execution_plan.decision.value == "BUY_SPOT":
+                    return "BUY_SPOT"
+                else:
+                    return "DO_NOTHING"
 
             return "DO_NOTHING"
 
