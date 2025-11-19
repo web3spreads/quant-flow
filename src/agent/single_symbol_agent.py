@@ -707,8 +707,8 @@ class SingleSymbolAgent:
                                 return "BUY_TO_COVER"
                             elif tool_name == "buy_spot":
                                 return "BUY_SPOT_RECOMMEND"
-                            elif tool_name == "do_nothing":
-                                return "DO_NOTHING"
+                            # elif tool_name == "do_nothing":
+                                # return "DO_NOTHING"
 
                     if hasattr(message, 'name'):
                         if message.name == "buy":
@@ -721,8 +721,8 @@ class SingleSymbolAgent:
                             return "BUY_TO_COVER"
                         elif message.name == "buy_spot":
                             return "BUY_SPOT_RECOMMEND"
-                        elif message.name == "do_nothing":
-                            return "DO_NOTHING"
+                        # elif message.name == "do_nothing":
+                            # return "DO_NOTHING"
 
             # 后备方案：使用 ExecutionAgent 解析文本并执行
             # 提取 Agent 的决策文本（只提取 AI 消息，不包括用户 prompt）
