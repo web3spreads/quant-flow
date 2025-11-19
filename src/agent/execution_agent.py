@@ -131,9 +131,11 @@ class ExecutionAgent:
             execution_plan = self.structured_llm.invoke(messages)
 
             if logger:
+                amount_str = f"{execution_plan.amount}" if execution_plan.amount is not None else "默认"
+                leverage_str = f"{execution_plan.leverage}x" if execution_plan.leverage is not None else "默认"
                 logger.print_info(
                     f"[ExecutionAgent] 解析决策: {execution_plan.decision.value} "
-                    f"(金额: {execution_plan.amount}, 杠杆: {execution_plan.leverage}x)"
+                    f"(金额: ${amount_str}, 杠杆: {leverage_str})"
                 )
 
             return execution_plan
@@ -178,11 +180,15 @@ class ExecutionAgent:
                         amount=execution_plan.amount,
                         leverage=execution_plan.leverage
                     )
+                else:
+                    return f"❌ 未找到 BUY 工具回调"
 
             elif decision == DecisionType.SELL:
                 callback = tools_callbacks.get('sell')
                 if callback:
                     return callback(symbol=symbol)
+                else:
+                    return f"❌ 未找到 SELL 工具回调"
 
             elif decision == DecisionType.SELL_SHORT:
                 callback = tools_callbacks.get('sell_short')
@@ -192,11 +198,15 @@ class ExecutionAgent:
                         amount=execution_plan.amount,
                         leverage=execution_plan.leverage
                     )
+                else:
+                    return f"❌ 未找到 SELL_SHORT 工具回调"
 
             elif decision == DecisionType.BUY_TO_COVER:
                 callback = tools_callbacks.get('buy_to_cover')
                 if callback:
                     return callback(symbol=symbol)
+                else:
+                    return f"❌ 未找到 BUY_TO_COVER 工具回调"
 
             elif decision == DecisionType.BUY_SPOT:
                 callback = tools_callbacks.get('buy_spot')
@@ -205,13 +215,17 @@ class ExecutionAgent:
                         symbol=symbol,
                         amount=execution_plan.amount
                     )
+                else:
+                    return f"❌ 未找到 BUY_SPOT 工具回调"
 
             elif decision == DecisionType.DO_NOTHING:
                 callback = tools_callbacks.get('do_nothing')
                 if callback:
                     return callback(reason=execution_plan.reason)
+                else:
+                    return f"❌ 未找到 DO_NOTHING 工具回调"
 
-            return f"❌ 未找到对应的工具回调: {decision}"
+            return f"❌ 未识别的决策类型: {decision}"
 
         except Exception as e:
             error_msg = f"❌ 执行计划失败: {str(e)}"
