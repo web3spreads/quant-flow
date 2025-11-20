@@ -16,6 +16,25 @@ from src.utils.logger import TradingLogger
 from src.prompt_manager import PromptManager
 
 
+def safe_float(value: Any, default: float = 0.0) -> float:
+    """
+    安全地将值转换为float，如果转换失败则返回默认值
+
+    Args:
+        value: 要转换的值
+        default: 转换失败时的默认值
+
+    Returns:
+        转换后的float值或默认值
+    """
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 class SingleSymbolAgent:
     """单币种交易 Agent - 为每个交易对维护独立上下文"""
 
@@ -128,7 +147,7 @@ class SingleSymbolAgent:
 
                 positions = self.order_manager.get_current_positions()
                 # 检查是否有多头仓位（szi > 0 表示多头）
-                has_long = any(p.get('coin') == self.symbol and float(p.get('szi', 0)) > 0 for p in positions)
+                has_long = any(p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) > 0 for p in positions)
                 if has_long:
                     return f"❌ 已持有 {self.symbol} 的多头仓位"
 
@@ -230,7 +249,7 @@ class SingleSymbolAgent:
 
                 positions = self.order_manager.get_current_positions()
                 # 查找多头仓位（szi > 0 表示多头）
-                position = next((p for p in positions if p.get('coin') == self.symbol and float(p.get('szi', 0)) > 0), None)
+                position = next((p for p in positions if p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) > 0), None)
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的多头仓位"
@@ -340,7 +359,7 @@ class SingleSymbolAgent:
 
                 positions = self.order_manager.get_current_positions()
                 # 检查是否有空头仓位（szi < 0 表示空头）
-                has_short = any(p.get('coin') == self.symbol and float(p.get('szi', 0)) < 0 for p in positions)
+                has_short = any(p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) < 0 for p in positions)
                 if has_short:
                     return f"❌ 已持有 {self.symbol} 的空头仓位"
 
@@ -441,7 +460,7 @@ class SingleSymbolAgent:
 
                 positions = self.order_manager.get_current_positions()
                 # 查找空头仓位（szi < 0 表示空头）
-                position = next((p for p in positions if p.get('coin') == self.symbol and float(p.get('szi', 0)) < 0), None)
+                position = next((p for p in positions if p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) < 0), None)
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的空头仓位"
