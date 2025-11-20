@@ -127,7 +127,8 @@ class SingleSymbolAgent:
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
                 positions = self.order_manager.get_current_positions()
-                has_long = any(p.get('coin') == self.symbol and p.get('side', 'long') == 'long' for p in positions)
+                # 检查是否有多头仓位（szi > 0 表示多头）
+                has_long = any(p.get('coin') == self.symbol and float(p.get('szi', 0)) > 0 for p in positions)
                 if has_long:
                     return f"❌ 已持有 {self.symbol} 的多头仓位"
 
@@ -228,7 +229,8 @@ class SingleSymbolAgent:
                 self.logger.print_info(f"[{self.symbol}Agent] 执行卖出平多")
 
                 positions = self.order_manager.get_current_positions()
-                position = next((p for p in positions if p.get('coin') == self.symbol and p.get('side', 'long') == 'long'), None)
+                # 查找多头仓位（szi > 0 表示多头）
+                position = next((p for p in positions if p.get('coin') == self.symbol and float(p.get('szi', 0)) > 0), None)
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的多头仓位"
@@ -337,7 +339,8 @@ class SingleSymbolAgent:
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
                 positions = self.order_manager.get_current_positions()
-                has_short = any(p.get('coin') == self.symbol and p.get('side') == 'short' for p in positions)
+                # 检查是否有空头仓位（szi < 0 表示空头）
+                has_short = any(p.get('coin') == self.symbol and float(p.get('szi', 0)) < 0 for p in positions)
                 if has_short:
                     return f"❌ 已持有 {self.symbol} 的空头仓位"
 
@@ -437,7 +440,8 @@ class SingleSymbolAgent:
                 self.logger.print_info(f"[{self.symbol}Agent] 执行买入平空")
 
                 positions = self.order_manager.get_current_positions()
-                position = next((p for p in positions if p.get('coin') == self.symbol and p.get('side') == 'short'), None)
+                # 查找空头仓位（szi < 0 表示空头）
+                position = next((p for p in positions if p.get('coin') == self.symbol and float(p.get('szi', 0)) < 0), None)
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的空头仓位"
@@ -707,8 +711,8 @@ class SingleSymbolAgent:
                                 return "BUY_TO_COVER"
                             elif tool_name == "buy_spot":
                                 return "BUY_SPOT_RECOMMEND"
-                            # elif tool_name == "do_nothing":
-                                # return "DO_NOTHING"
+                            elif tool_name == "do_nothing":
+                                return "DO_NOTHING"
 
                     if hasattr(message, 'name'):
                         if message.name == "buy":
@@ -721,8 +725,8 @@ class SingleSymbolAgent:
                             return "BUY_TO_COVER"
                         elif message.name == "buy_spot":
                             return "BUY_SPOT_RECOMMEND"
-                        # elif message.name == "do_nothing":
-                            # return "DO_NOTHING"
+                        elif message.name == "do_nothing":
+                            return "DO_NOTHING"
 
             # 后备方案：使用 ExecutionAgent 解析文本并执行
             # 提取 Agent 的决策文本（只提取 AI 消息，不包括用户 prompt）
