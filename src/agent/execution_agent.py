@@ -102,6 +102,20 @@ class ExecutionAgent:
             ExecutionPlan: 结构化的执行计划
         """
         try:
+            # 预检查：确保决策文本不为空
+            if not decision_text or not decision_text.strip():
+                error_msg = "决策文本为空，无法解析"
+                if logger:
+                    logger.print_error(f"[ExecutionAgent] {error_msg}")
+                return ExecutionPlan(
+                    decision=DecisionType.DO_NOTHING,
+                    symbol=symbol,
+                    reason=error_msg
+                )
+
+            if logger:
+                logger.print_info(f"[ExecutionAgent] 开始解析决策文本（长度: {len(decision_text)} 字符）")
+
             prompt = f"""
 请分析以下交易决策文本，提取关键信息并生成执行计划。
 
@@ -128,7 +142,49 @@ class ExecutionAgent:
                 HumanMessage(content=prompt)
             ]
 
-            execution_plan = self.structured_llm.invoke(messages)
+            # 增强错误处理：捕获 structured output 调用并记录详细信息
+            try:
+                execution_plan = self.structured_llm.invoke(messages)
+            except Exception as structured_error:
+                # 记录 structured output 失败的详细信息
+                if logger:
+                    logger.print_error(f"[ExecutionAgent] Structured output 调用失败: {structured_error}")
+                    logger.print_error(f"[ExecutionAgent] 决策文本长度: {len(decision_text)} 字符")
+                    logger.print_error(f"[ExecutionAgent] 决策文本预览: {decision_text[:200]}...")
+
+                # 尝试使用普通 LLM 调用作为后备方案
+                if logger:
+                    logger.print_info(f"[ExecutionAgent] 尝试后备方案：使用普通 LLM 调用")
+
+                try:
+                    response = self.llm.invoke(messages)
+                    response_content = response.content if hasattr(response, 'content') else str(response)
+
+                    if logger:
+                        logger.print_info(f"[ExecutionAgent] LLM 原始响应: {response_content[:200]}...")
+
+                    # 尝试手动解析响应
+                    import json
+                    import re
+
+                    # 尝试提取 JSON 部分（如果 LLM 返回了包含 JSON 的文本）
+                    json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        parsed_data = json.loads(json_str)
+                        execution_plan = ExecutionPlan(**parsed_data)
+
+                        if logger:
+                            logger.print_info(f"[ExecutionAgent] 后备方案成功：手动解析 JSON")
+                    else:
+                        # 无法提取 JSON，使用文本分析
+                        raise ValueError(f"无法从响应中提取有效的 JSON: {response_content[:100]}")
+
+                except Exception as fallback_error:
+                    if logger:
+                        logger.print_error(f"[ExecutionAgent] 后备方案也失败: {fallback_error}")
+                    # 重新抛出原始错误
+                    raise structured_error
 
             if logger:
                 amount_str = f"{execution_plan.amount}" if execution_plan.amount is not None else "默认"
@@ -143,6 +199,9 @@ class ExecutionAgent:
         except Exception as e:
             if logger:
                 logger.print_error(f"[ExecutionAgent] 解析决策失败: {e}")
+                # 记录完整的异常堆栈
+                import traceback
+                logger.print_error(f"[ExecutionAgent] 异常堆栈:\n{traceback.format_exc()}")
 
             # 返回默认的观望决策
             return ExecutionPlan(
