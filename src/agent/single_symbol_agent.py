@@ -35,6 +35,38 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def safe_leverage(leverage_data: Any, default: int = 1) -> int:
+    """
+    安全地从leverage数据中提取杠杆倍数
+
+    Hyperliquid API返回的leverage字段格式:
+    {
+        "type": "cross" | "isolated",
+        "value": 10
+    }
+
+    Args:
+        leverage_data: leverage数据，可能是字典、数字或None
+        default: 提取失败时的默认值
+
+    Returns:
+        杠杆倍数（整数）
+    """
+    try:
+        if leverage_data is None:
+            return default
+
+        # 如果是字典，尝试提取 value 字段
+        if isinstance(leverage_data, dict):
+            value = leverage_data.get('value', default)
+            return int(value)
+
+        # 如果直接是数字，转换为整数
+        return int(leverage_data)
+    except (ValueError, TypeError, KeyError):
+        return default
+
+
 class SingleSymbolAgent:
     """单币种交易 Agent - 为每个交易对维护独立上下文"""
 
@@ -269,7 +301,8 @@ class SingleSymbolAgent:
                         exit_price = self.current_price
                         size = abs(float(position.get('szi', 0)))
                         pnl = result.get('pnl', 0)
-                        pnl_percent = (exit_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+                        leverage = safe_leverage(position.get('leverage'), 1)
+                        pnl_percent = (exit_price - entry_price) / entry_price * leverage * 100 if entry_price > 0 else 0
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
@@ -480,7 +513,7 @@ class SingleSymbolAgent:
                         exit_price = self.current_price
                         size = abs(float(position.get('szi', 0)))
                         pnl = result.get('pnl', 0)
-                        leverage = position.get('leverage', 1)
+                        leverage = safe_leverage(position.get('leverage'), 1)
                         pnl_percent = ((entry_price - exit_price) / entry_price * leverage * 100) if entry_price > 0 else 0
 
                         self.notifier.notify_trade_closed(
