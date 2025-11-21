@@ -167,10 +167,25 @@ class ExecutionAgent:
                     import json
                     import re
 
+                    # 辅助函数：提取第一个平衡的 JSON 对象
+                    def extract_json_object(text):
+                        start = text.find('{')
+                        if start == -1:
+                            return None
+                        stack = []
+                        for i in range(start, len(text)):
+                            if text[i] == '{':
+                                stack.append('{')
+                            elif text[i] == '}':
+                                if stack:
+                                    stack.pop()
+                                if not stack:
+                                    return text[start:i+1]
+                        return None
+
                     # 尝试提取 JSON 部分（如果 LLM 返回了包含 JSON 的文本）
-                    json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(0)
+                    json_str = extract_json_object(response_content)
+                    if json_str:
                         parsed_data = json.loads(json_str)
                         execution_plan = ExecutionPlan(**parsed_data)
 
