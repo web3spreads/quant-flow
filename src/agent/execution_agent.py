@@ -181,12 +181,19 @@ class ExecutionAgent:
                                     stack.pop()
                                 if not stack:
                                     return text[start:i+1]
-                        return None
+                    from json import JSONDecodeError
 
                     # 尝试提取 JSON 部分（如果 LLM 返回了包含 JSON 的文本）
-                    json_str = extract_json_object(response_content)
-                    if json_str:
-                        parsed_data = json.loads(json_str)
+                    json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        try:
+                            parsed_data = json.loads(json_str)
+                        except JSONDecodeError as json_error:
+                            if logger:
+                                logger.print_error(f"[ExecutionAgent] JSON 解析失败: {json_error}")
+                                logger.print_error(f"[ExecutionAgent] 有问题的 JSON 字符串: {json_str[:200]}...")
+                            raise
                         execution_plan = ExecutionPlan(**parsed_data)
 
                         if logger:
