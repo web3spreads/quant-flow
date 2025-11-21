@@ -183,8 +183,8 @@ class ExecutionAgent:
                 except Exception as fallback_error:
                     if logger:
                         logger.print_error(f"[ExecutionAgent] 后备方案也失败: {fallback_error}")
-                    # 重新抛出原始错误
-                    raise structured_error
+                    # 重新抛出原始错误，并保留后备方案的异常上下文
+                    raise structured_error from fallback_error
 
             if logger:
                 amount_str = f"{execution_plan.amount}" if execution_plan.amount is not None else "默认"
