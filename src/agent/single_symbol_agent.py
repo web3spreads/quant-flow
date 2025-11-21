@@ -800,7 +800,7 @@ class SingleSymbolAgent:
             if decision_text:
                 self.logger.print_info(f"[{self.symbol}Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本")
                 self.logger.print_info(f"[{self.symbol}Agent] 决策文本长度: {len(decision_text)} 字符")
-                self.logger.print_info(f"[{self.symbol}Agent] 决策文本预览: {decision_text[:300]}...")
+                self.logger.print_info(f"[{self.symbol}Agent] 决策文本预览: {decision_text[:300]}{'...' if len(decision_text) > 300 else ''}")
 
                 # 使用 ExecutionAgent 解析决策
                 execution_plan = self.execution_agent.parse_decision(
