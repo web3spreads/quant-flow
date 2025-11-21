@@ -153,7 +153,7 @@ class ExecutionAgent:
                 if logger:
                     logger.print_error(f"[ExecutionAgent] Structured output 调用失败: {structured_error}")
                     logger.print_error(f"[ExecutionAgent] 决策文本长度: {len(decision_text)} 字符")
-                    logger.print_error(f"[ExecutionAgent] 决策文本预览: {decision_text[:200]}...")
+                    logger.print_error(f"[ExecutionAgent] 决策文本预览: {decision_text[:200]}{'...' if len(decision_text) > 200 else ''}")
 
                 # 尝试使用普通 LLM 调用作为后备方案
                 if logger:
@@ -164,14 +164,20 @@ class ExecutionAgent:
                     response_content = response.content if hasattr(response, 'content') else str(response)
 
                     if logger:
-                        logger.print_info(f"[ExecutionAgent] LLM 原始响应: {response_content[:200]}...")
+                        logger.print_info(f"[ExecutionAgent] LLM 原始响应: {response_content[:200]}{'...' if len(response_content) > 200 else ''}")
 
                     # 尝试手动解析响应
                     # 尝试提取 JSON 部分（如果 LLM 返回了包含 JSON 的文本）
                     json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
                     if json_match:
                         json_str = json_match.group(0)
-                        parsed_data = json.loads(json_str)
+                        try:
+                            parsed_data = json.loads(json_str)
+                        except JSONDecodeError as json_error:
+                            if logger:
+                                logger.print_error(f"[ExecutionAgent] JSON 解析失败: {json_error}")
+                                logger.print_error(f"[ExecutionAgent] 有问题的 JSON 字符串: {json_str[:200]}...")
+                            raise
                         execution_plan = ExecutionPlan(**parsed_data)
 
                         if logger:
