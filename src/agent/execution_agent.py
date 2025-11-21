@@ -5,6 +5,9 @@
 使用 LangChain 的 structured output 机制来确保正确的工具调用
 """
 
+import json
+import re
+import traceback
 from typing import Dict, Any, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -164,8 +167,6 @@ class ExecutionAgent:
                         logger.print_info(f"[ExecutionAgent] LLM 原始响应: {response_content[:200]}...")
 
                     # 尝试手动解析响应
-                    import json
-                    import re
 
                     # 辅助函数：提取第一个平衡的 JSON 对象
                     def extract_json_object(text):
@@ -181,7 +182,6 @@ class ExecutionAgent:
                                     stack.pop()
                                 if not stack:
                                     return text[start:i+1]
-                    from json import JSONDecodeError
 
                     # 尝试提取 JSON 部分（如果 LLM 返回了包含 JSON 的文本）
                     json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
@@ -189,7 +189,7 @@ class ExecutionAgent:
                         json_str = json_match.group(0)
                         try:
                             parsed_data = json.loads(json_str)
-                        except JSONDecodeError as json_error:
+                        except json.JSONDecodeError as json_error:
                             if logger:
                                 logger.print_error(f"[ExecutionAgent] JSON 解析失败: {json_error}")
                                 logger.print_error(f"[ExecutionAgent] 有问题的 JSON 字符串: {json_str[:200]}...")
@@ -222,7 +222,6 @@ class ExecutionAgent:
             if logger:
                 logger.print_error(f"[ExecutionAgent] 解析决策失败: {e}")
                 # 记录完整的异常堆栈
-                import traceback
                 logger.print_error(f"[ExecutionAgent] 异常堆栈:\n{traceback.format_exc()}")
 
             # 返回默认的观望决策
