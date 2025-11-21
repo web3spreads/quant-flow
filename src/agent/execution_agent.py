@@ -150,7 +150,7 @@ class ExecutionAgent:
                 if logger:
                     logger.print_error(f"[ExecutionAgent] Structured output 调用失败: {structured_error}")
                     logger.print_error(f"[ExecutionAgent] 决策文本长度: {len(decision_text)} 字符")
-                    logger.print_error(f"[ExecutionAgent] 决策文本预览: {decision_text[:200]}...")
+                    logger.print_error(f"[ExecutionAgent] 决策文本预览: {decision_text[:200]}{'...' if len(decision_text) > 200 else ''}")
 
                 # 尝试使用普通 LLM 调用作为后备方案
                 if logger:
