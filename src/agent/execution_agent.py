@@ -161,7 +161,7 @@ class ExecutionAgent:
                     response_content = response.content if hasattr(response, 'content') else str(response)
 
                     if logger:
-                        logger.print_info(f"[ExecutionAgent] LLM 原始响应: {response_content[:200]}...")
+                        logger.print_info(f"[ExecutionAgent] LLM 原始响应: {response_content[:200]}{'...' if len(response_content) > 200 else ''}")
 
                     # 尝试手动解析响应
                     import json
