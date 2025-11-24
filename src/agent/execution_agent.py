@@ -199,8 +199,7 @@ class ExecutionAgent:
                         示例: "这是你的执行计划：{'decision': 'BUY', 'symbol': 'BTCUSDT', ...}，请尽快执行。"）
                         该函数会尝试从上述格式中提取第一个有效的 JSON 对象。
                         """
-                        # 方法 1: 尝试提取 markdown 代码块中的 JSON
-                        # 方法 1: 尝试提取 markdown 代码块中的 JSON（不使用 brace 匹配的正则）
+                        # 方法 1: 尝试提取 markdown 代码块中的 JSON（使用字符串查找，不使用正则）
                         code_block_markers = [
                             ("```json", "```"),
                             ("```", "```"),
