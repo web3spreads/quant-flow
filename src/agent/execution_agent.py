@@ -49,9 +49,28 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 
 重要规则：
 - 从文本中准确提取交易对、金额、杠杆等参数
-- 如果文本中没有明确指定金额或杠杆，设置为 None（使用默认值）
+- 如果文本中没有明确指定金额或杠杆，设置为 null
 - 决策理由应简短明确，总结关键要点
 - 如果文本中决策不明确，默认为 DO_NOTHING
+- **必须**输出符合以下格式的 JSON 对象
+
+JSON 输出格式示例：
+{
+  "decision": "BUY",
+  "symbol": "DOGE",
+  "amount": 100.0,
+  "leverage": 5,
+  "reason": "技术指标显示多头信号强烈"
+}
+
+或者（观望示例）：
+{
+  "decision": "DO_NOTHING",
+  "symbol": "DOGE",
+  "amount": null,
+  "leverage": null,
+  "reason": "市场趋势不明确，等待更好的入场点"
+}
 """
 
 
@@ -161,52 +180,108 @@ class ExecutionAgent:
                     response_content = response.content if hasattr(response, 'content') else str(response)
 
                     if logger:
-                        logger.print_info(f"[ExecutionAgent] LLM 原始响应: {response_content[:200]}{'...' if len(response_content) > 200 else ''}")
+                        logger.print_info(f"[ExecutionAgent] LLM 原始响应（完整）: {response_content}")
 
                     # 尝试手动解析响应
                     import json
                     import re
-
-                    # 辅助函数：提取第一个平衡的 JSON 对象
-                    def extract_json_object(text):
-                        start = text.find('{')
-                        if start == -1:
-                            return None
-                        stack = []
-                        for i in range(start, len(text)):
-                            if text[i] == '{':
-                                stack.append('{')
-                            elif text[i] == '}':
-                                if stack:
-                                    stack.pop()
-                                if not stack:
-                                    return text[start:i+1]
                     from json import JSONDecodeError
 
-                    # 尝试提取 JSON 部分（如果 LLM 返回了包含 JSON 的文本）
-                    json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(0)
-                        try:
-                            parsed_data = json.loads(json_str)
-                        except JSONDecodeError as json_error:
+                    # 辅助函数：提取 JSON 对象（支持多种格式）
+                    def extract_json_from_text(text: str) -> Optional[dict]:
+                        """
+                        尝试从文本中提取 JSON 对象
+                        支持：
+                        1. Markdown 代码块: ```json {...} ```
+                        2. 纯 JSON: {...}
+                        3. 带有文本的混合内容
+                        """
+                        # 方法 1: 尝试提取 markdown 代码块中的 JSON
+                        code_block_patterns = [
+                            r'```json\s*(\{.*?\})\s*```',  # ```json {...} ```
+                            r'```\s*(\{.*?\})\s*```',      # ``` {...} ```
+                        ]
+                        for pattern in code_block_patterns:
+                            match = re.search(pattern, text, re.DOTALL)
+                            if match:
+                                try:
+                                    return json.loads(match.group(1))
+                                except JSONDecodeError:
+                                    continue
+
+                        # 方法 2: 提取第一个平衡的 JSON 对象
+                        start = text.find('{')
+                        if start != -1:
+                            stack = []
+                            for i in range(start, len(text)):
+                                if text[i] == '{':
+                                    stack.append('{')
+                                elif text[i] == '}':
+                                    if stack:
+                                        stack.pop()
+                                    if not stack:
+                                        json_str = text[start:i+1]
+                                        try:
+                                            return json.loads(json_str)
+                                        except JSONDecodeError:
+                                            break
+
+                        # 方法 3: 使用正则表达式匹配（最宽松）
+                        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+                        if json_match:
+                            try:
+                                return json.loads(json_match.group(0))
+                            except JSONDecodeError:
+                                pass
+
+                        return None
+
+                    # 尝试提取并解析 JSON
+                    parsed_data = extract_json_from_text(response_content)
+
+                    if parsed_data:
+                        # 验证并补全必需字段
+                        if 'decision' not in parsed_data:
                             if logger:
-                                logger.print_error(f"[ExecutionAgent] JSON 解析失败: {json_error}")
-                                logger.print_error(f"[ExecutionAgent] 有问题的 JSON 字符串: {json_str[:200]}...")
-                            raise
+                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 'decision' 字段，使用默认值 DO_NOTHING")
+                            parsed_data['decision'] = 'DO_NOTHING'
+
+                        if 'symbol' not in parsed_data:
+                            if logger:
+                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 'symbol' 字段，使用传入的 symbol: {symbol}")
+                            parsed_data['symbol'] = symbol
+
+                        if 'reason' not in parsed_data:
+                            if logger:
+                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 'reason' 字段，使用默认值")
+                            parsed_data['reason'] = "AI 决策解析不完整"
+
                         execution_plan = ExecutionPlan(**parsed_data)
 
                         if logger:
                             logger.print_info(f"[ExecutionAgent] 后备方案成功：手动解析 JSON")
                     else:
-                        # 无法提取 JSON，使用文本分析
-                        raise ValueError(f"无法从响应中提取有效的 JSON: {response_content[:100]}")
+                        # 无法提取 JSON，返回默认的 DO_NOTHING 决策
+                        if logger:
+                            logger.print_warning(f"[ExecutionAgent] 无法从响应中提取有效的 JSON，返回默认决策")
+                        execution_plan = ExecutionPlan(
+                            decision=DecisionType.DO_NOTHING,
+                            symbol=symbol,
+                            reason="无法解析 AI 响应格式"
+                        )
 
                 except Exception as fallback_error:
                     if logger:
                         logger.print_error(f"[ExecutionAgent] 后备方案也失败: {fallback_error}")
-                    # 重新抛出原始错误，并保留后备方案的异常上下文
-                    raise structured_error from fallback_error
+                        import traceback
+                        logger.print_error(f"[ExecutionAgent] 后备异常堆栈:\n{traceback.format_exc()}")
+
+                    # 返回默认的 DO_NOTHING 决策，而不是重新抛出异常
+                    execution_plan = ExecutionPlan(
+                        decision=DecisionType.DO_NOTHING,
+                        symbol=symbol,
+                        reason=f"后备方案失败: {str(fallback_error)}"
+                    )
 
             if logger:
                 amount_str = f"{execution_plan.amount}" if execution_plan.amount is not None else "默认"
