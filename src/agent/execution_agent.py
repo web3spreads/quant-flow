@@ -256,10 +256,18 @@ class ExecutionAgent:
                                 logger.print_warning(f"[ExecutionAgent] 响应中缺少 'reason' 字段，使用默认值")
                             parsed_data['reason'] = "AI 决策解析不完整"
 
-                        execution_plan = ExecutionPlan(**parsed_data)
-
-                        if logger:
-                            logger.print_info(f"[ExecutionAgent] 后备方案成功：手动解析 JSON")
+                        try:
+                            execution_plan = ExecutionPlan(**parsed_data)
+                            if logger:
+                                logger.print_info(f"[ExecutionAgent] 后备方案成功：手动解析 JSON")
+                        except Exception as validation_error:
+                            if logger:
+                                logger.print_warning(f"[ExecutionAgent] JSON 解析后字段验证失败，返回默认决策: {validation_error}")
+                            execution_plan = ExecutionPlan(
+                                decision=DecisionType.DO_NOTHING,
+                                symbol=symbol,
+                                reason="字段验证失败，无法解析 AI 响应格式"
+                            )
                     else:
                         # 无法提取 JSON，返回默认的 DO_NOTHING 决策
                         if logger:
