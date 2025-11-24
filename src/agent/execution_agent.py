@@ -229,14 +229,6 @@ class ExecutionAgent:
                                         except JSONDecodeError:
                                             break
 
-                        # 方法 3: 使用正则表达式匹配（最宽松）
-                        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
-                        if json_match:
-                            try:
-                                return json.loads(json_match.group(0))
-                            except JSONDecodeError:
-                                pass
-
                         return None
 
                     # 尝试提取并解析 JSON
