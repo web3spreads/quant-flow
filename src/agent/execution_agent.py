@@ -200,17 +200,22 @@ class ExecutionAgent:
                         该函数会尝试从上述格式中提取第一个有效的 JSON 对象。
                         """
                         # 方法 1: 尝试提取 markdown 代码块中的 JSON
-                        code_block_patterns = [
-                            r'```json\s*(\{.*?\})\s*```',  # ```json {...} ```
-                            r'```\s*(\{.*?\})\s*```',      # ``` {...} ```
+                        # 方法 1: 尝试提取 markdown 代码块中的 JSON（不使用 brace 匹配的正则）
+                        code_block_markers = [
+                            ("```json", "```"),
+                            ("```", "```"),
                         ]
-                        for pattern in code_block_patterns:
-                            match = re.search(pattern, text, re.DOTALL)
-                            if match:
-                                try:
-                                    return json.loads(match.group(1))
-                                except JSONDecodeError:
-                                    continue
+                        for start_marker, end_marker in code_block_markers:
+                            start_idx = text.find(start_marker)
+                            if start_idx != -1:
+                                start_idx += len(start_marker)
+                                end_idx = text.find(end_marker, start_idx)
+                                if end_idx != -1:
+                                    code_content = text[start_idx:end_idx].strip()
+                                    try:
+                                        return json.loads(code_content)
+                                    except JSONDecodeError:
+                                        continue
 
                         # 方法 2: 提取第一个平衡的 JSON 对象
                         start = text.find('{')
