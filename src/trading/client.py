@@ -81,11 +81,13 @@ class HyperliquidClient:
         
         Returns:
             {
-                'accountValue': str,  # 账户总价值（USD）
-                'totalMarginUsed': str,  # 已用保证金
-                'totalRawUsd': str,  # 可用余额
-                ...
+                'accountValue': float,  # 账户总价值（USD，包含未实现盈亏）
+                'totalMarginUsed': float,  # 已用保证金
+                'totalRawUsd': float,  # 原始 USD 余额（现金部分，不包含未实现盈亏）
+                'withdrawable': str,  # 可提取余额
             }
+            
+        注意：可用余额应该计算为 accountValue - totalMarginUsed，而不是直接使用 totalRawUsd
         """
         try:
             user_state = self.info.user_state(self.address)

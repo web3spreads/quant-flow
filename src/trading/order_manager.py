@@ -41,11 +41,14 @@ class OrderManager:
         获取可用余额（USD）
         
         Returns:
-            可用余额
+            可用余额 = 账户总价值 - 已占用保证金
         """
         balance = self.client.get_balance()
         if balance:
-            return balance['totalRawUsd']
+            total = balance['accountValue']
+            occupied = balance['totalMarginUsed']
+            # 可用余额 = 账户总价值 - 已占用保证金
+            return total - occupied
         return 0.0
 
     def check_sufficient_balance(self, required_amount: float) -> bool:
@@ -93,7 +96,8 @@ class OrderManager:
 
             total = balance['accountValue']
             occupied = balance['totalMarginUsed']
-            available = balance['totalRawUsd']
+            # 可用余额 = 账户总价值 - 已占用保证金
+            available = total - occupied
 
             # 计算未实现盈亏（从所有持仓汇总）
             unrealized_pnl = 0
