@@ -191,10 +191,12 @@ class ExecutionAgent:
                     def extract_json_from_text(text: str) -> Optional[dict]:
                         """
                         尝试从文本中提取 JSON 对象
-                        支持：
+                        支持以下格式：
                         1. Markdown 代码块: ```json {...} ```
                         2. 纯 JSON: {...}
-                        3. 带有文本的混合内容
+                        3. 带有文本的混合内容（即 JSON 对象嵌入在其他文本中，例如：
+                        示例: "这是你的执行计划：{'decision': 'BUY', 'symbol': 'BTCUSDT', ...}，请尽快执行。"）
+                        该函数会尝试从上述格式中提取第一个有效的 JSON 对象。
                         """
                         # 方法 1: 尝试提取 markdown 代码块中的 JSON
                         code_block_patterns = [
