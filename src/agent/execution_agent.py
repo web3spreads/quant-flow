@@ -180,8 +180,9 @@ class ExecutionAgent:
                     response_content = response.content if hasattr(response, 'content') else str(response)
 
                     if logger:
-                        logger.print_info(f"[ExecutionAgent] LLM 原始响应（完整）: {response_content}")
-
+                        max_log_len = 2000
+                        truncated = "..." if len(response_content) > max_log_len else ""
+                        logger.print_info(f"[ExecutionAgent] LLM 原始响应（完整）: {response_content[:max_log_len]}{truncated} (总长度: {len(response_content)} 字符)")
                     # 尝试手动解析响应
                     import json
                     import re
