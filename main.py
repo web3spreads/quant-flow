@@ -6,6 +6,7 @@ Multi-Agent Architecture: Maintains independent context for each trading pair, w
 
 import sys
 import signal
+import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -58,6 +59,10 @@ class QuantFlowBot:
         # 调度器
         self.scheduler = None
         self.is_running = False
+
+        # 交易周期锁（防止并发执行）
+        self._trading_lock = threading.Lock()
+        self._skipped_cycles = 0  # 跳过的周期计数
 
         # 交易统计
         self.statistics = {
@@ -239,6 +244,15 @@ class QuantFlowBot:
 
     def trading_cycle(self):
         """执行一轮交易决策循环（多 Agent 独立决策模式）"""
+        # 尝试获取锁，如果正在执行则跳过
+        if not self._trading_lock.acquire(blocking=False):
+            self._skipped_cycles += 1
+            self.logger.print_warning(
+                f"⏭️ 上一个交易周期仍在运行，跳过本次调度 "
+                f"(累计跳过: {self._skipped_cycles} 次)"
+            )
+            return
+
         try:
             self.logger.print_header(f"🔄 多 Agent 交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
@@ -495,7 +509,7 @@ class QuantFlowBot:
                         self.logger.logger.exception(e)
             
             self.logger.print_header(f"✅ 多 Agent 交易周期完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            
+
         except Exception as e:
             self.logger.print_error(f"交易周期异常: {e}")
             self.logger.logger.exception(e)
@@ -507,6 +521,9 @@ class QuantFlowBot:
                     error_message=str(e),
                     context="交易决策循环执行时发生错误"
                 )
+        finally:
+            # 无论成功或失败，都释放锁
+            self._trading_lock.release()
 
     def start(self):
         """启动机器人"""
