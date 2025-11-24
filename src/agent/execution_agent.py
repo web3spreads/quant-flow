@@ -10,6 +10,16 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from enum import Enum
+import json
+import re
+
+
+# ExecutionPlan 字段名常量（避免硬编码字符串）
+FIELD_DECISION = 'decision'
+FIELD_SYMBOL = 'symbol'
+FIELD_REASON = 'reason'
+FIELD_AMOUNT = 'amount'
+FIELD_LEVERAGE = 'leverage'
 
 
 class DecisionType(str, Enum):
@@ -72,6 +82,64 @@ JSON 输出格式示例：
   "reason": "市场趋势不明确，等待更好的入场点"
 }
 """
+
+
+def _extract_json_from_text(text: str) -> Optional[dict]:
+    """
+    从文本中提取 JSON 对象（模块级辅助函数）
+
+    支持以下格式：
+    1. Markdown 代码块: ```json {...} ```
+    2. 纯 JSON: {...}
+    3. 带有文本的混合内容（即 JSON 对象嵌入在其他文本中）
+
+    Args:
+        text: 包含 JSON 对象的文本
+
+    Returns:
+        提取的 JSON 对象（字典），如果提取失败则返回 None
+
+    Examples:
+        >>> _extract_json_from_text('```json\\n{"key": "value"}\\n```')
+        {'key': 'value'}
+        >>> _extract_json_from_text('Some text {"key": "value"} more text')
+        {'key': 'value'}
+    """
+    # 方法 1: 尝试提取 markdown 代码块中的 JSON（使用字符串查找，不使用正则）
+    code_block_markers = [
+        ("```json", "```"),
+        ("```", "```"),
+    ]
+    for start_marker, end_marker in code_block_markers:
+        start_idx = text.find(start_marker)
+        if start_idx != -1:
+            start_idx += len(start_marker)
+            end_idx = text.find(end_marker, start_idx)
+            if end_idx != -1:
+                code_content = text[start_idx:end_idx].strip()
+                try:
+                    return json.loads(code_content)
+                except json.JSONDecodeError:
+                    continue
+
+    # 方法 2: 提取第一个平衡的 JSON 对象
+    start = text.find('{')
+    if start != -1:
+        stack = []
+        for i in range(start, len(text)):
+            if text[i] == '{':
+                stack.append('{')
+            elif text[i] == '}':
+                if stack:
+                    stack.pop()
+                if not stack:
+                    json_str = text[start:i+1]
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError:
+                        break
+
+    return None
 
 
 class ExecutionAgent:
@@ -183,77 +251,26 @@ class ExecutionAgent:
                         max_log_len = 2000
                         truncated = "..." if len(response_content) > max_log_len else ""
                         logger.print_info(f"[ExecutionAgent] LLM 原始响应（完整）: {response_content[:max_log_len]}{truncated} (总长度: {len(response_content)} 字符)")
-                    # 尝试手动解析响应
-                    import json
-                    import re
-                    from json import JSONDecodeError
 
-                    # 辅助函数：提取 JSON 对象（支持多种格式）
-                    def extract_json_from_text(text: str) -> Optional[dict]:
-                        """
-                        尝试从文本中提取 JSON 对象
-                        支持以下格式：
-                        1. Markdown 代码块: ```json {...} ```
-                        2. 纯 JSON: {...}
-                        3. 带有文本的混合内容（即 JSON 对象嵌入在其他文本中，例如：
-                        示例: "这是你的执行计划：{'decision': 'BUY', 'symbol': 'BTCUSDT', ...}，请尽快执行。"）
-                        该函数会尝试从上述格式中提取第一个有效的 JSON 对象。
-                        """
-                        # 方法 1: 尝试提取 markdown 代码块中的 JSON（使用字符串查找，不使用正则）
-                        code_block_markers = [
-                            ("```json", "```"),
-                            ("```", "```"),
-                        ]
-                        for start_marker, end_marker in code_block_markers:
-                            start_idx = text.find(start_marker)
-                            if start_idx != -1:
-                                start_idx += len(start_marker)
-                                end_idx = text.find(end_marker, start_idx)
-                                if end_idx != -1:
-                                    code_content = text[start_idx:end_idx].strip()
-                                    try:
-                                        return json.loads(code_content)
-                                    except JSONDecodeError:
-                                        continue
-
-                        # 方法 2: 提取第一个平衡的 JSON 对象
-                        start = text.find('{')
-                        if start != -1:
-                            stack = []
-                            for i in range(start, len(text)):
-                                if text[i] == '{':
-                                    stack.append('{')
-                                elif text[i] == '}':
-                                    if stack:
-                                        stack.pop()
-                                    if not stack:
-                                        json_str = text[start:i+1]
-                                        try:
-                                            return json.loads(json_str)
-                                        except JSONDecodeError:
-                                            break
-
-                        return None
-
-                    # 尝试提取并解析 JSON
-                    parsed_data = extract_json_from_text(response_content)
+                    # 尝试提取并解析 JSON（使用模块级辅助函数）
+                    parsed_data = _extract_json_from_text(response_content)
 
                     if parsed_data:
-                        # 验证并补全必需字段
-                        if 'decision' not in parsed_data:
+                        # 验证并补全必需字段（使用字段名常量避免硬编码）
+                        if FIELD_DECISION not in parsed_data:
                             if logger:
-                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 'decision' 字段，使用默认值 DO_NOTHING")
-                            parsed_data['decision'] = 'DO_NOTHING'
+                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 '{FIELD_DECISION}' 字段，使用默认值 DO_NOTHING")
+                            parsed_data[FIELD_DECISION] = DecisionType.DO_NOTHING.value
 
-                        if 'symbol' not in parsed_data:
+                        if FIELD_SYMBOL not in parsed_data:
                             if logger:
-                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 'symbol' 字段，使用传入的 symbol: {symbol}")
-                            parsed_data['symbol'] = symbol
+                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 '{FIELD_SYMBOL}' 字段，使用传入的 symbol: {symbol}")
+                            parsed_data[FIELD_SYMBOL] = symbol
 
-                        if 'reason' not in parsed_data:
+                        if FIELD_REASON not in parsed_data:
                             if logger:
-                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 'reason' 字段，使用默认值")
-                            parsed_data['reason'] = "AI 决策解析不完整"
+                                logger.print_warning(f"[ExecutionAgent] 响应中缺少 '{FIELD_REASON}' 字段，使用默认值")
+                            parsed_data[FIELD_REASON] = "AI 决策解析不完整"
 
                         try:
                             execution_plan = ExecutionPlan(**parsed_data)
