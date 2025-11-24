@@ -267,7 +267,7 @@ class ExecutionAgent:
                         execution_plan = ExecutionPlan(
                             decision=DecisionType.DO_NOTHING,
                             symbol=symbol,
-                            reason="无法解析 AI 响应格式"
+                            reason=f"无法解析 AI 响应格式 (响应长度: {len(response_content)}，预览: {response_content[:200]}{'...' if len(response_content) > 200 else ''})"
                         )
 
                 except Exception as fallback_error:
