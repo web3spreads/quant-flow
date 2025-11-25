@@ -651,7 +651,7 @@ class SingleSymbolAgent:
         """
         total_fee_rate = self.FEE_RATE_PER_SIDE * 2
 
-        profit_to_fee_ratio = self.take_profit_ratio / total_fee_rate if total_fee_rate > 0 else float('inf')
+        profit_to_fee_ratio = self.take_profit_ratio / total_fee_rate
         if profit_to_fee_ratio < self.MIN_PROFIT_TO_FEE_RATIO:
             return (
                 f"❌ 当前止盈比例 {self.take_profit_ratio:.2%} "
