@@ -110,9 +110,9 @@ ETH 波动性高，是激进交易者的理想标的：
 ## ⚡ 交易成本分析（必看！）
 
 **手续费结构 (Hyperliquid):**
-- 开仓手续费: **0.035%** (Taker, 市价单)
-- 平仓手续费: **0.035%** (Taker)
-- **完整交易成本**: 0.07% (开仓 + 平仓)
+- 开仓手续费: **{{ fee_rate_per_side }}** (Taker, 市价单)
+- 平仓手续费: **{{ fee_rate_per_side }}** (Taker)
+- **完整交易成本**: {{ total_fee_rate }}
 
 **本次交易成本预估:**
 假设使用金额: ${{ max_trade_amount }} USD, 杠杆: {{ max_leverage }}x
@@ -122,12 +122,13 @@ ETH 波动性高，是激进交易者的理想标的：
 - **预计总手续费**: ${{ total_fee }}
 
 **盈亏平衡点:**
-- 需要盈利: ${{ total_fee }} / ${{ max_trade_amount }} = **{{ breakeven_percent }}** 才能覆盖手续费
-- 换算为价格变动: **{{ price_move_percent }}** (考虑杠杆效应)
+- 资金需要: ${{ total_fee }} / ${{ max_trade_amount }} = **{{ breakeven_percent }}**（相对保证金）
+- 价格需要: **{{ price_move_percent }}** 的真实价格变动才覆盖手续费
+- 止盈/手续费：{{ profit_to_fee_ratio }}
 
 **决策要求:**
 - ⚠️ **只有预期盈利 > 手续费成本 4 倍以上时，才值得开仓**
-- ⚠️ **当前止盈目标 {{ take_profit_ratio }}，完全覆盖手续费，符合要求 ✅**
+- ⚠️ **当前止盈目标 {{ take_profit_ratio }}（{{ profit_to_fee_ratio }}），完全覆盖手续费 ✅**
 - ⚠️ **积极把握机会，每次交易都要有合理的盈利预期**
 
 ## 💰 交易权限（激进策略）

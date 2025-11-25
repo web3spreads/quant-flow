@@ -70,6 +70,9 @@ def safe_leverage(leverage_data: Any, default: int = 1) -> int:
 class SingleSymbolAgent:
     """单币种交易 Agent - 为每个交易对维护独立上下文"""
 
+    FEE_RATE_PER_SIDE = 0.00035
+    MIN_PROFIT_TO_FEE_RATIO = 4.0
+
     def __init__(
         self,
         symbol: str,
@@ -161,6 +164,10 @@ class SingleSymbolAgent:
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
                     return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+
+                fee_guard_msg = self._check_fee_guard()
+                if fee_guard_msg:
+                    return fee_guard_msg
 
                 # 使用 AI 指定的金额和杠杆，如果没有指定则使用默认上限
                 actual_amount = amount if amount is not None else self.trade_amount
@@ -375,6 +382,10 @@ class SingleSymbolAgent:
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
                     return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+
+                fee_guard_msg = self._check_fee_guard()
+                if fee_guard_msg:
+                    return fee_guard_msg
 
                 # 使用 AI 指定的金额和杠杆，如果没有指定则使用默认上限
                 actual_amount = amount if amount is not None else self.trade_amount
@@ -633,6 +644,22 @@ class SingleSymbolAgent:
             'do_nothing': self._do_nothing_callback,
             'buy_spot': self._buy_spot_callback
         }
+
+    def _check_fee_guard(self) -> Optional[str]:
+        """
+        确保当前止盈目标足以覆盖手续费，避免因为手续费导致的小额亏损
+        """
+        total_fee_rate = self.FEE_RATE_PER_SIDE * 2
+        if total_fee_rate <= 0:
+            return None
+
+        profit_to_fee_ratio = self.take_profit_ratio / total_fee_rate if total_fee_rate > 0 else float('inf')
+        if profit_to_fee_ratio < self.MIN_PROFIT_TO_FEE_RATIO:
+            return (
+                f"❌ 当前止盈比例 {self.take_profit_ratio:.2%} "
+                f"仅覆盖手续费 {profit_to_fee_ratio:.1f}x，低于最低要求 {self.MIN_PROFIT_TO_FEE_RATIO}x"
+            )
+        return None
 
     def make_decision(
         self,

@@ -104,9 +104,9 @@
 ## ⚡ 交易成本分析
 
 **手续费结构 (Hyperliquid):**
-- 开仓手续费: **0.035%** (Taker, 市价单)
-- 平仓手续费: **0.035%** (Taker)
-- **完整交易成本**: 0.07% (开仓 + 平仓)
+- 开仓手续费: **{{ fee_rate_per_side }}** (Taker, 市价单)
+- 平仓手续费: **{{ fee_rate_per_side }}** (Taker)
+- **完整交易成本**: {{ total_fee_rate }}
 
 **本次交易成本预估:**
 假设使用上限金额和杠杆
@@ -114,11 +114,13 @@
 - 开仓手续费: ${{ open_fee }}
 - 平仓手续费: ${{ close_fee }}
 - **预计总手续费**: ${{ total_fee }}
-- **盈亏平衡点**: {{ breakeven_percent }}
+- **盈亏平衡点（资金回报）**: {{ breakeven_percent }}
+- **需要的真实价格变动**: {{ price_move_percent }}
+- **止盈 / 手续费比**: {{ profit_to_fee_ratio }}
 
 **决策要求:**
 - ✅ 预期盈利必须 > 手续费成本 **3-5 倍以上**
-- ✅ 当前止盈目标 {{ take_profit_ratio }}，完全符合要求
+- ✅ 当前止盈目标 {{ take_profit_ratio }}（{{ profit_to_fee_ratio }}），满足成本要求
 - ⚠️ 避免频繁交易，每次开仓都要有足够的盈利空间
 
 ## 💰 交易权限与币种特定建议
