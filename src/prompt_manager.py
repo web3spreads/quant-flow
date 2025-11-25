@@ -392,10 +392,7 @@ class PromptManager:
         else:
             price_move_percent = "0.000%"
 
-        if total_fee_rate > 0:
-            profit_to_fee_ratio = take_profit_ratio / total_fee_rate
-        else:
-            profit_to_fee_ratio = float('inf')
+        profit_to_fee_ratio = take_profit_ratio / total_fee_rate
 
         # 准备模板上下文（使用 Jinja2 渲染）
         context = {
