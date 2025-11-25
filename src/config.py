@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Dict, Any, List
 from dotenv import load_dotenv
 
+# Trading fee constants (Hyperliquid)
+FEE_RATE_PER_SIDE = 0.00035  # 0.035% per side (taker fee)
+
 
 class Config:
     """配置管理类"""

@@ -14,6 +14,7 @@ from src.agent.execution_agent import ExecutionAgent
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
 from src.prompt_manager import PromptManager
+from src.config import FEE_RATE_PER_SIDE
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -70,7 +71,7 @@ def safe_leverage(leverage_data: Any, default: int = 1) -> int:
 class SingleSymbolAgent:
     """单币种交易 Agent - 为每个交易对维护独立上下文"""
 
-    FEE_RATE_PER_SIDE = 0.00035
+    FEE_RATE = FEE_RATE_PER_SIDE  # Use shared constant from config
     MIN_PROFIT_TO_FEE_RATIO = 4.0
 
     def __init__(
@@ -649,7 +650,7 @@ class SingleSymbolAgent:
         """
         确保当前止盈目标足以覆盖手续费，避免因为手续费导致的小额亏损
         """
-        total_fee_rate = self.FEE_RATE_PER_SIDE * 2
+        total_fee_rate = self.FEE_RATE * 2
 
         profit_to_fee_ratio = self.take_profit_ratio / total_fee_rate
         if profit_to_fee_ratio < self.MIN_PROFIT_TO_FEE_RATIO:
