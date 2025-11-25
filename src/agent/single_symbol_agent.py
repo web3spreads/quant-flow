@@ -655,7 +655,7 @@ class SingleSymbolAgent:
         if profit_to_fee_ratio < self.MIN_PROFIT_TO_FEE_RATIO:
             return (
                 f"❌ 当前止盈比例 {self.take_profit_ratio:.2%} "
-                f"仅覆盖手续费 {profit_to_fee_ratio:.1f}x，低于最低要求 {self.MIN_PROFIT_TO_FEE_RATIO}x"
+                f"仅为手续费的 {profit_to_fee_ratio:.1f} 倍，低于最低要求 {self.MIN_PROFIT_TO_FEE_RATIO}x"
             )
         return None
 
