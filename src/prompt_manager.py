@@ -374,9 +374,11 @@ class PromptManager:
 """
 
         # 计算手续费相关的值（防止除零错误）
+        fee_rate_per_side = 0.00035
+        total_fee_rate = fee_rate_per_side * 2
         position_value = max_trade_amount * max_leverage
-        open_fee = position_value * 0.00035
-        close_fee = position_value * 0.00035
+        open_fee = position_value * fee_rate_per_side
+        close_fee = position_value * fee_rate_per_side
         total_fee = open_fee + close_fee
 
         # 防止除零错误
@@ -385,10 +387,15 @@ class PromptManager:
         else:
             breakeven_percent = "0.00%"
 
-        if max_leverage > 0:
-            price_move_percent = f"{0.07 / max_leverage:.3f}%"
+        if position_value > 0:
+            price_move_percent = f"{(total_fee / position_value) * 100:.3f}%"
         else:
             price_move_percent = "0.000%"
+
+        if total_fee_rate > 0:
+            profit_to_fee_ratio = take_profit_ratio / total_fee_rate
+        else:
+            profit_to_fee_ratio = float('inf')
 
         # 准备模板上下文（使用 Jinja2 渲染）
         context = {
@@ -478,6 +485,10 @@ class PromptManager:
             # 费用计算
             'position_value': f"{position_value:.2f}",
             'position_value_raw': position_value,
+            'fee_rate_per_side': f"{fee_rate_per_side * 100:.3f}%",
+            'fee_rate_per_side_raw': fee_rate_per_side,
+            'total_fee_rate': f"{total_fee_rate * 100:.3f}%",
+            'total_fee_rate_raw': total_fee_rate,
             'open_fee': f"{open_fee:.2f}",
             'open_fee_raw': open_fee,
             'close_fee': f"{close_fee:.2f}",
@@ -486,7 +497,8 @@ class PromptManager:
             'total_fee_raw': total_fee,
             'breakeven_percent': breakeven_percent,
             'price_move_percent': price_move_percent,
-
+            'profit_to_fee_ratio': f"{profit_to_fee_ratio:.1f}x" if profit_to_fee_ratio != float('inf') else "∞",
+            'profit_to_fee_ratio_raw': profit_to_fee_ratio,
             # 历史和余额信息
             'historical_summary': historical_text,
             'balance_info': balance_text,
