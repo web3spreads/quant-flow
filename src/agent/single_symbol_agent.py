@@ -650,8 +650,6 @@ class SingleSymbolAgent:
         确保当前止盈目标足以覆盖手续费，避免因为手续费导致的小额亏损
         """
         total_fee_rate = self.FEE_RATE_PER_SIDE * 2
-        if total_fee_rate <= 0:
-            return None
 
         profit_to_fee_ratio = self.take_profit_ratio / total_fee_rate if total_fee_rate > 0 else float('inf')
         if profit_to_fee_ratio < self.MIN_PROFIT_TO_FEE_RATIO:
