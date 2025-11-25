@@ -62,7 +62,12 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 - 如果文本中没有明确指定金额或杠杆，设置为 null
 - 决策理由应简短明确，总结关键要点
 - 如果文本中决策不明确，默认为 DO_NOTHING
-- **必须**输出符合以下格式的 JSON 对象
+
+🚨 输出格式要求（极其重要）：
+- 你的输出必须是纯 JSON 对象
+- 直接以 { 开始，以 } 结束
+- 不要添加任何前缀或后缀文字
+- 不要使用 Markdown 代码块（```json```）
 
 JSON 输出格式示例：
 {
@@ -161,11 +166,14 @@ class ExecutionAgent:
             openai_model: 模型名称
             temperature: 温度参数（建议使用 0 以确保确定性输出）
         """
+        # 启用 JSON Mode 以确保 LLM 返回纯 JSON 格式
+        # 这可以显著提高 structured output 的成功率
         self.llm = ChatOpenAI(
             base_url=openai_api_base,
             api_key=openai_api_key,
             model=openai_model,
             temperature=temperature,
+            model_kwargs={"response_format": {"type": "json_object"}}
         )
 
         # 使用 structured output
@@ -233,15 +241,14 @@ class ExecutionAgent:
             try:
                 execution_plan = self.structured_llm.invoke(messages)
             except Exception as structured_error:
-                # 记录 structured output 失败的详细信息
+                # 使用 warning 级别，因为后备方案能处理
                 if logger:
-                    logger.print_error(f"[ExecutionAgent] Structured output 调用失败: {structured_error}")
-                    logger.print_error(f"[ExecutionAgent] 决策文本长度: {len(decision_text)} 字符")
-                    logger.print_error(f"[ExecutionAgent] 决策文本预览: {decision_text[:200]}{'...' if len(decision_text) > 200 else ''}")
+                    logger.print_warning(f"⚠️  [ExecutionAgent] Structured output 需要后备方案: {structured_error}")
+                    logger.print_info(f"[ExecutionAgent] 决策文本长度: {len(decision_text)} 字符")
 
                 # 尝试使用普通 LLM 调用作为后备方案
                 if logger:
-                    logger.print_info(f"[ExecutionAgent] 尝试后备方案：使用普通 LLM 调用")
+                    logger.print_info(f"[ExecutionAgent] 使用兼容模式解析决策")
 
                 try:
                     response = self.llm.invoke(messages)

@@ -194,8 +194,9 @@ class SingleSymbolAgent:
                     # 获取市场订单信息
                     market_order = result.get('market_order', {})
                     entry_price = self.current_price
-                    tp_price = entry_price * 1.05  # 5% take profit
-                    sl_price = entry_price * 0.98  # 2% stop loss
+                    # 使用配置的止盈止损比例（与实际交易一致）
+                    tp_price = entry_price * (1 + self.take_profit_ratio)
+                    sl_price = entry_price * (1 - self.stop_loss_ratio)
                     quantity = result.get('quantity', 0)
                     leverage_used = actual_leverage
 
@@ -406,8 +407,9 @@ class SingleSymbolAgent:
                 if result and result.get('success'):
                     # 获取市场订单信息
                     entry_price = self.current_price
-                    tp_price = entry_price * 0.95  # 5% take profit (下跌)
-                    sl_price = entry_price * 1.02  # 2% stop loss (上涨)
+                    # 使用配置的止盈止损比例（做空方向相反）
+                    tp_price = entry_price * (1 - self.take_profit_ratio)  # 下跌时止盈
+                    sl_price = entry_price * (1 + self.stop_loss_ratio)    # 上涨时止损
                     quantity = result.get('quantity', 0)
                     leverage_used = actual_leverage
 
