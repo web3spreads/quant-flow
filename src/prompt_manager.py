@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from jinja2 import Environment, FileSystemLoader, Template
 
+from src.config import FEE_RATE_PER_SIDE
+
 
 class PromptManager:
     """Prompt 管理器 - 支持从配置文件加载和切换不同的 Prompt 集合"""
@@ -374,7 +376,7 @@ class PromptManager:
 """
 
         # 计算手续费相关的值（防止除零错误）
-        fee_rate_per_side = 0.00035
+        fee_rate_per_side = FEE_RATE_PER_SIDE
         total_fee_rate = fee_rate_per_side * 2
         position_value = max_trade_amount * max_leverage
         open_fee = position_value * fee_rate_per_side
