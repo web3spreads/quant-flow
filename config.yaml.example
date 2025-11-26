@@ -98,6 +98,17 @@ prompt:
   # Prompt 配置文件路径
   config_file: prompts/prompts.yaml
 
+# 复盘 Agent 配置
+review_agent:
+  enabled: true                  # 是否启用复盘 Agent
+  run_every_cycles: 3            # 每多少个交易周期触发一次复盘
+  lookback_decisions: 12         # 复盘时回顾的最近决策数量
+  model: deepseek-chat           # 复盘 Agent 使用的模型（默认与交易 Agent 相同）
+  temperature: 0.05              # 复盘 Agent 温度，建议较低确保稳定
+  memory_file: logs/review_memory.json  # 复盘经验持久化文件
+  max_lessons: 30                # 每个符号最多保留的经验数量
+  min_confidence: 0.35           # 采纳经验所需的最小置信度
+
 # 风控配置
 risk_management:
   # 是否启用熔断机制

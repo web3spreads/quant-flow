@@ -1,0 +1,136 @@
+"""
+复盘经验持久化存储
+用于在不同运行之间保留复盘 Agent 的经验规则
+"""
+
+import json
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+
+
+class ReviewMemoryStore:
+    """复盘经验存储，支持简单的基于文件的持久化"""
+
+    def __init__(self, path: str, max_lessons: int = 30):
+        self.path = Path(path)
+        self.max_lessons = max_lessons
+        self.lessons: Dict[str, List[Dict[str, Any]]] = {}
+        self.load()
+
+    def load(self):
+        """从磁盘加载经验"""
+        try:
+            if self.path.exists():
+                with open(self.path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                if isinstance(data, dict) and isinstance(data.get("lessons"), dict):
+                    self.lessons = data["lessons"]
+                elif isinstance(data, list):
+                    # 兼容旧格式
+                    converted: Dict[str, List[Dict[str, Any]]] = {}
+                    for item in data:
+                        symbol = item.get("symbol", "GLOBAL")
+                        converted.setdefault(symbol, []).append(item)
+                    self.lessons = converted
+                else:
+                    self.lessons = {}
+        except Exception:
+            # 若解析失败，重置为空以避免阻塞主流程
+            self.lessons = {}
+
+    def save(self):
+        """保存经验到磁盘"""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"lessons": self.lessons, "updated_at": datetime.utcnow().isoformat()}
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def get_lessons(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """获取指定交易对的经验列表"""
+        if symbol:
+            lessons = list(self.lessons.get(symbol, []))
+            return sorted(lessons, key=lambda x: x.get("last_seen", ""), reverse=True)
+
+        # 全量（用于 Prompt 展示）
+        aggregated: List[Dict[str, Any]] = []
+        for symbol_lessons in self.lessons.values():
+            aggregated.extend(symbol_lessons)
+        return sorted(aggregated, key=lambda x: x.get("last_seen", ""), reverse=True)
+
+    def get_lessons_summary(self, symbol: str, limit: int = 5) -> str:
+        """将经验格式化为可嵌入 Prompt 的文本"""
+        lessons = self.get_lessons(symbol)[:limit]
+        if not lessons:
+            return ""
+
+        lines = [
+            f"{idx + 1}. {lesson.get('rule')} => {lesson.get('action')} "
+            f"(置信度 {lesson.get('confidence', 0):.2f}, 证据 {lesson.get('support_count', 1)})"
+            for idx, lesson in enumerate(lessons)
+        ]
+        return "### ♻️ 复盘经验\n" + "\n".join(lines)
+
+    def add_lessons(
+        self,
+        symbol: str,
+        lessons: List[Dict[str, Any]],
+        min_confidence: float = 0.35
+    ) -> List[Dict[str, Any]]:
+        """
+        添加新的经验规则，并自动合并/去重
+
+        Returns:
+            被采纳的经验列表
+        """
+        if not lessons:
+            return []
+
+        accepted: List[Dict[str, Any]] = []
+        bucket = self.lessons.setdefault(symbol, [])
+        now_text = datetime.utcnow().isoformat(timespec="seconds")
+
+        for item in lessons:
+            rule = (item.get("rule") or "").strip()
+            action = (item.get("action") or "").strip()
+            confidence = float(item.get("confidence", 0) or 0)
+
+            if not rule or not action or confidence < min_confidence:
+                continue
+
+            normalized = {
+                "rule": rule[:80],
+                "action": action[:80],
+                "conditions": (item.get("conditions") or [])[:4],
+                "confidence": round(confidence, 3),
+                "evidence": (item.get("evidence") or [])[:5],
+                "last_seen": item.get("last_seen", now_text),
+                "support_count": int(item.get("support_count", 1)),
+                "symbol": symbol
+            }
+
+            found = next((entry for entry in bucket if entry.get("rule") == normalized["rule"]), None)
+
+            if found:
+                # 合并已有规则
+                found["support_count"] = found.get("support_count", 1) + 1
+                found["confidence"] = round((found.get("confidence", confidence) + confidence) / 2, 3)
+                found["conditions"] = normalized["conditions"] or found.get("conditions", [])
+                found["evidence"] = normalized["evidence"] or found.get("evidence", [])
+                found["last_seen"] = now_text
+                accepted.append(found)
+            else:
+                normalized["last_seen"] = now_text
+                bucket.append(normalized)
+                accepted.append(normalized)
+
+        # 控制每个 symbol 的经验数量
+        if len(bucket) > self.max_lessons:
+            bucket.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
+            self.lessons[symbol] = bucket[: self.max_lessons]
+
+        if accepted:
+            self.save()
+
+        return accepted

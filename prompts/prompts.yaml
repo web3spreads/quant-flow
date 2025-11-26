@@ -30,6 +30,8 @@ prompt_sets:
 
     # 现货定投 Prompt 模板
     spot_prompt_template_file: "default/spot_prompt_template.md"
+    review_system_prompt_file: "default/review_system_prompt.md"
+    review_prompt_template_file: "default/review_prompt_template.md"
 
   # 保守策略（低风险）
   conservative:
@@ -39,6 +41,8 @@ prompt_sets:
     spot_system_prompt_file: "conservative/spot_system_prompt.md"
     trading_prompt_template_file: "conservative/trading_prompt_template.md"
     spot_prompt_template_file: "conservative/spot_prompt_template.md"
+    review_system_prompt_file: "default/review_system_prompt.md"
+    review_prompt_template_file: "default/review_prompt_template.md"
 
   # 激进策略（高风险高收益）
   aggressive:
@@ -48,6 +52,8 @@ prompt_sets:
     spot_system_prompt_file: "aggressive/spot_system_prompt.md"
     trading_prompt_template_file: "aggressive/trading_prompt_template.md"
     spot_prompt_template_file: "aggressive/spot_prompt_template.md"
+    review_system_prompt_file: "default/review_system_prompt.md"
+    review_prompt_template_file: "default/review_prompt_template.md"
 
   # Alpha Arena博客复刻版
   nof1:
@@ -57,6 +63,8 @@ prompt_sets:
     spot_system_prompt_file: "nof1/spot_system_prompt.md"
     trading_prompt_template_file: "nof1/trading_prompt_template.md"
     spot_prompt_template_file: "nof1/spot_prompt_template.md"
+    review_system_prompt_file: "default/review_system_prompt.md"
+    review_prompt_template_file: "default/review_prompt_template.md"
 
   # Alpha Arena 重制版
   nof1-improved:
@@ -66,6 +74,8 @@ prompt_sets:
     spot_system_prompt_file: "nof1-improved/spot_system_prompt.md"
     trading_prompt_template_file: "nof1-improved/trading_prompt_template.md"
     spot_prompt_template_file: "nof1-improved/spot_prompt_template.md"
+    review_system_prompt_file: "default/review_system_prompt.md"
+    review_prompt_template_file: "default/review_prompt_template.md"
 
 # 使用说明:
 # 1. 创建新的 Prompt 集合:

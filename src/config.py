@@ -39,6 +39,7 @@ class Config:
         self._init_indicators_config()
         self._init_agent_config()
         self._init_prompt_config()
+        self._init_review_agent_config()
         self._init_risk_config()
         self._init_logging_config()
         self._init_notifications_config()
@@ -148,6 +149,18 @@ class Config:
         prompt = self.config_data.get("prompt", {})
         self.prompt_set: str = prompt.get("set", "default")
         self.prompt_config_file: str = prompt.get("config_file", "prompts/prompts.yaml")
+
+    def _init_review_agent_config(self):
+        """初始化复盘 Agent 配置"""
+        review = self.config_data.get("review_agent", {})
+        self.review_enabled: bool = review.get("enabled", False)
+        self.review_run_every_cycles: int = int(review.get("run_every_cycles", 3))
+        self.review_lookback_decisions: int = int(review.get("lookback_decisions", 12))
+        self.review_model: str = review.get("model", self.openai_model)
+        self.review_temperature: float = float(review.get("temperature", 0.05))
+        self.review_memory_file: str = review.get("memory_file", "logs/review_memory.json")
+        self.review_max_lessons: int = int(review.get("max_lessons", 30))
+        self.review_min_confidence: float = float(review.get("min_confidence", 0.35))
 
     def _init_risk_config(self):
         """初始化风控配置"""

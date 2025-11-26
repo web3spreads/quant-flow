@@ -3,6 +3,8 @@ from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
 from src.agent.tools import TradingTools
 from src.agent.prompts import SYSTEM_PROMPT
+from src.agent.review_agent import ReviewAgent
+from src.agent.review_memory import ReviewMemoryStore
 
 __all__ = [
     'SingleSymbolAgent',
@@ -10,5 +12,7 @@ __all__ = [
     'SummaryAgentV2',
     'DecisionHistory',
     'TradingTools',
-    'SYSTEM_PROMPT'
+    'SYSTEM_PROMPT',
+    'ReviewAgent',
+    'ReviewMemoryStore'
 ]
