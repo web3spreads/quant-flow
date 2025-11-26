@@ -23,6 +23,8 @@ from src.trading.order_manager import OrderManager
 from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
+from src.agent.review_agent import ReviewAgent
+from src.agent.review_memory import ReviewMemoryStore
 from src.notification import Notifier
 from src.prompt_manager import PromptManager
 
@@ -71,6 +73,7 @@ class QuantFlowBot:
             'total_pnl': 0.0,
             'start_time': None
         }
+        self.cycle_counter = 0
 
     def _initialize_components(self):
         """初始化所有组件"""
@@ -136,6 +139,33 @@ class QuantFlowBot:
             temperature=0.1,
             max_context_tokens=2000  # 限制汇总长度
         )
+
+        # 5.5 复盘经验存储与复盘 Agent
+        self.logger.print_info("初始化复盘经验存储...")
+        self.review_memory_store = ReviewMemoryStore(
+            path=self.config.review_memory_file,
+            max_lessons=self.config.review_max_lessons
+        )
+
+        if self.config.review_enabled:
+            if not self.prompt_manager:
+                self.logger.print_warning("Prompt 管理器不可用，复盘 Agent 已禁用")
+                self.review_agent = None
+            else:
+                self.logger.print_info("初始化复盘 Agent...")
+                self.review_agent = ReviewAgent(
+                    logger=self.logger,
+                    prompt_manager=self.prompt_manager,
+                    openai_api_base=self.config.openai_api_base,
+                    openai_api_key=self.config.openai_api_key,
+                    model=self.config.review_model,
+                    temperature=self.config.review_temperature,
+                    lookback_decisions=self.config.review_lookback_decisions,
+                    memory_store=self.review_memory_store,
+                    min_confidence=self.config.review_min_confidence
+                )
+        else:
+            self.review_agent = None
         
         # 6. 为每个交易对创建独立的单币 Agent
         self.logger.print_info("为每个交易对创建独立 Agent...")
@@ -254,6 +284,7 @@ class QuantFlowBot:
             return
 
         try:
+            self.cycle_counter += 1
             self.logger.print_header(f"🔄 多 Agent 交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
             # 第一步：获取当前持仓和余额
@@ -421,6 +452,12 @@ class QuantFlowBot:
                         )
                     else:
                         self.logger.print_info(f"{symbol} 历史记录不足（{history_count} < 10），跳过汇总")
+
+                    # 追加复盘经验，帮助 Agent 复用历史经验
+                    if hasattr(self, 'review_memory_store') and self.review_memory_store:
+                        lessons_text = self.review_memory_store.get_lessons_summary(symbol, limit=5)
+                        if lessons_text:
+                            historical_summary = f"{historical_summary}\n\n{lessons_text}" if historical_summary else lessons_text
                     
                     # 调用单币 Agent 决策
                     agent = self.symbol_agents[symbol]
@@ -507,6 +544,9 @@ class QuantFlowBot:
                     except Exception as e:
                         self.logger.print_error(f"现货 Agent 评估 {symbol} 异常: {e}")
                         self.logger.logger.exception(e)
+
+            # 第四步：按需运行复盘 Agent
+            self._maybe_run_review_cycle()
             
             self.logger.print_header(f"✅ 多 Agent 交易周期完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -581,6 +621,73 @@ class QuantFlowBot:
         self._send_shutdown_notification(reason)
         
         self.logger.print_info("机器人已停止")
+
+    def _maybe_run_review_cycle(self):
+        """根据配置触发复盘 Agent"""
+        if not getattr(self.config, 'review_enabled', False):
+            return
+        if not getattr(self, 'review_agent', None) or not self.review_agent:
+            return
+        if self.cycle_counter % max(1, self.config.review_run_every_cycles) != 0:
+            return
+
+        self.logger.print_section("🧠 运行复盘 Agent", style="bold white")
+        stats_snapshot = self._gather_statistics()
+        fills_summary = {
+            'total_fills': stats_snapshot.get('total_trades', 0),
+            'total_pnl': stats_snapshot.get('total_pnl', 0.0)
+        }
+
+        for symbol in self.config.symbols:
+            recent_decisions = self.decision_history.get_recent_decisions(
+                symbol, self.config.review_lookback_decisions
+            )
+            if len(recent_decisions) < max(3, self.config.review_lookback_decisions // 2):
+                self.logger.print_info(f"{symbol} 复盘数据不足，跳过")
+                continue
+
+            existing_lessons = []
+            if hasattr(self, 'review_memory_store') and self.review_memory_store:
+                existing_lessons = self.review_memory_store.get_lessons(symbol)
+
+            review_result = self.review_agent.review(
+                symbol=symbol,
+                decision_records=recent_decisions,
+                fills_summary=fills_summary,
+                existing_lessons=existing_lessons
+            )
+
+            lessons = review_result.get('lessons', [])
+            if not lessons:
+                self.logger.print_info(f"{symbol} 复盘未生成新经验")
+                continue
+
+            added = []
+            if hasattr(self, 'review_memory_store') and self.review_memory_store:
+                added = self.review_memory_store.add_lessons(
+                    symbol=symbol,
+                    lessons=lessons,
+                    min_confidence=self.config.review_min_confidence
+                )
+
+            if not added:
+                self.logger.print_info(f"{symbol} 复盘经验未满足置信度要求")
+                continue
+
+            self.logger.print_info(f"{symbol} 复盘采纳 {len(added)} 条经验")
+            self.logger.log_decision(
+                symbol=f"{symbol}_REVIEW",
+                market_data={'timestamp': datetime.now().isoformat()},
+                prompt=review_result.get('prompt', ''),
+                ai_response=review_result.get('raw_output', ''),
+                decision='REVIEW',
+                action_details={
+                    'lessons': added,
+                    'summary': review_result.get('summary', ''),
+                    'spot_checks': review_result.get('spot_checks', [])
+                },
+                status='SUCCESS'
+            )
 
     def _gather_statistics(self) -> Dict[str, Any]:
         """收集交易统计信息"""

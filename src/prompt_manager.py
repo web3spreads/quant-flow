@@ -7,11 +7,60 @@ Prompt 管理模块
 import os
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from jinja2 import Environment, FileSystemLoader, Template
 
 from src.config import FEE_RATE_PER_SIDE
 
+DEFAULT_REVIEW_SYSTEM_PROMPT = """你是一个严谨的量化交易复盘专家。你的职责是回顾最新的交易决策，提取可以复用的经验规则，并指出需要规避的风险。你必须：
+1. 基于提供的结构化决策摘要进行分析，禁止编造不存在的数据。
+2. 产出 JSON 结构，每条经验包含 rule、action、conditions、confidence、evidence 字段。
+3. rule 和 action 不超过 40 个中文字，conditions/evidence 以短句描述。
+4. 当没有足够信息得出结论时，返回空数组并说明原因。"""
+
+DEFAULT_REVIEW_PROMPT_TEMPLATE = """
+你将看到关于 {{ symbol }} 的最近决策摘要和统计数据，请提炼经验。
+
+## 最近决策 (最多 {{ decision_digest|length }} 条)
+{% for item in decision_digest %}
+- {{ item.timestamp }} | {{ item.decision }} @ ${{ "%.2f"|format(item.price) }} | 结果: {{ item.result }} | 理由: {{ item.reason }}
+{% endfor %}
+
+## 决策统计
+- 总次数: {{ stats.total_decisions }}
+- 买入: {{ stats.buy_count }} | 卖出: {{ stats.sell_count }} | 做空: {{ stats.sell_short_count }} | 平仓: {{ stats.close_count }} | 观望: {{ stats.idle_count }}
+- 平均价格: ${{ "%.2f"|format(stats.average_price) }} | 价格区间: ${{ "%.2f"|format(stats.min_price) }} - ${{ "%.2f"|format(stats.max_price) }}
+
+## 现有经验 (供参考)
+{% if existing_lessons %}
+{% for lesson in existing_lessons %}
+- {{ lesson.rule }} => {{ lesson.action }} (置信度 {{ "%.2f"|format(lesson.confidence) }}, 证据 {{ lesson.support_count }})
+{% endfor %}
+{% else %}
+- 暂无历史经验
+{% endif %}
+
+## 成交统计
+- 成交次数: {{ fills_summary.total_fills }}
+- 总收益: {{ "%.2f"|format(fills_summary.total_pnl) }}
+
+请输出 JSON：
+{
+  "summary": "对这段期间表现的总体结论",
+  "lessons": [
+    {
+      "rule": "简短的经验规则",
+      "action": "如何执行/避免",
+      "conditions": ["触发条件1", "触发条件2"],
+      "confidence": 0.65,
+      "evidence": ["引用第N条决策...", "..."]
+    }
+  ],
+  "spot_checks": [
+    {"timestamp": "...", "issue": "可选的风险点描述", "fix": "建议措施"}
+  ]
+}
+"""
 
 class PromptManager:
     """Prompt 管理器 - 支持从配置文件加载和切换不同的 Prompt 集合"""
@@ -201,6 +250,14 @@ class PromptManager:
         self.spot_system_prompt = self._load_prompt_file(self.prompt_set["spot_system_prompt_file"])
         self.trading_prompt_template = self._load_prompt_template(self.prompt_set["trading_prompt_template_file"])
         self.spot_prompt_template = self._load_prompt_template(self.prompt_set["spot_prompt_template_file"])
+        self.review_system_prompt = self._load_optional_prompt_file(
+            self.prompt_set.get("review_system_prompt_file"),
+            DEFAULT_REVIEW_SYSTEM_PROMPT
+        )
+        self.review_prompt_template = self._load_optional_prompt_template(
+            self.prompt_set.get("review_prompt_template_file"),
+            DEFAULT_REVIEW_PROMPT_TEMPLATE
+        )
 
         print(f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}")
 
@@ -271,6 +328,24 @@ class PromptManager:
             template_content = f.read()
             return self.jinja_env.from_string(template_content)
 
+    def _load_optional_prompt_file(self, relative_path: Optional[str], default: str) -> str:
+        """加载可选 Prompt 文件，不存在时使用默认内容"""
+        if not relative_path:
+            return default
+        try:
+            return self._load_prompt_file(relative_path)
+        except FileNotFoundError:
+            return default
+
+    def _load_optional_prompt_template(self, relative_path: Optional[str], default_template: str) -> Template:
+        """加载可选 Prompt 模板，不存在时使用默认模板"""
+        if not relative_path:
+            return self.jinja_env.from_string(default_template)
+        try:
+            return self._load_prompt_template(relative_path)
+        except FileNotFoundError:
+            return self.jinja_env.from_string(default_template)
+
     def get_system_prompt(self) -> str:
         """获取系统 Prompt"""
         return self.system_prompt
@@ -278,6 +353,10 @@ class PromptManager:
     def get_spot_system_prompt(self) -> str:
         """获取现货 Agent 系统 Prompt"""
         return self.spot_system_prompt
+
+    def get_review_system_prompt(self) -> str:
+        """获取复盘 Agent 系统 Prompt"""
+        return self.review_system_prompt
 
     def format_trading_prompt(
         self,
@@ -538,6 +617,25 @@ class PromptManager:
         prompt = self.trading_prompt_template.render(context)
 
         return prompt
+
+    def format_review_prompt(
+        self,
+        symbol: str,
+        decision_digest: List[Dict[str, Any]],
+        stats: Dict[str, Any],
+        existing_lessons: List[Dict[str, Any]],
+        fills_summary: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """格式化复盘 Prompt"""
+        fills_context = fills_summary or {"total_fills": 0, "total_pnl": 0.0}
+        context = {
+            "symbol": symbol,
+            "decision_digest": decision_digest,
+            "stats": stats,
+            "existing_lessons": existing_lessons,
+            "fills_summary": fills_context
+        }
+        return self.review_prompt_template.render(context)
 
     def format_spot_prompt(
         self,
