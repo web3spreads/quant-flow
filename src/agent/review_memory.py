@@ -19,7 +19,13 @@ class ReviewMemoryStore:
         self.load()
 
     def load(self):
-        """从磁盘加载经验"""
+        """
+        从磁盘加载经验规则到内存。
+
+        文件格式期望为 JSON，包含 {"lessons": {symbol: [rules]}} 结构。
+        如果文件不存在或解析失败，会重置为空字典以避免阻塞主流程。
+        兼容旧格式（列表格式）并自动转换为新格式。
+        """
         try:
             if self.path.exists():
                 with open(self.path, "r", encoding="utf-8") as f:
@@ -48,7 +54,15 @@ class ReviewMemoryStore:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def get_lessons(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """获取指定交易对的经验列表"""
+        """
+        获取指定交易对的经验列表。
+
+        Args:
+            symbol: 交易对符号（如 "BTC"）。如果为 None，返回所有交易对的经验。
+
+        Returns:
+            经验规则列表，按 last_seen 时间倒序排列（最新的在前）。
+        """
         if symbol:
             lessons = list(self.lessons.get(symbol, []))
             return sorted(lessons, key=lambda x: x.get("last_seen", ""), reverse=True)
@@ -60,7 +74,18 @@ class ReviewMemoryStore:
         return sorted(aggregated, key=lambda x: x.get("last_seen", ""), reverse=True)
 
     def get_lessons_summary(self, symbol: str, limit: int = 5) -> str:
-        """将经验格式化为可嵌入 Prompt 的文本"""
+        """
+        将经验格式化为可嵌入 Prompt 的文本。
+
+        Args:
+            symbol: 交易对符号
+            limit: 最多返回的经验条数，默认 5 条
+
+        Returns:
+            格式化的文本字符串，包含标题和编号列表。
+            格式: "### ♻️ 复盘经验\n1. rule => action (置信度 x.xx, 证据 n)"
+            如果没有经验，返回空字符串。
+        """
         lessons = self.get_lessons(symbol)[:limit]
         if not lessons:
             return ""
@@ -73,10 +98,7 @@ class ReviewMemoryStore:
         return "### ♻️ 复盘经验\n" + "\n".join(lines)
 
     def add_lessons(
-        self,
-        symbol: str,
-        lessons: List[Dict[str, Any]],
-        min_confidence: float = 0.35
+        self, symbol: str, lessons: List[Dict[str, Any]], min_confidence: float = 0.35
     ) -> List[Dict[str, Any]]:
         """
         添加新的经验规则，并自动合并/去重
@@ -107,16 +129,23 @@ class ReviewMemoryStore:
                 "evidence": (item.get("evidence") or [])[:5],
                 "last_seen": item.get("last_seen", now_text),
                 "support_count": int(item.get("support_count", 1)),
-                "symbol": symbol
+                "symbol": symbol,
             }
 
-            found = next((entry for entry in bucket if entry.get("rule") == normalized["rule"]), None)
+            found = next(
+                (entry for entry in bucket if entry.get("rule") == normalized["rule"]),
+                None,
+            )
 
             if found:
                 # 合并已有规则
                 found["support_count"] = found.get("support_count", 1) + 1
-                found["confidence"] = round((found.get("confidence", 0.5) + confidence) / 2, 3)
-                found["conditions"] = normalized["conditions"] or found.get("conditions", [])
+                found["confidence"] = round(
+                    (found.get("confidence", 0.5) + confidence) / 2, 3
+                )
+                found["conditions"] = normalized["conditions"] or found.get(
+                    "conditions", []
+                )
                 found["evidence"] = normalized["evidence"] or found.get("evidence", [])
                 found["last_seen"] = now_text
                 accepted.append(found)

@@ -27,7 +27,7 @@ class ReviewAgent:
         temperature: float = 0.05,
         lookback_decisions: int = 12,
         memory_store: Optional[ReviewMemoryStore] = None,
-        min_confidence: float = 0.35
+        min_confidence: float = 0.35,
     ):
         self.logger = logger
         self.prompt_manager = prompt_manager
@@ -40,6 +40,7 @@ class ReviewAgent:
             api_key=openai_api_key,
             model=model,
             temperature=temperature,
+            model_kwargs={"response_format": {"type": "json_object"}},
         )
 
         system_prompt = self.prompt_manager.get_review_system_prompt()
@@ -50,7 +51,7 @@ class ReviewAgent:
         symbol: str,
         decision_records: List[Dict[str, Any]],
         fills_summary: Optional[Dict[str, Any]] = None,
-        existing_lessons: Optional[List[Dict[str, Any]]] = None
+        existing_lessons: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """执行复盘"""
         if not decision_records:
@@ -68,24 +69,30 @@ class ReviewAgent:
             decision_digest=digest,
             stats=stats,
             existing_lessons=(existing_lessons or [])[:5],
-            fills_summary=fills_summary or {"total_fills": 0, "total_pnl": 0.0}
+            fills_summary=fills_summary or {"total_fills": 0, "total_pnl": 0.0},
         )
 
         self.logger.print_section(f"🧠 {symbol} 复盘 Agent 输入", style="bold white")
         self.logger.print_prompt(prompt)
 
-        response = self.llm.invoke([
-            self.system_message,
-            HumanMessage(content=prompt)
-        ])
+        response = self.llm.invoke([self.system_message, HumanMessage(content=prompt)])
 
-        raw_text = response.content if isinstance(response.content, str) else str(response.content)
+        raw_text = (
+            response.content
+            if isinstance(response.content, str)
+            else str(response.content)
+        )
         parsed = self._parse_response(raw_text)
         lessons = parsed.get("lessons", [])
 
         filtered_lessons = [
-            lesson for lesson in lessons
-            if (lesson.get("rule") and lesson.get("action") and float(lesson.get("confidence", 0)) >= self.min_confidence)
+            lesson
+            for lesson in lessons
+            if (
+                lesson.get("rule")
+                and lesson.get("action")
+                and float(lesson.get("confidence", 0)) >= self.min_confidence
+            )
         ]
 
         result = {
@@ -93,30 +100,57 @@ class ReviewAgent:
             "lessons": filtered_lessons,
             "spot_checks": parsed.get("spot_checks", []),
             "raw_output": raw_text,
-            "prompt": prompt
+            "prompt": prompt,
         }
 
         return result
 
-    def _build_decision_digest(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """压缩决策历史为短摘要，控制 token"""
+    def _build_decision_digest(
+        self, records: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        压缩决策历史为短摘要，控制 token 消耗。
+
+        Args:
+            records: 决策记录列表，每条记录包含 market_data、action_details 等字段
+
+        Returns:
+            压缩后的摘要列表，每条包含: timestamp, decision, price, result, reason
+        """
         digest = []
         for record in records:
             market = record.get("market_data", {})
             action_details = record.get("action_details", {})
             reason = record.get("reason") or action_details.get("output", "")
-            digest.append({
-                "timestamp": record.get("timestamp", ""),
-                "decision": record.get("decision", "UNKNOWN"),
-                "price": float(market["current_price"]) if "current_price" in market and market["current_price"] is not None else None,
-                "result": action_details.get("status") or action_details.get("decision", "N/A"),
-                "reason": self._shorten(reason)
-            })
+            digest.append(
+                {
+                    "timestamp": record.get("timestamp", ""),
+                    "decision": record.get("decision", "UNKNOWN"),
+                    "price": float(market.get("current_price") or 0.0),
+                    "result": action_details.get("status")
+                    or action_details.get("decision", "N/A"),
+                    "reason": self._shorten(reason),
+                }
+            )
         return digest
 
     def _calculate_stats(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """统计基本指标，避免让 LLM 自己计算"""
-        prices = [float(r.get("market_data", {}).get("current_price") or 0.0) for r in records]
+        """
+        统计基本指标，避免让 LLM 自己计算。
+
+        Args:
+            records: 决策记录列表
+
+        Returns:
+            统计字典，包含:
+            - total_decisions: 总决策数
+            - buy_count, sell_count, sell_short_count, buy_to_cover_count, idle_count: 各类型决策计数
+            - close_count: 平仓总数 (sell + buy_to_cover)
+            - min_price, max_price, average_price: 价格统计
+        """
+        prices = [
+            float(r.get("market_data", {}).get("current_price") or 0.0) for r in records
+        ]
         avg_price = sum(prices) / len(prices) if prices else 0.0
 
         def count(decision_type: str) -> int:
@@ -132,7 +166,7 @@ class ReviewAgent:
             "close_count": count("SELL") + count("BUY_TO_COVER"),
             "min_price": min(prices) if prices else 0.0,
             "max_price": max(prices) if prices else 0.0,
-            "average_price": avg_price
+            "average_price": avg_price,
         }
 
     @staticmethod
@@ -163,7 +197,16 @@ class ReviewAgent:
         return None
 
     def _parse_response(self, text: str) -> Dict[str, Any]:
-        """解析 LLM 响应"""
+        """
+        解析 LLM 响应为结构化数据。
+
+        Args:
+            text: LLM 返回的原始文本，期望为 JSON 格式
+
+        Returns:
+            解析后的字典，包含 summary, lessons, spot_checks 字段。
+            如果解析失败，返回默认结构: {"summary": text[:200], "lessons": [], "spot_checks": []}
+        """
         json_block = self._extract_json_block(text)
         if not json_block:
             return {"summary": text[:200], "lessons": [], "spot_checks": []}
