@@ -108,7 +108,7 @@ class ReviewAgent:
             digest.append({
                 "timestamp": record.get("timestamp", ""),
                 "decision": record.get("decision", "UNKNOWN"),
-                "price": float(market.get("current_price") or 0.0),
+                "price": float(market["current_price"]) if "current_price" in market and market["current_price"] is not None else None,
                 "result": action_details.get("status") or action_details.get("decision", "N/A"),
                 "reason": self._shorten(reason)
             })
