@@ -115,7 +115,7 @@ class ReviewMemoryStore:
             if found:
                 # 合并已有规则
                 found["support_count"] = found.get("support_count", 1) + 1
-                found["confidence"] = round((found.get("confidence", confidence) + confidence) / 2, 3)
+                found["confidence"] = round((found.get("confidence", 0.5) + confidence) / 2, 3)
                 found["conditions"] = normalized["conditions"] or found.get("conditions", [])
                 found["evidence"] = normalized["evidence"] or found.get("evidence", [])
                 found["last_seen"] = now_text
