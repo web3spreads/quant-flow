@@ -209,6 +209,7 @@ class QuantFlowBot:
         self.logger.print_info(f"✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info(f"  - 1 个汇总 Agent")
+        self.logger.print_info(f"  - 1 个复盘 Agent")
         self.logger.print_info(f"  - 1 个现货定投 Agent")
 
         # 启动时检查账户余额
