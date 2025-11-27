@@ -642,7 +642,10 @@ class QuantFlowBot:
             recent_decisions = self.decision_history.get_recent_decisions(
                 symbol, self.config.review_lookback_decisions
             )
-            if len(recent_decisions) < max(3, self.config.review_lookback_decisions // 2):
+            # Require at least a minimum number of decisions for review.
+            # By default, this is max(3, half the lookback window), but can be overridden in config as review_min_required_decisions.
+            min_required_decisions = getattr(self.config, 'review_min_required_decisions', max(3, self.config.review_lookback_decisions // 2))
+            if len(recent_decisions) < min_required_decisions:
                 self.logger.print_info(f"{symbol} 复盘数据不足，跳过")
                 continue
 
