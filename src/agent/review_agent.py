@@ -173,5 +173,6 @@ class ReviewAgent:
             if isinstance(data, dict):
                 return data
         except json.JSONDecodeError:
+            # If JSON parsing fails, fall back to default summary/lessons/spot_checks.
             pass
         return {"summary": text[:200], "lessons": [], "spot_checks": []}
