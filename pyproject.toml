@@ -30,3 +30,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.uv]
+preview = true
+
+[tool.uv.sources]
+langchain-core = { git = "https://github.com/loadchange/langchain", subdirectory = "libs/core", branch = "feat/tool-call-extra-content" }
+langchain-openai = { git = "https://github.com/loadchange/langchain", subdirectory = "libs/partners/openai", branch = "feat/tool-call-extra-content" }
