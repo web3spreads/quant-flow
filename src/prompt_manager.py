@@ -355,7 +355,12 @@ class PromptManager:
         return self.spot_system_prompt
 
     def get_review_system_prompt(self) -> str:
-        """获取复盘 Agent 系统 Prompt"""
+        """
+        获取复盘 Agent 的系统 Prompt。
+
+        Returns:
+            复盘 Agent 的系统 Prompt 字符串，用于指导复盘 Agent 的行为。
+        """
         return self.review_system_prompt
 
     def format_trading_prompt(
