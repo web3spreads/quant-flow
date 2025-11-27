@@ -12,61 +12,14 @@ from jinja2 import Environment, FileSystemLoader, Template
 
 from src.config import FEE_RATE_PER_SIDE
 
-DEFAULT_REVIEW_SYSTEM_PROMPT = """你是一个严谨的量化交易复盘专家。你的职责是回顾最新的交易决策，提取可以复用的经验规则，并指出需要规避的风险。你必须：
-1. 基于提供的结构化决策摘要进行分析，禁止编造不存在的数据。
-2. 产出 JSON 结构，每条经验包含 rule、action、conditions、confidence、evidence 字段。
-3. rule 和 action 不超过 40 个中文字，conditions/evidence 以短句描述。
-4. 当没有足够信息得出结论时，返回空数组并说明原因。"""
-
-DEFAULT_REVIEW_PROMPT_TEMPLATE = """
-你将看到关于 {{ symbol }} 的最近决策摘要和统计数据，请提炼经验。
-
-## 最近决策 (最多 {{ decision_digest|length }} 条)
-{% for item in decision_digest %}
-- {{ item.timestamp }} | {{ item.decision }} @ ${{ "%.2f"|format(item.price) }} | 结果: {{ item.result }} | 理由: {{ item.reason }}
-{% endfor %}
-
-## 决策统计
-- 总次数: {{ stats.total_decisions }}
-- 买入: {{ stats.buy_count }} | 卖出: {{ stats.sell_count }} | 做空: {{ stats.sell_short_count }} | 平仓: {{ stats.close_count }} | 观望: {{ stats.idle_count }}
-- 平均价格: ${{ "%.2f"|format(stats.average_price) }} | 价格区间: ${{ "%.2f"|format(stats.min_price) }} - ${{ "%.2f"|format(stats.max_price) }}
-
-## 现有经验 (供参考)
-{% if existing_lessons %}
-{% for lesson in existing_lessons %}
-- {{ lesson.rule }} => {{ lesson.action }} (置信度 {{ "%.2f"|format(lesson.confidence) }}, 证据 {{ lesson.support_count }})
-{% endfor %}
-{% else %}
-- 暂无历史经验
-{% endif %}
-
-## 成交统计
-- 成交次数: {{ fills_summary.total_fills }}
-- 总收益: {{ "%.2f"|format(fills_summary.total_pnl) }}
-
-请输出 JSON：
-{
-  "summary": "对这段期间表现的总体结论",
-  "lessons": [
-    {
-      "rule": "简短的经验规则",
-      "action": "如何执行/避免",
-      "conditions": ["触发条件1", "触发条件2"],
-      "confidence": 0.65,
-      "evidence": ["引用第N条决策...", "..."]
-    }
-  ],
-  "spot_checks": [
-    {"timestamp": "...", "issue": "可选的风险点描述", "fix": "建议措施"}
-  ]
-}
-"""
 
 class PromptManager:
     """Prompt 管理器 - 支持从配置文件加载和切换不同的 Prompt 集合"""
 
     @staticmethod
-    def format_position_details(symbol: str, current_positions: list, current_price: float) -> Dict[str, Any]:
+    def format_position_details(
+        symbol: str, current_positions: list, current_price: float
+    ) -> Dict[str, Any]:
         """
         格式化当前币种的持仓详情
 
@@ -95,60 +48,64 @@ class PromptManager:
         # 查找当前币种的持仓
         position = None
         for pos in current_positions:
-            if pos.get('coin') == symbol:
+            if pos.get("coin") == symbol:
                 position = pos
                 break
 
         # 如果没有持仓，返回空信息
         if not position:
             return {
-                'has_position': False,
-                'position_side': 'none',
-                'entry_price': 0,
-                'position_size': 0,
-                'position_value': 0,
-                'leverage': 0,
-                'unrealized_pnl': 0,
-                'unrealized_pnl_percent': 0,
-                'margin_used': 0,
-                'liquidation_price': 0,
-                'price_change_percent': 0,
-                'distance_from_entry': 0,
-                'distance_to_liquidation': 0,
-                'position_text': f'**{symbol} 持仓状态**: 无持仓 ❌'
+                "has_position": False,
+                "position_side": "none",
+                "entry_price": 0,
+                "position_size": 0,
+                "position_value": 0,
+                "leverage": 0,
+                "unrealized_pnl": 0,
+                "unrealized_pnl_percent": 0,
+                "margin_used": 0,
+                "liquidation_price": 0,
+                "price_change_percent": 0,
+                "distance_from_entry": 0,
+                "distance_to_liquidation": 0,
+                "position_text": f"**{symbol} 持仓状态**: 无持仓 ❌",
             }
 
         # 提取持仓数据
-        szi = float(position.get('szi', 0))
-        entry_price = float(position.get('entryPx', 0))
-        position_value = abs(float(position.get('positionValue', 0)))
-        unrealized_pnl = float(position.get('unrealizedPnl', 0))
+        szi = float(position.get("szi", 0))
+        entry_price = float(position.get("entryPx", 0))
+        position_value = abs(float(position.get("positionValue", 0)))
+        unrealized_pnl = float(position.get("unrealizedPnl", 0))
 
         # 确定方向
         if szi == 0:
-            position_side = 'none'
+            position_side = "none"
         elif szi > 0:
-            position_side = 'long'
+            position_side = "long"
         else:
-            position_side = 'short'
+            position_side = "short"
         position_size = abs(szi)
 
         # 获取杠杆信息
-        leverage_info = position.get('leverage', {})
+        leverage_info = position.get("leverage", {})
         if isinstance(leverage_info, dict):
-            leverage = int(leverage_info.get('value', 1))
+            leverage = int(leverage_info.get("value", 1))
         else:
             leverage = int(leverage_info) if leverage_info else 1
 
         # 计算盈亏百分比（防止除零错误）
         if entry_price > 0 and current_price > 0:
-            if position_side == 'long':
+            if position_side == "long":
                 # 多头：(当前价 - 入场价) / 入场价 * 杠杆
-                price_change_percent = ((current_price - entry_price) / entry_price) * 100
+                price_change_percent = (
+                    (current_price - entry_price) / entry_price
+                ) * 100
                 unrealized_pnl_percent = price_change_percent * leverage
             else:
                 # 空头：(入场价 - 当前价) / 入场价 * 杠杆
-                price_change_percent = ((entry_price - current_price) / entry_price) * 100
+                price_change_percent = (
+                    (entry_price - current_price) / entry_price
+                ) * 100
                 unrealized_pnl_percent = price_change_percent * leverage
 
             distance_from_entry = abs(price_change_percent)
@@ -162,20 +119,26 @@ class PromptManager:
         margin_used = position_value / leverage if leverage > 0 else position_value
 
         # 获取清算价格（如果有）
-        liquidation_price = float(position.get('liquidationPx', 0))
+        liquidation_price = float(position.get("liquidationPx", 0))
 
         # 计算距离清算价的距离
         if liquidation_price > 0 and current_price > 0:
-            if position_side == 'long':
-                distance_to_liquidation = ((current_price - liquidation_price) / current_price) * 100
+            if position_side == "long":
+                distance_to_liquidation = (
+                    (current_price - liquidation_price) / current_price
+                ) * 100
             else:
-                distance_to_liquidation = ((liquidation_price - current_price) / current_price) * 100
+                distance_to_liquidation = (
+                    (liquidation_price - current_price) / current_price
+                ) * 100
         else:
             distance_to_liquidation = 0
 
         # 格式化持仓信息文本
-        side_emoji = "📈" if position_side == 'long' else "📉"
-        pnl_emoji = "✅" if unrealized_pnl > 0 else ("❌" if unrealized_pnl < 0 else "➖")
+        side_emoji = "📈" if position_side == "long" else "📉"
+        pnl_emoji = (
+            "✅" if unrealized_pnl > 0 else ("❌" if unrealized_pnl < 0 else "➖")
+        )
 
         position_text = f"""**{symbol} 持仓详情** {side_emoji}:
 
@@ -205,23 +168,27 @@ class PromptManager:
 - 请关注价格走势，及时调整策略"""
 
         return {
-            'has_position': True,
-            'position_side': position_side,
-            'entry_price': entry_price,
-            'position_size': position_size,
-            'position_value': position_value,
-            'leverage': leverage,
-            'unrealized_pnl': unrealized_pnl,
-            'unrealized_pnl_percent': unrealized_pnl_percent,
-            'margin_used': margin_used,
-            'liquidation_price': liquidation_price,
-            'price_change_percent': price_change_percent,
-            'distance_from_entry': distance_from_entry,
-            'distance_to_liquidation': distance_to_liquidation if liquidation_price > 0 else 0,
-            'position_text': position_text
+            "has_position": True,
+            "position_side": position_side,
+            "entry_price": entry_price,
+            "position_size": position_size,
+            "position_value": position_value,
+            "leverage": leverage,
+            "unrealized_pnl": unrealized_pnl,
+            "unrealized_pnl_percent": unrealized_pnl_percent,
+            "margin_used": margin_used,
+            "liquidation_price": liquidation_price,
+            "price_change_percent": price_change_percent,
+            "distance_from_entry": distance_from_entry,
+            "distance_to_liquidation": (
+                distance_to_liquidation if liquidation_price > 0 else 0
+            ),
+            "position_text": position_text,
         }
 
-    def __init__(self, config_file: str = "prompts/prompts.yaml", prompt_set: str = "default"):
+    def __init__(
+        self, config_file: str = "prompts/prompts.yaml", prompt_set: str = "default"
+    ):
         """
         初始化 Prompt 管理器
 
@@ -238,7 +205,7 @@ class PromptManager:
             loader=FileSystemLoader(str(self.prompts_dir)),
             autoescape=False,
             trim_blocks=True,
-            lstrip_blocks=True
+            lstrip_blocks=True,
         )
 
         # 加载 Prompt 配置
@@ -246,20 +213,33 @@ class PromptManager:
         self.prompt_set = self._get_prompt_set(prompt_set)
 
         # 加载 Prompt 内容（作为 Jinja2 模板）
-        self.system_prompt = self._load_prompt_file(self.prompt_set["system_prompt_file"])
-        self.spot_system_prompt = self._load_prompt_file(self.prompt_set["spot_system_prompt_file"])
-        self.trading_prompt_template = self._load_prompt_template(self.prompt_set["trading_prompt_template_file"])
-        self.spot_prompt_template = self._load_prompt_template(self.prompt_set["spot_prompt_template_file"])
-        self.review_system_prompt = self._load_optional_prompt_file(
-            self.prompt_set.get("review_system_prompt_file"),
-            DEFAULT_REVIEW_SYSTEM_PROMPT
+        self.system_prompt = self._load_prompt_file(
+            self.prompt_set["system_prompt_file"]
         )
-        self.review_prompt_template = self._load_optional_prompt_template(
-            self.prompt_set.get("review_prompt_template_file"),
-            DEFAULT_REVIEW_PROMPT_TEMPLATE
+        self.spot_system_prompt = self._load_prompt_file(
+            self.prompt_set["spot_system_prompt_file"]
+        )
+        self.trading_prompt_template = self._load_prompt_template(
+            self.prompt_set["trading_prompt_template_file"]
+        )
+        self.spot_prompt_template = self._load_prompt_template(
+            self.prompt_set["spot_prompt_template_file"]
         )
 
-        print(f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}")
+        # Review prompts: 优先使用当前 prompt set 的配置，如果没有则 fallback 到 default
+        review_system_file = self.prompt_set.get(
+            "review_system_prompt_file", "default/review_system_prompt.md"
+        )
+        review_template_file = self.prompt_set.get(
+            "review_prompt_template_file", "default/review_prompt_template.md"
+        )
+
+        self.review_system_prompt = self._load_prompt_file(review_system_file)
+        self.review_prompt_template = self._load_prompt_template(review_template_file)
+
+        print(
+            f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}"
+        )
 
     def _load_config(self) -> Dict[str, Any]:
         """加载 Prompt 配置文件"""
@@ -328,7 +308,9 @@ class PromptManager:
             template_content = f.read()
             return self.jinja_env.from_string(template_content)
 
-    def _load_optional_prompt_file(self, relative_path: Optional[str], default: str) -> str:
+    def _load_optional_prompt_file(
+        self, relative_path: Optional[str], default: str
+    ) -> str:
         """加载可选 Prompt 文件，不存在时使用默认内容"""
         if not relative_path:
             return default
@@ -337,7 +319,9 @@ class PromptManager:
         except FileNotFoundError:
             return default
 
-    def _load_optional_prompt_template(self, relative_path: Optional[str], default_template: str) -> Template:
+    def _load_optional_prompt_template(
+        self, relative_path: Optional[str], default_template: str
+    ) -> Template:
         """加载可选 Prompt 模板，不存在时使用默认模板"""
         if not relative_path:
             return self.jinja_env.from_string(default_template)
@@ -376,7 +360,7 @@ class PromptManager:
         stop_loss_ratio: float,
         historical_summary: Optional[str] = None,
         balance_info: Optional[Dict[str, float]] = None,
-        enriched_data: Optional[Dict[str, Any]] = None
+        enriched_data: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         格式化交易决策 Prompt
@@ -398,32 +382,40 @@ class PromptManager:
             格式化后的 Prompt
         """
         # 提取市场数据
-        current_price = market_data.get('current_price', 0)
-        rsi = market_data.get('rsi', 0)
-        macd = market_data.get('macd', 0)
-        macd_signal = market_data.get('macd_signal', 0)
-        macd_hist = market_data.get('macd_hist', 0)
-        ma_7 = market_data.get('ma_7', 0)
-        ma_25 = market_data.get('ma_25', 0)
-        ma_99 = market_data.get('ma_99', 0)
-        bb_upper = market_data.get('bb_upper', 0)
-        bb_middle = market_data.get('bb_middle', 0)
-        bb_lower = market_data.get('bb_lower', 0)
-        bb_position = market_data.get('bb_position', 0.5)
-        volume_change = market_data.get('volume_change', 0)
+        current_price = market_data.get("current_price", 0)
+        rsi = market_data.get("rsi", 0)
+        macd = market_data.get("macd", 0)
+        macd_signal = market_data.get("macd_signal", 0)
+        macd_hist = market_data.get("macd_hist", 0)
+        ma_7 = market_data.get("ma_7", 0)
+        ma_25 = market_data.get("ma_25", 0)
+        ma_99 = market_data.get("ma_99", 0)
+        bb_upper = market_data.get("bb_upper", 0)
+        bb_middle = market_data.get("bb_middle", 0)
+        bb_lower = market_data.get("bb_lower", 0)
+        bb_position = market_data.get("bb_position", 0.5)
+        volume_change = market_data.get("volume_change", 0)
 
         # 获取详细持仓信息
-        position_details = self.format_position_details(symbol, current_positions, current_price)
+        position_details = self.format_position_details(
+            symbol, current_positions, current_price
+        )
 
         # 判断持仓状态（保持向后兼容）
-        has_long = position_details['has_position'] and position_details['position_side'] == 'long'
-        has_short = position_details['has_position'] and position_details['position_side'] == 'short'
+        has_long = (
+            position_details["has_position"]
+            and position_details["position_side"] == "long"
+        )
+        has_short = (
+            position_details["has_position"]
+            and position_details["position_side"] == "short"
+        )
         position_count = len(current_positions)
 
         # 格式化多周期趋势
         trends_text = ""
-        for timeframe in ['日线', '4小时', '1小时', '15分钟', '1分钟']:
-            trend = multi_timeframe_trends.get(timeframe, '未知')
+        for timeframe in ["日线", "4小时", "1小时", "15分钟", "1分钟"]:
+            trend = multi_timeframe_trends.get(timeframe, "未知")
             trends_text += f"- {timeframe}: {trend}\n"
 
         # 格式化历史汇总
@@ -440,11 +432,13 @@ class PromptManager:
         # 格式化账户余额信息
         balance_text = ""
         if balance_info:
-            total = balance_info.get('total', 0)
-            occupied = balance_info.get('occupied', 0)
-            available = balance_info.get('available', 0)
-            unrealized_pnl = balance_info.get('unrealized_pnl', 0)
-            pnl_emoji = "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
+            total = balance_info.get("total", 0)
+            occupied = balance_info.get("occupied", 0)
+            available = balance_info.get("available", 0)
+            unrealized_pnl = balance_info.get("unrealized_pnl", 0)
+            pnl_emoji = (
+                "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
+            )
             balance_text = f"""
 ## 💰 账户余额（实时）
 
@@ -483,108 +477,112 @@ class PromptManager:
         # 准备模板上下文（使用 Jinja2 渲染）
         context = {
             # 基础信息
-            'symbol': symbol,
-            'coin': symbol,  # 币种别名
-
+            "symbol": symbol,
+            "coin": symbol,  # 币种别名
             # 币种类型判断（用于条件逻辑）
-            'is_BTC': symbol == 'BTC',
-            'is_ETH': symbol == 'ETH',
-            'is_SOL': symbol == 'SOL',
-            'is_major_coin': symbol in ['BTC', 'ETH'],  # 主流币
-            'is_altcoin': symbol not in ['BTC', 'ETH'],  # 山寨币
-
+            "is_BTC": symbol == "BTC",
+            "is_ETH": symbol == "ETH",
+            "is_SOL": symbol == "SOL",
+            "is_major_coin": symbol in ["BTC", "ETH"],  # 主流币
+            "is_altcoin": symbol not in ["BTC", "ETH"],  # 山寨币
             # 市场数据
-            'current_price': f"{current_price:.2f}",
-            'current_price_raw': current_price,
-            'rsi': f"{rsi:.2f}",
-            'rsi_raw': rsi,
-            'macd': f"{macd:.4f}",
-            'macd_raw': macd,
-            'macd_signal': f"{macd_signal:.4f}",
-            'macd_signal_raw': macd_signal,
-            'macd_hist': f"{macd_hist:.4f}",
-            'macd_hist_raw': macd_hist,
-            'ma_7': f"{ma_7:.2f}",
-            'ma_7_raw': ma_7,
-            'ma_25': f"{ma_25:.2f}",
-            'ma_25_raw': ma_25,
-            'ma_99': f"{ma_99:.2f}",
-            'ma_99_raw': ma_99,
-            'bb_upper': f"{bb_upper:.2f}",
-            'bb_upper_raw': bb_upper,
-            'bb_middle': f"{bb_middle:.2f}",
-            'bb_middle_raw': bb_middle,
-            'bb_lower': f"{bb_lower:.2f}",
-            'bb_lower_raw': bb_lower,
-            'bb_position': f"{bb_position:.2%}",
-            'bb_position_raw': bb_position,
-            'volume_change': f"{volume_change:.2f}",
-            'volume_change_raw': volume_change,
-            'multi_timeframe_trends': trends_text,
-
+            "current_price": f"{current_price:.2f}",
+            "current_price_raw": current_price,
+            "rsi": f"{rsi:.2f}",
+            "rsi_raw": rsi,
+            "macd": f"{macd:.4f}",
+            "macd_raw": macd,
+            "macd_signal": f"{macd_signal:.4f}",
+            "macd_signal_raw": macd_signal,
+            "macd_hist": f"{macd_hist:.4f}",
+            "macd_hist_raw": macd_hist,
+            "ma_7": f"{ma_7:.2f}",
+            "ma_7_raw": ma_7,
+            "ma_25": f"{ma_25:.2f}",
+            "ma_25_raw": ma_25,
+            "ma_99": f"{ma_99:.2f}",
+            "ma_99_raw": ma_99,
+            "bb_upper": f"{bb_upper:.2f}",
+            "bb_upper_raw": bb_upper,
+            "bb_middle": f"{bb_middle:.2f}",
+            "bb_middle_raw": bb_middle,
+            "bb_lower": f"{bb_lower:.2f}",
+            "bb_lower_raw": bb_lower,
+            "bb_position": f"{bb_position:.2%}",
+            "bb_position_raw": bb_position,
+            "volume_change": f"{volume_change:.2f}",
+            "volume_change_raw": volume_change,
+            "multi_timeframe_trends": trends_text,
             # 持仓信息（基础）
-            'position_count': position_count,
-            'max_positions': max_positions,
-            'has_long': "是 ✅" if has_long else "否 ❌",
-            'has_long_bool': has_long,
-            'has_short': "是 ✅" if has_short else "否 ❌",
-            'has_short_bool': has_short,
-
+            "position_count": position_count,
+            "max_positions": max_positions,
+            "has_long": "是 ✅" if has_long else "否 ❌",
+            "has_long_bool": has_long,
+            "has_short": "是 ✅" if has_short else "否 ❌",
+            "has_short_bool": has_short,
             # 当前币种详细持仓信息
-            'has_position': position_details['has_position'],
-            'position_side': position_details['position_side'],
-            'entry_price': f"{position_details['entry_price']:.2f}",
-            'entry_price_raw': position_details['entry_price'],
-            'position_size': f"{position_details['position_size']:.4f}",
-            'position_size_raw': position_details['position_size'],
-            'position_value': f"{position_details['position_value']:.2f}",
-            'position_value_raw': position_details['position_value'],
-            'position_leverage': position_details['leverage'],
-            'position_unrealized_pnl': f"{position_details['unrealized_pnl']:+.2f}",
-            'position_unrealized_pnl_raw': position_details['unrealized_pnl'],
-            'position_unrealized_pnl_percent': f"{position_details['unrealized_pnl_percent']:+.2f}",
-            'position_unrealized_pnl_percent_raw': position_details['unrealized_pnl_percent'],
-            'position_margin_used': f"{position_details['margin_used']:.2f}",
-            'position_margin_used_raw': position_details['margin_used'],
-            'position_liquidation_price': f"{position_details['liquidation_price']:.2f}",
-            'position_liquidation_price_raw': position_details['liquidation_price'],
-            'position_price_change_percent': f"{position_details['price_change_percent']:+.2f}",
-            'position_price_change_percent_raw': position_details['price_change_percent'],
-            'position_distance_from_entry': f"{position_details['distance_from_entry']:.2f}",
-            'position_distance_from_entry_raw': position_details['distance_from_entry'],
-            'position_distance_to_liquidation': f"{position_details['distance_to_liquidation']:.2f}",
-            'position_distance_to_liquidation_raw': position_details['distance_to_liquidation'],
-            'position_details_text': position_details['position_text'],
-
+            "has_position": position_details["has_position"],
+            "position_side": position_details["position_side"],
+            "entry_price": f"{position_details['entry_price']:.2f}",
+            "entry_price_raw": position_details["entry_price"],
+            "position_size": f"{position_details['position_size']:.4f}",
+            "position_size_raw": position_details["position_size"],
+            "position_value": f"{position_details['position_value']:.2f}",
+            "position_value_raw": position_details["position_value"],
+            "position_leverage": position_details["leverage"],
+            "position_unrealized_pnl": f"{position_details['unrealized_pnl']:+.2f}",
+            "position_unrealized_pnl_raw": position_details["unrealized_pnl"],
+            "position_unrealized_pnl_percent": f"{position_details['unrealized_pnl_percent']:+.2f}",
+            "position_unrealized_pnl_percent_raw": position_details[
+                "unrealized_pnl_percent"
+            ],
+            "position_margin_used": f"{position_details['margin_used']:.2f}",
+            "position_margin_used_raw": position_details["margin_used"],
+            "position_liquidation_price": f"{position_details['liquidation_price']:.2f}",
+            "position_liquidation_price_raw": position_details["liquidation_price"],
+            "position_price_change_percent": f"{position_details['price_change_percent']:+.2f}",
+            "position_price_change_percent_raw": position_details[
+                "price_change_percent"
+            ],
+            "position_distance_from_entry": f"{position_details['distance_from_entry']:.2f}",
+            "position_distance_from_entry_raw": position_details["distance_from_entry"],
+            "position_distance_to_liquidation": f"{position_details['distance_to_liquidation']:.2f}",
+            "position_distance_to_liquidation_raw": position_details[
+                "distance_to_liquidation"
+            ],
+            "position_details_text": position_details["position_text"],
             # 交易参数
-            'max_trade_amount': f"{max_trade_amount:.2f}",
-            'max_trade_amount_raw': max_trade_amount,
-            'max_leverage': max_leverage,
-            'take_profit_ratio': f"{take_profit_ratio:.1%}",
-            'take_profit_ratio_raw': take_profit_ratio,
-            'stop_loss_ratio': f"{stop_loss_ratio:.1%}",
-            'stop_loss_ratio_raw': stop_loss_ratio,
-
+            "max_trade_amount": f"{max_trade_amount:.2f}",
+            "max_trade_amount_raw": max_trade_amount,
+            "max_leverage": max_leverage,
+            "take_profit_ratio": f"{take_profit_ratio:.1%}",
+            "take_profit_ratio_raw": take_profit_ratio,
+            "stop_loss_ratio": f"{stop_loss_ratio:.1%}",
+            "stop_loss_ratio_raw": stop_loss_ratio,
             # 费用计算
-            'position_value': f"{position_value:.2f}",
-            'position_value_raw': position_value,
-            'fee_rate_per_side': f"{fee_rate_per_side * 100:.3f}%",
-            'fee_rate_per_side_raw': fee_rate_per_side,
-            'total_fee_rate': f"{total_fee_rate * 100:.3f}%",
-            'total_fee_rate_raw': total_fee_rate,
-            'open_fee': f"{open_fee:.2f}",
-            'open_fee_raw': open_fee,
-            'close_fee': f"{close_fee:.2f}",
-            'close_fee_raw': close_fee,
-            'total_fee': f"{total_fee:.2f}",
-            'total_fee_raw': total_fee,
-            'breakeven_percent': breakeven_percent,
-            'price_move_percent': price_move_percent,
-            'profit_to_fee_ratio': f"{profit_to_fee_ratio:.1f}x" if profit_to_fee_ratio != float('inf') else "∞",
-            'profit_to_fee_ratio_raw': profit_to_fee_ratio,
+            "position_value": f"{position_value:.2f}",
+            "position_value_raw": position_value,
+            "fee_rate_per_side": f"{fee_rate_per_side * 100:.3f}%",
+            "fee_rate_per_side_raw": fee_rate_per_side,
+            "total_fee_rate": f"{total_fee_rate * 100:.3f}%",
+            "total_fee_rate_raw": total_fee_rate,
+            "open_fee": f"{open_fee:.2f}",
+            "open_fee_raw": open_fee,
+            "close_fee": f"{close_fee:.2f}",
+            "close_fee_raw": close_fee,
+            "total_fee": f"{total_fee:.2f}",
+            "total_fee_raw": total_fee,
+            "breakeven_percent": breakeven_percent,
+            "price_move_percent": price_move_percent,
+            "profit_to_fee_ratio": (
+                f"{profit_to_fee_ratio:.1f}x"
+                if profit_to_fee_ratio != float("inf")
+                else "∞"
+            ),
+            "profit_to_fee_ratio_raw": profit_to_fee_ratio,
             # 历史和余额信息
-            'historical_summary': historical_text,
-            'balance_info': balance_text,
+            "historical_summary": historical_text,
+            "balance_info": balance_text,
         }
 
         # 添加enriched_data中的额外字段（用于nof1和nof1-improved prompts）
@@ -593,30 +591,33 @@ class PromptManager:
             context.update(enriched_data)
 
             # 确保关键字段有默认值
-            context.setdefault('elapsed_minutes', 0)
-            context.setdefault('mid_prices', [])
-            context.setdefault('ema_indicators', [])
-            context.setdefault('macd_indicators', [])
-            context.setdefault('rsi_7_indicators', [])
-            context.setdefault('rsi_14_indicators', [])
-            context.setdefault('current_ema20', current_price)
-            context.setdefault('current_rsi', rsi)
-            context.setdefault('oi_latest', 0)
-            context.setdefault('oi_average', 0)
-            context.setdefault('funding_rate', 0)
-            context.setdefault('ema_20_4h', current_price)
-            context.setdefault('ema_50_4h', current_price)
-            context.setdefault('atr_3_4h', 0)
-            context.setdefault('atr_14_4h', 0)
-            context.setdefault('current_volume', 0)
-            context.setdefault('avg_volume', 0)
-            context.setdefault('macd_4h_indicators', [])
-            context.setdefault('rsi_14_4h_indicators', [])
-            context.setdefault('total_return_pct', 0)
-            context.setdefault('account_value', 10000)
-            context.setdefault('available_cash', balance_info.get('available', 0) if balance_info else 0)
-            context.setdefault('sharpe_ratio', 0)
-            context.setdefault('current_positions', str(current_positions))
+            context.setdefault("elapsed_minutes", 0)
+            context.setdefault("mid_prices", [])
+            context.setdefault("ema_indicators", [])
+            context.setdefault("macd_indicators", [])
+            context.setdefault("rsi_7_indicators", [])
+            context.setdefault("rsi_14_indicators", [])
+            context.setdefault("current_ema20", current_price)
+            context.setdefault("current_rsi", rsi)
+            context.setdefault("oi_latest", 0)
+            context.setdefault("oi_average", 0)
+            context.setdefault("funding_rate", 0)
+            context.setdefault("ema_20_4h", current_price)
+            context.setdefault("ema_50_4h", current_price)
+            context.setdefault("atr_3_4h", 0)
+            context.setdefault("atr_14_4h", 0)
+            context.setdefault("current_volume", 0)
+            context.setdefault("avg_volume", 0)
+            context.setdefault("macd_4h_indicators", [])
+            context.setdefault("rsi_14_4h_indicators", [])
+            context.setdefault("total_return_pct", 0)
+            context.setdefault("account_value", 10000)
+            context.setdefault(
+                "available_cash",
+                balance_info.get("available", 0) if balance_info else 0,
+            )
+            context.setdefault("sharpe_ratio", 0)
+            context.setdefault("current_positions", str(current_positions))
 
         # 使用 Jinja2 渲染模板
         prompt = self.trading_prompt_template.render(context)
@@ -629,7 +630,7 @@ class PromptManager:
         decision_digest: List[Dict[str, Any]],
         stats: Dict[str, Any],
         existing_lessons: List[Dict[str, Any]],
-        fills_summary: Optional[Dict[str, Any]] = None
+        fills_summary: Optional[Dict[str, Any]] = None,
     ) -> str:
         """格式化复盘 Prompt"""
         fills_context = fills_summary or {"total_fills": 0, "total_pnl": 0.0}
@@ -638,7 +639,7 @@ class PromptManager:
             "decision_digest": decision_digest,
             "stats": stats,
             "existing_lessons": existing_lessons,
-            "fills_summary": fills_context
+            "fills_summary": fills_context,
         }
         return self.review_prompt_template.render(context)
 
@@ -650,7 +651,7 @@ class PromptManager:
         recommendation: Dict[str, Any],
         current_spot_holdings: list,
         max_trade_amount: float,
-        balance_info: Optional[Dict[str, float]] = None
+        balance_info: Optional[Dict[str, float]] = None,
     ) -> str:
         """
         格式化现货定投决策 Prompt
@@ -668,32 +669,34 @@ class PromptManager:
             格式化后的 Prompt
         """
         # 提取市场数据
-        current_price = market_data.get('current_price', 0)
-        rsi = market_data.get('rsi', 0)
-        macd_hist = market_data.get('macd_hist', 0)
-        ma_7 = market_data.get('ma_7', 0)
-        ma_25 = market_data.get('ma_25', 0)
-        ma_99 = market_data.get('ma_99', 0)
-        bb_position = market_data.get('bb_position', 0.5)
-        volume_change = market_data.get('volume_change', 0)
+        current_price = market_data.get("current_price", 0)
+        rsi = market_data.get("rsi", 0)
+        macd_hist = market_data.get("macd_hist", 0)
+        ma_7 = market_data.get("ma_7", 0)
+        ma_25 = market_data.get("ma_25", 0)
+        ma_99 = market_data.get("ma_99", 0)
+        bb_position = market_data.get("bb_position", 0.5)
+        volume_change = market_data.get("volume_change", 0)
 
         # 检查是否已持有该现货
-        has_spot = any(h.get('symbol') == symbol for h in current_spot_holdings)
+        has_spot = any(h.get("symbol") == symbol for h in current_spot_holdings)
 
         # 格式化多周期趋势
         trends_text = ""
-        for timeframe in ['日线', '4小时', '1小时', '15分钟', '1分钟']:
-            trend = multi_timeframe_trends.get(timeframe, '未知')
+        for timeframe in ["日线", "4小时", "1小时", "15分钟", "1分钟"]:
+            trend = multi_timeframe_trends.get(timeframe, "未知")
             trends_text += f"- {timeframe}: {trend}\n"
 
         # 格式化账户余额信息
         balance_text = ""
         if balance_info:
-            total = balance_info.get('total', 0)
-            occupied = balance_info.get('occupied', 0)
-            available = balance_info.get('available', 0)
-            unrealized_pnl = balance_info.get('unrealized_pnl', 0)
-            pnl_emoji = "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
+            total = balance_info.get("total", 0)
+            occupied = balance_info.get("occupied", 0)
+            available = balance_info.get("available", 0)
+            unrealized_pnl = balance_info.get("unrealized_pnl", 0)
+            pnl_emoji = (
+                "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
+            )
             balance_text = f"""
 ## 💰 账户余额（实时）
 
@@ -711,47 +714,42 @@ class PromptManager:
         # 准备模板上下文（使用 Jinja2 渲染）
         context = {
             # 基础信息
-            'symbol': symbol,
-            'coin': symbol,
-
+            "symbol": symbol,
+            "coin": symbol,
             # 币种类型判断
-            'is_BTC': symbol == 'BTC',
-            'is_ETH': symbol == 'ETH',
-            'is_SOL': symbol == 'SOL',
-            'is_major_coin': symbol in ['BTC', 'ETH'],
-            'is_altcoin': symbol not in ['BTC', 'ETH'],
-
+            "is_BTC": symbol == "BTC",
+            "is_ETH": symbol == "ETH",
+            "is_SOL": symbol == "SOL",
+            "is_major_coin": symbol in ["BTC", "ETH"],
+            "is_altcoin": symbol not in ["BTC", "ETH"],
             # 推荐信息
-            'recommendation_reason': recommendation.get('reason', '未提供原因'),
-            'recommendation_timestamp': recommendation.get('timestamp', '未知时间'),
-
+            "recommendation_reason": recommendation.get("reason", "未提供原因"),
+            "recommendation_timestamp": recommendation.get("timestamp", "未知时间"),
             # 市场数据
-            'current_price': f"{current_price:.2f}",
-            'current_price_raw': current_price,
-            'has_spot': "已持有 ✅" if has_spot else "未持有 ❌",
-            'has_spot_bool': has_spot,
-            'rsi': f"{rsi:.2f}",
-            'rsi_raw': rsi,
-            'macd_hist': f"{macd_hist:.4f}",
-            'macd_hist_raw': macd_hist,
-            'ma_7': f"{ma_7:.2f}",
-            'ma_7_raw': ma_7,
-            'ma_25': f"{ma_25:.2f}",
-            'ma_25_raw': ma_25,
-            'ma_99': f"{ma_99:.2f}",
-            'ma_99_raw': ma_99,
-            'bb_position': f"{bb_position:.2%}",
-            'bb_position_raw': bb_position,
-            'volume_change': f"{volume_change:.2f}",
-            'volume_change_raw': volume_change,
-            'multi_timeframe_trends': trends_text,
-
+            "current_price": f"{current_price:.2f}",
+            "current_price_raw": current_price,
+            "has_spot": "已持有 ✅" if has_spot else "未持有 ❌",
+            "has_spot_bool": has_spot,
+            "rsi": f"{rsi:.2f}",
+            "rsi_raw": rsi,
+            "macd_hist": f"{macd_hist:.4f}",
+            "macd_hist_raw": macd_hist,
+            "ma_7": f"{ma_7:.2f}",
+            "ma_7_raw": ma_7,
+            "ma_25": f"{ma_25:.2f}",
+            "ma_25_raw": ma_25,
+            "ma_99": f"{ma_99:.2f}",
+            "ma_99_raw": ma_99,
+            "bb_position": f"{bb_position:.2%}",
+            "bb_position_raw": bb_position,
+            "volume_change": f"{volume_change:.2f}",
+            "volume_change_raw": volume_change,
+            "multi_timeframe_trends": trends_text,
             # 交易参数
-            'max_trade_amount': f"{max_trade_amount:.2f}",
-            'max_trade_amount_raw': max_trade_amount,
-
+            "max_trade_amount": f"{max_trade_amount:.2f}",
+            "max_trade_amount_raw": max_trade_amount,
             # 余额信息
-            'balance_info': balance_text,
+            "balance_info": balance_text,
         }
 
         # 使用 Jinja2 渲染模板
@@ -764,11 +762,13 @@ class PromptManager:
         return {
             "name": self.prompt_set["name"],
             "description": self.prompt_set["description"],
-            "set_name": self.prompt_set_name
+            "set_name": self.prompt_set_name,
         }
 
 
-def get_prompt_manager(config_file: str = "prompts/prompts.yaml", prompt_set: str = "default") -> PromptManager:
+def get_prompt_manager(
+    config_file: str = "prompts/prompts.yaml", prompt_set: str = "default"
+) -> PromptManager:
     """
     获取 Prompt 管理器实例
 

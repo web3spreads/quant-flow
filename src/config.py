@@ -57,7 +57,9 @@ class Config:
 
     def _init_openai_config(self):
         """初始化 OpenAI API 配置"""
-        self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1")
+        self.openai_api_base = os.getenv(
+            "OPENAI_API_BASE", "https://api.deepseek.com/v1"
+        )
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
 
@@ -71,7 +73,9 @@ class Config:
         """初始化 Hyperliquid 配置"""
         self.hyperliquid_private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY")
         self.hyperliquid_account_address = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", "")
-        self.hyperliquid_testnet = os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
+        self.hyperliquid_testnet = (
+            os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
+        )
 
         # 检查私钥配置
         if not self.hyperliquid_private_key:
@@ -158,7 +162,9 @@ class Config:
         self.review_lookback_decisions: int = int(review.get("lookback_decisions", 12))
         self.review_model: str = review.get("model", self.openai_model)
         self.review_temperature: float = float(review.get("temperature", 0.05))
-        self.review_memory_file: str = review.get("memory_file", "logs/review_memory.json")
+        self.review_memory_file: str = review.get(
+            "memory_file", "logs/review_memory.json"
+        )
         self.review_max_lessons: int = int(review.get("max_lessons", 30))
         self.review_min_confidence: float = float(review.get("min_confidence", 0.35))
 
@@ -166,7 +172,9 @@ class Config:
         """初始化风控配置"""
         risk = self.config_data.get("risk_management", {})
         self.circuit_breaker_enabled: bool = risk.get("circuit_breaker_enabled", True)
-        self.circuit_breaker_threshold: float = float(risk.get("circuit_breaker_threshold", 0.1))
+        self.circuit_breaker_threshold: float = float(
+            risk.get("circuit_breaker_threshold", 0.1)
+        )
         self.circuit_breaker_window: int = int(risk.get("circuit_breaker_window", 5))
         self.circuit_breaker_pause: int = int(risk.get("circuit_breaker_pause", 30))
 
@@ -175,8 +183,12 @@ class Config:
         logging_config = self.config_data.get("logging", {})
         self.console_color: bool = logging_config.get("console_color", True)
         self.show_full_prompt: bool = logging_config.get("show_full_prompt", True)
-        self.show_chain_of_thought: bool = logging_config.get("show_chain_of_thought", True)
-        self.decision_log_format: str = logging_config.get("decision_log_format", "json")
+        self.show_chain_of_thought: bool = logging_config.get(
+            "show_chain_of_thought", True
+        )
+        self.decision_log_format: str = logging_config.get(
+            "decision_log_format", "json"
+        )
 
         # 日志级别
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
@@ -204,17 +216,23 @@ class Config:
             errors.append("至少需要配置一个交易对")
 
         # 验证时间周期
-        valid_timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
+        valid_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
         if self.timeframe not in valid_timeframes:
             errors.append(f"timeframe 必须是以下之一: {valid_timeframes}")
 
         if errors:
-            raise ValueError("配置验证失败:\n" + "\n".join(f"- {err}" for err in errors))
+            raise ValueError(
+                "配置验证失败:\n" + "\n".join(f"- {err}" for err in errors)
+            )
 
     def __str__(self) -> str:
         """返回配置摘要（不包含敏感信息）"""
         # 确定运行模式
-        mode = "Hyperliquid 测试网 🧪" if self.hyperliquid_testnet else "Hyperliquid 主网 ⚠️"
+        mode = (
+            "Hyperliquid 测试网 🧪"
+            if self.hyperliquid_testnet
+            else "Hyperliquid 主网 ⚠️"
+        )
 
         return f"""
         === Quant Flow 配置摘要 ===
