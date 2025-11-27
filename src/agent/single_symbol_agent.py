@@ -121,6 +121,9 @@ class SingleSymbolAgent:
         self.max_iterations = max_iterations
         self.notifier = notifier
         self.prompt_manager = prompt_manager
+        
+        # 用于去重：记录本次决策周期中已执行的工具调用
+        self._executed_callbacks = set()
 
         # 初始化 LLM
         self.llm = ChatOpenAI(
@@ -596,7 +599,11 @@ class SingleSymbolAgent:
 
         def do_nothing_callback(reason: str) -> str:
             """不操作回调"""
-            self.logger.print_info(f"[{self.symbol}Agent] 不操作 - {reason}")
+            # 去重：避免在同一决策周期中重复执行相同的回调
+            callback_key = f"do_nothing:{reason}"
+            if callback_key not in self._executed_callbacks:
+                self.logger.print_info(f"[{self.symbol}Agent] 不操作 - {reason}")
+                self._executed_callbacks.add(callback_key)
             return f"⏸️  确认：不执行操作。原因：{reason}"
 
         def buy_spot_callback(symbol: str, amount: Optional[float] = None) -> str:
@@ -683,6 +690,9 @@ class SingleSymbolAgent:
             (决策类型, 决策详情)
         """
         try:
+            # 重置去重状态（每次新的决策周期开始时）
+            self._executed_callbacks.clear()
+            
             # 更新当前价格
             self.current_price = market_data.get('current_price', 0)
 
@@ -728,20 +738,34 @@ class SingleSymbolAgent:
             # 收集所有输出
             all_events = []
             agent_output = ""
+            last_printed_content = ""  # 记录上次打印的内容，避免重复打印
 
+            # 使用 config 参数限制最大迭代次数
+            # recursion_limit 控制图的最大递归深度，防止无限循环
+            config = {"recursion_limit": self.max_iterations * 2}
+            
             for event in self.agent_executor.stream(
                 {"messages": messages},
-                stream_mode="values"
+                stream_mode="values",
+                config=config
             ):
                 all_events.append(event)
                 if "messages" in event and len(event["messages"]) > 0:
                     last_message = event["messages"][-1]
                     if hasattr(last_message, 'content'):
                         content = last_message.content
-                        if content and content != prompt and content != agent_output:
+                        # 更新agent_output为最新的完整内容
+                        if content and content != prompt:
+                            agent_output = content
+                        
+                        # 只在内容长度增加时打印（支持流式输出，避免重复打印相同内容）
+                        # 这样可以处理逐步生成的内容，同时避免重复打印相同的完整响应
+                        if (content and 
+                            content != prompt and 
+                            len(content) > len(last_printed_content)):
                             # 使用新的 AI 响应渲染方法（支持 Markdown）
                             self.logger.print_ai_response(content, f"🎯 {self.symbol} Agent 分析中...")
-                            agent_output = content
+                            last_printed_content = content
 
             # 解析结果
             decision_type = self._parse_decision_from_events(all_events)

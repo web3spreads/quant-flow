@@ -33,6 +33,17 @@ prompt_sets:
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
 
+  # 默认策略的稳健过滤版
+  default-guarded:
+    name: "默认策略-场景风控版"
+    description: "先判定场景/历史支撑，再做 R/R 与仓位控制，稳健过滤噪声交易"
+    system_prompt_file: "default-guarded/system_prompt.md"
+    spot_system_prompt_file: "default-guarded/spot_system_prompt.md"
+    trading_prompt_template_file: "default-guarded/trading_prompt_template.md"
+    spot_prompt_template_file: "default-guarded/spot_prompt_template.md"
+    review_system_prompt_file: "default-guarded/review_system_prompt.md"
+    review_prompt_template_file: "default-guarded/review_prompt_template.md"
+
   # 保守策略（低风险）
   conservative:
     name: "保守策略"

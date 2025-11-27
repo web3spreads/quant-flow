@@ -439,20 +439,33 @@ class SpotAgent:
             # 收集所有输出
             all_events = []
             agent_output = ""
+            last_printed_content = ""  # 记录上次打印的内容，避免重复打印
 
+            # 使用 config 参数限制最大迭代次数为 3
+            # recursion_limit 控制图的最大递归深度，防止无限循环
+            config = {"recursion_limit": 6}  # 3 次迭代 * 2
+            
             for event in self.agent_executor.stream(
                 {"messages": messages},
-                stream_mode="values"
+                stream_mode="values",
+                config=config
             ):
                 all_events.append(event)
                 if "messages" in event and len(event["messages"]) > 0:
                     last_message = event["messages"][-1]
                     if hasattr(last_message, 'content'):
                         content = last_message.content
-                        if content and content != prompt and content != agent_output:
+                        # 更新agent_output为最新的完整内容
+                        if content and content != prompt:
+                            agent_output = content
+                        
+                        # 只在内容长度增加时打印（支持流式输出，避免重复打印相同内容）
+                        if (content and 
+                            content != prompt and 
+                            len(content) > len(last_printed_content)):
                             # 使用新的 AI 响应渲染方法（支持 Markdown）
                             self.logger.print_ai_response(content, "💎 现货 Agent 分析中...")
-                            agent_output = content
+                            last_printed_content = content
 
             # 解析结果
             decision_type = self._parse_decision_from_events(all_events)
