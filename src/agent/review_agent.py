@@ -85,7 +85,7 @@ class ReviewAgent:
 
         filtered_lessons = [
             lesson for lesson in lessons
-            if (lesson.get("rule") and lesson.get("action") and float(lesson.get("confidence", 0) or 0) >= self.min_confidence)
+            if (lesson.get("rule") and lesson.get("action") and float(lesson.get("confidence", 0)) >= self.min_confidence)
         ]
 
         result = {
