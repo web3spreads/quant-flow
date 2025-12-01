@@ -441,9 +441,9 @@ class SpotAgent:
             agent_output = ""
             last_printed_content = ""  # 记录上次打印的内容，避免重复打印
 
-            # 使用 config 参数限制最大迭代次数为 3
+            # 使用 config 参数限制最大迭代次数为 3（每次迭代包含 2 个递归步骤，因此 recursion_limit 需设置为 3*2=6）
             # recursion_limit 控制图的最大递归深度，防止无限循环
-            config = {"recursion_limit": 6}  # 3 次迭代 * 2
+            config = {"recursion_limit": 6}  # 递归深度为 3 次迭代 * 2 步
             
             for event in self.agent_executor.stream(
                 {"messages": messages},
