@@ -88,6 +88,17 @@ prompt_sets:
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
 
+  # Alpha Arena English Version
+  nof1-eng:
+    name: "nof1.ai English Strategy"
+    description: "English version of nof1.ai style prompts, imitating its trading logic and style"
+    system_prompt_file: "nof1-eng/system_prompt.md"
+    spot_system_prompt_file: "nof1-eng/spot_system_prompt.md"
+    trading_prompt_template_file: "nof1-eng/trading_prompt_template.md"
+    spot_prompt_template_file: "nof1-eng/spot_prompt_template.md"
+    review_system_prompt_file: "nof1-eng/review_system_prompt.md"
+    review_prompt_template_file: "nof1-eng/review_prompt_template.md"
+
 # 使用说明:
 # 1. 创建新的 Prompt 集合:
 #    - 在 prompts/ 目录下创建新文件夹（如 prompts/my_strategy/）
