@@ -347,7 +347,6 @@ class BacktestEngine:
                 continue
 
             is_long = position.get('is_long', True)
-            entry_price = float(position.get('entryPx', 0))
             tp_price = position.get('take_profit_price')
             sl_price = position.get('stop_loss_price')
 
