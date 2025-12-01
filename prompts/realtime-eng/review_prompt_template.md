@@ -15,7 +15,7 @@ You will see the latest trading records, statistics, and old rules of thumb for 
 
 ### Decision Statistics
 - Total Count: {{ stats.total_decisions }}
-- Buy: {{ stats.buy_count }}, Sell: {{ stats.sell_count }}, Sell Short: {{ stats.sell_short_count }}, Buy to Cover: {{ stats.buy_to_cover_count }}, Hold: {{ stats.idle_count }}
+- Buy: {{ stats.buy_count }}, Sell: {{ stats.sell_count }}, Sell Short: {{ stats.sell_short_count }}, Buy to Cover: {{ stats.buy_to_cover_count }}, Do Nothing: {{ stats.idle_count }}
 - Average Price: ${{ "%.2f"|format(stats.average_price) }}, Max Price: ${{ "%.2f"|format(stats.max_price) }}, Min Price: ${{ "%.2f"|format(stats.min_price) }}
 
 ### Existing Lessons (if empty, means none)
