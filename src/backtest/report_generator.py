@@ -5,7 +5,7 @@
 
 import json
 import csv
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pathlib import Path
 from datetime import datetime
 
