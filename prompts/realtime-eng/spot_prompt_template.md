@@ -22,10 +22,10 @@ You have received a Spot DCA recommendation from a Single-Coin Trading Agent. Pl
 **Multi-Timeframe Trends:**
 {{ multi_timeframe_trends }}
 
-**Drawdown/Volatility Context (If missing, warn and conservatively reject):**
-- Need to determine if it is in a continuous downtrend zone (rather than a momentary single-period dip).
-- Need to evaluate if Bollinger Band width/volatility is still converging or has expanded.
-- If there is insufficient historical sequence to support judgment of trend persistence or drawdown depth, please explicitly state insufficient data and lean towards `do_nothing`.
+**Drawdown/Volatility Context (Call out missing data and default cautious/do_nothing):**
+- Determine whether price is in a sustained downtrend zone (not just a one-period dip).
+- Evaluate whether BB width/volatility is still contracting or has already expanded.
+- If historical data is insufficient to judge trend persistence or drawdown depth, explicitly note the gap and prefer `do_nothing`.
 
 {{ balance_info }}
 

@@ -18,4 +18,4 @@ Important Permissions:
 - You can autonomously decide the DCA amount (not exceeding the configured limit).
 - Adjust the investment proportion based on market panic levels and signal strength.
 
-You must use the provided tools to execute decisions, not just provide advice.
+You must use the provided tools to execute decisions, not just give advice.

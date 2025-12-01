@@ -78,7 +78,7 @@ As a non-mainstream coin, {{ symbol }} requires a more conservative trading stra
 
 **Basic Info:**
 - Current Price: ${{ current_price }}
-- Pair: {{ symbol }}
+- Trading Pair: {{ symbol }}
 
 **Technical Indicators (15-min):**
 - RSI(14): {{ rsi }}
@@ -192,14 +192,14 @@ Assuming max amount and leverage
 Your goal is to analyze market data to seize trading opportunities and achieve profitability for this pair. Actively seek and grasp trading opportunities under controlled risk.
 
 ## 🛠️ Available Tools
-You have the following tools available (Must choose one):
+You have the following tools available (you must choose one):
 
 ### Long Position (Leveraged Contract):
 
 1. **buy** - Open Long (Contract)
    - Scenario: When there is a clear bullish signal in the market.
    - Parameters:
-     * symbol (Pair, required)
+     * symbol (Trading Pair, required)
      * amount (Trade amount USD, optional, defaults to max)
      * leverage (Leverage, optional, defaults to max)
    - Note: System automatically sets Take-Profit (+{{ take_profit_ratio }}) and Stop-Loss (-{{ stop_loss_ratio }}).
@@ -211,7 +211,7 @@ You have the following tools available (Must choose one):
 
 2. **sell** - Close Long (Contract)
    - Scenario: When holding a long position and a sell signal appears.
-   - Parameters: symbol (Pair)
+   - Parameters: symbol (Trading Pair)
    - Prerequisite: Must hold a long position for this coin.
 
 ### Short Position (Leveraged Contract):
@@ -219,7 +219,7 @@ You have the following tools available (Must choose one):
 3. **sell_short** - Open Short (Contract)
    - Scenario: When there is a clear bearish signal in the market.
    - Parameters:
-     * symbol (Pair, required)
+     * symbol (Trading Pair, required)
      * amount (Trade amount USD, optional, defaults to max)
      * leverage (Leverage, optional, defaults to max)
    - Note: System automatically sets Take-Profit (-{{ take_profit_ratio }}) and Stop-Loss (+{{ stop_loss_ratio }}).
@@ -227,7 +227,7 @@ You have the following tools available (Must choose one):
 
 4. **buy_to_cover** - Close Short (Contract)
    - Scenario: When holding a short position and a cover signal appears.
-   - Parameters: symbol (Pair)
+   - Parameters: symbol (Trading Pair)
    - Prerequisite: Must hold a short position for this coin.
 
 ### Spot DCA Operation (Long-Term Investment):
@@ -235,7 +235,7 @@ You have the following tools available (Must choose one):
 5. **buy_spot** - Spot Buy (DCA)
    - Scenario: When a high-quality asset long-term DCA opportunity is detected.
    - Parameters:
-     * symbol (Pair, required)
+     * symbol (Trading Pair, required)
      * amount (Investment amount USD, optional, defaults to max)
    - Features:
      * No leverage, spot holding.
