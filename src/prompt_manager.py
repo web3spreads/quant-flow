@@ -11,14 +11,14 @@ from typing import Dict, Any, Optional, List
 from jinja2 import Environment, FileSystemLoader, Template
 
 from src.config import FEE_RATE_PER_SIDE
+from src.i18n import get_text, get_timeframe_name
 
 
 class PromptManager:
     """Prompt 管理器 - 支持从配置文件加载和切换不同的 Prompt 集合"""
 
-    @staticmethod
     def format_position_details(
-        symbol: str, current_positions: list, current_price: float
+        self, symbol: str, current_positions: list, current_price: float
     ) -> Dict[str, Any]:
         """
         格式化当前币种的持仓详情
@@ -54,6 +54,8 @@ class PromptManager:
 
         # 如果没有持仓，返回空信息
         if not position:
+            no_position_text = get_text(self.language, "no_position")
+            position_status_label = get_text(self.language, "position_details") if self.language == "en" else "持仓状态"
             return {
                 "has_position": False,
                 "position_side": "none",
@@ -68,7 +70,7 @@ class PromptManager:
                 "price_change_percent": 0,
                 "distance_from_entry": 0,
                 "distance_to_liquidation": 0,
-                "position_text": f"**{symbol} 持仓状态**: 无持仓 ❌",
+                "position_text": f"**{symbol} {position_status_label}**: {no_position_text}",
             }
 
         # 提取持仓数据
@@ -140,32 +142,47 @@ class PromptManager:
             "✅" if unrealized_pnl > 0 else ("❌" if unrealized_pnl < 0 else "➖")
         )
 
-        position_text = f"""**{symbol} 持仓详情** {side_emoji}:
+        # 获取本地化文本
+        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
 
-**基础信息**:
-- 持仓方向: {'做多 (Long)' if position_side == 'long' else '做空 (Short)'} {side_emoji}
-- 持仓数量: {position_size:.4f} {symbol}
-- 入场价格: ${entry_price:.2f}
-- 当前价格: ${current_price:.2f}
-- 杠杆倍数: {leverage}x
+        position_side_text = t("long") if position_side == "long" else t("short")
 
-**盈亏状况** {pnl_emoji}:
-- 价格变化: {price_change_percent:+.2f}% (距离入场价)
-- 未实现盈亏: ${unrealized_pnl:+.2f} ({unrealized_pnl_percent:+.2f}%) {pnl_emoji}
-- 持仓价值: ${position_value:.2f}
-- 使用保证金: ${margin_used:.2f}"""
+        position_text = f"""**{symbol} {t('position_details')}** {side_emoji}:
+
+**{t('basic_info')}**:
+- {t('position_side')}: {position_side_text} {side_emoji}
+- {t('position_size')}: {position_size:.4f} {symbol}
+- {t('entry_price')}: ${entry_price:.2f}
+- {t('current_price')}: ${current_price:.2f}
+- {t('leverage')}: {leverage}x
+
+**{t('pnl_status')}** {pnl_emoji}:
+- {t('price_change')}: {price_change_percent:+.2f}% ({t('distance_from_entry')})
+- {t('unrealized_pnl')}: ${unrealized_pnl:+.2f} ({unrealized_pnl_percent:+.2f}%) {pnl_emoji}
+- {t('position_value')}: ${position_value:.2f}
+- {t('margin_used')}: ${margin_used:.2f}"""
 
         if liquidation_price > 0:
             position_text += f"""
-- 清算价格: ${liquidation_price:.2f}
-- 距离清算: {distance_to_liquidation:.2f}%"""
+- {t('liquidation_price')}: ${liquidation_price:.2f}
+- {t('distance_to_liquidation')}: {distance_to_liquidation:.2f}%"""
+
+        # 确定盈亏状态
+        if unrealized_pnl > 0:
+            status = t('profit_status')
+        elif unrealized_pnl == 0:
+            status = t('flat_status')
+        else:
+            status = t('loss_status')
+
+        risk_level = t('risk_high') if leverage >= 10 else t('risk_moderate')
 
         position_text += f"""
 
-**重要提示**:
-- 当前{'盈利' if unrealized_pnl > 0 else ('持平' if unrealized_pnl == 0 else '亏损')}状态，请根据市场情况决定是否止盈/止损
-- 杠杆倍数为 {leverage}x，风险{'较高' if leverage >= 10 else '适中'}
-- 请关注价格走势，及时调整策略"""
+**{t('important_notice')}**:
+- {t('current_status_notice', status=status)}
+- {t('leverage_risk', leverage=leverage, risk_level=risk_level)}
+- {t('watch_price_notice')}"""
 
         return {
             "has_position": True,
@@ -211,6 +228,9 @@ class PromptManager:
         # 加载 Prompt 配置
         self.config = self._load_config()
         self.prompt_set = self._get_prompt_set(prompt_set)
+
+        # 获取语言设置，默认为中文
+        self.language = self.prompt_set.get("language", "zh")
 
         # 加载 Prompt 内容（作为 Jinja2 模板）
         self.system_prompt = self._load_prompt_file(
@@ -413,20 +433,33 @@ class PromptManager:
         position_count = len(current_positions)
 
         # 格式化多周期趋势
+        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        timeframes = [
+            ("daily", "日线"),
+            ("4h", "4小时"),
+            ("1h", "1小时"),
+            ("15m", "15分钟"),
+            ("1m", "1分钟")
+        ]
         trends_text = ""
-        for timeframe in ["日线", "4小时", "1小时", "15分钟", "1分钟"]:
-            trend = multi_timeframe_trends.get(timeframe, "未知")
-            trends_text += f"- {timeframe}: {trend}\n"
+        for tf_key, tf_zh in timeframes:
+            # 对于中文prompt使用中文时间周期，英文prompt使用英文时间周期
+            timeframe_display = t(tf_key) if self.language == "en" else tf_zh
+            timeframe_key = tf_zh  # multi_timeframe_trends 使用中文键
+            trend = multi_timeframe_trends.get(timeframe_key, "未知" if self.language == "zh" else "Unknown")
+            trends_text += f"- {timeframe_display}: {trend}\n"
 
         # 格式化历史汇总
         historical_text = ""
         if historical_summary:
+            summary_title = t("historical_summary")
+            summary_hint = t("historical_hint")
             historical_text = f"""
-## 📜 历史决策汇总
+## 📜 {summary_title}
 
 {historical_summary}
 
-**提示:** 以上是你过去的决策记录汇总，可以帮助你理解市场演变和之前的策略。但请基于当前市场数据做出独立判断。
+**{"Hint" if self.language == "en" else "提示"}:** {summary_hint}
 """
 
         # 格式化账户余额信息
@@ -440,17 +473,17 @@ class PromptManager:
                 "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
             )
             balance_text = f"""
-## 💰 账户余额（实时）
+## 💰 {t('account_balance')}
 
-- **账户总价值**: ${total:.2f}
-- **已占用保证金**: ${occupied:.2f}
-- **可用余额**: ${available:.2f}
-- **未实现盈亏**: ${unrealized_pnl:+.2f} {pnl_emoji}
+- **{t('total_value')}**: ${total:.2f}
+- **{t('occupied_margin')}**: ${occupied:.2f}
+- **{t('available_balance')}**: ${available:.2f}
+- **{t('unrealized_pnl_total')}**: ${unrealized_pnl:+.2f} {pnl_emoji}
 
-**重要提示**:
-- 你必须根据可用余额决定是否开仓
-- 如果可用余额不足以支持交易，必须选择 do_nothing
-- 关注未实现盈亏，如果亏损较大应更谨慎
+**{t('balance_notice_title')}**:
+- {t('balance_check_notice')}
+- {t('insufficient_balance_notice')}
+- {t('large_loss_notice')}
 """
 
         # 计算手续费相关的值（防止除零错误）
@@ -682,10 +715,20 @@ class PromptManager:
         has_spot = any(h.get("symbol") == symbol for h in current_spot_holdings)
 
         # 格式化多周期趋势
+        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        timeframes = [
+            ("daily", "日线"),
+            ("4h", "4小时"),
+            ("1h", "1小时"),
+            ("15m", "15分钟"),
+            ("1m", "1分钟")
+        ]
         trends_text = ""
-        for timeframe in ["日线", "4小时", "1小时", "15分钟", "1分钟"]:
-            trend = multi_timeframe_trends.get(timeframe, "未知")
-            trends_text += f"- {timeframe}: {trend}\n"
+        for tf_key, tf_zh in timeframes:
+            timeframe_display = t(tf_key) if self.language == "en" else tf_zh
+            timeframe_key = tf_zh
+            trend = multi_timeframe_trends.get(timeframe_key, "未知" if self.language == "zh" else "Unknown")
+            trends_text += f"- {timeframe_display}: {trend}\n"
 
         # 格式化账户余额信息
         balance_text = ""
@@ -698,17 +741,17 @@ class PromptManager:
                 "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
             )
             balance_text = f"""
-## 💰 账户余额（实时）
+## 💰 {t('account_balance')}
 
-- **账户总价值**: ${total:.2f}
-- **已占用保证金**: ${occupied:.2f}
-- **可用余额**: ${available:.2f}
-- **未实现盈亏**: ${unrealized_pnl:+.2f} {pnl_emoji}
+- **{t('total_value')}**: ${total:.2f}
+- **{t('occupied_margin')}**: ${occupied:.2f}
+- **{t('available_balance')}**: ${available:.2f}
+- **{t('unrealized_pnl_total')}**: ${unrealized_pnl:+.2f} {pnl_emoji}
 
-**重要提示**:
-- 你必须根据可用余额决定是否定投
-- 如果可用余额不足，必须选择 do_nothing
-- 关注未实现盈亏，如果亏损较大应更谨慎
+**{t('balance_notice_title')}**:
+- {t('balance_check_for_dca')}
+- {t('insufficient_balance_dca')}
+- {t('large_loss_notice')}
 """
 
         # 准备模板上下文（使用 Jinja2 渲染）
@@ -728,7 +771,7 @@ class PromptManager:
             # 市场数据
             "current_price": f"{current_price:.2f}",
             "current_price_raw": current_price,
-            "has_spot": "已持有 ✅" if has_spot else "未持有 ❌",
+            "has_spot": t("has_spot") if has_spot else t("no_spot"),
             "has_spot_bool": has_spot,
             "rsi": f"{rsi:.2f}",
             "rsi_raw": rsi,
