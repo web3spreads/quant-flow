@@ -141,8 +141,8 @@ def main():
             historical_data = data_loader.load_from_file(args.data_file, args.symbol)
         else:
             # 从API加载
-            if not args.end_date:
-                print("❌ 使用API数据源时必须提供 --end-date")
+            if not args.start_date or not args.end_date:
+                print("❌ 使用API数据源时必须同时提供 --start-date 和 --end-date")
                 sys.exit(1)
 
             start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
