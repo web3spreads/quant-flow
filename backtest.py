@@ -7,7 +7,6 @@
 import argparse
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from src.config import get_config
 from src.utils.logger import TradingLogger
