@@ -5,7 +5,7 @@
 
 import pandas as pd
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from hyperliquid.info import Info
