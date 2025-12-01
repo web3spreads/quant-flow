@@ -33,6 +33,17 @@ prompt_sets:
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
 
+  # 实时信号优先策略
+  realtime:
+    name: "实时信号优先策略"
+    description: "优先关注实时价格行为和成交量，指标用于确认而非等待"
+    system_prompt_file: "realtime/system_prompt.md"
+    spot_system_prompt_file: "realtime/spot_system_prompt.md"
+    trading_prompt_template_file: "realtime/trading_prompt_template.md"
+    spot_prompt_template_file: "realtime/spot_prompt_template.md"
+    review_system_prompt_file: "realtime/review_system_prompt.md"
+    review_prompt_template_file: "realtime/review_prompt_template.md"
+
   # 保守策略（低风险）
   conservative:
     name: "保守策略"
