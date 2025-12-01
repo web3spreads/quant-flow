@@ -44,6 +44,17 @@ prompt_sets:
     review_system_prompt_file: "realtime/review_system_prompt.md"
     review_prompt_template_file: "realtime/review_prompt_template.md"
 
+  # Real-time Signal Priority Strategy (English)
+  realtime-eng:
+    name: "Real-time Signal Priority Strategy"
+    description: "Prioritizes real-time price action and volume; uses indicators for confirmation rather than waiting. (English Version)"
+    system_prompt_file: "realtime-eng/system_prompt.md"
+    spot_system_prompt_file: "realtime-eng/spot_system_prompt.md"
+    trading_prompt_template_file: "realtime-eng/trading_prompt_template.md"
+    spot_prompt_template_file: "realtime-eng/spot_prompt_template.md"
+    review_system_prompt_file: "realtime-eng/review_system_prompt.md"
+    review_prompt_template_file: "realtime-eng/review_prompt_template.md"
+
   # 保守策略（低风险）
   conservative:
     name: "保守策略"
@@ -87,6 +98,17 @@ prompt_sets:
     spot_prompt_template_file: "nof1-improved/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
+
+  # Alpha Arena English Version
+  nof1-eng:
+    name: "nof1.ai English Strategy"
+    description: "English version of nof1.ai style prompts, imitating its trading logic and style"
+    system_prompt_file: "nof1-eng/system_prompt.md"
+    spot_system_prompt_file: "nof1-eng/spot_system_prompt.md"
+    trading_prompt_template_file: "nof1-eng/trading_prompt_template.md"
+    spot_prompt_template_file: "nof1-eng/spot_prompt_template.md"
+    review_system_prompt_file: "nof1-eng/review_system_prompt.md"
+    review_prompt_template_file: "nof1-eng/review_prompt_template.md"
 
 # 使用说明:
 # 1. 创建新的 Prompt 集合:
