@@ -107,8 +107,12 @@ class QuantFlowBot:
 
         # 2.5 数据增强器（为nof1和nof1-improved prompts提供额外数据）
         self.logger.print_info("初始化数据增强器...")
+        # 从 prompt_manager 获取语言设置，如果没有则默认为中文
+        language = self.prompt_manager.language if self.prompt_manager else "zh"
         self.data_enricher = MarketDataEnricher(
-            market_fetcher=self.market_fetcher, start_time=self.start_time
+            market_fetcher=self.market_fetcher,
+            start_time=self.start_time,
+            language=language
         )
 
         # 3. Hyperliquid 交易客户端

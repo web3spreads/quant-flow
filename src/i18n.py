@@ -74,6 +74,54 @@ LANGUAGE_RESOURCES = {
         # Yes/No indicators
         "yes": "是 ✅",
         "no": "否 ❌",
+
+        # Data enricher - Price trend analysis
+        "trend_rising": "上升趋势",
+        "trend_falling": "下降趋势",
+        "trend_sideways": "横盘整理",
+        "price_data_error_zero": "价格数据异常(起始价为0)",
+
+        # Data enricher - MACD analysis
+        "macd_golden_cross_above_zero": "金叉且位于零轴上方(强势多头)",
+        "macd_golden_cross_below_zero": "金叉但位于零轴下方(多头转强)",
+        "macd_death_cross_below_zero": "死叉且位于零轴下方(强势空头)",
+        "macd_death_cross_above_zero": "死叉但位于零轴上方(空头转强)",
+
+        # Data enricher - RSI analysis
+        "rsi_overbought": "超买区",
+        "rsi_oversold": "超卖区",
+        "rsi_strong": "偏强",
+        "rsi_weak": "偏弱",
+        "rsi_neutral": "中性",
+
+        # Data enricher - EMA analysis
+        "price_above_ema20": "价格在EMA20上方",
+        "price_below_ema20": "价格在EMA20下方",
+        "price_near_ema20": "价格接近EMA20",
+        "ema_data_error": "EMA数据异常(价格或EMA为0)",
+
+        # Data enricher - Volume analysis
+        "volume_surge": "明显放量",
+        "volume_increase": "温和放量",
+        "volume_decline": "明显缩量",
+        "volume_normal": "成交量正常",
+        "volume_data_error": "成交量数据异常(平均成交量为0)",
+
+        # Data enricher - 4H trend analysis
+        "h4_bullish_alignment": "4小时多头排列(强势)",
+        "h4_bearish_alignment": "4小时空头排列(弱势)",
+        "h4_bullish": "4小时偏多",
+        "h4_bearish": "4小时偏空",
+        "h4_ranging": "4小时震荡",
+
+        # Data enricher - Composite signals
+        "signal_macd_bullish": "MACD多头",
+        "signal_macd_bearish": "MACD空头",
+        "signal_rsi_overbought": "RSI超买",
+        "signal_rsi_oversold": "RSI超卖",
+        "signal_price_above_ema": "价格在EMA上方",
+        "signal_price_below_ema": "价格在EMA下方",
+        "signal_none": "无明显信号",
     },
     "en": {
         # Position status related
@@ -141,6 +189,54 @@ LANGUAGE_RESOURCES = {
         # Yes/No indicators
         "yes": "Yes ✅",
         "no": "No ❌",
+
+        # Data enricher - Price trend analysis
+        "trend_rising": "Rising trend",
+        "trend_falling": "Falling trend",
+        "trend_sideways": "Sideways",
+        "price_data_error_zero": "Price data error (starting price is 0)",
+
+        # Data enricher - MACD analysis
+        "macd_golden_cross_above_zero": "Golden cross above zero (strong bullish)",
+        "macd_golden_cross_below_zero": "Golden cross below zero (turning bullish)",
+        "macd_death_cross_below_zero": "Death cross below zero (strong bearish)",
+        "macd_death_cross_above_zero": "Death cross above zero (turning bearish)",
+
+        # Data enricher - RSI analysis
+        "rsi_overbought": "Overbought",
+        "rsi_oversold": "Oversold",
+        "rsi_strong": "Strong",
+        "rsi_weak": "Weak",
+        "rsi_neutral": "Neutral",
+
+        # Data enricher - EMA analysis
+        "price_above_ema20": "Price above EMA20",
+        "price_below_ema20": "Price below EMA20",
+        "price_near_ema20": "Price near EMA20",
+        "ema_data_error": "EMA data error (price or EMA is 0)",
+
+        # Data enricher - Volume analysis
+        "volume_surge": "Significant surge",
+        "volume_increase": "Moderate increase",
+        "volume_decline": "Significant decline",
+        "volume_normal": "Normal volume",
+        "volume_data_error": "Volume data error (average volume is 0)",
+
+        # Data enricher - 4H trend analysis
+        "h4_bullish_alignment": "4H bullish alignment (strong)",
+        "h4_bearish_alignment": "4H bearish alignment (weak)",
+        "h4_bullish": "4H bullish",
+        "h4_bearish": "4H bearish",
+        "h4_ranging": "4H ranging",
+
+        # Data enricher - Composite signals
+        "signal_macd_bullish": "MACD bullish",
+        "signal_macd_bearish": "MACD bearish",
+        "signal_rsi_overbought": "RSI overbought",
+        "signal_rsi_oversold": "RSI oversold",
+        "signal_price_above_ema": "Price above EMA",
+        "signal_price_below_ema": "Price below EMA",
+        "signal_none": "No clear signal",
     }
 }
 
