@@ -303,14 +303,15 @@ class MarketDataEnricher:
 
             # 检查平均成交量是否为0
             if avg_volume != 0:
+                times_unit = t('times_unit')
                 if current_volume > avg_volume * 1.5:
-                    volume_status = f"{t('volume_surge')}({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_surge')}({(current_volume/avg_volume):.1f}{times_unit})"
                 elif current_volume > avg_volume * 1.2:
-                    volume_status = f"{t('volume_increase')}({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_increase')}({(current_volume/avg_volume):.1f}{times_unit})"
                 elif current_volume < avg_volume * 0.5:
-                    volume_status = f"{t('volume_decline')}({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_decline')}({(current_volume/avg_volume):.1f}{times_unit})"
                 else:
-                    volume_status = f"{t('volume_normal')}({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_normal')}({(current_volume/avg_volume):.1f}{times_unit})"
             else:
                 volume_status = t('volume_data_error')
 
@@ -337,15 +338,14 @@ class MarketDataEnricher:
 
         # 7. 综合分析
         signals = []
-        # 检查MACD信号（使用翻译后的文本关键词）
-        macd_golden_key = t('macd_golden_cross_above_zero') if self.language == 'zh' else 'Golden cross'
-        macd_death_key = t('macd_death_cross_below_zero') if self.language == 'zh' else 'Death cross'
+        # 检查MACD信号（使用MACD数值而非语言关键词）
+        current_macd = enriched.get('current_macd', 0)
+        macd_signal = df_15m.iloc[-1].get('macd_signal', 0) if not df_15m.empty else 0
         
-        if 'macd_analysis' in analysis:
-            if macd_golden_key[:2] in analysis['macd_analysis'] or 'Golden' in analysis['macd_analysis']:
-                signals.append(t('signal_macd_bullish'))
-            elif macd_death_key[:2] in analysis['macd_analysis'] or 'Death' in analysis['macd_analysis']:
-                signals.append(t('signal_macd_bearish'))
+        if current_macd > macd_signal:
+            signals.append(t('signal_macd_bullish'))
+        elif current_macd < macd_signal:
+            signals.append(t('signal_macd_bearish'))
 
         if current_rsi >= 70:
             signals.append(t('signal_rsi_overbought'))

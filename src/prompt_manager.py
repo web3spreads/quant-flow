@@ -447,7 +447,7 @@ class PromptManager:
             # 对于中文prompt使用中文时间周期，英文prompt使用英文时间周期
             timeframe_display = t(tf_key) if self.language == "en" else tf_zh
             timeframe_key = tf_zh  # multi_timeframe_trends 使用中文键
-            trend = multi_timeframe_trends.get(timeframe_key, "未知" if self.language == "zh" else "Unknown")
+            trend = multi_timeframe_trends.get(timeframe_key, t("unknown"))
             trends_text += f"- {timeframe_display}: {trend}\n"
 
         # 格式化历史汇总
@@ -455,12 +455,13 @@ class PromptManager:
         if historical_summary:
             summary_title = t("historical_summary")
             summary_hint = t("historical_hint")
+            hint_label = t("hint_label")
             historical_text = f"""
 ## 📜 {summary_title}
 
 {historical_summary}
 
-**{"Hint" if self.language == "en" else "提示"}:** {summary_hint}
+**{hint_label}:** {summary_hint}
 """
 
         # 格式化账户余额信息
@@ -733,7 +734,7 @@ class PromptManager:
         for tf_key, tf_zh in timeframes:
             timeframe_display = t(tf_key) if self.language == "en" else tf_zh
             timeframe_key = tf_zh
-            trend = multi_timeframe_trends.get(timeframe_key, "未知" if self.language == "zh" else "Unknown")
+            trend = multi_timeframe_trends.get(timeframe_key, t("unknown"))
             trends_text += f"- {timeframe_display}: {trend}\n"
 
         # 格式化账户余额信息
@@ -761,7 +762,6 @@ class PromptManager:
 """
 
         # 准备模板上下文（使用 Jinja2 渲染）
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
         context = {
             # 基础信息
             "symbol": symbol,
