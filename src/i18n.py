@@ -122,6 +122,11 @@ LANGUAGE_RESOURCES = {
         "signal_price_above_ema": "价格在EMA上方",
         "signal_price_below_ema": "价格在EMA下方",
         "signal_none": "无明显信号",
+
+        # Common labels
+        "hint_label": "提示",
+        "unknown": "未知",
+        "times_unit": "倍",
     },
     "en": {
         # Position status related
@@ -237,6 +242,11 @@ LANGUAGE_RESOURCES = {
         "signal_price_above_ema": "Price above EMA",
         "signal_price_below_ema": "Price below EMA",
         "signal_none": "No clear signal",
+
+        # Common labels
+        "hint_label": "Hint",
+        "unknown": "Unknown",
+        "times_unit": "x",
     }
 }
 
