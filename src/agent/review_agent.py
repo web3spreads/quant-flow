@@ -222,7 +222,7 @@ class ReviewAgent:
             )
             env_match_factor = self._environment_match_factor(similarity_score)
             adjusted_confidence = round(
-                base_confidence * similarity_score * env_match_factor, 3
+                base_confidence * env_match_factor, 3
             )
             support_count = int(lesson.get("support_count", 1) or 1)
             ci_low, ci_high = self._calculate_confidence_interval(

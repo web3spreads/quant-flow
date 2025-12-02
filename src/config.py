@@ -74,8 +74,6 @@ class Config:
                 "未设置 OPENAI_API_KEY 环境变量！\n"
                 "请在 .env 文件中设置或使用环境变量"
             )
-        if not self.openai_api_key:
-            self.openai_api_key = None
 
     def _init_hyperliquid_config(self):
         """初始化 Hyperliquid 配置"""
@@ -91,8 +89,6 @@ class Config:
                 "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n"
                 "请在 .env 文件中设置钱包私钥"
             )
-        if not self.hyperliquid_private_key:
-            self.hyperliquid_private_key = None
 
     def _init_trading_config(self):
         """初始化交易配置"""

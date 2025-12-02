@@ -98,7 +98,8 @@ class SimilarityScorer:
             return max(0.0, min(numeric, 5.0)) / 5.0
         if key == "price_position":
             return max(0.0, min(numeric, 1.0))
-        return numeric
+        # 默认将数值平滑压缩到 [-1, 1]，避免大尺度特征主导相似度
+        return numeric / (1 + abs(numeric))
 
     def _cosine_similarity(self, features: Dict[str, Dict[str, float]]) -> float:
         dot = 0.0
