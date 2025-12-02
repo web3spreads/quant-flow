@@ -39,9 +39,9 @@ class ContextExtractor:
     def _macd_state(self, market_data: Dict[str, Any]) -> str:
         hist = float(market_data.get("macd_hist", 0) or 0)
         signal = float(market_data.get("macd_signal", 0) or 0)
-        if hist > 0 or signal > 0:
+        if hist > 0:
             return "bullish"
-        if hist < 0 or signal < 0:
+        if hist < 0:
             return "bearish"
         return "neutral"
 
