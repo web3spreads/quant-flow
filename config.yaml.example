@@ -108,6 +108,18 @@ review_agent:
   memory_file: logs/review_memory.json  # 复盘经验持久化文件
   max_lessons: 30                # 每个符号最多保留的经验数量
   min_confidence: 0.35           # 采纳经验所需的最小置信度
+  similarity_threshold: 0.5      # 当前环境与历史经验的最小相似度
+  similarity_method: cosine      # 相似度计算方法: cosine / euclidean / hybrid
+  similarity_weights:            # 为特征设置权重，技术指标更高
+    rsi: 1.2
+    macd_signal: 1.0
+    ema_trend: 1.0
+    trend_direction: 1.0
+    volatility_level: 0.8
+    volume_ratio: 0.6
+    price_position: 0.7
+    time_of_day: 0.3
+  confidence_decay_factor: 0.6   # 低相似度时的置信度衰减因子
 
 # 风控配置
 risk_management:
