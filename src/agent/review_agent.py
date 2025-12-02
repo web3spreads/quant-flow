@@ -12,6 +12,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from src.prompt_manager import PromptManager
 from src.utils.logger import TradingLogger
 from src.agent.review_memory import ReviewMemoryStore
+from src.agent.context_extractor import ContextExtractor
+from src.agent.similarity_scorer import SimilarityScorer
 
 
 class ReviewAgent:
@@ -28,12 +30,18 @@ class ReviewAgent:
         lookback_decisions: int = 12,
         memory_store: Optional[ReviewMemoryStore] = None,
         min_confidence: float = 0.35,
+        similarity_threshold: float = 0.5,
+        similarity_weights: Optional[Dict[str, float]] = None,
+        confidence_decay_factor: float = 0.6,
+        similarity_method: str = "cosine",
     ):
         self.logger = logger
         self.prompt_manager = prompt_manager
         self.lookback_decisions = lookback_decisions
         self.memory_store = memory_store
         self.min_confidence = min_confidence
+        self.similarity_threshold = similarity_threshold
+        self.confidence_decay_factor = confidence_decay_factor
 
         self.llm = ChatOpenAI(
             base_url=openai_api_base,
@@ -45,6 +53,10 @@ class ReviewAgent:
 
         system_prompt = self.prompt_manager.get_review_system_prompt()
         self.system_message = SystemMessage(content=system_prompt)
+        self.context_extractor = ContextExtractor()
+        self.similarity_scorer = SimilarityScorer(
+            weights=similarity_weights, method=similarity_method
+        )
 
     def review(
         self,
@@ -60,9 +72,27 @@ class ReviewAgent:
         records = decision_records[-self.lookback_decisions :]
         digest = self._build_decision_digest(records)
         stats = self._calculate_stats(records)
+        current_context = self.context_extractor.extract(
+            records[-1].get("market_data", {}),
+            decision_records=records,
+        )
+
+        similar_lessons: List[Dict[str, Any]] = []
+        if self.memory_store:
+            similar_lessons = self.memory_store.get_similar_lessons(
+                symbol=symbol,
+                context_features=current_context,
+                scorer=self.similarity_scorer,
+                similarity_threshold=self.similarity_threshold,
+                limit=5,
+            )
 
         if existing_lessons is None and self.memory_store:
-            existing_lessons = self.memory_store.get_lessons(symbol)
+            existing_lessons = (
+                similar_lessons if similar_lessons else self.memory_store.get_lessons(symbol)
+            )
+        elif similar_lessons:
+            existing_lessons = similar_lessons
 
         prompt = self.prompt_manager.format_review_prompt(
             symbol=symbol,
@@ -70,6 +100,7 @@ class ReviewAgent:
             stats=stats,
             existing_lessons=(existing_lessons or [])[:5],
             fills_summary=fills_summary or {"total_fills": 0, "total_pnl": 0.0},
+            context_features=current_context,
         )
 
         self.logger.print_section(f"🧠 {symbol} 复盘 Agent 输入", style="bold white")
@@ -84,16 +115,10 @@ class ReviewAgent:
         )
         parsed = self._parse_response(raw_text)
         lessons = parsed.get("lessons", [])
-
-        filtered_lessons = [
-            lesson
-            for lesson in lessons
-            if (
-                lesson.get("rule")
-                and lesson.get("action")
-                and float(lesson.get("confidence", 0)) >= self.min_confidence
-            )
-        ]
+        filtered_lessons = self._enrich_lessons(
+            lessons=lessons,
+            context_features=current_context,
+        )
 
         result = {
             "summary": parsed.get("summary", ""),
@@ -101,6 +126,7 @@ class ReviewAgent:
             "spot_checks": parsed.get("spot_checks", []),
             "raw_output": raw_text,
             "prompt": prompt,
+            "context_features": current_context,
         }
 
         return result
@@ -168,6 +194,96 @@ class ReviewAgent:
             "max_price": max(prices) if prices else 0.0,
             "average_price": avg_price,
         }
+
+    def _enrich_lessons(
+        self, lessons: List[Dict[str, Any]], context_features: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """为经验打上相似度、置信区间并按阈值过滤"""
+        if not lessons:
+            return []
+
+        enriched: List[Dict[str, Any]] = []
+        for lesson in lessons:
+            rule = (lesson.get("rule") or "").strip()
+            action = (lesson.get("action") or "").strip()
+            if not rule or not action:
+                continue
+
+            base_confidence = float(lesson.get("confidence", 0) or 0)
+
+            # 仅在响应包含 context_features 时使用；否则视为新规则并绑定当前环境
+            if "context_features" in lesson and lesson.get("context_features"):
+                lesson_context = lesson.get("context_features")
+            else:
+                lesson_context = context_features
+
+            similarity_score = self.similarity_scorer.compute(
+                context_features, lesson_context or {}
+            )
+            env_match_factor = self._environment_match_factor(similarity_score)
+            adjusted_confidence = round(
+                base_confidence * env_match_factor, 3
+            )
+            support_count = int(lesson.get("support_count", 1) or 1)
+            ci_low, ci_high = self._calculate_confidence_interval(
+                base_confidence,
+                adjusted_confidence,
+                support_count,
+                similarity_score,
+            )
+
+            if adjusted_confidence < self.min_confidence:
+                continue
+            if similarity_score < self.similarity_threshold:
+                continue
+
+            enriched.append(
+                {
+                    **lesson,
+                    "rule": rule,
+                    "action": action,
+                    "original_confidence": base_confidence,
+                    "confidence": adjusted_confidence,
+                    "adjusted_confidence": adjusted_confidence,
+                    "similarity_score": similarity_score,
+                    "environment_match_factor": env_match_factor,
+                    "confidence_interval": [ci_low, ci_high],
+                    "context_features": lesson_context,
+                    "support_count": support_count,
+                }
+            )
+
+        enriched.sort(key=lambda item: item.get("confidence", 0), reverse=True)
+        return enriched
+
+    def _environment_match_factor(self, similarity_score: float) -> float:
+        """
+        根据相似度计算环境匹配度，低相似度时衰减置信度
+
+        逻辑：相似度越低，惩罚越大，但保留最低 0.2 的权重
+        """
+        penalty = (1 - similarity_score) * self.confidence_decay_factor
+        return max(0.2, 1 - penalty)
+
+    def _calculate_confidence_interval(
+        self,
+        base_confidence: float,
+        adjusted_confidence: float,
+        support_count: int,
+        similarity_score: float,
+    ) -> List[float]:
+        """
+        简易置信区间估算：方差基于原始置信度，相似度只影响区间宽度一次
+        """
+        support = max(1, support_count)
+        base_confidence = max(0.0, min(base_confidence, 1.0))
+        variance = base_confidence * (1 - base_confidence)
+        std_error = (variance / support) ** 0.5
+        widen = 1 + (1 - similarity_score)  # 相似度低时放宽
+        margin = std_error * widen
+        lower = max(0.0, adjusted_confidence - margin)
+        upper = min(1.0, adjusted_confidence + margin)
+        return [round(lower, 3), round(upper, 3)]
 
     @staticmethod
     def _shorten(text: str, limit: int = 140) -> str:

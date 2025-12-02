@@ -418,9 +418,11 @@ class DecisionHistory:
         """
         if symbol not in self.histories:
             self.histories[symbol] = []
-        
+
+        data_ts = market_data.get('timestamp') if isinstance(market_data, dict) else None
         record = {
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            # 使用数据时间而不是当前时间，便于回测报告准确反映交易时间
+            'timestamp': data_ts if data_ts is not None else datetime.now(),
             'decision': decision,
             'market_data': market_data,
             'reason': reason,

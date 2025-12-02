@@ -170,6 +170,10 @@ class QuantFlowBot:
                     lookback_decisions=self.config.review_lookback_decisions,
                     memory_store=self.review_memory_store,
                     min_confidence=self.config.review_min_confidence,
+                    similarity_threshold=self.config.review_similarity_threshold,
+                    similarity_weights=self.config.review_similarity_weights,
+                    confidence_decay_factor=self.config.review_confidence_decay_factor,
+                    similarity_method=self.config.review_similarity_method,
                 )
         else:
             self.review_agent = None

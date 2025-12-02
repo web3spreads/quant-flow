@@ -4,6 +4,7 @@
 """
 
 import pandas as pd
+import json
 from typing import Optional
 from datetime import datetime
 from pathlib import Path
@@ -143,12 +144,47 @@ class BacktestDataLoader:
             if path.suffix.lower() == '.csv':
                 df = pd.read_csv(file_path)
             elif path.suffix.lower() == '.json':
-                df = pd.read_json(file_path)
+                # 兼容数组、字典包装以及 JSONL 格式
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    parsed = json.loads(content)
+
+                    # 如果是 dict，尝试在常见字段中取出列表
+                    if isinstance(parsed, dict):
+                        for key in ['data', 'candles', 'klines', 'records']:
+                            if key in parsed and isinstance(parsed[key], list):
+                                parsed = parsed[key]
+                                break
+                    # 如果是列表，直接转 DataFrame
+                    if isinstance(parsed, list):
+                        df = pd.DataFrame(parsed)
+                    else:
+                        # 回退到 pandas 解析（可兼容 JSONL）
+                        df = pd.read_json(file_path, lines=True)
+                except Exception:
+                    # 回退到 pandas 解析（可兼容 JSONL）
+                    df = pd.read_json(file_path, lines=True)
             else:
                 print(f"❌ 不支持的文件格式: {path.suffix}")
                 return None
             
             # 检查必需的列
+            # 支持多种常见字段名称
+            column_mapping = {
+                't': 'timestamp',
+                'time': 'timestamp',
+                'o': 'open',
+                'h': 'high',
+                'l': 'low',
+                'c': 'close',
+                'v': 'volume',
+                'vol': 'volume'
+            }
+            for src, dst in column_mapping.items():
+                if src in df.columns and dst not in df.columns:
+                    df = df.rename(columns={src: dst})
+
             required_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
             missing_cols = [col for col in required_cols if col not in df.columns]
             if missing_cols:
@@ -223,4 +259,3 @@ class BacktestDataLoader:
             raise ValueError("使用API数据源时必须提供 start_date 和 end_date")
         
         return self.load_from_api(symbol, timeframe, start_date, end_date)
-
