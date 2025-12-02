@@ -264,6 +264,7 @@ def get_text(language: str, key: str, **kwargs) -> str:
         try:
             text = text.format(**kwargs)
         except (KeyError, ValueError):
+            # 如果格式化参数有误，则返回未格式化的文本（这是预期的回退行为）
             pass
 
     return text
