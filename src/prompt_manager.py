@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional, List
 from jinja2 import Environment, FileSystemLoader, Template
 
 from src.config import FEE_RATE_PER_SIDE
-from src.i18n import get_text, get_timeframe_name
+from src.i18n import get_text
 
 
 class PromptManager:
