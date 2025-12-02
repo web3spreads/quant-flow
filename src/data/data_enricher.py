@@ -8,19 +8,23 @@ import pandas as pd
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+from src.i18n import get_text
+
 class MarketDataEnricher:
     """市场数据增强器 - 提供额外的数据字段供prompt使用"""
 
-    def __init__(self, market_fetcher, start_time: Optional[datetime] = None):
+    def __init__(self, market_fetcher, start_time: Optional[datetime] = None, language: str = "zh"):
         """
         初始化数据增强器
 
         Args:
             market_fetcher: MarketDataFetcher实例
             start_time: 程序启动时间,用于计算elapsed_minutes
+            language: 语言代码 ("zh" 或 "en"),用于国际化分析文本
         """
         self.market_fetcher = market_fetcher
         self.start_time = start_time or datetime.now()
+        self.language = language
 
     def get_elapsed_minutes(self) -> int:
         """获取程序运行时长(分钟)"""
@@ -221,6 +225,7 @@ class MarketDataEnricher:
             包含分析结论的字典
         """
         analysis = {}
+        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
 
         # 1. 分析价格趋势（防止除零错误）
         if 'mid_prices_raw' in enriched and len(enriched['mid_prices_raw']) >= 5:
@@ -230,29 +235,29 @@ class MarketDataEnricher:
                 price_change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
 
                 if price_change_pct > 1.0:
-                    trend = f"上升趋势(+{price_change_pct:.2f}%)"
+                    trend = f"{t('trend_rising')}(+{price_change_pct:.2f}%)"
                 elif price_change_pct < -1.0:
-                    trend = f"下降趋势({price_change_pct:.2f}%)"
+                    trend = f"{t('trend_falling')}({price_change_pct:.2f}%)"
                 else:
-                    trend = f"横盘整理({price_change_pct:.2f}%)"
+                    trend = f"{t('trend_sideways')}({price_change_pct:.2f}%)"
 
                 analysis['price_trend_analysis'] = trend
             else:
                 # 起始价格为0，无法计算趋势
-                analysis['price_trend_analysis'] = "价格数据异常(起始价为0)"
+                analysis['price_trend_analysis'] = t('price_data_error_zero')
 
         # 2. 分析MACD
         current_macd = enriched.get('current_macd', 0)
         macd_signal = df_15m.iloc[-1].get('macd_signal', 0) if not df_15m.empty else 0
 
         if current_macd > macd_signal and current_macd > 0:
-            macd_status = "金叉且位于零轴上方(强势多头)"
+            macd_status = t('macd_golden_cross_above_zero')
         elif current_macd > macd_signal and current_macd <= 0:
-            macd_status = "金叉但位于零轴下方(多头转强)"
+            macd_status = t('macd_golden_cross_below_zero')
         elif current_macd < macd_signal and current_macd < 0:
-            macd_status = "死叉且位于零轴下方(强势空头)"
+            macd_status = t('macd_death_cross_below_zero')
         elif current_macd < macd_signal and current_macd >= 0:
-            macd_status = "死叉但位于零轴上方(空头转强)"
+            macd_status = t('macd_death_cross_above_zero')
         else:
             macd_status = f"MACD={current_macd:.4f}"
 
@@ -262,15 +267,15 @@ class MarketDataEnricher:
         current_rsi = enriched.get('current_rsi', 50)
 
         if current_rsi >= 70:
-            rsi_status = f"超买区({current_rsi:.1f})"
+            rsi_status = f"{t('rsi_overbought')}({current_rsi:.1f})"
         elif current_rsi <= 30:
-            rsi_status = f"超卖区({current_rsi:.1f})"
+            rsi_status = f"{t('rsi_oversold')}({current_rsi:.1f})"
         elif current_rsi >= 60:
-            rsi_status = f"偏强({current_rsi:.1f})"
+            rsi_status = f"{t('rsi_strong')}({current_rsi:.1f})"
         elif current_rsi <= 40:
-            rsi_status = f"偏弱({current_rsi:.1f})"
+            rsi_status = f"{t('rsi_weak')}({current_rsi:.1f})"
         else:
-            rsi_status = f"中性({current_rsi:.1f})"
+            rsi_status = f"{t('rsi_neutral')}({current_rsi:.1f})"
 
         analysis['rsi_analysis'] = rsi_status
 
@@ -281,13 +286,13 @@ class MarketDataEnricher:
         # 检查EMA20是否为0
         if current_ema20 != 0 and current_price > 0:
             if current_price > current_ema20 * 1.01:
-                ema_status = f"价格在EMA20上方({((current_price/current_ema20 - 1) * 100):.2f}%)"
+                ema_status = f"{t('price_above_ema20')}({((current_price/current_ema20 - 1) * 100):.2f}%)"
             elif current_price < current_ema20 * 0.99:
-                ema_status = f"价格在EMA20下方({((current_price/current_ema20 - 1) * 100):.2f}%)"
+                ema_status = f"{t('price_below_ema20')}({((current_price/current_ema20 - 1) * 100):.2f}%)"
             else:
-                ema_status = "价格接近EMA20"
+                ema_status = t('price_near_ema20')
         else:
-            ema_status = "EMA数据异常(价格或EMA为0)"
+            ema_status = t('ema_data_error')
 
         analysis['ema_analysis'] = ema_status
 
@@ -299,15 +304,15 @@ class MarketDataEnricher:
             # 检查平均成交量是否为0
             if avg_volume != 0:
                 if current_volume > avg_volume * 1.5:
-                    volume_status = f"明显放量({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_surge')}({(current_volume/avg_volume):.1f}倍)"
                 elif current_volume > avg_volume * 1.2:
-                    volume_status = f"温和放量({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_increase')}({(current_volume/avg_volume):.1f}倍)"
                 elif current_volume < avg_volume * 0.5:
-                    volume_status = f"明显缩量({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_decline')}({(current_volume/avg_volume):.1f}倍)"
                 else:
-                    volume_status = f"成交量正常({(current_volume/avg_volume):.1f}倍)"
+                    volume_status = f"{t('volume_normal')}({(current_volume/avg_volume):.1f}倍)"
             else:
-                volume_status = "成交量数据异常(平均成交量为0)"
+                volume_status = t('volume_data_error')
 
             analysis['volume_analysis'] = volume_status
 
@@ -318,36 +323,41 @@ class MarketDataEnricher:
             h4_ema50 = enriched.get('ema_50_4h', h4_price)
 
             if h4_price > h4_ema20 and h4_ema20 > h4_ema50:
-                h4_trend = "4小时多头排列(强势)"
+                h4_trend = t('h4_bullish_alignment')
             elif h4_price < h4_ema20 and h4_ema20 < h4_ema50:
-                h4_trend = "4小时空头排列(弱势)"
+                h4_trend = t('h4_bearish_alignment')
             elif h4_price > h4_ema20:
-                h4_trend = "4小时偏多"
+                h4_trend = t('h4_bullish')
             elif h4_price < h4_ema20:
-                h4_trend = "4小时偏空"
+                h4_trend = t('h4_bearish')
             else:
-                h4_trend = "4小时震荡"
+                h4_trend = t('h4_ranging')
 
             analysis['h4_trend_analysis'] = h4_trend
 
         # 7. 综合分析
         signals = []
-        if 'macd_analysis' in analysis and '金叉' in analysis['macd_analysis']:
-            signals.append("MACD多头")
-        elif 'macd_analysis' in analysis and '死叉' in analysis['macd_analysis']:
-            signals.append("MACD空头")
+        # 检查MACD信号（使用翻译后的文本关键词）
+        macd_golden_key = t('macd_golden_cross_above_zero') if self.language == 'zh' else 'Golden cross'
+        macd_death_key = t('macd_death_cross_below_zero') if self.language == 'zh' else 'Death cross'
+        
+        if 'macd_analysis' in analysis:
+            if macd_golden_key[:2] in analysis['macd_analysis'] or 'Golden' in analysis['macd_analysis']:
+                signals.append(t('signal_macd_bullish'))
+            elif macd_death_key[:2] in analysis['macd_analysis'] or 'Death' in analysis['macd_analysis']:
+                signals.append(t('signal_macd_bearish'))
 
         if current_rsi >= 70:
-            signals.append("RSI超买")
+            signals.append(t('signal_rsi_overbought'))
         elif current_rsi <= 30:
-            signals.append("RSI超卖")
+            signals.append(t('signal_rsi_oversold'))
 
         if current_price > current_ema20:
-            signals.append("价格在EMA上方")
+            signals.append(t('signal_price_above_ema'))
         else:
-            signals.append("价格在EMA下方")
+            signals.append(t('signal_price_below_ema'))
 
-        analysis['composite_signal'] = ', '.join(signals) if signals else "无明显信号"
+        analysis['composite_signal'] = ', '.join(signals) if signals else t('signal_none')
 
         return analysis
 
