@@ -5,6 +5,7 @@ Prompt 管理模块
 """
 
 import os
+import json
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -631,6 +632,7 @@ class PromptManager:
         stats: Dict[str, Any],
         existing_lessons: List[Dict[str, Any]],
         fills_summary: Optional[Dict[str, Any]] = None,
+        context_features: Optional[Dict[str, Any]] = None,
     ) -> str:
         """格式化复盘 Prompt"""
         fills_context = fills_summary or {"total_fills": 0, "total_pnl": 0.0}
@@ -640,6 +642,10 @@ class PromptManager:
             "stats": stats,
             "existing_lessons": existing_lessons,
             "fills_summary": fills_context,
+            "context_features": context_features or {},
+            "context_features_json": json.dumps(
+                context_features or {}, ensure_ascii=False
+            ),
         }
         return self.review_prompt_template.render(context)
 

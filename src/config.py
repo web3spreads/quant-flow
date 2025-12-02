@@ -167,6 +167,18 @@ class Config:
         )
         self.review_max_lessons: int = int(review.get("max_lessons", 30))
         self.review_min_confidence: float = float(review.get("min_confidence", 0.35))
+        self.review_similarity_threshold: float = float(
+            review.get("similarity_threshold", 0.5)
+        )
+        self.review_similarity_weights: Dict[str, float] = review.get(
+            "similarity_weights", {}
+        )
+        self.review_confidence_decay_factor: float = float(
+            review.get("confidence_decay_factor", 0.6)
+        )
+        self.review_similarity_method: str = review.get(
+            "similarity_method", "cosine"
+        )
 
     def _init_risk_config(self):
         """初始化风控配置"""

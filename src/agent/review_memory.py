@@ -8,6 +8,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
+from src.agent.similarity_scorer import SimilarityScorer
+
 
 class ReviewMemoryStore:
     """复盘经验存储，支持简单的基于文件的持久化"""
@@ -46,6 +48,17 @@ class ReviewMemoryStore:
             # 若解析失败，重置为空以避免阻塞主流程
             self.lessons = {}
 
+        self._ensure_context_defaults()
+
+    def _ensure_context_defaults(self):
+        """为旧记录补充 context_features 等新字段"""
+        for symbol, items in self.lessons.items():
+            for item in items:
+                item.setdefault("context_features", {})
+                item.setdefault("original_confidence", item.get("confidence", 0))
+                item.setdefault("similarity_score", 0.0)
+                item.setdefault("confidence_interval", [])
+
     def save(self):
         """保存经验到磁盘"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,6 +85,37 @@ class ReviewMemoryStore:
         for symbol_lessons in self.lessons.values():
             aggregated.extend(symbol_lessons)
         return sorted(aggregated, key=lambda x: x.get("last_seen", ""), reverse=True)
+
+    def get_similar_lessons(
+        self,
+        symbol: str,
+        context_features: Dict[str, Any],
+        scorer: SimilarityScorer,
+        similarity_threshold: float = 0.5,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        根据相似度筛选经验规则
+
+        Args:
+            symbol: 交易对符号
+            context_features: 当前环境特征
+            scorer: 相似度计算器
+            similarity_threshold: 最小相似度阈值
+            limit: 返回数量上限
+        """
+        lessons = self.get_lessons(symbol)
+        scored: List[Dict[str, Any]] = []
+        for lesson in lessons:
+            sim = scorer.compute(context_features, lesson.get("context_features", {}))
+            if sim < similarity_threshold:
+                continue
+            lesson_with_score = dict(lesson)
+            lesson_with_score["similarity_score"] = sim
+            scored.append(lesson_with_score)
+
+        scored.sort(key=lambda item: item.get("similarity_score", 0), reverse=True)
+        return scored[:limit]
 
     def get_lessons_summary(self, symbol: str, limit: int = 5) -> str:
         """
@@ -126,9 +170,15 @@ class ReviewMemoryStore:
                 "action": action[:80],
                 "conditions": (item.get("conditions") or [])[:4],
                 "confidence": round(confidence, 3),
+                "original_confidence": float(
+                    item.get("original_confidence", confidence)
+                ),
                 "evidence": (item.get("evidence") or [])[:5],
                 "last_seen": item.get("last_seen", now_text),
                 "support_count": int(item.get("support_count", 1)),
+                "similarity_score": float(item.get("similarity_score", 0)),
+                "confidence_interval": item.get("confidence_interval", []),
+                "context_features": item.get("context_features") or {},
                 "symbol": symbol,
             }
 
@@ -143,10 +193,28 @@ class ReviewMemoryStore:
                 found["confidence"] = round(
                     (found.get("confidence", 0.5) + confidence) / 2, 3
                 )
+                found["original_confidence"] = round(
+                    (
+                        found.get("original_confidence", found["confidence"])
+                        + normalized["original_confidence"]
+                    )
+                    / 2,
+                    3,
+                )
                 found["conditions"] = normalized["conditions"] or found.get(
                     "conditions", []
                 )
                 found["evidence"] = normalized["evidence"] or found.get("evidence", [])
+                found["similarity_score"] = max(
+                    normalized.get("similarity_score", 0),
+                    found.get("similarity_score", 0),
+                )
+                found["confidence_interval"] = (
+                    normalized.get("confidence_interval")
+                    or found.get("confidence_interval", [])
+                )
+                if normalized.get("context_features"):
+                    found["context_features"] = normalized["context_features"]
                 found["last_seen"] = now_text
                 accepted.append(found)
             else:

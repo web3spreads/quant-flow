@@ -5,6 +5,8 @@ from src.agent.tools import TradingTools
 from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.review_agent import ReviewAgent
 from src.agent.review_memory import ReviewMemoryStore
+from src.agent.context_extractor import ContextExtractor
+from src.agent.similarity_scorer import SimilarityScorer
 
 __all__ = [
     'SingleSymbolAgent',
@@ -14,5 +16,7 @@ __all__ = [
     'TradingTools',
     'SYSTEM_PROMPT',
     'ReviewAgent',
-    'ReviewMemoryStore'
+    'ReviewMemoryStore',
+    'ContextExtractor',
+    'SimilarityScorer'
 ]
