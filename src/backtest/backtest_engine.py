@@ -360,7 +360,10 @@ class BacktestEngine:
         row = df.iloc[closest_idx]
 
         # 获取技术指标
-        return TechnicalIndicators.get_latest_indicators(df.iloc[:closest_idx+1])
+        indicators = TechnicalIndicators.get_latest_indicators(df.iloc[:closest_idx+1])
+        # 使用蜡烛的真实时间戳，而不是回测运行时的当前时间
+        indicators['timestamp'] = row['timestamp']
+        return indicators
 
     def _check_take_profit_stop_loss(
         self,
@@ -717,8 +720,13 @@ class BacktestEngine:
         last_decision = self.decision_history.get_recent_decisions(self.symbol, 1)
         if last_decision:
             result['last_decision'] = last_decision[0]
-
-        result['updated_at'] = datetime.utcnow().isoformat()
+            # 将更新时间对齐到最后一次决策对应的数据时间
+            ts = last_decision[0].get('timestamp')
+            if isinstance(ts, datetime):
+                ts = ts.isoformat()
+            result['updated_at'] = ts or datetime.utcnow().isoformat()
+        else:
+            result['updated_at'] = datetime.utcnow().isoformat()
         return result
 
     def _get_open_positions_snapshot(self) -> List[Dict[str, Any]]:
