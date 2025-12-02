@@ -209,10 +209,8 @@ class ReviewMemoryStore:
                     normalized.get("similarity_score", 0),
                     found.get("similarity_score", 0),
                 )
-                found["confidence_interval"] = (
-                    normalized.get("confidence_interval")
-                    or found.get("confidence_interval", [])
-                )
+                if normalized.get("confidence_interval"):
+                    found["confidence_interval"] = normalized["confidence_interval"]
                 if normalized.get("context_features"):
                     found["context_features"] = normalized["context_features"]
                 found["last_seen"] = now_text

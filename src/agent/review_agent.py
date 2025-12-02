@@ -210,9 +210,15 @@ class ReviewAgent:
                 continue
 
             base_confidence = float(lesson.get("confidence", 0) or 0)
-            lesson_context = lesson.get("context_features") or context_features
+
+            # 仅在响应包含 context_features 时使用；否则视为新规则并绑定当前环境
+            if "context_features" in lesson and lesson.get("context_features"):
+                lesson_context = lesson.get("context_features")
+            else:
+                lesson_context = context_features
+
             similarity_score = self.similarity_scorer.compute(
-                context_features, lesson_context
+                context_features, lesson_context or {}
             )
             env_match_factor = self._environment_match_factor(similarity_score)
             adjusted_confidence = round(
@@ -220,7 +226,10 @@ class ReviewAgent:
             )
             support_count = int(lesson.get("support_count", 1) or 1)
             ci_low, ci_high = self._calculate_confidence_interval(
-                adjusted_confidence, support_count, similarity_score
+                base_confidence,
+                adjusted_confidence,
+                support_count,
+                similarity_score,
             )
 
             if adjusted_confidence < self.min_confidence:
@@ -257,18 +266,23 @@ class ReviewAgent:
         return max(0.2, 1 - penalty)
 
     def _calculate_confidence_interval(
-        self, confidence: float, support_count: int, similarity_score: float
+        self,
+        base_confidence: float,
+        adjusted_confidence: float,
+        support_count: int,
+        similarity_score: float,
     ) -> List[float]:
         """
-        简易置信区间估算，基于二项分布近似的标准误差并结合相似度
+        简易置信区间估算：方差基于原始置信度，相似度只影响区间宽度一次
         """
         support = max(1, support_count)
-        variance = confidence * (1 - confidence)
+        base_confidence = max(0.0, min(base_confidence, 1.0))
+        variance = base_confidence * (1 - base_confidence)
         std_error = (variance / support) ** 0.5
-        # 相似度越低，区间越宽
-        margin = std_error * (2 - similarity_score)
-        lower = max(0.0, confidence - margin)
-        upper = min(1.0, confidence + margin)
+        widen = 1 + (1 - similarity_score)  # 相似度低时放宽
+        margin = std_error * widen
+        lower = max(0.0, adjusted_confidence - margin)
+        upper = min(1.0, adjusted_confidence + margin)
         return [round(lower, 3), round(upper, 3)]
 
     @staticmethod
