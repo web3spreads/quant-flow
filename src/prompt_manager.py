@@ -550,9 +550,9 @@ class PromptManager:
             # 持仓信息（基础）
             "position_count": position_count,
             "max_positions": max_positions,
-            "has_long": "是 ✅" if has_long else "否 ❌",
+            "has_long": t("yes") if has_long else t("no"),
             "has_long_bool": has_long,
-            "has_short": "是 ✅" if has_short else "否 ❌",
+            "has_short": t("yes") if has_short else t("no"),
             "has_short_bool": has_short,
             # 当前币种详细持仓信息
             "has_position": position_details["has_position"],
@@ -761,6 +761,7 @@ class PromptManager:
 """
 
         # 准备模板上下文（使用 Jinja2 渲染）
+        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
         context = {
             # 基础信息
             "symbol": symbol,
@@ -772,8 +773,8 @@ class PromptManager:
             "is_major_coin": symbol in ["BTC", "ETH"],
             "is_altcoin": symbol not in ["BTC", "ETH"],
             # 推荐信息
-            "recommendation_reason": recommendation.get("reason", "未提供原因"),
-            "recommendation_timestamp": recommendation.get("timestamp", "未知时间"),
+            "recommendation_reason": recommendation.get("reason", t("recommendation_reason_default")),
+            "recommendation_timestamp": recommendation.get("timestamp", t("recommendation_timestamp_default")),
             # 市场数据
             "current_price": f"{current_price:.2f}",
             "current_price_raw": current_price,

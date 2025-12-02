@@ -103,7 +103,7 @@ ATR(14, 4H): {{ atr_14_4h }}
 
 **4小时趋势:** {{ h4_trend_analysis }}
 
-**综合信号:** {{ 综合信号 }}
+**综合信号:** {{ composite_signal }}
 
 ---
 

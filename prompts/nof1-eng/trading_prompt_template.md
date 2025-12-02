@@ -52,7 +52,7 @@ RSI Indicators (14-period, 4-Hour): {{ rsi_14_4h_indicators }}
 - EMA Relationship: {{ ema_analysis }}
 - Volume: {{ volume_analysis }}
 - 4H Trend: {{ h4_trend_analysis }}
-- Composite Signal: {{ 综合信号 }}
+- Composite Signal: {{ composite_signal }}
 
 ---
 

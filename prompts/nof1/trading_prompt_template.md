@@ -52,7 +52,7 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 - EMA关系: {{ ema_analysis }}
 - 成交量: {{ volume_analysis }}
 - 4小时趋势: {{ h4_trend_analysis }}
-- 综合信号: {{ 综合信号 }}
+- 综合信号: {{ composite_signal }}
 
 ---
 
