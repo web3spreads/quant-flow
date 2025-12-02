@@ -6,9 +6,11 @@
 import pandas as pd
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from .mock_client import MockHyperliquidClient
 from .mock_order_manager import MockOrderManager
+from .report_generator import BacktestReportGenerator
 from src.data.indicators import TechnicalIndicators
 from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
@@ -101,12 +103,23 @@ class BacktestEngine:
         # 手续费率
         self.fee_rate = FEE_RATE_PER_SIDE
 
+        # 实时报告
+        self.live_report_path: Optional[Path] = None
+        self.live_report_interval: int = 1
+        self._last_live_report_index: int = -1
+        self._total_decision_points: int = 0
+
         print(f"✅ 回测引擎初始化完成")
         print(f"   交易对: {symbol}")
         print(f"   初始余额: ${initial_balance:.2f}")
         print(f"   数据点数: {len(historical_data)}")
 
-    def run(self, decision_interval_minutes: int = 15) -> Dict[str, Any]:
+    def run(
+        self,
+        decision_interval_minutes: int = 15,
+        live_report_path: Optional[str] = None,
+        live_report_interval: int = 1
+    ) -> Dict[str, Any]:
         """
         运行回测
         
@@ -121,6 +134,14 @@ class BacktestEngine:
 
         if not self.agent:
             raise ValueError("Agent未初始化，无法运行回测")
+
+        # 配置实时报告
+        if live_report_path:
+            self.live_report_path = Path(live_report_path)
+            self.live_report_interval = max(1, live_report_interval)
+            self._last_live_report_index = -1
+        else:
+            self.live_report_path = None
 
         # 计算技术指标
         if self.config:
@@ -145,8 +166,15 @@ class BacktestEngine:
 
         # 按决策间隔选择时间点
         decision_timestamps = self._get_decision_timestamps(df, decision_interval_minutes)
+        self._total_decision_points = len(decision_timestamps)
 
         print(f"   决策点数量: {len(decision_timestamps)}")
+        self._maybe_write_live_report(
+            processed_decisions=0,
+            total_decisions=self._total_decision_points,
+            force=True,
+            status="initializing"
+        )
 
         # 遍历每个决策点
         for i, timestamp in enumerate(decision_timestamps):
@@ -242,6 +270,10 @@ class BacktestEngine:
 
                 # 更新账户价值
                 self._update_account_value()
+                self._maybe_write_live_report(
+                    processed_decisions=i + 1,
+                    total_decisions=self._total_decision_points
+                )
 
             except Exception as e:
                 print(f"⚠️ 决策点 {i+1}/{len(decision_timestamps)} 处理失败: {e}")
@@ -254,11 +286,20 @@ class BacktestEngine:
 
         # 生成回测结果
         result = self._generate_result()
+        result['status'] = 'completed'
 
         print(f"\n✅ 回测完成")
         print(f"   总交易数: {len(self.closed_trades)}")
         print(f"   最终余额: ${result['final_balance']:.2f}")
         print(f"   总收益率: {result['total_return']*100:.2f}%")
+
+        self._maybe_write_live_report(
+            processed_decisions=self._total_decision_points,
+            total_decisions=self._total_decision_points,
+            force=True,
+            status="completed",
+            base_result=result
+        )
 
         return result
 
@@ -527,12 +568,20 @@ class BacktestEngine:
         total_trades = len(self.closed_trades)
         if total_trades == 0:
             return {
+                'symbol': self.symbol,
                 'total_trades': 0,
-                'final_balance': self.initial_balance,
-                'total_return': 0.0,
+                'profitable_trades': 0,
+                'losing_trades': 0,
                 'win_rate': 0.0,
                 'profit_factor': 0.0,
+                'total_pnl': 0.0,
+                'total_fee': 0.0,
+                'initial_balance': self.initial_balance,
+                'final_balance': self.initial_balance,
+                'total_return': 0.0,
                 'max_drawdown': 0.0,
+                'avg_profit': 0.0,
+                'avg_loss': 0.0,
                 'trades': []
             }
 
@@ -557,6 +606,7 @@ class BacktestEngine:
         max_drawdown = self._calculate_max_drawdown()
 
         return {
+            'symbol': self.symbol,
             'total_trades': total_trades,
             'profitable_trades': len(profitable_trades),
             'losing_trades': len(losing_trades),
@@ -604,3 +654,110 @@ class BacktestEngine:
 
         return max_dd
 
+    def _maybe_write_live_report(
+        self,
+        processed_decisions: int,
+        total_decisions: int,
+        force: bool = False,
+        status: str = "running",
+        base_result: Optional[Dict[str, Any]] = None
+    ):
+        """根据设置刷新实时报告"""
+        if not self.live_report_path:
+            return
+
+        if not force:
+            if self._last_live_report_index >= 0:
+                if (processed_decisions - self._last_live_report_index) < self.live_report_interval:
+                    return
+
+        snapshot = self._build_live_result_snapshot(
+            processed_decisions=processed_decisions,
+            total_decisions=total_decisions,
+            status=status,
+            base_result=base_result
+        )
+
+        generator = BacktestReportGenerator(snapshot)
+        generator.save_partial(
+            file_path=str(self.live_report_path),
+            quiet=not force
+        )
+        self._last_live_report_index = processed_decisions
+
+    def _build_live_result_snapshot(
+        self,
+        processed_decisions: int,
+        total_decisions: int,
+        status: str,
+        base_result: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """构建实时报告数据"""
+        result = dict(base_result) if base_result else self._generate_result()
+        result['symbol'] = self.symbol
+        result['status'] = status
+        result['progress'] = {
+            'processed_decisions': processed_decisions,
+            'total_decisions': total_decisions,
+            'percentage': round((processed_decisions / total_decisions) * 100, 2) if total_decisions else 100.0
+        }
+        result['open_positions'] = self._get_open_positions_snapshot()
+
+        balance_info = self.order_manager.get_available_balance_info()
+        if balance_info:
+            result['current_balance'] = {
+                'status': balance_info.get('status'),
+                'total': balance_info.get('total'),
+                'occupied': balance_info.get('occupied'),
+                'available': balance_info.get('available'),
+                'unrealized_pnl': balance_info.get('unrealized_pnl'),
+                'message': balance_info.get('message')
+            }
+
+        last_decision = self.decision_history.get_recent_decisions(self.symbol, 1)
+        if last_decision:
+            result['last_decision'] = last_decision[0]
+
+        result['updated_at'] = datetime.utcnow().isoformat()
+        return result
+
+    def _get_open_positions_snapshot(self) -> List[Dict[str, Any]]:
+        """序列化当前持仓，便于实时报告展示"""
+        positions_snapshot: List[Dict[str, Any]] = []
+        current_price = self.client.get_current_price(self.symbol)
+
+        for position in self.client.get_positions():
+            if position.get('coin') != self.symbol:
+                continue
+
+            entry_time = position.get('entry_time')
+            if isinstance(entry_time, datetime):
+                entry_time = entry_time.isoformat()
+
+            size_value = self._safe_float(position.get('szi', 0.0))
+            entry_price = self._safe_float(position.get('entryPx', 0.0))
+            leverage = position.get('leverage', {}).get('value', 1)
+            unrealized = self._safe_float(position.get('unrealizedPnl', 0.0))
+
+            positions_snapshot.append({
+                'symbol': position.get('coin'),
+                'size': size_value,
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'leverage': leverage,
+                'is_long': position.get('is_long', True),
+                'unrealized_pnl': unrealized,
+                'take_profit_price': position.get('take_profit_price'),
+                'stop_loss_price': position.get('stop_loss_price'),
+                'entry_time': entry_time
+            })
+
+        return positions_snapshot
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        """安全转换为float"""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default

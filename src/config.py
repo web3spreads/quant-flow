@@ -16,18 +16,24 @@ FEE_RATE_PER_SIDE = 0.00035  # 0.035% per side (taker fee)
 class Config:
     """配置管理类"""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(
+        self,
+        config_path: str = "config.yaml",
+        require_api_credentials: bool = True,
+    ):
         """
         初始化配置
 
         Args:
             config_path: 配置文件路径
+            require_api_credentials: 是否强制要求 OpenAI/Hyperliquid 凭证
         """
         # 加载环境变量
         load_dotenv()
 
         # 加载 YAML 配置
         self.config_path = Path(config_path)
+        self.require_api_credentials = require_api_credentials
         self.config_data = self._load_yaml_config()
 
         # 初始化各配置项
@@ -63,11 +69,13 @@ class Config:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
 
-        if not self.openai_api_key:
+        if not self.openai_api_key and self.require_api_credentials:
             raise ValueError(
                 "未设置 OPENAI_API_KEY 环境变量！\n"
                 "请在 .env 文件中设置或使用环境变量"
             )
+        if not self.openai_api_key:
+            self.openai_api_key = None
 
     def _init_hyperliquid_config(self):
         """初始化 Hyperliquid 配置"""
@@ -78,11 +86,13 @@ class Config:
         )
 
         # 检查私钥配置
-        if not self.hyperliquid_private_key:
+        if not self.hyperliquid_private_key and self.require_api_credentials:
             raise ValueError(
                 "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n"
                 "请在 .env 文件中设置钱包私钥"
             )
+        if not self.hyperliquid_private_key:
+            self.hyperliquid_private_key = None
 
     def _init_trading_config(self):
         """初始化交易配置"""
@@ -266,19 +276,34 @@ class Config:
 _config: Config = None
 
 
-def get_config(config_path: str = "config.yaml") -> Config:
+def get_config(
+    config_path: str = "config.yaml",
+    require_api_credentials: bool = True,
+    force_reload: bool = False,
+) -> Config:
     """
     获取全局配置实例（单例模式）
 
     Args:
         config_path: 配置文件路径
+        require_api_credentials: 是否强制要求 API 凭证
+        force_reload: 是否强制重新加载配置
 
     Returns:
         Config 实例
     """
     global _config
-    if _config is None:
-        _config = Config(config_path)
+    requested_path = Path(config_path)
+    if (
+        _config is None
+        or force_reload
+        or requested_path != _config.config_path
+        or _config.require_api_credentials != require_api_credentials
+    ):
+        _config = Config(
+            config_path,
+            require_api_credentials=require_api_credentials,
+        )
         _config.validate()
     return _config
 

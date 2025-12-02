@@ -5,7 +5,7 @@
 
 import json
 import csv
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
 
@@ -59,28 +59,7 @@ class BacktestReportGenerator:
         Args:
             file_path: 文件路径
         """
-        path = Path(file_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 准备JSON数据（处理datetime序列化）
-        json_data = self.result.copy()
-        
-        # 转换交易记录中的datetime
-        if 'trades' in json_data:
-            trades = []
-            for trade in json_data['trades']:
-                trade_copy = trade.copy()
-                if 'entry_time' in trade_copy and isinstance(trade_copy['entry_time'], datetime):
-                    trade_copy['entry_time'] = trade_copy['entry_time'].isoformat()
-                if 'exit_time' in trade_copy and isinstance(trade_copy['exit_time'], datetime):
-                    trade_copy['exit_time'] = trade_copy['exit_time'].isoformat()
-                trades.append(trade_copy)
-            json_data['trades'] = trades
-        
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, indent=2, ensure_ascii=False)
-        
-        print(f"✅ JSON报告已保存: {file_path}")
+        self._write_json(file_path)
 
     def save_csv(self, file_path: str):
         """
@@ -135,6 +114,26 @@ class BacktestReportGenerator:
             
             print(f"✅ CSV报告已保存: {file_path}")
 
+    def save_partial(
+        self,
+        file_path: str,
+        extra_data: Optional[Dict[str, Any]] = None,
+        quiet: bool = False
+    ):
+        """
+        以JSON格式保存实时报告快照
+        
+        Args:
+            file_path: 文件路径
+            extra_data: 需要合并到结果中的额外字段
+        """
+        data = self.result.copy()
+        if extra_data:
+            data.update(extra_data)
+
+        success_message = None if quiet else f"📝 实时报告已刷新: {file_path}"
+        self._write_json(file_path, data, success_message=success_message)
+
     def generate_full_report(
         self,
         output_dir: str = "backtest_results",
@@ -167,3 +166,34 @@ class BacktestReportGenerator:
             'csv_file': str(csv_file)
         }
 
+    def _write_json(
+        self,
+        file_path: str,
+        data: Optional[Dict[str, Any]] = None,
+        success_message: Optional[str] = None
+    ):
+        """
+        写入JSON文件，自动处理datetime
+        """
+        path = Path(file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        json_data = (data or self.result).copy()
+
+        # 转换交易记录中的datetime
+        if 'trades' in json_data:
+            trades = []
+            for trade in json_data['trades']:
+                trade_copy = trade.copy()
+                if 'entry_time' in trade_copy and isinstance(trade_copy['entry_time'], datetime):
+                    trade_copy['entry_time'] = trade_copy['entry_time'].isoformat()
+                if 'exit_time' in trade_copy and isinstance(trade_copy['exit_time'], datetime):
+                    trade_copy['exit_time'] = trade_copy['exit_time'].isoformat()
+                trades.append(trade_copy)
+            json_data['trades'] = trades
+
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, indent=2, ensure_ascii=False)
+
+        message = success_message or f"✅ JSON报告已保存: {file_path}"
+        print(message)

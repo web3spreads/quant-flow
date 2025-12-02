@@ -6,7 +6,9 @@
 
 import argparse
 import sys
+import re
 from datetime import datetime
+from pathlib import Path
 
 from src.config import get_config
 from src.utils.logger import TradingLogger
@@ -88,6 +90,12 @@ def parse_args():
         default='backtest_results',
         help='报告输出目录（默认: backtest_results）'
     )
+    parser.add_argument(
+        '--live-report-interval',
+        type=int,
+        default=1,
+        help='实时报告刷新频率（按决策点数量，默认: 每次刷新，设为0可禁用）'
+    )
 
     # 配置参数
     parser.add_argument(
@@ -106,6 +114,27 @@ def parse_args():
     return parser.parse_args()
 
 
+def _build_live_report_filename(args) -> str:
+    """基于输入参数构建唯一的实时报告文件名"""
+    parts = [args.symbol.upper()]
+
+    if args.data_file:
+        parts.append(Path(args.data_file).stem or "data")
+    elif args.start_date and args.end_date:
+        parts.append(f"{args.start_date}_to_{args.end_date}")
+    elif args.start_date:
+        parts.append(args.start_date)
+    else:
+        parts.append("api")
+
+    parts.append(args.timeframe)
+    parts.append(f"interval{args.interval}m")
+
+    raw_name = "_".join(parts)
+    safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', raw_name)
+    return f"{safe_name}_live.json"
+
+
 def main():
     """主函数"""
     args = parse_args()
@@ -113,7 +142,7 @@ def main():
     try:
         # 加载配置
         print("📋 加载配置...")
-        config = get_config(args.config)
+        config = get_config(args.config, require_api_credentials=False)
         
         # 初始化日志
         logger = TradingLogger(
@@ -179,7 +208,20 @@ def main():
 
         # 运行回测
         print("\n🚀 开始回测...")
-        result = engine.run(decision_interval_minutes=args.interval)
+        live_report_file = None
+        if args.live_report_interval != 0:
+            live_report_file = Path(args.output_dir) / _build_live_report_filename(args)
+
+        run_kwargs = {
+            'decision_interval_minutes': args.interval
+        }
+        if live_report_file:
+            run_kwargs.update({
+                'live_report_path': str(live_report_file),
+                'live_report_interval': max(1, args.live_report_interval)
+            })
+
+        result = engine.run(**run_kwargs)
 
         # 生成报告
         print("\n📊 生成回测报告...")
@@ -207,4 +249,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
