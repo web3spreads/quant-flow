@@ -347,7 +347,7 @@ class MarketDataEnricher:
         else:
             signals.append("价格在EMA下方")
 
-        analysis['综合信号'] = ', '.join(signals) if signals else "无明显信号"
+        analysis['composite_signal'] = ', '.join(signals) if signals else "无明显信号"
 
         return analysis
 

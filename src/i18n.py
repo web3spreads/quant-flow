@@ -66,6 +66,14 @@ LANGUAGE_RESOURCES = {
         # 现货相关
         "has_spot": "已持有 ✅",
         "no_spot": "未持有 ❌",
+
+        # Recommendation related
+        "recommendation_reason_default": "未提供原因",
+        "recommendation_timestamp_default": "未知时间",
+
+        # Yes/No indicators
+        "yes": "是 ✅",
+        "no": "否 ❌",
     },
     "en": {
         # Position status related
@@ -125,6 +133,14 @@ LANGUAGE_RESOURCES = {
         # Spot related
         "has_spot": "Held ✅",
         "no_spot": "Not Held ❌",
+
+        # Recommendation related
+        "recommendation_reason_default": "No reason provided",
+        "recommendation_timestamp_default": "Unknown time",
+
+        # Yes/No indicators
+        "yes": "Yes ✅",
+        "no": "No ❌",
     }
 }
 
