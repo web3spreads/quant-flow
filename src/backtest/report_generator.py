@@ -128,6 +128,7 @@ class BacktestReportGenerator:
         Args:
             file_path: 文件路径
             extra_data: 需要合并到结果中的额外字段
+            quiet: 如果为True，则不输出成功提示信息
         """
         data = self.result.copy()
         if extra_data:
