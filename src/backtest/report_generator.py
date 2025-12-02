@@ -9,6 +9,8 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
 
+from src.utils.logger import CustomJSONEncoder
+
 
 class BacktestReportGenerator:
     """回测报告生成器"""
@@ -193,7 +195,8 @@ class BacktestReportGenerator:
             json_data['trades'] = trades
 
         with open(path, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, indent=2, ensure_ascii=False)
+            # 使用自定义编码器处理 LangChain 消息、numpy 等特殊类型，避免序列化报错
+            json.dump(json_data, f, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
 
         message = success_message or f"✅ JSON报告已保存: {file_path}"
         print(message)
