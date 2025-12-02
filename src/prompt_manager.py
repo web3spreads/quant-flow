@@ -56,7 +56,7 @@ class PromptManager:
         # 如果没有持仓，返回空信息
         if not position:
             no_position_text = get_text(self.language, "no_position")
-            position_status_label = get_text(self.language, "position_details") if self.language == "en" else "持仓状态"
+            position_status_label = get_text(self.language, "position_details")
             return {
                 "has_position": False,
                 "position_side": "none",
