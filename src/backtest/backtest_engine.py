@@ -247,7 +247,7 @@ class BacktestEngine:
                     decision=decision,
                     market_data=market_data,
                     reason=details.get('output', '')[:200],
-                    action_details=details
+                    action_details=self._sanitize_action_details(details)
                 )
 
                 # 执行决策（Agent的工具回调会自动调用order_manager）
@@ -769,3 +769,22 @@ class BacktestEngine:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _sanitize_action_details(details: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        精简决策详情，去掉对话/事件等大对象，避免回测JSON过大
+        """
+        if not isinstance(details, dict):
+            return {}
+
+        clean = details.copy()
+        # 去掉流式事件等对话信息
+        clean.pop('events', None)
+
+        # 控制输出长度，防止长文本
+        output = clean.get('output')
+        if isinstance(output, str) and len(output) > 800:
+            clean['output'] = output[:800] + "...[truncated]"
+
+        return clean
