@@ -188,11 +188,7 @@ class SingleSymbolAgent:
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
-                positions = self.order_manager.get_current_positions()
-                # 检查是否有多头仓位（szi > 0 表示多头）
-                has_long = any(p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) > 0 for p in positions)
-                if has_long:
-                    return f"❌ 已持有 {self.symbol} 的多头仓位"
+                # 允许多头仓位的加仓，不再检查是否已有多头仓位
 
                 result = self.order_manager.execute_long(
                     symbol=self.symbol,
@@ -406,11 +402,7 @@ class SingleSymbolAgent:
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
-                positions = self.order_manager.get_current_positions()
-                # 检查是否有空头仓位（szi < 0 表示空头）
-                has_short = any(p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) < 0 for p in positions)
-                if has_short:
-                    return f"❌ 已持有 {self.symbol} 的空头仓位"
+                # 允许空头仓位的加仓，不再检查是否已有空头仓位
 
                 result = self.order_manager.execute_short(
                     symbol=self.symbol,
