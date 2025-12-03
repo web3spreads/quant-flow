@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from jinja2 import Environment, FileSystemLoader, Template
 
-from src.config import FEE_RATE_PER_SIDE
+from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
+from src.fees import FeeRates
 
 
 class PromptManager:
@@ -188,7 +189,10 @@ class PromptManager:
         }
 
     def __init__(
-        self, config_file: str = "prompts/prompts.yaml", prompt_set: str = "default"
+        self,
+        config_file: str = "prompts/prompts.yaml",
+        prompt_set: str = "default",
+        fee_rates_perp: FeeRates | None = None,
     ):
         """
         初始化 Prompt 管理器
@@ -196,10 +200,14 @@ class PromptManager:
         Args:
             config_file: Prompt 配置文件路径
             prompt_set: 使用的 Prompt 集合名称
+            fee_rates_perp: 永续合约的 maker/taker 费率（如果为 None 使用默认常量）
         """
         self.config_file = Path(config_file)
         self.prompt_set_name = prompt_set
         self.prompts_dir = self.config_file.parent
+        self.fee_rates_perp = fee_rates_perp or FeeRates(
+            maker_rate=MAKER_FEE_RATE_PER_SIDE, taker_rate=FEE_RATE_PER_SIDE
+        )
 
         # 初始化 Jinja2 环境
         self.jinja_env = Environment(
@@ -455,7 +463,7 @@ class PromptManager:
 """
 
         # 计算手续费相关的值（防止除零错误）
-        fee_rate_per_side = FEE_RATE_PER_SIDE
+        fee_rate_per_side = self.fee_rates_perp.taker_rate
         total_fee_rate = fee_rate_per_side * 2
         position_value = max_trade_amount * max_leverage
         open_fee = position_value * fee_rate_per_side

@@ -9,6 +9,7 @@ from eth_account.signers.local import LocalAccount
 from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+from src.fees import FeeRates, calculate_fee_rates
 
 
 class HyperliquidClient:
@@ -73,6 +74,43 @@ class HyperliquidClient:
             self.account,
             self.base_url,
             account_address=self.address if self.is_api_wallet_mode else None
+        )
+
+    def fetch_user_fee_rates(
+        self,
+        *,
+        is_aligned_quote_token: bool = False,
+        is_stable_pair: bool = False,
+        deployer_fee_scale: float = 0.0,
+        growth_mode: bool = False,
+        market_type: str = "perp",
+    ) -> FeeRates:
+        """
+        获取用户当前的实际费率（maker/taker），按 Hyperliquid 官方公式计算。
+
+        Args:
+            is_aligned_quote_token: 是否为 aligned quote 资产
+            is_stable_pair: 是否为稳定币对（仅 spot）
+            deployer_fee_scale: HIP-3 部署者费率缩放（0-3，非 HIP-3=0）
+            growth_mode: HIP-3 growth mode
+            market_type: "perp" 或 "spot"
+
+        Returns:
+            FeeRates(maker_rate, taker_rate) 小数形式（0.00045 = 0.045%）
+        """
+        user_fees = self.info.user_fees(self.address)
+        maker_rate = float(user_fees.get("userAddRate", 0))
+        taker_rate = float(user_fees.get("userCrossRate", 0))
+        active_referral_discount = float(user_fees.get("activeReferralDiscount", 0))
+
+        return calculate_fee_rates(
+            FeeRates(maker_rate=maker_rate, taker_rate=taker_rate),
+            active_referral_discount=active_referral_discount,
+            is_aligned_quote_token=is_aligned_quote_token,
+            market_type=market_type,
+            is_stable_pair=is_stable_pair,
+            deployer_fee_scale=deployer_fee_scale,
+            growth_mode=growth_mode,
         )
 
     def get_balance(self) -> Optional[Dict[str, Any]]:

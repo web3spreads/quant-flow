@@ -9,8 +9,12 @@ from pathlib import Path
 from typing import Dict, Any, List
 from dotenv import load_dotenv
 
-# Trading fee constants (Hyperliquid)
-FEE_RATE_PER_SIDE = 0.00035  # 0.035% per side (taker fee)
+from src.fees import default_perp_fee_rates
+
+# Trading fee constants (Hyperliquid, per doc Tier 0: taker 0.045% / maker 0.015%)
+DEFAULT_PERP_FEE_RATES = default_perp_fee_rates()
+FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.taker_rate
+MAKER_FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.maker_rate
 
 
 class Config:
