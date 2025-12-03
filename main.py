@@ -13,7 +13,7 @@ from typing import Dict, Any
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from src.config import get_config
+from src.config import get_config, DEFAULT_PERP_FEE_RATES
 from src.utils.logger import get_logger
 from src.utils.banner import print_startup_banner
 from src.data.market_data import MarketDataFetcher
@@ -81,33 +81,18 @@ class QuantFlowBot:
         """初始化所有组件"""
         self.logger.print_section("🔧 初始化多 Agent 架构", style="bold yellow")
 
-        # 0. Prompt 管理器（最优先初始化）
-        self.logger.print_info("初始化 Prompt 管理器...")
-        try:
-            self.prompt_manager = PromptManager(
-                config_file=getattr(
-                    self.config, "prompt_config_file", "prompts/prompts.yaml"
-                ),
-                prompt_set=getattr(self.config, "prompt_set", "default"),
-            )
-        except Exception as e:
-            self.logger.print_warning(
-                f"Prompt 管理器初始化失败，将使用硬编码 Prompt: {e}"
-            )
-            self.prompt_manager = None
-
-        # 1. 通知系统（优先初始化，以便其他组件可以使用）
+        # 0. 通知系统（优先初始化，以便其他组件可以使用）
         self.logger.print_info("初始化通知系统...")
         notifications_config = getattr(self.config, "notifications", {"enabled": False})
         self.notifier = Notifier(
             notifications_config, is_testnet=self.config.hyperliquid_testnet
         )
 
-        # 2. 市场数据获取器
+        # 1. 市场数据获取器
         self.logger.print_info("初始化市场数据获取器...")
         self.market_fetcher = MarketDataFetcher(testnet=self.config.hyperliquid_testnet)
 
-        # 2.5 数据增强器（为nof1和nof1-improved prompts提供额外数据）
+        # 1.5 数据增强器（为nof1和nof1-improved prompts提供额外数据）
         self.logger.print_info("初始化数据增强器...")
         # 从 prompt_manager 获取语言设置，如果没有则默认为中文
         language = self.prompt_manager.language if self.prompt_manager else "zh"
@@ -117,13 +102,16 @@ class QuantFlowBot:
             language=language
         )
 
-        # 3. Hyperliquid 交易客户端
+        # 2. Hyperliquid 交易客户端
         self.logger.print_info("初始化 Hyperliquid 交易客户端...")
         self.hyperliquid_client = HyperliquidClient(
             private_key=self.config.hyperliquid_private_key,
             account_address=self.config.hyperliquid_account_address or None,
             testnet=self.config.hyperliquid_testnet,
         )
+
+        # 2.5 动态手续费（基于 userFees）
+        self.fee_rates = self._init_fee_rates()
 
         # 3. 订单管理器
         self.logger.print_info("初始化订单管理器...")
@@ -133,6 +121,22 @@ class QuantFlowBot:
             stop_loss_ratio=self.config.stop_loss_ratio,
             default_leverage=self.config.default_leverage,
         )
+
+        # 3.5 Prompt 管理器（需要费率）
+        self.logger.print_info("初始化 Prompt 管理器...")
+        try:
+            self.prompt_manager = PromptManager(
+                config_file=getattr(
+                    self.config, "prompt_config_file", "prompts/prompts.yaml"
+                ),
+                prompt_set=getattr(self.config, "prompt_set", "default"),
+                fee_rates_perp=self.fee_rates,
+            )
+        except Exception as e:
+            self.logger.print_warning(
+                f"Prompt 管理器初始化失败，将使用硬编码 Prompt: {e}"
+            )
+            self.prompt_manager = None
 
         # 4. 决策历史管理器
         self.logger.print_info("初始化决策历史管理器...")
@@ -199,8 +203,25 @@ class QuantFlowBot:
                 stop_loss_ratio=self.config.stop_loss_ratio,
                 notifier=self.notifier,
                 prompt_manager=self.prompt_manager,
+                fee_rates=self.fee_rates,
             )
             self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
+
+    def _init_fee_rates(self):
+        """
+        从 Hyperliquid userFees 拉取最新的用户费率，失败时回退到默认 Tier0。
+        """
+        try:
+            fee_rates = self.hyperliquid_client.fetch_user_fee_rates()
+            self.logger.print_info(
+                f"当前费率 (自动注入): taker {fee_rates.taker_rate*100:.3f}% / maker {fee_rates.maker_rate*100:.3f}%"
+            )
+            return fee_rates
+        except Exception as e:
+            self.logger.print_warning(
+                f"获取动态费率失败，使用默认值: {DEFAULT_PERP_FEE_RATES}，原因: {e}"
+            )
+            return DEFAULT_PERP_FEE_RATES
 
         # 7. 现货定投 Agent
         self.logger.print_info("初始化现货定投 Agent...")
