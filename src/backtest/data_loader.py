@@ -25,7 +25,7 @@ class BacktestDataLoader:
         """
         self.testnet = testnet
         self.base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
-        self.info = Info(self.base_url, skip_ws=True) if not testnet else None
+        self.info = Info(self.base_url, skip_ws=True)
 
     def load_from_api(
         self,

@@ -65,3 +65,4 @@ htmlcov/
 *.bak
 *.backup
 .venv
+backtest_results/

@@ -17,7 +17,7 @@ class MockHyperliquidClient:
     def __init__(
         self,
         historical_data: pd.DataFrame,
-        initial_balance: float = 10000.0
+        initial_balance: float = 1000.0
     ):
         """
         初始化模拟客户端

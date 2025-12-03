@@ -20,6 +20,7 @@ class Config:
         self,
         config_path: str = "config.yaml",
         require_api_credentials: bool = True,
+        env_file: str = None,
     ):
         """
         初始化配置
@@ -27,9 +28,15 @@ class Config:
         Args:
             config_path: 配置文件路径
             require_api_credentials: 是否强制要求 OpenAI/Hyperliquid 凭证
+            env_file: 环境变量文件路径（默认: .env）
         """
         # 加载环境变量
-        load_dotenv()
+        if env_file:
+            load_dotenv(dotenv_path=env_file)
+        else:
+            # 优先检查环境变量 DOTENV_PATH，否则使用默认 .env
+            env_path = os.getenv('DOTENV_PATH', '.env')
+            load_dotenv(dotenv_path=env_path)
 
         # 加载 YAML 配置
         self.config_path = Path(config_path)
@@ -276,6 +283,7 @@ def get_config(
     config_path: str = "config.yaml",
     require_api_credentials: bool = True,
     force_reload: bool = False,
+    env_file: str = None,
 ) -> Config:
     """
     获取全局配置实例（单例模式）
@@ -284,22 +292,27 @@ def get_config(
         config_path: 配置文件路径
         require_api_credentials: 是否强制要求 API 凭证
         force_reload: 是否强制重新加载配置
+        env_file: 环境变量文件路径（默认: .env）
 
     Returns:
         Config 实例
     """
     global _config
     requested_path = Path(config_path)
+    requested_env_file = env_file or os.getenv('DOTENV_PATH', '.env')
     if (
         _config is None
         or force_reload
         or requested_path != _config.config_path
         or _config.require_api_credentials != require_api_credentials
+        or getattr(_config, '_env_file', None) != requested_env_file
     ):
         _config = Config(
             config_path,
             require_api_credentials=require_api_credentials,
+            env_file=env_file,
         )
+        _config._env_file = requested_env_file  # 记录使用的env文件
         _config.validate()
     return _config
 
