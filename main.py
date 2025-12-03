@@ -6,6 +6,7 @@ Multi-Agent Architecture: Maintains independent context for each trading pair, w
 
 import sys
 import signal
+import argparse
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any
@@ -32,15 +33,16 @@ from src.prompt_manager import PromptManager
 class QuantFlowBot:
     """Quant Flow 交易机器人 - 多 Agent 架构"""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", env_file: str = None):
         """
         初始化机器人
 
         Args:
             config_path: 配置文件路径
+            env_file: 环境变量文件路径（默认: .env）
         """
         # 加载配置
-        self.config = get_config(config_path)
+        self.config = get_config(config_path, env_file=env_file)
 
         # 记录程序启动时间（用于数据增强器）
         self.start_time = datetime.now()
@@ -822,13 +824,43 @@ def signal_handler(signum, frame):
 
 def main():
     """主函数"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(
+        description="Quant Flow - AI驱动的加密货币自动交易机器人",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 使用默认配置
+  python main.py
+
+  # 指定环境变量文件
+  python main.py --env-file .env.testnet
+
+  # 指定配置文件和环境变量文件
+  python main.py --config config.yaml --env-file .env.testnet
+        """
+    )
+    parser.add_argument(
+        '--config',
+        type=str,
+        default='config.yaml',
+        help='配置文件路径（默认: config.yaml）'
+    )
+    parser.add_argument(
+        '--env-file',
+        type=str,
+        default=None,
+        help='环境变量文件路径（默认: .env，可通过环境变量 DOTENV_PATH 覆盖）'
+    )
+    args = parser.parse_args()
+
     # 注册信号处理器
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
         # 创建并启动机器人
-        bot = QuantFlowBot(config_path="config.yaml")
+        bot = QuantFlowBot(config_path=args.config, env_file=args.env_file)
         bot.start()
 
     except FileNotFoundError as e:

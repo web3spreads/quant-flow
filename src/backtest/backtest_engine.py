@@ -114,11 +114,221 @@ class BacktestEngine:
         print(f"   初始余额: ${initial_balance:.2f}")
         print(f"   数据点数: {len(historical_data)}")
 
+    def _restore_from_live_report(
+        self,
+        resume_info: Dict[str, Any],
+        decision_timestamps: List[datetime]
+    ) -> int:
+        """
+        从 live.json 文件恢复状态
+        
+        Args:
+            resume_info: 从 live.json 加载的恢复信息
+            decision_timestamps: 决策时间戳列表
+            
+        Returns:
+            已处理的决策点索引（从该索引继续执行）
+        """
+        print("\n🔄 恢复回测状态...")
+        
+        try:
+            # 验证恢复信息
+            if not resume_info:
+                print("   ⚠️ 恢复信息为空，将从开始执行")
+                return 0
+            
+            # 验证交易对匹配
+            resume_symbol = resume_info.get('symbol')
+            if resume_symbol and resume_symbol.upper() != self.symbol.upper():
+                print(f"   ⚠️ 恢复文件中的交易对 ({resume_symbol}) 与当前交易对 ({self.symbol}) 不匹配")
+                print(f"   将从头开始回测")
+                return 0
+            
+            # 1. 恢复账户余额
+            current_balance = resume_info.get('current_balance', {})
+            account_value = current_balance.get('total', self.initial_balance)
+            margin_used = current_balance.get('occupied', 0.0)
+            
+            # 验证余额合理性
+            if account_value < 0:
+                print(f"   ⚠️ 恢复的账户余额无效: ${account_value:.2f}，使用初始余额")
+                account_value = self.initial_balance
+            if margin_used < 0:
+                margin_used = 0.0
+            
+            self.client.update_account_value(account_value, margin_used)
+            print(f"   ✅ 账户余额已恢复: ${account_value:.2f} (已用保证金: ${margin_used:.2f})")
+            
+            # 2. 恢复已完成的交易记录
+            trades = resume_info.get('trades', [])
+            restored_trades = 0
+            for trade in trades:
+                try:
+                    # 转换时间戳格式
+                    if isinstance(trade.get('entry_time'), str):
+                        trade['entry_time'] = pd.to_datetime(trade['entry_time'])
+                    if isinstance(trade.get('exit_time'), str):
+                        trade['exit_time'] = pd.to_datetime(trade['exit_time'])
+                    
+                    # 验证交易数据完整性
+                    if not all(k in trade for k in ['entry_price', 'exit_price', 'size', 'net_pnl']):
+                        print(f"   ⚠️ 跳过不完整的交易记录: {trade.get('entry_time')}")
+                        continue
+                    
+                    self.closed_trades.append(trade)
+                    restored_trades += 1
+                except Exception as e:
+                    print(f"   ⚠️ 恢复交易记录时出错: {e}，跳过该记录")
+                    continue
+            
+            if restored_trades > 0:
+                print(f"   ✅ 已恢复 {restored_trades} 笔已完成交易")
+            
+            # 3. 恢复当前持仓
+            open_positions = resume_info.get('open_positions', [])
+            restored_positions = 0
+            for pos_data in open_positions:
+                try:
+                    if pos_data.get('symbol') != self.symbol:
+                        continue
+                    
+                    # 恢复持仓
+                    entry_price = pos_data.get('entry_price', 0.0)
+                    size = pos_data.get('size', 0.0)
+                    leverage = pos_data.get('leverage', 1)
+                    is_long = pos_data.get('is_long', True)
+                    take_profit_price = pos_data.get('take_profit_price')
+                    stop_loss_price = pos_data.get('stop_loss_price')
+                    
+                    # 验证持仓数据
+                    if entry_price <= 0 or size <= 0 or leverage <= 0:
+                        print(f"   ⚠️ 跳过无效的持仓数据: entry_price={entry_price}, size={size}, leverage={leverage}")
+                        continue
+                    
+                    # 转换 entry_time
+                    entry_time = pos_data.get('entry_time')
+                    if isinstance(entry_time, str):
+                        entry_time = pd.to_datetime(entry_time)
+                    
+                    # 添加持仓到客户端
+                    self.client.add_position(
+                        symbol=self.symbol,
+                        size=size,
+                        entry_price=entry_price,
+                        leverage=leverage,
+                        is_long=is_long,
+                        take_profit_price=take_profit_price,
+                        stop_loss_price=stop_loss_price
+                    )
+                    
+                    # 更新持仓的 entry_time（如果提供了）
+                    if entry_time:
+                        for pos in self.client.positions:
+                            if pos.get('coin') == self.symbol:
+                                pos['entry_time'] = entry_time
+                                break
+                    
+                    # 更新未实现盈亏
+                    current_price = pos_data.get('current_price')
+                    if current_price and current_price > 0:
+                        if is_long:
+                            unrealized_pnl = (current_price - entry_price) * size
+                        else:
+                            unrealized_pnl = (entry_price - current_price) * size
+                        self.client.update_position_pnl(self.symbol, unrealized_pnl)
+                    
+                    restored_positions += 1
+                except Exception as e:
+                    print(f"   ⚠️ 恢复持仓时出错: {e}，跳过该持仓")
+                    continue
+            
+            if restored_positions > 0:
+                print(f"   ✅ 已恢复 {restored_positions} 个持仓")
+            
+            # 4. 恢复决策历史（至少最后一次）
+            last_decision = resume_info.get('last_decision')
+            timestamp = None
+            if last_decision:
+                try:
+                    market_data = last_decision.get('market_data', {})
+                    decision = last_decision.get('decision', 'DO_NOTHING')
+                    reason = last_decision.get('reason', '')
+                    action_details = last_decision.get('action_details', {})
+                    
+                    # 转换时间戳
+                    timestamp = last_decision.get('timestamp')
+                    if isinstance(timestamp, str):
+                        timestamp = pd.to_datetime(timestamp)
+                    if timestamp and isinstance(market_data, dict):
+                        market_data['timestamp'] = timestamp
+                    
+                    self.decision_history.add_decision(
+                        symbol=self.symbol,
+                        decision=decision,
+                        market_data=market_data,
+                        reason=reason,
+                        action_details=action_details
+                    )
+                    print(f"   ✅ 已恢复最后一次决策: {decision}")
+                except Exception as e:
+                    print(f"   ⚠️ 恢复决策历史时出错: {e}")
+            
+            # 5. 找到已处理的决策点索引
+            processed_count = resume_info.get('progress', {}).get('processed_decisions', 0)
+            total_count = resume_info.get('progress', {}).get('total_decisions', len(decision_timestamps))
+            
+            # 验证决策点数量是否匹配
+            if total_count != len(decision_timestamps):
+                print(f"   ⚠️ 恢复文件中的总决策点数 ({total_count}) 与当前不匹配 ({len(decision_timestamps)})")
+                print(f"   将尝试从已处理数量继续")
+            
+            if processed_count > 0:
+                # 尝试从最后一个决策时间戳找到对应的索引
+                if last_decision and timestamp:
+                    try:
+                        # 找到最接近的时间戳索引
+                        time_diffs = [(ts - timestamp).total_seconds() for ts in decision_timestamps]
+                        closest_idx = min(range(len(time_diffs)), key=lambda i: abs(time_diffs[i]))
+                        
+                        # 如果最接近的时间戳差异太大（超过1小时），使用处理数量
+                        if abs(time_diffs[closest_idx]) > 3600:
+                            print(f"   ⚠️ 时间戳差异较大 ({time_diffs[closest_idx]:.0f}秒)，使用处理数量")
+                            resume_index = min(processed_count, len(decision_timestamps) - 1)
+                        else:
+                            # 确保索引在有效范围内，并且是已处理的下一个
+                            resume_index = min(closest_idx + 1, len(decision_timestamps) - 1)
+                    except Exception as e:
+                        print(f"   ⚠️ 查找时间戳索引时出错: {e}，使用处理数量")
+                        resume_index = min(processed_count, len(decision_timestamps) - 1)
+                else:
+                    # 如果没有时间戳，使用处理数量作为索引
+                    resume_index = min(processed_count, len(decision_timestamps) - 1)
+                
+                # 确保索引有效
+                if resume_index < 0:
+                    resume_index = 0
+                if resume_index >= len(decision_timestamps):
+                    resume_index = len(decision_timestamps) - 1
+                
+                print(f"   ✅ 将从决策点 {resume_index + 1}/{len(decision_timestamps)} 继续执行")
+                return resume_index
+            else:
+                print(f"   ⚠️ 未找到已处理的决策点，将从开始执行")
+                return 0
+                
+        except Exception as e:
+            print(f"   ⚠️ 状态恢复过程中出现错误: {e}")
+            print(f"   将从头开始回测")
+            import traceback
+            traceback.print_exc()
+            return 0
+
     def run(
         self,
         decision_interval_minutes: int = 15,
         live_report_path: Optional[str] = None,
-        live_report_interval: int = 1
+        live_report_interval: int = 1,
+        resume_from: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         运行回测
@@ -136,7 +346,12 @@ class BacktestEngine:
             raise ValueError("Agent未初始化，无法运行回测")
 
         # 配置实时报告
-        if live_report_path:
+        if resume_from and resume_from.get('resume_file'):
+            # 如果从恢复文件继续，使用恢复文件作为实时报告路径
+            self.live_report_path = Path(resume_from['resume_file'])
+            self.live_report_interval = max(1, live_report_interval)
+            self._last_live_report_index = -1
+        elif live_report_path:
             self.live_report_path = Path(live_report_path)
             self.live_report_interval = max(1, live_report_interval)
             self._last_live_report_index = -1
@@ -169,15 +384,28 @@ class BacktestEngine:
         self._total_decision_points = len(decision_timestamps)
 
         print(f"   决策点数量: {len(decision_timestamps)}")
+        
+        # 如果提供了恢复信息，恢复状态
+        start_index = 0
+        if resume_from:
+            start_index = self._restore_from_live_report(resume_from, decision_timestamps)
+            # 更新实时报告索引（已处理的决策点数量 - 1，因为下次写入时会 +1）
+            processed_count = resume_from.get('progress', {}).get('processed_decisions', 0)
+            if processed_count > 0:
+                self._last_live_report_index = processed_count - 1
+            else:
+                self._last_live_report_index = -1
+        
         self._maybe_write_live_report(
-            processed_decisions=0,
+            processed_decisions=start_index,
             total_decisions=self._total_decision_points,
             force=True,
-            status="initializing"
+            status="running" if start_index > 0 else "initializing"
         )
 
-        # 遍历每个决策点
-        for i, timestamp in enumerate(decision_timestamps):
+        # 遍历每个决策点（从恢复的索引开始）
+        for i in range(start_index, len(decision_timestamps)):
+            timestamp = decision_timestamps[i]
             try:
                 # 在到达决策点之前，检查上一个决策点到当前决策点之间的所有K线
                 # 以更真实地模拟实际交易中的实时监控
