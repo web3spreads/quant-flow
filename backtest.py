@@ -111,6 +111,13 @@ def parse_args():
         help='使用测试网（仅用于API数据源）'
     )
 
+    parser.add_argument(
+        '--env-file',
+        type=str,
+        default=None,
+        help='环境变量文件路径（默认: .env，可通过环境变量 DOTENV_PATH 覆盖）'
+    )
+
     return parser.parse_args()
 
 
@@ -142,7 +149,7 @@ def main():
     try:
         # 加载配置
         print("📋 加载配置...")
-        config = get_config(args.config, require_api_credentials=False)
+        config = get_config(args.config, require_api_credentials=False, env_file=args.env_file)
         
         # 初始化日志
         logger = TradingLogger(

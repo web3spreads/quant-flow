@@ -26,7 +26,7 @@ class BacktestEngine:
         self,
         symbol: str,
         historical_data: pd.DataFrame,
-        initial_balance: float = 10000.0,
+        initial_balance: float = 1000.0,
         config: Any = None,
         logger: Optional[TradingLogger] = None,
         prompt_manager: Optional[PromptManager] = None
@@ -179,6 +179,12 @@ class BacktestEngine:
         # 遍历每个决策点
         for i, timestamp in enumerate(decision_timestamps):
             try:
+                # 在到达决策点之前，检查上一个决策点到当前决策点之间的所有K线
+                # 以更真实地模拟实际交易中的实时监控
+                if i > 0:
+                    prev_timestamp = decision_timestamps[i - 1]
+                    self._check_tpsl_between_decisions(prev_timestamp, timestamp, df)
+
                 # 设置当前时间
                 self.client.set_current_time(timestamp)
 
@@ -191,7 +197,7 @@ class BacktestEngine:
                 current_positions = self.order_manager.get_current_positions()
                 balance_info = self.order_manager.get_available_balance_info()
 
-                # 检查止盈止损
+                # 在决策点也检查止盈止损（作为最后一道检查）
                 self._check_take_profit_stop_loss(timestamp, df)
 
                 # 调整交易金额
@@ -364,6 +370,45 @@ class BacktestEngine:
         # 使用蜡烛的真实时间戳，而不是回测运行时的当前时间
         indicators['timestamp'] = row['timestamp']
         return indicators
+
+    def _check_tpsl_between_decisions(
+        self,
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+        df: pd.DataFrame
+    ):
+        """
+        在两个决策点之间的所有K线上检查止盈止损
+        
+        Args:
+            start_timestamp: 起始时间（上一个决策点）
+            end_timestamp: 结束时间（当前决策点）
+            df: 数据DataFrame
+        """
+        # 获取两个决策点之间的所有K线数据
+        mask = (df['timestamp'] > start_timestamp) & (df['timestamp'] <= end_timestamp)
+        between_candles = df[mask].copy()
+        
+        if len(between_candles) == 0:
+            return
+        
+        # 遍历每个K线检查止盈止损
+        for idx, row in between_candles.iterrows():
+            # 检查是否还有持仓（可能在前面的K线已经被平掉）
+            positions = self.client.get_positions()
+            if not any(p.get('coin') == self.symbol for p in positions):
+                # 没有持仓了，可以提前退出
+                break
+            
+            # 设置当前时间到该K线的时间点
+            candle_timestamp = row['timestamp']
+            self.client.set_current_time(candle_timestamp)
+            
+            # 检查止盈止损
+            self._check_take_profit_stop_loss(candle_timestamp, df)
+            
+            # 如果持仓被平掉，更新持仓盈亏并继续
+            self._update_positions_pnl(candle_timestamp, df)
 
     def _check_take_profit_stop_loss(
         self,
