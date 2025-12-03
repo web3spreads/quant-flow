@@ -47,6 +47,9 @@ class QuantFlowBot:
         # 记录程序启动时间（用于数据增强器）
         self.start_time = datetime.now()
 
+        # Prompt 管理器在组件初始化过程中会使用，先占位避免属性不存在
+        self.prompt_manager = None
+
         # 初始化日志
         self.logger = get_logger(
             log_level=self.config.log_level,
@@ -207,22 +210,6 @@ class QuantFlowBot:
             )
             self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
 
-    def _init_fee_rates(self):
-        """
-        从 Hyperliquid userFees 拉取最新的用户费率，失败时回退到默认 Tier0。
-        """
-        try:
-            fee_rates = self.hyperliquid_client.fetch_user_fee_rates()
-            self.logger.print_info(
-                f"当前费率 (自动注入): taker {fee_rates.taker_rate*100:.3f}% / maker {fee_rates.maker_rate*100:.3f}%"
-            )
-            return fee_rates
-        except Exception as e:
-            self.logger.print_warning(
-                f"获取动态费率失败，使用默认值: {DEFAULT_PERP_FEE_RATES}，原因: {e}"
-            )
-            return DEFAULT_PERP_FEE_RATES
-
         # 7. 现货定投 Agent
         self.logger.print_info("初始化现货定投 Agent...")
         self.spot_agent = SpotAgent(
@@ -248,6 +235,22 @@ class QuantFlowBot:
 
         # 发送启动通知
         self._send_startup_notification()
+
+    def _init_fee_rates(self):
+        """
+        从 Hyperliquid userFees 拉取最新的用户费率，失败时回退到默认 Tier0。
+        """
+        try:
+            fee_rates = self.hyperliquid_client.fetch_user_fee_rates()
+            self.logger.print_info(
+                f"当前费率 (自动注入): taker {fee_rates.taker_rate*100:.3f}% / maker {fee_rates.maker_rate*100:.3f}%"
+            )
+            return fee_rates
+        except Exception as e:
+            self.logger.print_warning(
+                f"获取动态费率失败，使用默认值: {DEFAULT_PERP_FEE_RATES}，原因: {e}"
+            )
+            return DEFAULT_PERP_FEE_RATES
 
     def _check_and_display_balance(self):
         """检查并显示账户余额信息"""
