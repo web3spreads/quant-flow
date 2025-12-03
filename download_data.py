@@ -9,8 +9,6 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional
-
 import pandas as pd
 
 from src.backtest.data_loader import BacktestDataLoader
