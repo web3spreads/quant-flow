@@ -642,10 +642,13 @@ class BacktestEngine:
             
             # 如果持仓被平掉，设置标志
             if position_closed:
-                has_position = False
+                has_position = any(p.get('coin') == self.symbol for p in self.client.get_positions())
+                if not has_position:
+                    break
             
-            # 更新持仓盈亏
-            self._update_positions_pnl(candle_timestamp, df)
+            if has_position:
+                # 更新持仓盈亏
+                self._update_positions_pnl(candle_timestamp, df)
 
     def _check_take_profit_stop_loss(
         self,
