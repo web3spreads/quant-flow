@@ -389,10 +389,9 @@ class BacktestEngine:
         start_index = 0
         if resume_from:
             start_index = self._restore_from_live_report(resume_from, decision_timestamps)
-            # 更新实时报告索引（已处理的决策点数量 - 1，因为下次写入时会 +1）
-            processed_count = resume_from.get('progress', {}).get('processed_decisions', 0)
-            if processed_count > 0:
-                self._last_live_report_index = processed_count - 1
+            # 更新实时报告索引，确保与恢复的决策点一致
+            if start_index > 0:
+                self._last_live_report_index = start_index - 1
             else:
                 self._last_live_report_index = -1
         
