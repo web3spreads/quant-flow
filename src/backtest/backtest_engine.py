@@ -14,6 +14,8 @@ from .report_generator import BacktestReportGenerator
 from src.data.indicators import TechnicalIndicators
 from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
+from src.agent.review_agent import ReviewAgent
+from src.agent.review_memory import ReviewMemoryStore
 from src.utils.logger import TradingLogger
 from src.prompt_manager import PromptManager
 from src.config import FEE_RATE_PER_SIDE
@@ -95,6 +97,36 @@ class BacktestEngine:
             )
         else:
             self.summary_agent = None
+
+        # 复盘Agent（如果启用）
+        self.review_agent = None
+        self.review_memory_store = None
+        self.cycle_counter = 0
+        if config and config.review_enabled and prompt_manager:
+            try:
+                self.logger.print_info("初始化复盘 Agent...")
+                self.review_memory_store = ReviewMemoryStore(
+                    path=config.review_memory_file,
+                    max_lessons=config.review_max_lessons,
+                )
+                self.review_agent = ReviewAgent(
+                    logger=self.logger,
+                    prompt_manager=prompt_manager,
+                    openai_api_base=config.openai_api_base,
+                    openai_api_key=config.openai_api_key,
+                    model=config.review_model,
+                    temperature=config.review_temperature,
+                    lookback_decisions=config.review_lookback_decisions,
+                    memory_store=self.review_memory_store,
+                    min_confidence=config.review_min_confidence,
+                    similarity_threshold=config.review_similarity_threshold,
+                    similarity_weights=config.review_similarity_weights,
+                    confidence_decay_factor=config.review_confidence_decay_factor,
+                    similarity_method=config.review_similarity_method,
+                )
+                self.logger.print_info("✅ 复盘 Agent 初始化完成")
+            except Exception as e:
+                self.logger.print_warning(f"复盘 Agent 初始化失败: {e}")
 
         # 交易记录
         self.trades: List[Dict[str, Any]] = []
@@ -482,6 +514,15 @@ class BacktestEngine:
                     reason=details.get('output', '')[:200],
                     action_details=self._sanitize_action_details(details)
                 )
+                
+                # 更新周期计数器并运行复盘 Agent（如果启用）
+                self.cycle_counter += 1
+                if self.review_agent and self.config:
+                    # 检查是否有足够的决策记录
+                    decision_count = self.decision_history.get_history_count(self.symbol)
+                    if decision_count >= self.config.review_lookback_decisions:
+                        if self.cycle_counter % max(1, self.config.review_run_every_cycles) == 0:
+                            self._run_review_agent()
 
                 # 执行决策（Agent的工具回调会自动调用order_manager）
                 # 对于平仓决策，需要检测持仓变化并记录交易
@@ -838,6 +879,50 @@ class BacktestEngine:
             margin_used += entry_price * size / leverage
 
         self.client.update_account_value(account_value, margin_used)
+
+    def _run_review_agent(self):
+        """运行复盘 Agent"""
+        if not self.review_agent:
+            return
+        
+        try:
+            self.logger.print_section("🧠 运行复盘 Agent", style="bold white")
+            
+            # 获取最近的决策记录
+            decision_count = self.decision_history.get_history_count(self.symbol)
+            if decision_count < self.config.review_lookback_decisions:
+                self.logger.print_info(f"决策记录不足 ({decision_count} < {self.config.review_lookback_decisions})，跳过复盘")
+                return
+            
+            recent_decisions = self.decision_history.get_recent_decisions(
+                self.symbol, 
+                self.config.review_lookback_decisions
+            )
+            
+            if len(recent_decisions) < 3:
+                self.logger.print_info("有效决策记录不足，跳过复盘")
+                return
+            
+            # 获取已存在的经验
+            existing_lessons = self.review_memory_store.get_lessons(self.symbol) if self.review_memory_store else []
+            
+            # 运行复盘
+            review_result = self.review_agent.review(
+                symbol=self.symbol,
+                decision_records=recent_decisions,
+                fills_summary=None,  # 回测中不提供成交汇总
+                existing_lessons=existing_lessons,
+            )
+            
+            # 保存经验
+            if self.review_memory_store:
+                self.review_memory_store.save()
+                self.logger.print_info(f"✅ 复盘完成，经验已保存")
+            
+        except Exception as e:
+            self.logger.print_warning(f"复盘 Agent 运行失败: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _close_all_positions(self, timestamp: datetime, price: float):
         """

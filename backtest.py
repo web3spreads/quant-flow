@@ -8,8 +8,11 @@ import argparse
 import sys
 import re
 import json
+import shutil
+import yaml
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from src.config import get_config
 from src.utils.logger import TradingLogger
@@ -195,13 +198,99 @@ def _load_resume_info(resume_from_path: str) -> dict:
         raise ValueError(f"读取恢复文件失败: {e}")
 
 
+def _create_backtest_workspace(args, existing_workspace: Optional[Path] = None) -> Path:
+    """
+    创建回测工作空间，生成独立的配置和环境文件
+    
+    Args:
+        args: 命令行参数
+        existing_workspace: 已存在的工作空间目录（用于恢复场景）
+        
+    Returns:
+        回测工作空间目录路径
+    """
+    # 如果提供了已存在的工作空间，直接使用
+    if existing_workspace and existing_workspace.exists():
+        workspace_dir = existing_workspace
+        print(f"📁 使用现有回测工作空间: {workspace_dir}")
+    else:
+        # 创建新的回测工作空间目录
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        workspace_name = f"backtest_{args.symbol}_{timestamp}"
+        workspace_dir = Path(args.output_dir) / workspace_name
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        print(f"📁 创建回测工作空间: {workspace_dir}")
+    
+    # 创建子目录
+    logs_dir = workspace_dir / "logs"
+    logs_dir.mkdir(exist_ok=True)
+    
+    # 检查配置文件是否已存在（恢复场景）
+    backtest_config_path = workspace_dir / "config.yaml"
+    backtest_env_path = workspace_dir / ".env"
+    
+    if backtest_config_path.exists() and existing_workspace:
+        print(f"✅ 使用现有配置文件: {backtest_config_path}")
+        # 如果 env 文件不存在，尝试创建
+        if not backtest_env_path.exists():
+            original_env_path = Path(args.env_file) if args.env_file else Path('.env')
+            if original_env_path.exists():
+                shutil.copy2(original_env_path, backtest_env_path)
+                print(f"✅ 回测环境文件已创建: {backtest_env_path}")
+    else:
+        # 读取原始配置文件
+        original_config_path = Path(args.config)
+        if not original_config_path.exists():
+            raise FileNotFoundError(f"配置文件不存在: {original_config_path}")
+        
+        with open(original_config_path, 'r', encoding='utf-8') as f:
+            config_data = yaml.safe_load(f)
+        
+        # 修改配置以适应回测
+        # 1. 禁用通知
+        if 'notifications' not in config_data:
+            config_data['notifications'] = {}
+        config_data['notifications']['enabled'] = False
+        
+        # 2. 启用 review agent，并设置日志路径到工作空间
+        if 'review_agent' not in config_data:
+            config_data['review_agent'] = {}
+        config_data['review_agent']['enabled'] = True
+        config_data['review_agent']['memory_file'] = str(logs_dir / "review_memory.json")
+        
+        # 3. 设置初始余额（如果配置中有）
+        if 'trading' in config_data:
+            config_data['trading']['initial_balance'] = args.initial_balance
+        
+        # 保存修改后的配置文件
+        with open(backtest_config_path, 'w', encoding='utf-8') as f:
+            yaml.dump(config_data, f, allow_unicode=True, default_flow_style=False)
+        
+        print(f"✅ 回测配置文件已创建: {backtest_config_path}")
+        
+        # 创建独立的 env 文件
+        original_env_path = Path(args.env_file) if args.env_file else Path('.env')
+        
+        if original_env_path.exists():
+            # 复制原始 env 文件，但不包含敏感信息（如果需要可以过滤）
+            shutil.copy2(original_env_path, backtest_env_path)
+            print(f"✅ 回测环境文件已创建: {backtest_env_path}")
+        else:
+            # 创建空的 env 文件
+            backtest_env_path.touch()
+            print(f"⚠️ 原始环境文件不存在，创建空的环境文件: {backtest_env_path}")
+    
+    return workspace_dir
+
+
 def main():
     """主函数"""
     args = parse_args()
 
     try:
-        # 如果提供了 --resume-from，从文件恢复信息
+        # 如果提供了 --resume-from，从文件恢复信息并推断工作空间
         resume_info = None
+        workspace_dir = None
         if args.resume_from:
             print("📂 从恢复文件加载信息...")
             try:
@@ -210,6 +299,30 @@ def main():
                 print(f"   交易对: {resume_info['symbol']}")
                 print(f"   初始余额: ${resume_info['initial_balance']:.2f}")
                 print(f"   已处理决策点: {resume_info['progress'].get('processed_decisions', 0)}/{resume_info['progress'].get('total_decisions', 0)}")
+                
+                # 从恢复文件路径推断工作空间目录
+                resume_path = Path(args.resume_from)
+                # 如果恢复文件在工作空间中（live_report.json），向上查找工作空间目录
+                if resume_path.name == "live_report.json":
+                    workspace_dir = resume_path.parent
+                elif resume_path.parent.name == "logs" and resume_path.name.endswith("_live.json"):
+                    # 旧格式的实时报告，工作空间在父目录的父目录
+                    workspace_dir = resume_path.parent.parent
+                else:
+                    # 尝试从路径中推断工作空间
+                    # 查找包含 backtest_ 的父目录
+                    current = resume_path.parent
+                    while current != current.parent:
+                        if current.name.startswith("backtest_"):
+                            workspace_dir = current
+                            break
+                        current = current.parent
+                
+                if workspace_dir and workspace_dir.exists():
+                    print(f"✅ 找到工作空间目录: {workspace_dir}")
+                else:
+                    print(f"⚠️ 无法从恢复文件推断工作空间，将创建新的工作空间")
+                    workspace_dir = None
                 
                 # 使用恢复的信息覆盖参数
                 if resume_info['symbol']:
@@ -222,10 +335,26 @@ def main():
                 print(f"⚠️ 恢复文件加载失败: {e}")
                 print("   将从头开始回测")
                 resume_info = None
+                workspace_dir = None
 
+        # 如果没有工作空间（新回测或恢复失败），创建工作空间
+        if not workspace_dir:
+            workspace_dir = _create_backtest_workspace(args)
+        else:
+            # 如果是从恢复文件恢复，确保工作空间配置正确
+            workspace_dir = _create_backtest_workspace(args, existing_workspace=workspace_dir)
+        
+        # 使用工作空间中的配置文件和环境文件
+        backtest_config_path = workspace_dir / "config.yaml"
+        backtest_env_path = workspace_dir / ".env"
+        
         # 加载配置
         print("📋 加载配置...")
-        config = get_config(args.config, require_api_credentials=False, env_file=args.env_file)
+        config = get_config(
+            str(backtest_config_path), 
+            require_api_credentials=False, 
+            env_file=str(backtest_env_path)
+        )
         
         # 初始化日志
         logger = TradingLogger(
@@ -293,7 +422,8 @@ def main():
         print("\n🚀 开始回测...")
         live_report_file = None
         if args.live_report_interval != 0:
-            live_report_file = Path(args.output_dir) / _build_live_report_filename(args)
+            # 实时报告保存到工作空间目录
+            live_report_file = workspace_dir / "live_report.json"
 
         run_kwargs = {
             'decision_interval_minutes': args.interval
@@ -313,16 +443,50 @@ def main():
         # 生成报告
         print("\n📊 生成回测报告...")
         report_generator = BacktestReportGenerator(result)
+        
+        # 准备回测参数
+        backtest_params = {
+            'symbol': args.symbol,
+            'initial_balance': args.initial_balance,
+            'interval': args.interval,
+            'timeframe': args.timeframe,
+            'config_file': str(backtest_config_path),
+            'env_file': str(backtest_env_path),
+            'original_config_file': args.config,
+            'original_env_file': args.env_file,
+            'testnet': args.testnet,
+            'workspace_dir': str(workspace_dir)
+        }
+        
+        # 添加数据源信息
+        if args.data_file:
+            backtest_params['data_source'] = 'file'
+            backtest_params['data_file'] = args.data_file
+        else:
+            backtest_params['data_source'] = 'api'
+            backtest_params['start_date'] = args.start_date
+            backtest_params['end_date'] = args.end_date
+        
+        # 如果使用了恢复文件，记录恢复信息
+        if args.resume_from:
+            backtest_params['resume_from'] = args.resume_from
+        
+        # 报告生成到工作空间目录
         report_files = report_generator.generate_full_report(
-            output_dir=args.output_dir,
-            symbol=args.symbol
+            output_dir=str(workspace_dir),
+            symbol=args.symbol,
+            backtest_params=backtest_params,
+            config=config
         )
 
         print(f"\n✅ 回测完成！")
+        print(f"   报告目录: {report_files.get('report_dir', 'N/A')}")
         print(f"   报告文件:")
         print(f"   - JSON: {report_files['json_file']}")
         if report_files.get('csv_file'):
             print(f"   - CSV: {report_files['csv_file']}")
+        if report_files.get('pnl_file'):
+            print(f"   - 盈亏历史: {report_files['pnl_file']}")
 
     except KeyboardInterrupt:
         print("\n\n⚠️ 用户中断回测")
