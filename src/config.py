@@ -10,7 +10,10 @@ from typing import Dict, Any, List
 from dotenv import load_dotenv
 
 # Trading fee constants (Hyperliquid)
-FEE_RATE_PER_SIDE = 0.00035  # 0.035% per side (taker fee)
+# Tier 0 taker fee (for 14-day volume < $5M)
+# Fee tiers: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
+FEE_RATE_PER_SIDE = 0.00045  # 0.045% per side (Tier 0 taker fee)
+# Note: Fee rate decreases with higher trading volume (Tier 1-6: 0.040% - 0.024%)
 
 
 class Config:
