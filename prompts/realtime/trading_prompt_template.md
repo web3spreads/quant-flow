@@ -128,24 +128,36 @@
 
 ## ⚡ 交易成本分析
 
-**手续费结构 (Hyperliquid):**
+**手续费结构 (Hyperliquid Tier 0):**
 - 开仓手续费: **{{ fee_rate_per_side }}** (Taker, 市价单)
 - 平仓手续费: **{{ fee_rate_per_side }}** (Taker)
 - **完整交易成本**: {{ total_fee_rate }}
 
+**重要说明:**
+- 手续费基于 **仓位价值** (价格 × 数量),不是保证金
+- 杠杆放大仓位价值,因此也放大手续费
+
+**计算公式:**
+```
+仓位价值 = 保证金 × 杠杆
+开仓手续费 = 仓位价值 × {{ fee_rate_per_side }}
+平仓手续费 = 仓位价值 × {{ fee_rate_per_side }}
+总手续费 = 开仓手续费 + 平仓手续费
+```
+
 **本次交易成本预估:**
 假设使用上限金额和杠杆
-- 实际仓位价值: ${{ position_value }}
+- 仓位价值: ${{ position_value }} (保证金 ${{ max_trade_amount }} × {{ max_leverage }}x 杠杆)
 - 开仓手续费: ${{ open_fee }}
 - 平仓手续费: ${{ close_fee }}
 - **预计总手续费**: ${{ total_fee }}
 - **盈亏平衡点（资金回报）**: {{ breakeven_percent }}
-- **需要的真实价格变动**: {{ price_move_percent }}
+- **需要的价格变动**: {{ price_move_percent }}
 - **止盈 / 手续费比**: {{ profit_to_fee_ratio }}
 
 **成本参考:**
 - 当前止盈目标 {{ take_profit_ratio }}，止盈/手续费比 = {{ profit_to_fee_ratio }}
-- 比值 > 3 为优质交易，2-3 可接受
+- 比值 ≥ 3 为优质交易，2-3 可接受，< 2 需谨慎
 
 ## 💰 交易权限与币种特定建议
 - 单笔交易金额上限: ${{ max_trade_amount }} USD

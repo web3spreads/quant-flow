@@ -109,14 +109,19 @@ ETH 波动性高，是激进交易者的理想标的：
 
 ## ⚡ 交易成本分析（必看！）
 
-**手续费结构 (Hyperliquid):**
+**手续费结构 (Hyperliquid Tier 0):**
 - 开仓手续费: **{{ fee_rate_per_side }}** (Taker, 市价单)
 - 平仓手续费: **{{ fee_rate_per_side }}** (Taker)
 - **完整交易成本**: {{ total_fee_rate }}
 
+**重要说明:**
+- 手续费基于 **仓位价值** (价格 × 数量),不是保证金
+- 杠杆放大仓位价值,因此也放大手续费
+- 当前账户为 Tier 0 (交易量 < $5M)
+
 **本次交易成本预估:**
-假设使用金额: ${{ max_trade_amount }} USD, 杠杆: {{ max_leverage }}x
-- 实际仓位价值: ${{ max_trade_amount }} × {{ max_leverage }} = ${{ position_value }}
+假设使用上限金额和杠杆
+- 仓位价值: ${{ position_value }} (保证金 ${{ max_trade_amount }} × {{ max_leverage }}x 杠杆)
 - 开仓手续费: ${{ open_fee }}
 - 平仓手续费: ${{ close_fee }}
 - **预计总手续费**: ${{ total_fee }}
