@@ -37,10 +37,12 @@ class Config:
         # 加载环境变量
         if env_file:
             load_dotenv(dotenv_path=env_file)
+            self._env_file = env_file
         else:
             # 优先检查环境变量 DOTENV_PATH，否则使用默认 .env
             env_path = os.getenv('DOTENV_PATH', '.env')
             load_dotenv(dotenv_path=env_path)
+            self._env_file = env_path
 
         # 加载 YAML 配置
         self.config_path = Path(config_path)
@@ -309,14 +311,13 @@ def get_config(
         or force_reload
         or requested_path != _config.config_path
         or _config.require_api_credentials != require_api_credentials
-        or getattr(_config, '_env_file', None) != requested_env_file
+        or _config._env_file != requested_env_file
     ):
         _config = Config(
             config_path,
             require_api_credentials=require_api_credentials,
             env_file=env_file,
         )
-        _config._env_file = requested_env_file  # 记录使用的env文件
         _config.validate()
     return _config
 
