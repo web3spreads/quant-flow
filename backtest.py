@@ -7,6 +7,7 @@
 import argparse
 import sys
 import re
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -111,6 +112,20 @@ def parse_args():
         help='使用测试网（仅用于API数据源）'
     )
 
+    parser.add_argument(
+        '--env-file',
+        type=str,
+        default=None,
+        help='环境变量文件路径（默认: .env，可通过环境变量 DOTENV_PATH 覆盖）'
+    )
+
+    parser.add_argument(
+        '--resume-from',
+        type=str,
+        default=None,
+        help='从 live.json 文件恢复并继续回测（提供文件路径）'
+    )
+
     return parser.parse_args()
 
 
@@ -135,14 +150,82 @@ def _build_live_report_filename(args) -> str:
     return f"{safe_name}_live.json"
 
 
+def _load_resume_info(resume_from_path: str) -> dict:
+    """
+    从 live.json 文件加载恢复信息
+    
+    Args:
+        resume_from_path: live.json 文件路径
+        
+    Returns:
+        包含恢复信息的字典
+    """
+    resume_path = Path(resume_from_path)
+    if not resume_path.exists():
+        raise FileNotFoundError(f"恢复文件不存在: {resume_from_path}")
+    
+    try:
+        with open(resume_path, 'r', encoding='utf-8') as f:
+            resume_data = json.load(f)
+        
+        # 提取关键信息
+        info = {
+            'symbol': resume_data.get('symbol'),
+            'initial_balance': resume_data.get('initial_balance', 1000.0),
+            'resume_file': str(resume_path),
+            'progress': resume_data.get('progress', {}),
+            'current_balance': resume_data.get('current_balance', {}),
+            'trades': resume_data.get('trades', []),
+            'open_positions': resume_data.get('open_positions', []),
+            'last_decision': resume_data.get('last_decision')
+        }
+        
+        # 从文件名推断 interval（如果可能）
+        filename = resume_path.stem
+        interval_match = re.search(r'interval(\d+)m', filename)
+        if interval_match:
+            info['interval'] = int(interval_match.group(1))
+        else:
+            info['interval'] = None
+        
+        return info
+    except json.JSONDecodeError as e:
+        raise ValueError(f"恢复文件格式错误: {e}")
+    except Exception as e:
+        raise ValueError(f"读取恢复文件失败: {e}")
+
+
 def main():
     """主函数"""
     args = parse_args()
 
     try:
+        # 如果提供了 --resume-from，从文件恢复信息
+        resume_info = None
+        if args.resume_from:
+            print("📂 从恢复文件加载信息...")
+            try:
+                resume_info = _load_resume_info(args.resume_from)
+                print(f"✅ 恢复信息加载成功")
+                print(f"   交易对: {resume_info['symbol']}")
+                print(f"   初始余额: ${resume_info['initial_balance']:.2f}")
+                print(f"   已处理决策点: {resume_info['progress'].get('processed_decisions', 0)}/{resume_info['progress'].get('total_decisions', 0)}")
+                
+                # 使用恢复的信息覆盖参数
+                if resume_info['symbol']:
+                    args.symbol = resume_info['symbol']
+                if resume_info['initial_balance']:
+                    args.initial_balance = resume_info['initial_balance']
+                if resume_info.get('interval'):
+                    args.interval = resume_info['interval']
+            except Exception as e:
+                print(f"⚠️ 恢复文件加载失败: {e}")
+                print("   将从头开始回测")
+                resume_info = None
+
         # 加载配置
         print("📋 加载配置...")
-        config = get_config(args.config, require_api_credentials=False)
+        config = get_config(args.config, require_api_credentials=False, env_file=args.env_file)
         
         # 初始化日志
         logger = TradingLogger(
@@ -220,6 +303,10 @@ def main():
                 'live_report_path': str(live_report_file),
                 'live_report_interval': max(1, args.live_report_interval)
             })
+        
+        # 如果提供了恢复信息，传递给引擎
+        if resume_info:
+            run_kwargs['resume_from'] = resume_info
 
         result = engine.run(**run_kwargs)
 

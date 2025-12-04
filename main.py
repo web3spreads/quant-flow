@@ -6,13 +6,14 @@ Multi-Agent Architecture: Maintains independent context for each trading pair, w
 
 import sys
 import signal
+import argparse
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from src.config import get_config
+from src.config import get_config, DEFAULT_PERP_FEE_RATES
 from src.utils.logger import get_logger
 from src.utils.banner import print_startup_banner
 from src.data.market_data import MarketDataFetcher
@@ -32,18 +33,22 @@ from src.prompt_manager import PromptManager
 class QuantFlowBot:
     """Quant Flow 交易机器人 - 多 Agent 架构"""
 
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", env_file: str = None):
         """
         初始化机器人
 
         Args:
             config_path: 配置文件路径
+            env_file: 环境变量文件路径（默认: .env）
         """
         # 加载配置
-        self.config = get_config(config_path)
+        self.config = get_config(config_path, env_file=env_file)
 
         # 记录程序启动时间（用于数据增强器）
         self.start_time = datetime.now()
+
+        # Prompt 管理器在组件初始化过程中会使用，先占位避免属性不存在
+        self.prompt_manager = None
 
         # 初始化日志
         self.logger = get_logger(
@@ -79,33 +84,18 @@ class QuantFlowBot:
         """初始化所有组件"""
         self.logger.print_section("🔧 初始化多 Agent 架构", style="bold yellow")
 
-        # 0. Prompt 管理器（最优先初始化）
-        self.logger.print_info("初始化 Prompt 管理器...")
-        try:
-            self.prompt_manager = PromptManager(
-                config_file=getattr(
-                    self.config, "prompt_config_file", "prompts/prompts.yaml"
-                ),
-                prompt_set=getattr(self.config, "prompt_set", "default"),
-            )
-        except Exception as e:
-            self.logger.print_warning(
-                f"Prompt 管理器初始化失败，将使用硬编码 Prompt: {e}"
-            )
-            self.prompt_manager = None
-
-        # 1. 通知系统（优先初始化，以便其他组件可以使用）
+        # 0. 通知系统（优先初始化，以便其他组件可以使用）
         self.logger.print_info("初始化通知系统...")
         notifications_config = getattr(self.config, "notifications", {"enabled": False})
         self.notifier = Notifier(
             notifications_config, is_testnet=self.config.hyperliquid_testnet
         )
 
-        # 2. 市场数据获取器
+        # 1. 市场数据获取器
         self.logger.print_info("初始化市场数据获取器...")
         self.market_fetcher = MarketDataFetcher(testnet=self.config.hyperliquid_testnet)
 
-        # 2.5 数据增强器（为nof1和nof1-improved prompts提供额外数据）
+        # 1.5 数据增强器（为nof1和nof1-improved prompts提供额外数据）
         self.logger.print_info("初始化数据增强器...")
         # 从 prompt_manager 获取语言设置，如果没有则默认为中文
         language = self.prompt_manager.language if self.prompt_manager else "zh"
@@ -115,13 +105,16 @@ class QuantFlowBot:
             language=language
         )
 
-        # 3. Hyperliquid 交易客户端
+        # 2. Hyperliquid 交易客户端
         self.logger.print_info("初始化 Hyperliquid 交易客户端...")
         self.hyperliquid_client = HyperliquidClient(
             private_key=self.config.hyperliquid_private_key,
             account_address=self.config.hyperliquid_account_address or None,
             testnet=self.config.hyperliquid_testnet,
         )
+
+        # 2.5 动态手续费（基于 userFees）
+        self.fee_rates = self._init_fee_rates()
 
         # 3. 订单管理器
         self.logger.print_info("初始化订单管理器...")
@@ -131,6 +124,22 @@ class QuantFlowBot:
             stop_loss_ratio=self.config.stop_loss_ratio,
             default_leverage=self.config.default_leverage,
         )
+
+        # 3.5 Prompt 管理器（需要费率）
+        self.logger.print_info("初始化 Prompt 管理器...")
+        try:
+            self.prompt_manager = PromptManager(
+                config_file=getattr(
+                    self.config, "prompt_config_file", "prompts/prompts.yaml"
+                ),
+                prompt_set=getattr(self.config, "prompt_set", "default"),
+                fee_rates_perp=self.fee_rates,
+            )
+        except Exception as e:
+            self.logger.print_warning(
+                f"Prompt 管理器初始化失败，将使用硬编码 Prompt: {e}"
+            )
+            self.prompt_manager = None
 
         # 4. 决策历史管理器
         self.logger.print_info("初始化决策历史管理器...")
@@ -197,6 +206,7 @@ class QuantFlowBot:
                 stop_loss_ratio=self.config.stop_loss_ratio,
                 notifier=self.notifier,
                 prompt_manager=self.prompt_manager,
+                fee_rates=self.fee_rates,
             )
             self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
 
@@ -225,6 +235,22 @@ class QuantFlowBot:
 
         # 发送启动通知
         self._send_startup_notification()
+
+    def _init_fee_rates(self):
+        """
+        从 Hyperliquid userFees 拉取最新的用户费率，失败时回退到默认 Tier0。
+        """
+        try:
+            fee_rates = self.hyperliquid_client.fetch_user_fee_rates()
+            self.logger.print_info(
+                f"当前费率 (自动注入): taker {fee_rates.taker_rate*100:.3f}% / maker {fee_rates.maker_rate*100:.3f}%"
+            )
+            return fee_rates
+        except Exception as e:
+            self.logger.print_warning(
+                f"获取动态费率失败，使用默认值: {DEFAULT_PERP_FEE_RATES}，原因: {e}"
+            )
+            return DEFAULT_PERP_FEE_RATES
 
     def _check_and_display_balance(self):
         """检查并显示账户余额信息"""
@@ -826,13 +852,43 @@ def signal_handler(signum, frame):
 
 def main():
     """主函数"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(
+        description="Quant Flow - AI驱动的加密货币自动交易机器人",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 使用默认配置
+  python main.py
+
+  # 指定环境变量文件
+  python main.py --env-file .env.testnet
+
+  # 指定配置文件和环境变量文件
+  python main.py --config config.yaml --env-file .env.testnet
+        """
+    )
+    parser.add_argument(
+        '--config',
+        type=str,
+        default='config.yaml',
+        help='配置文件路径（默认: config.yaml）'
+    )
+    parser.add_argument(
+        '--env-file',
+        type=str,
+        default=None,
+        help='环境变量文件路径（默认: .env，可通过环境变量 DOTENV_PATH 覆盖）'
+    )
+    args = parser.parse_args()
+
     # 注册信号处理器
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
         # 创建并启动机器人
-        bot = QuantFlowBot(config_path="config.yaml")
+        bot = QuantFlowBot(config_path=args.config, env_file=args.env_file)
         bot.start()
 
     except FileNotFoundError as e:

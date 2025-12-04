@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import Dict, Any, List
 from dotenv import load_dotenv
 
-# Trading fee constants (Hyperliquid)
-# Tier 0 taker fee (for 14-day volume < $5M)
-# Fee tiers: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
-FEE_RATE_PER_SIDE = 0.00045  # 0.045% per side (Tier 0 taker fee)
-# Note: Fee rate decreases with higher trading volume (Tier 1-6: 0.040% - 0.024%)
+from src.fees import default_perp_fee_rates
+
+# Trading fee constants (Hyperliquid, per doc Tier 0: taker 0.045% / maker 0.015%)
+DEFAULT_PERP_FEE_RATES = default_perp_fee_rates()
+FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.taker_rate
+MAKER_FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.maker_rate
 
 
 class Config:
@@ -23,6 +24,7 @@ class Config:
         self,
         config_path: str = "config.yaml",
         require_api_credentials: bool = True,
+        env_file: str = None,
     ):
         """
         初始化配置
@@ -30,9 +32,17 @@ class Config:
         Args:
             config_path: 配置文件路径
             require_api_credentials: 是否强制要求 OpenAI/Hyperliquid 凭证
+            env_file: 环境变量文件路径（默认: .env）
         """
         # 加载环境变量
-        load_dotenv()
+        if env_file:
+            load_dotenv(dotenv_path=env_file)
+            self._env_file = env_file
+        else:
+            # 优先检查环境变量 DOTENV_PATH，否则使用默认 .env
+            env_path = os.getenv('DOTENV_PATH', '.env')
+            load_dotenv(dotenv_path=env_path)
+            self._env_file = env_path
 
         # 加载 YAML 配置
         self.config_path = Path(config_path)
@@ -279,6 +289,7 @@ def get_config(
     config_path: str = "config.yaml",
     require_api_credentials: bool = True,
     force_reload: bool = False,
+    env_file: str = None,
 ) -> Config:
     """
     获取全局配置实例（单例模式）
@@ -287,21 +298,25 @@ def get_config(
         config_path: 配置文件路径
         require_api_credentials: 是否强制要求 API 凭证
         force_reload: 是否强制重新加载配置
+        env_file: 环境变量文件路径（默认: .env）
 
     Returns:
         Config 实例
     """
     global _config
     requested_path = Path(config_path)
+    requested_env_file = env_file or os.getenv('DOTENV_PATH', '.env')
     if (
         _config is None
         or force_reload
         or requested_path != _config.config_path
         or _config.require_api_credentials != require_api_credentials
+        or _config._env_file != requested_env_file
     ):
         _config = Config(
             config_path,
             require_api_credentials=require_api_credentials,
+            env_file=env_file,
         )
         _config.validate()
     return _config
