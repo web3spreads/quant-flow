@@ -614,7 +614,7 @@ class BacktestEngine:
         """
         # 获取两个决策点之间的所有K线数据
         mask = (df['timestamp'] >= start_timestamp) & (df['timestamp'] <= end_timestamp)
-        between_candles = df[mask].copy()
+        between_candles = df[mask]
         
         if len(between_candles) == 0:
             return
