@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from jinja2 import Environment, FileSystemLoader, Template
 
-from src.config import FEE_RATE_PER_SIDE,MAKER_FEE_RATE_PER_SIDE
+from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.i18n import get_text
 from src.fees import FeeRates
 
