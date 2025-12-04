@@ -45,8 +45,8 @@ def calculate_fee_rates(
         is_aligned_quote_token: Whether the quote token is aligned (see docs).
         market_type: "perp" or "spot".
         is_stable_pair: True for stable spot pairs.
-        deployer_fee_scale: HIP-3 deployer scale (0-3, 0 for non-HIP-3).
-        growth_mode: Whether growth mode is enabled (HIP-3 only).
+        deployer_fee_scale: HIP-3 deployer scale (0-3, 0 for non-HIP-3). Only applies to perpetual markets.
+        growth_mode: Whether growth mode is enabled (HIP-3 only). Only applies to perpetual markets.
 
     Returns:
         FeeRates with maker/taker rates as decimals (per side).
