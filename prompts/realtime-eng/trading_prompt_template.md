@@ -128,24 +128,36 @@ The following factors are for your comprehensive evaluation, **not hard limits**
 
 ## ⚡ Trading Cost Analysis
 
-**Fee Structure (Hyperliquid):**
+**Fee Structure (Hyperliquid Tier 0):**
 - Open Fee: **{{ fee_rate_per_side }}** (Taker, Market Order)
 - Close Fee: **{{ fee_rate_per_side }}** (Taker)
 - **Full Round-Trip Cost**: {{ total_fee_rate }}
 
+**Important Notes:**
+- Fees are based on **position value** (price × size), not margin
+- Leverage amplifies position value, thus amplifying fees
+
+**Calculation Formula:**
+```
+Position Value = Margin × Leverage
+Open Fee = Position Value × {{ fee_rate_per_side }}
+Close Fee = Position Value × {{ fee_rate_per_side }}
+Total Fee = Open Fee + Close Fee
+```
+
 **Estimated Cost for This Trade:**
 Assuming max amount and leverage
-- Actual Position Value: ${{ position_value }}
+- Position Value: ${{ position_value }} (Margin ${{ max_trade_amount }} × {{ max_leverage }}x Leverage)
 - Open Fee: ${{ open_fee }}
 - Close Fee: ${{ close_fee }}
 - **Estimated Total Fee**: ${{ total_fee }}
 - **Breakeven Point (Return on Capital)**: {{ breakeven_percent }}
-- **Required Real Price Move**: {{ price_move_percent }}
+- **Required Price Move**: {{ price_move_percent }}
 - **Take-Profit / Fee Ratio**: {{ profit_to_fee_ratio }}
 
 **Cost Reference:**
 - Current Take-Profit Target {{ take_profit_ratio }}, TP/Fee Ratio = {{ profit_to_fee_ratio }}
-- Ratio > 3 is a quality trade; 2-3 is acceptable.
+- Ratio ≥ 3 is a quality trade; 2-3 is acceptable; < 2 requires caution
 
 ## 💰 Trading Permissions & Coin-Specific Suggestions
 - Max Trade Amount per Trade: ${{ max_trade_amount }} USD
