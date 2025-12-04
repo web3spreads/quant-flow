@@ -619,35 +619,48 @@ class BacktestEngine:
         if len(between_candles) == 0:
             return
         
+        # 在循环开始前检查一次持仓状态
+        positions = self.client.get_positions()
+        has_position = any(p.get('coin') == self.symbol for p in positions)
+        
+        if not has_position:
+            # 没有持仓，直接返回
+            return
+        
         # 遍历每个K线检查止盈止损
         for idx, row in between_candles.iterrows():
-            # 检查是否还有持仓（可能在前面的K线已经被平掉）
-            positions = self.client.get_positions()
-            if not any(p.get('coin') == self.symbol for p in positions):
-                # 没有持仓了，可以提前退出
+            # 如果之前已经平仓，提前退出
+            if not has_position:
                 break
             
             # 设置当前时间到该K线的时间点
             candle_timestamp = row['timestamp']
             self.client.set_current_time(candle_timestamp)
             
-            # 检查止盈止损
-            self._check_take_profit_stop_loss(candle_timestamp, df)
+            # 检查止盈止损，并返回是否发生了平仓
+            position_closed = self._check_take_profit_stop_loss(candle_timestamp, df)
             
-            # 如果持仓被平掉，更新持仓盈亏并继续
+            # 如果持仓被平掉，设置标志
+            if position_closed:
+                has_position = False
+            
+            # 更新持仓盈亏
             self._update_positions_pnl(candle_timestamp, df)
 
     def _check_take_profit_stop_loss(
         self,
         timestamp: datetime,
         df: pd.DataFrame
-    ):
+    ) -> bool:
         """
         检查止盈止损
         
         Args:
             timestamp: 当前时间
             df: 数据DataFrame
+            
+        Returns:
+            bool: 是否发生了平仓
         """
         # 找到当前时间点的价格
         time_diffs = (df['timestamp'] - timestamp).abs()
@@ -656,6 +669,7 @@ class BacktestEngine:
         high_price = df.iloc[closest_idx]['high']
         low_price = df.iloc[closest_idx]['low']
 
+        position_closed = False
         positions = self.client.get_positions()
         for position in positions[:]:  # 使用切片复制，避免修改时出错
             symbol = position.get('coin')
@@ -690,6 +704,9 @@ class BacktestEngine:
             if should_close:
                 # 平仓
                 self._close_position(symbol, current_price, close_reason)
+                position_closed = True
+        
+        return position_closed
 
     def _close_position(
         self,
