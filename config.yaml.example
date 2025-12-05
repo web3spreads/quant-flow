@@ -240,3 +240,5 @@ notifications:
     error: true
     # 熔断机制触发通知
     circuit_breaker: true
+    # 外部信息汇总完成通知
+    external_info_summary: true

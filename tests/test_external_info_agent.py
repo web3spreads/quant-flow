@@ -17,9 +17,9 @@ from src.utils.logger import get_logger
 
 
 def test_langchain_workflow():
-    """测试 LangChain 工作流模式"""
+    """测试 LangChain 工作流"""
     print("=" * 60)
-    print("测试 LangChain 工作流模式")
+    print("测试外部信息收集 Agent")
     print("=" * 60)
     
     logger = get_logger()
@@ -31,8 +31,7 @@ def test_langchain_workflow():
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4"),
         exa_api_key=os.getenv("EXA_API_KEY"),
-        symbols=["BTC", "ETH"],
-        use_langchain_workflow=True  # 使用新的工作流
+        symbols=["BTC", "ETH"]
     )
     
     # 测试收集单个周期
@@ -51,36 +50,6 @@ def test_langchain_workflow():
     status = agent.get_report_status()
     for period, info in status.items():
         print(f"  {period}: {info['total_files']} 个文件")
-
-
-def test_traditional_mode():
-    """测试传统模式"""
-    print("\n" + "=" * 60)
-    print("测试传统模式（exa_py）")
-    print("=" * 60)
-    
-    logger = get_logger()
-    
-    # 创建 Agent（使用传统模式）
-    agent = ExternalInfoAgent(
-        logger=logger,
-        openai_api_base=os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4"),
-        exa_api_key=os.getenv("EXA_API_KEY"),
-        symbols=["BTC"],
-        use_langchain_workflow=False  # 使用传统模式
-    )
-    
-    print("\n测试收集 daily 周期...")
-    saved_files = agent.collect_and_save(periods=[TimePeriod.DAILY])
-    
-    if saved_files:
-        print(f"\n✅ 成功生成 {len(saved_files)} 份报告:")
-        for period, file_path in saved_files.items():
-            print(f"  - {period}: {file_path}")
-    else:
-        print("\n❌ 未生成任何报告")
 
 
 def test_tools_directly():
@@ -136,9 +105,6 @@ if __name__ == "__main__":
         
         # 测试 LangChain 工作流
         test_langchain_workflow()
-        
-        # 测试传统模式
-        # test_traditional_mode()
         
         print("\n" + "=" * 60)
         print("✅ 所有测试完成")

@@ -844,6 +844,14 @@ class QuantFlowBot:
                 )
                 for period, file_path in saved_files.items():
                     self.logger.print_info(f"  - {period}: {file_path}")
+                
+                # 发送通知（通过 notifications.events.external_info_summary 控制）
+                if self.notifier and self.notifier.enabled:
+                    self.notifier.notify_external_info_summary(
+                        periods=[p.value for p in periods],
+                        report_count=len(saved_files),
+                        saved_files=saved_files
+                    )
             else:
                 self.logger.print_warning("外部信息收集未生成任何报告")
 

@@ -9,6 +9,7 @@ dependencies = [
     "langchain-core>=1.0.2",
     "langchain-openai>=1.0.1",
     "langchain-community>=0.4.1",
+    "langchain-exa>=0.2.0",
     "langgraph>=1.0.2",
     "openai>=1.60.0",
     "hyperliquid-python-sdk>=0.6.0",
@@ -31,10 +32,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
-
-[tool.uv]
-preview = true
-
-[tool.uv.sources]
-langchain-core = { git = "https://github.com/loadchange/langchain", subdirectory = "libs/core", branch = "feat/tool-call-extra-content" }
-langchain-openai = { git = "https://github.com/loadchange/langchain", subdirectory = "libs/partners/openai", branch = "feat/tool-call-extra-content" }

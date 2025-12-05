@@ -11,13 +11,7 @@ from langchain_core.tools import tool
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.documents import Document
-
-try:
-    from langchain_exa import ExaSearchRetriever
-    LANGCHAIN_EXA_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_EXA_AVAILABLE = False
-    ExaSearchRetriever = None
+from langchain_exa import ExaSearchRetriever
 
 
 @tool
@@ -39,8 +33,6 @@ def search_crypto_market_news(
     Returns:
         格式化的搜索结果列表
     """
-    if not LANGCHAIN_EXA_AVAILABLE:
-        return ["langchain-exa 未安装，无法使用此功能"]
     
     # 初始化 Exa 检索器
     retriever_kwargs = {

@@ -21,6 +21,7 @@ class NotificationEvent(str, Enum):
     ERROR = "error"                         # 错误
     CIRCUIT_BREAKER = "circuit_breaker"     # 熔断
     SYSTEM_SHUTDOWN = "system_shutdown"     # 系统关闭
+    EXTERNAL_INFO_SUMMARY = "external_info_summary"  # 外部信息汇总完成
 
 
 class Notifier:
@@ -710,3 +711,50 @@ class Notifier:
         
         message = "\n".join(lines)
         self.notify(NotificationEvent.SYSTEM_SHUTDOWN, title, message)
+
+    def notify_external_info_summary(
+        self,
+        periods: Optional[List[str]] = None,
+        report_count: int = 0,
+        saved_files: Optional[Dict[str, str]] = None
+    ):
+        """
+        发送外部信息汇总完成通知
+
+        Args:
+            periods: 收集的时间周期列表
+            report_count: 生成的报告数量
+            saved_files: 保存的文件路径字典 {period: file_path}
+        """
+        from datetime import datetime
+        
+        title = "📰 外部信息汇总完成"
+        
+        lines = [
+            f"【完成时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"【报告数量】{report_count} 份",
+        ]
+        
+        if periods:
+            period_names = {
+                "daily": "过去24小时",
+                "weekly": "过去一周",
+                "biweekly": "过去两周",
+                "monthly": "过去一个月"
+            }
+            period_list = [period_names.get(p, p) for p in periods]
+            lines.append(f"【时间周期】{', '.join(period_list)}")
+        
+        if saved_files:
+            lines.append("")
+            lines.append("【生成报告】")
+            for period, file_path in saved_files.items():
+                # 只显示文件名，不显示完整路径
+                file_name = file_path.split('/')[-1] if '/' in file_path else file_path
+                lines.append(f"  • {period}: {file_name}")
+        
+        lines.append("")
+        lines.append("✅ 市场信息已更新，可用于交易决策参考")
+        
+        message = "\n".join(lines)
+        self.notify(NotificationEvent.EXTERNAL_INFO_SUMMARY, title, message)

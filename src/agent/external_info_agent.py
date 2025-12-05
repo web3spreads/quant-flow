@@ -15,13 +15,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from jinja2 import Environment, FileSystemLoader
 
-try:
-    from exa_py import Exa
-    EXA_AVAILABLE = True
-except ImportError:
-    EXA_AVAILABLE = False
-    Exa = None
-
 from src.agent.market_info_store import MarketInfoStore, TimePeriod
 from src.utils.logger import TradingLogger
 
@@ -119,20 +112,10 @@ class ExternalInfoAgent:
         self.symbols = symbols or ["BTC", "ETH"]
         self.store = MarketInfoStore(store_dir)
 
-        # 初始化 Exa 客户端
+        # 设置 Exa API 密钥（用于 LangChain 集成）
         self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
-        self.exa_client = None
-
-        if EXA_AVAILABLE and self.exa_api_key:
-            try:
-                self.exa_client = Exa(api_key=self.exa_api_key)
-                self.logger.print_info("✅ Exa 搜索客户端初始化成功")
-            except Exception as e:
-                self.logger.print_warning(f"Exa 客户端初始化失败: {e}")
-        elif not EXA_AVAILABLE:
-            self.logger.print_warning("exa_py 未安装，外部信息收集功能将受限")
-        else:
-            self.logger.print_warning("未配置 EXA_API_KEY，外部信息收集功能将受限")
+        if self.exa_api_key:
+            os.environ["EXA_API_KEY"] = self.exa_api_key
 
         # 初始化 LLM
         self.llm = ChatOpenAI(
@@ -146,6 +129,21 @@ class ExternalInfoAgent:
         # 加载 Prompt 模板
         self.prompts_dir = Path(prompts_dir)
         self._load_prompts()
+        
+        # 初始化 LangChain 工作流
+        self.workflow = None
+        try:
+            from src.agent.external_info.workflow import ExternalInfoWorkflow
+            self.workflow = ExternalInfoWorkflow(
+                llm=self.llm,
+                system_prompt=self.system_prompt,
+                research_template=self.research_template.template
+            )
+            self.logger.print_info("✅ LangChain 工作流初始化成功")
+        except ImportError as e:
+            self.logger.print_error(f"❌ LangChain 工作流初始化失败: {e}")
+            self.logger.print_error("请确保已安装 langchain-exa: pip install langchain-exa")
+            raise
 
     def _load_prompts(self):
         """加载 Prompt 模板"""
@@ -193,277 +191,6 @@ class ExternalInfoAgent:
 
 请基于上述搜索结果，生成一份结构化的市场信息报告（JSON 格式）。"""
 
-    def _search_exa(
-        self,
-        query: str,
-        num_results: int = 5,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        使用 Exa 执行搜索
-
-        Args:
-            query: 搜索查询
-            num_results: 返回结果数量
-            start_date: 开始日期
-            end_date: 结束日期
-
-        Returns:
-            搜索结果列表
-        """
-        if not self.exa_client:
-            return []
-
-        try:
-            # 构建搜索参数
-            search_params = {
-                "query": query,
-                "num_results": num_results,
-                "use_autoprompt": True,
-                "type": "auto"
-            }
-
-            # 添加日期过滤
-            if start_date:
-                search_params["start_published_date"] = start_date.strftime("%Y-%m-%d")
-            if end_date:
-                search_params["end_published_date"] = end_date.strftime("%Y-%m-%d")
-
-            # 执行搜索并获取内容
-            results = self.exa_client.search_and_contents(
-                **search_params,
-                text={"max_characters": 1000}
-            )
-
-            # 解析结果
-            parsed_results = []
-            for result in results.results:
-                parsed_results.append({
-                    "title": result.title,
-                    "url": result.url,
-                    "text": result.text[:500] if result.text else "",
-                    "published_date": getattr(result, "published_date", None),
-                    "author": getattr(result, "author", None)
-                })
-
-            return parsed_results
-
-        except Exception as e:
-            self.logger.print_warning(f"Exa 搜索失败: {e}")
-            return []
-
-    def _collect_search_results(
-        self,
-        period: TimePeriod
-    ) -> str:
-        """
-        收集指定时间周期的搜索结果
-
-        Args:
-            period: 时间周期
-
-        Returns:
-            格式化的搜索结果文本
-        """
-        config = self.PERIOD_CONFIG[period]
-        end_date = datetime.now()
-        start_date = end_date - timedelta(hours=config["hours"])
-
-        all_results = []
-        date_range = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
-
-        # 对每个主题执行搜索
-        for topic, queries in self.SEARCH_QUERIES.items():
-            topic_results = []
-
-            # 选择要执行的查询数量
-            selected_queries = queries[:config["queries_per_topic"]]
-
-            for query_template in selected_queries:
-                query = query_template.format(date_range=date_range)
-
-                # 添加币种关键词
-                if self.symbols:
-                    for symbol in self.symbols[:2]:  # 只添加前两个币种
-                        enhanced_query = f"{query} {symbol}"
-                        results = self._search_exa(
-                            enhanced_query,
-                            num_results=config["results_per_query"],
-                            start_date=start_date,
-                            end_date=end_date
-                        )
-                        topic_results.extend(results)
-                else:
-                    results = self._search_exa(
-                        query,
-                        num_results=config["results_per_query"],
-                        start_date=start_date,
-                        end_date=end_date
-                    )
-                    topic_results.extend(results)
-
-            if topic_results:
-                all_results.append({
-                    "topic": topic,
-                    "results": topic_results
-                })
-
-        # 格式化搜索结果
-        return self._format_search_results(all_results)
-
-    def _format_search_results(self, results: List[Dict[str, Any]]) -> str:
-        """
-        格式化搜索结果为文本
-
-        Args:
-            results: 搜索结果列表
-
-        Returns:
-            格式化的文本
-        """
-        if not results:
-            return "未找到相关搜索结果。"
-
-        topic_labels = {
-            "market_news": "市场新闻",
-            "regulatory": "监管政策",
-            "macro": "宏观经济",
-            "industry": "行业动态",
-            "sentiment": "市场情绪"
-        }
-
-        formatted_parts = []
-
-        for topic_data in results:
-            topic = topic_data["topic"]
-            topic_results = topic_data["results"]
-            label = topic_labels.get(topic, topic)
-
-            formatted_parts.append(f"\n## {label}\n")
-
-            for i, result in enumerate(topic_results[:5], 1):  # 每个主题最多5条
-                title = result.get("title", "无标题")
-                text = result.get("text", "")[:300]  # 限制文本长度
-                url = result.get("url", "")
-                pub_date = result.get("published_date", "")
-
-                formatted_parts.append(f"""
-### {i}. {title}
-- **来源**: {url}
-- **发布时间**: {pub_date or '未知'}
-- **摘要**: {text}
-""")
-
-        return "".join(formatted_parts)
-
-    def _generate_report(
-        self,
-        period: TimePeriod,
-        search_results: str
-    ) -> Dict[str, Any]:
-        """
-        使用 LLM 生成研究报告
-
-        Args:
-            period: 时间周期
-            search_results: 搜索结果文本
-
-        Returns:
-            结构化的报告数据
-        """
-        config = self.PERIOD_CONFIG[period]
-        now = datetime.now()
-        start_time = now - timedelta(hours=config["hours"])
-
-        # 渲染 Prompt
-        context = {
-            "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-            "time_period": period.value,
-            "period_description": config["description"],
-            "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "symbols": self.symbols,
-            "search_results": search_results
-        }
-
-        prompt = self.research_template.render(context)
-
-        # 调用 LLM
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(content=prompt)
-        ]
-
-        try:
-            response = self.llm.invoke(messages)
-            raw_text = response.content if isinstance(response.content, str) else str(response.content)
-
-            # 解析 JSON 响应
-            report = self._parse_json_response(raw_text)
-
-            if report:
-                return report
-            else:
-                # 如果解析失败，返回基本结构
-                return {
-                    "period": period.value,
-                    "generated_at": now.isoformat(),
-                    "market_overview": {
-                        "summary": "报告生成失败",
-                        "trend": "未知",
-                        "sentiment": "中性"
-                    },
-                    "key_events": [],
-                    "regulatory_updates": [],
-                    "industry_news": [],
-                    "market_sentiment": {},
-                    "risk_alerts": [],
-                    "trading_implications": {},
-                    "raw_response": raw_text[:500]
-                }
-
-        except Exception as e:
-            self.logger.print_error(f"LLM 调用失败: {e}")
-            return {
-                "period": period.value,
-                "generated_at": now.isoformat(),
-                "error": str(e)
-            }
-
-    def _parse_json_response(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        解析 LLM 的 JSON 响应
-
-        Args:
-            text: LLM 响应文本
-
-        Returns:
-            解析后的字典，失败返回 None
-        """
-        # 尝试直接解析
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # 尝试提取 JSON 块
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        # 尝试提取 ```json 代码块
-        code_block_match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
-        if code_block_match:
-            try:
-                return json.loads(code_block_match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        return None
-
     def collect_and_save(
         self,
         periods: Optional[List[TimePeriod]] = None
@@ -480,6 +207,10 @@ class ExternalInfoAgent:
         if periods is None:
             periods = list(TimePeriod)
 
+        if not self.workflow:
+            self.logger.print_error("❌ 工作流未初始化，无法收集信息")
+            return {}
+
         saved_files = {}
 
         for period in periods:
@@ -489,16 +220,22 @@ class ExternalInfoAgent:
                     style="bold cyan"
                 )
 
-                # 收集搜索结果
-                search_results = self._collect_search_results(period)
+                # 运行工作流
+                final_state = self.workflow.run(
+                    period=period.value,
+                    symbols=self.symbols
+                )
 
-                if not search_results or search_results == "未找到相关搜索结果。":
-                    self.logger.print_warning(f"{period.value} 周期未找到搜索结果")
+                # 检查是否有错误
+                if final_state.get("errors"):
+                    for error in final_state["errors"]:
+                        self.logger.print_warning(error)
+
+                # 获取报告
+                report = final_state.get("report")
+                if not report:
+                    self.logger.print_warning(f"{period.value} 周期未生成报告")
                     continue
-
-                # 生成报告
-                self.logger.print_info("正在使用 AI 生成报告...")
-                report = self._generate_report(period, search_results)
 
                 # 保存报告
                 file_path = self.store.save_report(period, report)
