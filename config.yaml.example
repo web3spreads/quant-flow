@@ -121,6 +121,30 @@ review_agent:
     time_of_day: 0.3
   confidence_decay_factor: 0.6   # 低相似度时的置信度衰减因子
 
+# 外部信息收集 Agent 配置
+# 使用 Exa 搜索 API 收集市场新闻、监管动态等外部信息
+# 定期汇总后供交易决策 Agent 参考
+external_info_agent:
+  enabled: false                 # 是否启用外部信息收集 Agent
+  interval_hours: 3.0            # 收集间隔（小时），每次触发会汇总各时间周期信息
+  store_dir: data/market_info    # 市场信息存储目录
+  model: deepseek-chat           # 信息汇总使用的模型
+  temperature: 0.1               # 汇总时的 LLM 温度
+  max_summary_length: 2000       # 注入决策时的摘要最大长度（字符）
+  # 收集的时间周期配置
+  # 每次触发时会生成以下时间周期的报告：
+  # - daily: 过去24小时
+  # - weekly: 过去一周
+  # - biweekly: 过去两周
+  # - monthly: 过去一个月
+  periods:
+    - daily
+    - weekly
+    - biweekly
+    - monthly
+  # 报告清理配置
+  cleanup_days: 30               # 保留报告的天数，超过则自动清理
+
 # 风控配置
 risk_management:
   # 是否启用熔断机制

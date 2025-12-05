@@ -22,6 +22,7 @@ dependencies = [
     "rich>=13.9.0",
     "apprise>=1.9.0",
     "jinja2>=3.1.0",
+    "exa-py>=1.0.0",
 ]
 
 [build-system]

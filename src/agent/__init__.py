@@ -7,6 +7,16 @@ from src.agent.review_agent import ReviewAgent
 from src.agent.review_memory import ReviewMemoryStore
 from src.agent.context_extractor import ContextExtractor
 from src.agent.similarity_scorer import SimilarityScorer
+from src.agent.external_info_agent import (
+    ExternalInfoAgent,
+    ExternalInfoScheduler,
+    get_external_info_agent
+)
+from src.agent.market_info_store import (
+    MarketInfoStore,
+    TimePeriod,
+    get_market_info_store
+)
 
 __all__ = [
     'SingleSymbolAgent',
@@ -18,5 +28,11 @@ __all__ = [
     'ReviewAgent',
     'ReviewMemoryStore',
     'ContextExtractor',
-    'SimilarityScorer'
+    'SimilarityScorer',
+    'ExternalInfoAgent',
+    'ExternalInfoScheduler',
+    'get_external_info_agent',
+    'MarketInfoStore',
+    'TimePeriod',
+    'get_market_info_store'
 ]

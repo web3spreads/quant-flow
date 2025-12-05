@@ -59,6 +59,7 @@ class Config:
         self._init_agent_config()
         self._init_prompt_config()
         self._init_review_agent_config()
+        self._init_external_info_agent_config()
         self._init_risk_config()
         self._init_logging_config()
         self._init_notifications_config()
@@ -197,6 +198,32 @@ class Config:
         )
         self.review_similarity_method: str = review.get(
             "similarity_method", "cosine"
+        )
+
+    def _init_external_info_agent_config(self):
+        """初始化外部信息收集 Agent 配置"""
+        external_info = self.config_data.get("external_info_agent", {})
+        self.external_info_enabled: bool = external_info.get("enabled", False)
+        self.external_info_interval_hours: float = float(
+            external_info.get("interval_hours", 3.0)
+        )
+        self.external_info_store_dir: str = external_info.get(
+            "store_dir", "data/market_info"
+        )
+        self.external_info_model: str = external_info.get(
+            "model", self.openai_model
+        )
+        self.external_info_temperature: float = float(
+            external_info.get("temperature", 0.1)
+        )
+        self.external_info_max_summary_length: int = int(
+            external_info.get("max_summary_length", 2000)
+        )
+        self.external_info_periods: List[str] = external_info.get(
+            "periods", ["daily", "weekly", "biweekly", "monthly"]
+        )
+        self.external_info_cleanup_days: int = int(
+            external_info.get("cleanup_days", 30)
         )
 
     def _init_risk_config(self):
