@@ -274,7 +274,7 @@ class QuantFlowBot:
                     logger=self.logger
                 )
 
-                self.logger.print_info("  ✅ 外部信息收集 Agent 初始化完成")
+                self.logger.print_info("✅ 外部信息收集 Agent 初始化完成")
             except Exception as e:
                 self.logger.print_warning(f"外部信息收集 Agent 初始化失败: {e}")
                 self.external_info_agent = None

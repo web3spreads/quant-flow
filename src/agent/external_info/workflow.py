@@ -44,12 +44,16 @@ class ExternalInfoWorkflow:
         Args:
             llm: LangChain LLM 实例
             system_prompt: 系统提示
-            research_template: 研究模板
+            research_template: 研究模板（Jinja2 格式字符串）
             exa_api_key: Exa API 密钥
         """
         self.llm = llm
         self.system_prompt = system_prompt
-        self.research_template = research_template
+        
+        # 将模板字符串转换为 Jinja2 Template 对象
+        from jinja2 import Template
+        self.research_template = Template(research_template)
+        
         self.exa_api_key = exa_api_key
         self.parser = JsonOutputParser()
         
@@ -163,8 +167,8 @@ class ExternalInfoWorkflow:
         now = datetime.now()
         start_time = now - timedelta(hours=period_config.get("hours", 24))
         
-        # 渲染 Prompt
-        prompt_text = self.research_template.format(
+        # 渲染 Prompt（使用 Jinja2）
+        prompt_text = self.research_template.render(
             current_time=now.strftime("%Y-%m-%d %H:%M:%S"),
             time_period=period,
             period_description=period_config.get("description", period),
