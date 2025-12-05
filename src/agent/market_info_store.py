@@ -5,17 +5,9 @@
 
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 from enum import Enum
-
-
-class TimePeriod(Enum):
-    """时间周期枚举"""
-    DAILY = "daily"          # 每日
-    WEEKLY = "weekly"        # 每周
-    BIWEEKLY = "biweekly"    # 两周
-    MONTHLY = "monthly"      # 每月
 
 
 class RiskSeverity(Enum):
@@ -41,77 +33,53 @@ class MarketInfoStore:
             base_dir: 存储的基础目录
         """
         self.base_dir = Path(base_dir)
-        self._ensure_directories()
+        self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def _ensure_directories(self):
-        """确保所有必要的目录存在"""
-        for period in TimePeriod:
-            period_dir = self.base_dir / period.value
-            period_dir.mkdir(parents=True, exist_ok=True)
-
-    def _get_file_path(self, period: TimePeriod, date: datetime) -> Path:
+    def _get_file_path(self, start_time: datetime, end_time: datetime) -> Path:
         """
-        根据时间周期和日期获取文件路径
+        根据时间范围获取文件路径
 
         Args:
-            period: 时间周期
-            date: 日期
+            start_time: 开始时间
+            end_time: 结束时间
 
         Returns:
-            文件路径
+            文件路径，格式: YYYY-MM-DD_HH-MM.json
         """
-        if period == TimePeriod.DAILY:
-            # 每日：YYYY-MM-DD.json
-            filename = date.strftime("%Y-%m-%d.json")
-        elif period == TimePeriod.WEEKLY:
-            # 每周：YYYY-W##.json（周数）
-            iso_year, iso_week, _ = date.isocalendar()
-            filename = f"{iso_year}-W{iso_week:02d}.json"
-        elif period == TimePeriod.BIWEEKLY:
-            # 两周：使用两周周期的起始日期
-            # 计算两周周期的起始日期（以年初为基准）
-            year_start = datetime(date.year, 1, 1)
-            days_since_year_start = (date - year_start).days
-            biweek_number = days_since_year_start // 14
-            biweek_start = year_start + timedelta(days=biweek_number * 14)
-            filename = biweek_start.strftime("%Y-%m-%d.json")
-        elif period == TimePeriod.MONTHLY:
-            # 每月：YYYY-MM.json
-            filename = date.strftime("%Y-%m.json")
-        else:
-            raise ValueError(f"未知的时间周期: {period}")
-
-        return self.base_dir / period.value / filename
+        # 格式: 2025-12-05_19-22.json
+        date_str = end_time.strftime("%Y-%m-%d")
+        start_hour = start_time.strftime("%H-%M")
+        end_hour = end_time.strftime("%H-%M")
+        filename = f"{date_str}_{start_hour}_to_{end_hour}.json"
+        return self.base_dir / filename
 
     def save_report(
         self,
-        period: TimePeriod,
         report: Dict[str, Any],
-        date: Optional[datetime] = None
+        start_time: datetime,
+        end_time: datetime
     ) -> str:
         """
         保存市场信息报告
 
         Args:
-            period: 时间周期
             report: 报告内容
-            date: 报告日期（默认为当前时间）
+            start_time: 报告开始时间
+            end_time: 报告结束时间
 
         Returns:
             保存的文件路径
         """
-        if date is None:
-            date = datetime.now()
-
-        file_path = self._get_file_path(period, date)
+        file_path = self._get_file_path(start_time, end_time)
 
         # 添加元数据
         report_with_meta = {
             "metadata": {
-                "period": period.value,
                 "generated_at": datetime.now().isoformat(),
-                "report_date": date.isoformat(),
-                "version": "1.0"
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "interval_hours": (end_time - start_time).total_seconds() / 3600,
+                "version": "2.0"
             },
             "data": report
         }
@@ -121,69 +89,28 @@ class MarketInfoStore:
 
         return str(file_path)
 
-    def load_report(
-        self,
-        period: TimePeriod,
-        date: Optional[datetime] = None
-    ) -> Optional[Dict[str, Any]]:
+    def load_latest_report(self) -> Optional[Dict[str, Any]]:
         """
-        加载市场信息报告
-
-        Args:
-            period: 时间周期
-            date: 报告日期（默认为当前时间）
+        加载最新的市场信息报告
 
         Returns:
             报告内容，如果不存在则返回 None
         """
-        if date is None:
-            date = datetime.now()
-
-        file_path = self._get_file_path(period, date)
-
-        if not file_path.exists():
-            return None
-
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            # 获取所有 JSON 文件
+            json_files = list(self.base_dir.glob("*.json"))
+            if not json_files:
+                return None
+
+            # 按修改时间排序，获取最新的
+            latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
+
+            with open(latest_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
+
+        except Exception as e:
+            print(f"❌ 加载最新报告失败: {e}")
             return None
-
-    def get_latest_reports(
-        self,
-        max_age_hours: int = 24
-    ) -> Dict[str, Optional[Dict[str, Any]]]:
-        """
-        获取所有周期的最新报告
-
-        Args:
-            max_age_hours: 最大报告年龄（小时），超过则认为过期
-
-        Returns:
-            各周期的最新报告，格式为 {period: report}
-        """
-        now = datetime.now()
-        reports = {}
-
-        for period in TimePeriod:
-            report = self.load_report(period, now)
-
-            # 检查报告是否过期
-            if report:
-                generated_at = report.get("metadata", {}).get("generated_at")
-                if generated_at:
-                    try:
-                        gen_time = datetime.fromisoformat(generated_at)
-                        age_hours = (now - gen_time).total_seconds() / 3600
-                        if age_hours > max_age_hours:
-                            report = None  # 报告过期
-                    except ValueError:
-                        pass
-
-            reports[period.value] = report
-
-        return reports
 
     def get_combined_summary(
         self,
@@ -191,7 +118,7 @@ class MarketInfoStore:
         max_length: int = 2000
     ) -> str:
         """
-        获取合并的市场信息摘要，用于注入到交易决策中
+        获取最新报告的市场信息摘要
 
         Args:
             symbols: 关注的币种列表
@@ -200,66 +127,22 @@ class MarketInfoStore:
         Returns:
             格式化的市场信息摘要文本
         """
-        reports = self.get_latest_reports()
-        summary_parts = []
-
-        # 按优先级处理各周期报告
-        priority_order = [
-            TimePeriod.DAILY.value,
-            TimePeriod.WEEKLY.value,
-            TimePeriod.BIWEEKLY.value,
-            TimePeriod.MONTHLY.value
-        ]
-
-        for period_name in priority_order:
-            report = reports.get(period_name)
-            if not report:
-                continue
-
-            data = report.get("data", {})
-            period_summary = self._format_period_summary(period_name, data, symbols)
-
-            if period_summary:
-                summary_parts.append(period_summary)
-
-        if not summary_parts:
+        report = self.load_latest_report()
+        if not report:
             return ""
 
-        # 合并所有摘要
-        full_summary = "\n\n".join(summary_parts)
+        data = report.get("data", {})
+        metadata = report.get("metadata", {})
 
-        # 如果超过最大长度，进行截断
-        if len(full_summary) > max_length:
-            full_summary = full_summary[:max_length - 3] + "..."
+        # 格式化摘要
+        summary_parts = []
 
-        return full_summary
-
-    def _format_period_summary(
-        self,
-        period_name: str,
-        data: Dict[str, Any],
-        symbols: Optional[List[str]] = None
-    ) -> str:
-        """
-        格式化单个周期的摘要
-
-        Args:
-            period_name: 周期名称
-            data: 报告数据
-            symbols: 关注的币种列表
-
-        Returns:
-            格式化的摘要文本
-        """
-        period_labels = {
-            "daily": "📅 近24小时市场信息",
-            "weekly": "📆 近一周市场信息",
-            "biweekly": "📊 近两周市场信息",
-            "monthly": "📈 近一月市场信息"
-        }
-
-        label = period_labels.get(period_name, f"📋 {period_name}")
-        parts = [f"### {label}"]
+        # 时间范围
+        start_time = metadata.get("start_time", "")
+        end_time = metadata.get("end_time", "")
+        if start_time and end_time:
+            summary_parts.append(f"### 📰 外部市场信息")
+            summary_parts.append(f"**时间范围**: {start_time} 至 {end_time}")
 
         # 市场概况
         overview = data.get("market_overview", {})
@@ -269,19 +152,18 @@ class MarketInfoStore:
             sentiment = overview.get("sentiment", "")
 
             if summary_text:
-                parts.append(f"\n**市场概况**: {summary_text}")
+                summary_parts.append(f"\n**市场概况**: {summary_text}")
             if trend:
-                parts.append(f"**趋势**: {trend}")
+                summary_parts.append(f"**趋势**: {trend}")
             if sentiment:
-                parts.append(f"**情绪**: {sentiment}")
+                summary_parts.append(f"**情绪**: {sentiment}")
 
         # 关键事件（过滤与目标币种相关的）
         key_events = data.get("key_events", [])
         if key_events:
             relevant_events = []
-            for event in key_events[:5]:  # 最多5个事件
+            for event in key_events[:5]:
                 event_coins = event.get("coins", [])
-                # 如果指定了币种，只显示相关事件
                 if symbols:
                     if any(coin in symbols for coin in event_coins) or not event_coins:
                         relevant_events.append(event)
@@ -289,22 +171,12 @@ class MarketInfoStore:
                     relevant_events.append(event)
 
             if relevant_events:
-                parts.append("\n**关键事件**:")
-                for event in relevant_events[:3]:  # 最多显示3个
+                summary_parts.append("\n**关键事件**:")
+                for event in relevant_events[:3]:
                     title = event.get("title", "")
                     impact = event.get("impact", "")
                     if title:
-                        parts.append(f"- {title}（影响: {impact}）")
-
-        # 市场情绪
-        sentiment_data = data.get("market_sentiment", {})
-        if sentiment_data:
-            overall = sentiment_data.get("overall", "")
-            fear_greed = sentiment_data.get("fear_greed_index", "")
-            if overall:
-                parts.append(f"\n**市场情绪**: {overall}")
-            if fear_greed:
-                parts.append(f"**恐惧贪婪指数**: {fear_greed}")
+                        summary_parts.append(f"- {title}（影响: {impact}）")
 
         # 风险提示
         risk_alerts = data.get("risk_alerts", [])
@@ -312,11 +184,11 @@ class MarketInfoStore:
             # 筛选高风险和极高风险 (severity >= 4)
             high_risks = [r for r in risk_alerts if r.get("severity", 0) >= RiskSeverity.HIGH.value]
             if high_risks:
-                parts.append("\n**高风险警示**:")
-                for risk in high_risks[:2]:  # 最多2个高风险
+                summary_parts.append("\n**高风险警示**:")
+                for risk in high_risks[:2]:
                     desc = risk.get("description", "")
                     if desc:
-                        parts.append(f"- ⚠️ {desc}")
+                        summary_parts.append(f"- ⚠️ {desc}")
 
         # 交易参考
         trading_imp = data.get("trading_implications", {})
@@ -325,13 +197,19 @@ class MarketInfoStore:
             bearish = trading_imp.get("bearish_factors", [])
 
             if bullish:
-                parts.append(f"\n**利多因素**: {', '.join(bullish[:3])}")
+                summary_parts.append(f"\n**利多因素**: {', '.join(bullish[:3])}")
             if bearish:
-                parts.append(f"**利空因素**: {', '.join(bearish[:3])}")
+                summary_parts.append(f"**利空因素**: {', '.join(bearish[:3])}")
 
-        return "\n".join(parts) if len(parts) > 1 else ""
+        full_summary = "\n".join(summary_parts)
 
-    def cleanup_old_reports(self, days_to_keep: int = 30):
+        # 如果超过最大长度，进行截断
+        if len(full_summary) > max_length:
+            full_summary = full_summary[:max_length - 3] + "..."
+
+        return full_summary
+
+    def cleanup_old_reports(self, days_to_keep: int = 7):
         """
         清理过期的报告文件
 
@@ -340,47 +218,33 @@ class MarketInfoStore:
         """
         cutoff_date = datetime.now() - timedelta(days=days_to_keep)
 
-        for period in TimePeriod:
-            period_dir = self.base_dir / period.value
-
-            if not period_dir.exists():
+        for file_path in self.base_dir.glob("*.json"):
+            try:
+                mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                if mtime < cutoff_date:
+                    file_path.unlink()
+            except Exception:
                 continue
 
-            for file_path in period_dir.glob("*.json"):
-                try:
-                    # 获取文件修改时间
-                    mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
-                    if mtime < cutoff_date:
-                        file_path.unlink()
-                except Exception:
-                    continue
-
-    def get_report_status(self) -> Dict[str, Dict[str, Any]]:
+    def get_report_status(self) -> Dict[str, Any]:
         """
-        获取所有报告的状态信息
+        获取报告状态信息
 
         Returns:
-            各周期报告的状态信息
+            报告状态信息
         """
-        status = {}
+        files = list(self.base_dir.glob("*.json"))
+        latest_file = max(files, key=lambda f: f.stat().st_mtime) if files else None
 
-        for period in TimePeriod:
-            period_dir = self.base_dir / period.value
-            files = list(period_dir.glob("*.json")) if period_dir.exists() else []
+        status = {
+            "total_files": len(files),
+            "latest_file": str(latest_file) if latest_file else None,
+            "latest_modified": None
+        }
 
-            latest_file = max(files, key=lambda f: f.stat().st_mtime) if files else None
-
-            period_status = {
-                "total_files": len(files),
-                "latest_file": str(latest_file) if latest_file else None,
-                "latest_modified": None
-            }
-
-            if latest_file:
-                mtime = datetime.fromtimestamp(latest_file.stat().st_mtime)
-                period_status["latest_modified"] = mtime.isoformat()
-
-            status[period.value] = period_status
+        if latest_file:
+            mtime = datetime.fromtimestamp(latest_file.stat().st_mtime)
+            status["latest_modified"] = mtime.isoformat()
 
         return status
 

@@ -255,7 +255,10 @@ class QuantFlowBot:
                     store_dir=getattr(
                         self.config, "external_info_store_dir", "data/market_info"
                     ),
-                    prompt_manager=self.prompt_manager  # 传递 PromptManager
+                    prompt_manager=self.prompt_manager,  # 传递 PromptManager
+                    interval_hours=getattr(
+                        self.config, "external_info_interval_hours", 3.0
+                    )
                 )
 
                 # 创建市场信息存储实例（用于读取）

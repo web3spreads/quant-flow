@@ -4,14 +4,16 @@ LangGraph 状态定义
 """
 
 from typing import List, Dict, Any, Optional, TypedDict
-
+from datetime import datetime
 
 
 class ResearchState(TypedDict):
     """研究工作流状态"""
     # 基本信息
-    period: str  # 时间周期: daily, weekly, biweekly, monthly
+    interval_hours: float  # 时间间隔（小时）
     symbols: List[str]  # 关注的币种列表
+    start_time: datetime  # 开始时间
+    end_time: datetime  # 结束时间
     
     # 搜索相关
     search_queries: Dict[str, List[Dict[str, Any]]]  # 搜索查询列表

@@ -11,7 +11,7 @@ from pathlib import Path
 from langchain_openai import ChatOpenAI
 from jinja2 import Environment, FileSystemLoader
 
-from src.agent.market_info_store import MarketInfoStore, TimePeriod
+from src.agent.market_info_store import MarketInfoStore
 from src.utils.logger import TradingLogger
 
 
@@ -20,63 +20,6 @@ class ExternalInfoAgent:
     外部信息收集 Agent
     使用 Exa 搜索 API 收集加密货币市场信息，生成结构化报告
     """
-
-    # 搜索查询模板（针对不同主题）
-    SEARCH_QUERIES = {
-        "market_news": [
-            "cryptocurrency market news {date_range}",
-            "crypto Bitcoin Ethereum price analysis {date_range}",
-            "加密货币市场分析 {date_range}",
-        ],
-        "regulatory": [
-            "cryptocurrency regulation policy {date_range}",
-            "crypto SEC regulation news {date_range}",
-            "加密货币监管政策 {date_range}",
-        ],
-        "macro": [
-            "Federal Reserve interest rate crypto impact {date_range}",
-            "inflation economic data cryptocurrency {date_range}",
-            "美联储利率 加密货币影响 {date_range}",
-        ],
-        "industry": [
-            "blockchain technology upgrade news {date_range}",
-            "crypto exchange news {date_range}",
-            "DeFi protocol news {date_range}",
-        ],
-        "sentiment": [
-            "crypto fear greed index {date_range}",
-            "Bitcoin whale activity {date_range}",
-            "cryptocurrency institutional investment {date_range}",
-        ]
-    }
-
-    # 时间周期配置
-    PERIOD_CONFIG = {
-        TimePeriod.DAILY: {
-            "hours": 24,
-            "description": "过去24小时",
-            "queries_per_topic": 1,
-            "results_per_query": 5
-        },
-        TimePeriod.WEEKLY: {
-            "hours": 168,  # 7 * 24
-            "description": "过去一周",
-            "queries_per_topic": 2,
-            "results_per_query": 5
-        },
-        TimePeriod.BIWEEKLY: {
-            "hours": 336,  # 14 * 24
-            "description": "过去两周",
-            "queries_per_topic": 2,
-            "results_per_query": 5
-        },
-        TimePeriod.MONTHLY: {
-            "hours": 720,  # 30 * 24
-            "description": "过去一个月",
-            "queries_per_topic": 2,
-            "results_per_query": 8
-        }
-    }
 
     def __init__(
         self,
@@ -88,7 +31,8 @@ class ExternalInfoAgent:
         temperature: float = 0.1,
         symbols: Optional[List[str]] = None,
         store_dir: str = "data/market_info",
-        prompt_manager=None
+        prompt_manager=None,
+        interval_hours: float = 3.0
     ):
         """
         初始化外部信息收集 Agent
@@ -103,11 +47,13 @@ class ExternalInfoAgent:
             symbols: 关注的币种列表
             store_dir: 市场信息存储目录
             prompt_manager: Prompt 管理器（用于加载提示词）
+            interval_hours: 收集间隔（小时）
         """
         self.logger = logger
         self.symbols = symbols or ["BTC", "ETH"]
         self.store = MarketInfoStore(store_dir)
         self.prompt_manager = prompt_manager
+        self.interval_hours = interval_hours
 
         # 保存 Exa API 密钥（必须通过参数传入）
         if not exa_api_key:
@@ -137,7 +83,8 @@ class ExternalInfoAgent:
                 llm=self.llm,
                 system_prompt=self.system_prompt,
                 research_template=self.research_template_source,
-                exa_api_key=self.exa_api_key
+                exa_api_key=self.exa_api_key,
+                logger=self.logger
             )
             self.logger.print_info("✅ LangChain 工作流初始化成功")
         except ImportError as e:
@@ -175,81 +122,71 @@ class ExternalInfoAgent:
             self.logger.print_error(f"从 PromptManager 加载提示词失败: {e}")
             raise
 
-    def collect_and_save(
-        self,
-        periods: Optional[List[TimePeriod]] = None
-    ) -> Dict[str, str]:
+    def collect_and_save(self) -> Optional[str]:
         """
-        收集市场信息并保存报告
-
-        Args:
-            periods: 要收集的时间周期列表（默认为所有周期）
+        收集市场信息并保存报告（使用配置的间隔时间）
 
         Returns:
-            各周期保存的文件路径
+            保存的文件路径，失败返回 None
         """
-        if periods is None:
-            periods = list(TimePeriod)
-
         if not self.workflow:
             self.logger.print_error("❌ 工作流未初始化，无法收集信息")
-            return {}
+            return None
 
-        saved_files = {}
+        try:
+            # 计算时间范围
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=self.interval_hours)
 
-        for period in periods:
-            try:
-                self.logger.print_section(
-                    f"📡 收集 {self.PERIOD_CONFIG[period]['description']} 市场信息",
-                    style="bold cyan"
-                )
+            self.logger.print_section(
+                f"📡 收集市场信息 ({self.interval_hours} 小时)",
+                style="bold cyan"
+            )
+            self.logger.print_info(f"时间范围: {start_time.strftime('%Y-%m-%d %H:%M')} 至 {end_time.strftime('%Y-%m-%d %H:%M')}")
 
-                # 运行工作流
-                final_state = self.workflow.run(
-                    period=period.value,
-                    symbols=self.symbols
-                )
+            # 运行工作流
+            final_state = self.workflow.run(
+                interval_hours=self.interval_hours,
+                symbols=self.symbols,
+                start_time=start_time,
+                end_time=end_time
+            )
 
-                # 检查是否有错误
-                if final_state.get("errors"):
-                    for error in final_state["errors"]:
-                        self.logger.print_warning(error)
+            # 检查是否有错误
+            if final_state.get("errors"):
+                for error in final_state["errors"]:
+                    self.logger.print_warning(error)
 
-                # 获取报告
-                report = final_state.get("report")
-                if not report:
-                    self.logger.print_warning(f"{period.value} 周期未生成报告")
-                    continue
+            # 获取报告
+            report = final_state.get("report")
+            if not report:
+                self.logger.print_warning("未生成报告")
+                return None
 
-                # 保存报告
-                file_path = self.store.save_report(period, report)
-                saved_files[period.value] = file_path
-                self.logger.print_info(f"✅ 报告已保存: {file_path}")
+            # 保存报告
+            file_path = self.store.save_report(report, start_time, end_time)
+            self.logger.print_info(f"✅ 报告已保存: {file_path}")
 
-            except Exception as e:
-                self.logger.print_error(f"{period.value} 周期收集失败: {e}")
+            return file_path
 
-        return saved_files
+        except Exception as e:
+            self.logger.print_error(f"收集失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
-    async def collect_and_save_async(
-        self,
-        periods: Optional[List[TimePeriod]] = None
-    ) -> Dict[str, str]:
+    async def collect_and_save_async(self) -> Optional[str]:
         """
         异步收集市场信息并保存报告
 
-        Args:
-            periods: 要收集的时间周期列表
-
         Returns:
-            各周期保存的文件路径
+            保存的文件路径
         """
         # 在后台线程中运行同步方法
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None,
-            self.collect_and_save,
-            periods
+            self.collect_and_save
         )
 
     def get_latest_summary(
@@ -272,14 +209,27 @@ class ExternalInfoAgent:
             max_length=max_length
         )
 
-    def get_report_status(self) -> Dict[str, Dict[str, Any]]:
+    def get_report_status(self) -> Dict[str, Any]:
         """
         获取报告状态
 
         Returns:
-            各周期报告的状态信息
+            报告状态信息
         """
         return self.store.get_report_status()
+
+    def get_latest_report_content(self) -> Optional[Dict[str, Any]]:
+        """
+        获取最新报告的完整内容（用于通知）
+
+        Returns:
+            报告内容
+        """
+        report = self.store.load_latest_report()
+        if not report:
+            return None
+        
+        return report.get("data", {})
 
 
 class ExternalInfoScheduler:
@@ -359,7 +309,7 @@ class ExternalInfoScheduler:
         if self.logger:
             self.logger.print_info("📡 外部信息收集调度器已停止")
 
-    def run_once(self) -> Dict[str, str]:
+    def run_once(self) -> Optional[str]:
         """
         立即执行一次收集（同步方法）
 
@@ -376,7 +326,8 @@ def get_external_info_agent(
     openai_model: str,
     exa_api_key: Optional[str] = None,
     symbols: Optional[List[str]] = None,
-    store_dir: str = "data/market_info"
+    store_dir: str = "data/market_info",
+    interval_hours: float = 3.0
 ) -> ExternalInfoAgent:
     """
     获取外部信息收集 Agent 实例
@@ -389,6 +340,7 @@ def get_external_info_agent(
         exa_api_key: Exa API 密钥
         symbols: 关注的币种列表
         store_dir: 存储目录
+        interval_hours: 收集间隔（小时）
 
     Returns:
         ExternalInfoAgent 实例
@@ -400,5 +352,6 @@ def get_external_info_agent(
         openai_model=openai_model,
         exa_api_key=exa_api_key,
         symbols=symbols,
-        store_dir=store_dir
+        store_dir=store_dir,
+        interval_hours=interval_hours
     )

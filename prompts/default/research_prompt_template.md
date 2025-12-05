@@ -3,7 +3,7 @@
 ## 研究时间范围
 
 **当前时间**: {{ current_time }}
-**研究周期**: {{ time_period }}（{{ period_description }}）
+**研究周期**: {{ interval_description }}（{{ interval_hours }} 小时）
 **开始时间**: {{ start_time }}
 
 ## 研究主题
@@ -72,7 +72,7 @@
 
 ```json
 {
-  "period": "{{ time_period }}",
+  "interval_hours": {{ interval_hours }},
   "generated_at": "{{ current_time }}",
   "market_overview": {
     "summary": "市场概况总结",
