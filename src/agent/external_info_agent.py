@@ -136,7 +136,7 @@ class ExternalInfoAgent:
             self.workflow = ExternalInfoWorkflow(
                 llm=self.llm,
                 system_prompt=self.system_prompt,
-                research_template=self.research_template.template,
+                research_template=self.research_template_source,
                 exa_api_key=self.exa_api_key
             )
             self.logger.print_info("✅ LangChain 工作流初始化成功")
@@ -157,6 +157,9 @@ class ExternalInfoAgent:
         try:
             self.system_prompt = self.prompt_manager.get_research_system_prompt()
             research_template_content = self.prompt_manager.get_research_prompt_template()
+            
+            # 保存模板源字符串（用于传递给 workflow）
+            self.research_template_source = research_template_content
             
             # 初始化 Jinja2 环境用于渲染模板
             from jinja2 import Template
