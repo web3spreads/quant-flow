@@ -20,7 +20,6 @@ project_root = find_project_root()
 sys.path.insert(0, str(project_root))
 
 from src.agent.external_info_agent import ExternalInfoAgent
-from src.agent.market_info_store import TimePeriod
 from src.utils.logger import get_logger
 
 
@@ -45,25 +44,29 @@ def test_langchain_workflow():
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
         exa_api_key=exa_api_key,  # 必须显式传入
-        symbols=["BTC", "ETH"]
+        symbols=["BTC", "ETH"],
+        interval_hours=3.0  # 使用 3 小时间隔
     )
     
-    # 测试收集单个周期
-    print("\n测试收集 daily 周期...")
-    saved_files = agent.collect_and_save(periods=[TimePeriod.DAILY])
+    # 测试收集
+    print("\n测试收集市场信息（3 小时间隔）...")
+    saved_file = agent.collect_and_save()
     
-    if saved_files:
-        print(f"\n✅ 成功生成 {len(saved_files)} 份报告:")
-        for period, file_path in saved_files.items():
-            print(f"  - {period}: {file_path}")
+    if saved_file:
+        print(f"\n✅ 成功生成报告:")
+        print(f"  文件: {saved_file}")
+        
+        # 获取摘要
+        summary = agent.get_latest_summary(symbols=["BTC", "ETH"], max_length=500)
+        print(f"\n报告摘要:\n{summary}")
     else:
         print("\n❌ 未生成任何报告")
     
     # 获取报告状态
     print("\n报告状态:")
     status = agent.get_report_status()
-    for period, info in status.items():
-        print(f"  {period}: {info['total_files']} 个文件")
+    print(f"  总文件数: {status.get('total_files', 0)}")
+    print(f"  最新文件: {status.get('latest_file', 'N/A')}")
 
 
 def test_tools_directly():
@@ -88,7 +91,8 @@ def test_tools_directly():
             "query": "Bitcoin market news price analysis",
             "num_results": 3,
             "start_date": start_date.strftime("%Y-%m-%d"),
-            "end_date": end_date.strftime("%Y-%m-%d")
+            "end_date": end_date.strftime("%Y-%m-%d"),
+            "exa_api_key": os.getenv("EXA_API_KEY")
         })
         
         print(f"\n✅ 搜索成功，返回 {len(results)} 条结果")

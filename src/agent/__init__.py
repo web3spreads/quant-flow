@@ -14,7 +14,6 @@ from src.agent.external_info_agent import (
 )
 from src.agent.market_info_store import (
     MarketInfoStore,
-    TimePeriod,
     get_market_info_store
 )
 
@@ -33,6 +32,5 @@ __all__ = [
     'ExternalInfoScheduler',
     'get_external_info_agent',
     'MarketInfoStore',
-    'TimePeriod',
     'get_market_info_store'
 ]

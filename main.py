@@ -825,46 +825,28 @@ class QuantFlowBot:
                 style="bold blue"
             )
 
-            # 获取配置的时间周期
-            from src.agent.market_info_store import TimePeriod
+            # 执行收集（使用配置的间隔时间）
+            saved_file = self.external_info_agent.collect_and_save()
 
-            period_names = getattr(
-                self.config,
-                "external_info_periods",
-                ["daily", "weekly", "biweekly", "monthly"]
-            )
-
-            # 转换字符串为 TimePeriod 枚举
-            periods = []
-            for name in period_names:
-                try:
-                    periods.append(TimePeriod(name))
-                except ValueError:
-                    self.logger.print_warning(f"未知的时间周期: {name}")
-
-            if not periods:
-                periods = list(TimePeriod)
-
-            # 执行收集
-            saved_files = self.external_info_agent.collect_and_save(periods)
-
-            if saved_files:
-                self.logger.print_info(
-                    f"✅ 外部信息收集完成，生成 {len(saved_files)} 份报告"
-                )
-                for period, file_path in saved_files.items():
-                    self.logger.print_info(f"  - {period}: {file_path}")
+            if saved_file:
+                self.logger.print_info(f"✅ 外部信息收集完成")
+                self.logger.print_info(f"  报告文件: {saved_file}")
                 
-                # 发送通知（通过 notifications.events.external_info_summary 控制）
+                # 发送通知（包含报告内容）
                 if self.notifier and self.notifier.enabled:
-                    self.notifier.notify_external_info_summary(
-                        periods=[p.value for p in periods],
-                        report_count=len(saved_files),
-                        saved_files=saved_files
+                    # 获取报告摘要
+                    summary = self.external_info_agent.get_latest_summary(
+                        symbols=self.config.symbols,
+                        max_length=2000
                     )
+                    
+                    if summary:
+                        self.notifier.notify_external_info_summary(
+                            summary=summary,
+                            file_path=saved_file
+                        )
             else:
-                self.logger.print_warning("外部信息收集未生成任何报告")
-
+                self.logger.print_warning("⚠️ 外部信息收集未生成任何报告")
             # 清理过期报告
             cleanup_days = getattr(self.config, "external_info_cleanup_days", 30)
             if self.market_info_store:
