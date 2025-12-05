@@ -179,10 +179,11 @@ def create_period_search_queries(
         "sentiment": []
     }
     
-    # 市场新闻查询
-    for symbol in symbols[:2]:  # 限制为前两个币种
+    # 市场新闻查询 - 一次性查询所有币种
+    if symbols:
+        symbols_str = " ".join(symbols)
         queries["market_news"].append({
-            "query": f"cryptocurrency {symbol} market news price analysis {date_range}",
+            "query": f"cryptocurrency {symbols_str} market news price analysis {date_range}",
             "start_date": start_date_str,
             "end_date": end_date_str
         })
