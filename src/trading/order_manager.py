@@ -234,16 +234,24 @@ class OrderManager:
             
             print(f"📈 做多 {symbol}: {size} 张合约 @ ${current_price:.2f}")
 
-            # 3. 设置杠杆
+            # 3. 设置杠杆（仅在无持仓时设置，避免降杠杆保证金不足的问题）
             lev = leverage if leverage else self.default_leverage
-            print(f"   设置杠杆: {lev}x (逐仓模式)")
-            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+            
+            # 检查是否已有该币种的持仓
+            current_positions = self.get_current_positions()
+            has_position = any(pos['symbol'] == symbol for pos in current_positions)
+            
+            if has_position:
+                print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
+            else:
+                print(f"   设置杠杆: {lev}x (逐仓模式)")
+                leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-            # 检查杠杆设置是否成功
-            if leverage_result.get('status') == 'error':
-                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                print(f"❌ 无法继续下单")
-                return None
+                # 检查杠杆设置是否成功
+                if leverage_result.get('status') == 'error':
+                    print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                    print(f"❌ 无法继续下单")
+                    return None
 
             # 4. 计算止盈止损价格
             if with_tpsl:
@@ -327,16 +335,24 @@ class OrderManager:
             
             print(f"📉 做空 {symbol}: {size} 张合约 @ ${current_price:.2f}")
 
-            # 3. 设置杠杆
+            # 3. 设置杠杆（仅在无持仓时设置，避免降杠杆保证金不足的问题）
             lev = leverage if leverage else self.default_leverage
-            print(f"   设置杠杆: {lev}x (逐仓模式)")
-            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+            
+            # 检查是否已有该币种的持仓
+            current_positions = self.get_current_positions()
+            has_position = any(pos['symbol'] == symbol for pos in current_positions)
+            
+            if has_position:
+                print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
+            else:
+                print(f"   设置杠杆: {lev}x (逐仓模式)")
+                leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-            # 检查杠杆设置是否成功
-            if leverage_result.get('status') == 'error':
-                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                print(f"❌ 无法继续下单")
-                return None
+                # 检查杠杆设置是否成功
+                if leverage_result.get('status') == 'error':
+                    print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                    print(f"❌ 无法继续下单")
+                    return None
 
             # 4. 计算止盈止损价格（做空时方向相反）
             if with_tpsl:
