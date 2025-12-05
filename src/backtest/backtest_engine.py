@@ -914,10 +914,21 @@ class BacktestEngine:
                 existing_lessons=existing_lessons,
             )
             
-            # 保存经验
-            if self.review_memory_store:
-                self.review_memory_store.save()
-                self.logger.print_info(f"✅ 复盘完成，经验已保存")
+            # 保存经验到 memory store
+            if self.review_memory_store and review_result.get('lessons'):
+                accepted_lessons = self.review_memory_store.add_lessons(
+                    symbol=self.symbol,
+                    lessons=review_result.get('lessons', []),
+                    min_confidence=self.config.review_min_confidence if self.config else 0.35
+                )
+                if accepted_lessons:
+                    self.logger.print_info(f"✅ 复盘完成，已保存 {len(accepted_lessons)} 条经验")
+                else:
+                    self.logger.print_info(f"✅ 复盘完成，但未生成符合条件的新经验")
+            else:
+                if self.review_memory_store:
+                    self.review_memory_store.save()
+                self.logger.print_info(f"✅ 复盘完成")
             
         except Exception as e:
             self.logger.print_warning(f"复盘 Agent 运行失败: {e}")
