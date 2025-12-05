@@ -18,6 +18,15 @@ class TimePeriod(Enum):
     MONTHLY = "monthly"      # 每月
 
 
+class RiskSeverity(Enum):
+    """风险等级枚举 (1-5)"""
+    VERY_LOW = 1    # 极低
+    LOW = 2         # 低
+    MEDIUM = 3      # 中
+    HIGH = 4        # 高
+    CRITICAL = 5    # 极高/严重
+
+
 class MarketInfoStore:
     """
     市场信息存储类
@@ -300,7 +309,8 @@ class MarketInfoStore:
         # 风险提示
         risk_alerts = data.get("risk_alerts", [])
         if risk_alerts:
-            high_risks = [r for r in risk_alerts if r.get("severity") == "高"]
+            # 筛选高风险和极高风险 (severity >= 4)
+            high_risks = [r for r in risk_alerts if r.get("severity", 0) >= RiskSeverity.HIGH.value]
             if high_risks:
                 parts.append("\n**高风险警示**:")
                 for risk in high_risks[:2]:  # 最多2个高风险
