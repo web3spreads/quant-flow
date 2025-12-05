@@ -176,7 +176,7 @@ class QuantFlowBot:
                     prompt_manager=self.prompt_manager,
                     openai_api_base=self.config.openai_api_base,
                     openai_api_key=self.config.openai_api_key,
-                    model=self.config.review_model,
+                    model=self.config.openai_model,
                     temperature=self.config.review_temperature,
                     lookback_decisions=self.config.review_lookback_decisions,
                     memory_store=self.review_memory_store,
@@ -185,6 +185,7 @@ class QuantFlowBot:
                     similarity_weights=self.config.review_similarity_weights,
                     confidence_decay_factor=self.config.review_confidence_decay_factor,
                     similarity_method=self.config.review_similarity_method,
+                    notifier=self.notifier,  # 传递通知器
                 )
         else:
             self.review_agent = None
@@ -246,9 +247,7 @@ class QuantFlowBot:
                     logger=self.logger,
                     openai_api_base=self.config.openai_api_base,
                     openai_api_key=self.config.openai_api_key,
-                    openai_model=getattr(
-                        self.config, "external_info_model", self.config.openai_model
-                    ),
+                    openai_model=self.config.openai_model,
                     exa_api_key=exa_api_key,
                     temperature=getattr(self.config, "external_info_temperature", 0.1),
                     symbols=self.config.symbols,
@@ -289,8 +288,9 @@ class QuantFlowBot:
         self.logger.print_info(f"✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info(f"  - 1 个汇总 Agent")
-        self.logger.print_info(f"  - 1 个复盘 Agent")
         self.logger.print_info(f"  - 1 个现货定投 Agent")
+        if self.review_agent:
+            self.logger.print_info(f"  - 1 个复盘 Agent")
         if self.external_info_agent:
             self.logger.print_info(f"  - 1 个外部信息收集 Agent")
 

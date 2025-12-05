@@ -180,7 +180,6 @@ class Config:
         self.review_enabled: bool = review.get("enabled", False)
         self.review_run_every_cycles: int = int(review.get("run_every_cycles", 3))
         self.review_lookback_decisions: int = int(review.get("lookback_decisions", 12))
-        self.review_model: str = review.get("model", self.openai_model)
         self.review_temperature: float = float(review.get("temperature", 0.05))
         self.review_memory_file: str = review.get(
             "memory_file", "logs/review_memory.json"
@@ -213,9 +212,6 @@ class Config:
         # 从环境变量读取 Exa API 密钥
         self.external_info_exa_api_key: str = os.getenv("EXA_API_KEY")
         
-        self.external_info_model: str = external_info.get(
-            "model", self.openai_model
-        )
         self.external_info_temperature: float = float(
             external_info.get("temperature", 0.1)
         )

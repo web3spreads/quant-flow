@@ -22,6 +22,7 @@ class NotificationEvent(str, Enum):
     CIRCUIT_BREAKER = "circuit_breaker"     # 熔断
     SYSTEM_SHUTDOWN = "system_shutdown"     # 系统关闭
     EXTERNAL_INFO_SUMMARY = "external_info_summary"  # 外部信息汇总完成
+    REVIEW_LESSON_LEARNED = "review_lesson_learned"  # 复盘获得新经验
 
 
 class Notifier:
@@ -711,6 +712,56 @@ class Notifier:
         
         message = "\n".join(lines)
         self.notify(NotificationEvent.SYSTEM_SHUTDOWN, title, message)
+
+    def notify_review_lesson(
+        self,
+        symbol: str,
+        lessons: List[Dict[str, Any]],
+        summary: Optional[str] = None
+    ):
+        """
+        发送复盘经验通知
+
+        Args:
+            symbol: 交易对
+            lessons: 新获得的经验列表
+            summary: 复盘总结
+        """
+        from datetime import datetime
+        
+        if not lessons:
+            return
+        
+        title = f"🧠 {symbol} 复盘获得新经验"
+        
+        lines = [
+            f"【时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"【币种】{symbol}",
+            f"【新经验数量】{len(lessons)} 条",
+        ]
+        
+        if summary:
+            lines.append("")
+            lines.append(f"【复盘总结】{summary[:200]}")
+        
+        lines.append("")
+        lines.append("【新获得的经验】")
+        
+        for i, lesson in enumerate(lessons[:3], 1):  # 最多显示3条
+            rule = lesson.get("rule", "")
+            action = lesson.get("action", "")
+            confidence = lesson.get("confidence", 0)
+            
+            lines.append(f"\n{i}. {rule[:100]}")
+            lines.append(f"   → 建议行动: {action[:50]}")
+            lines.append(f"   → 置信度: {confidence:.1%}")
+        
+        if len(lessons) > 3:
+            lines.append(f"\n... 还有 {len(lessons) - 3} 条经验")
+        
+        message = "\n".join(lines)
+        self.notify(NotificationEvent.REVIEW_LESSON_LEARNED, title, message)
+
 
     def notify_external_info_summary(
         self,
