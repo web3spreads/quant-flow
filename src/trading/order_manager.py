@@ -239,7 +239,7 @@ class OrderManager:
             
             # 检查是否已有该币种的持仓
             current_positions = self.get_current_positions()
-            has_position = any(pos['symbol'] == symbol for pos in current_positions)
+            has_position = any(pos.get('coin') == symbol for pos in current_positions)
             
             if has_position:
                 print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
@@ -340,7 +340,7 @@ class OrderManager:
             
             # 检查是否已有该币种的持仓
             current_positions = self.get_current_positions()
-            has_position = any(pos['symbol'] == symbol for pos in current_positions)
+            has_position = any(pos.get('coin') == symbol for pos in current_positions)
             
             if has_position:
                 print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
