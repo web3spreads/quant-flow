@@ -239,8 +239,9 @@ class QuantFlowBot:
                 exa_api_key = self.config.external_info_exa_api_key
                 if not exa_api_key:
                     raise ValueError(
-                        "未设置 EXA_API_KEY 环境变量。"
-                        "请在 .env 文件中设置 EXA_API_KEY"
+                        f"未设置 EXA_API_KEY 环境变量。"
+                        f"请在 .env 文件中设置 EXA_API_KEY\n"
+                        f"当前读取到的值: {repr(exa_api_key)}"
                     )
 
                 self.external_info_agent = ExternalInfoAgent(
