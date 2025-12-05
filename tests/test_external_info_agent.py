@@ -8,7 +8,15 @@ import sys
 from pathlib import Path
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent.parent
+def find_project_root(marker="pyproject.toml"):
+    current = Path(__file__).resolve().parent
+    while current != current.parent:
+        if (current / marker).is_file():
+            return current
+        current = current.parent
+    raise FileNotFoundError(f"Could not find {marker} in any parent directory of {__file__}")
+
+project_root = find_project_root()
 sys.path.insert(0, str(project_root))
 
 from src.agent.external_info_agent import ExternalInfoAgent

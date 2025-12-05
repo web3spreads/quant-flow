@@ -3,14 +3,14 @@
 使用 LangChain 和 Exa 集成的最佳实践
 """
 
-import os
+
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 
 from langchain_core.tools import tool
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
-from langchain_core.documents import Document
+
 from langchain_exa import ExaSearchRetriever
 
 
@@ -69,7 +69,7 @@ def search_crypto_market_news(
                 "title": doc.metadata.get("title", "无标题"),
                 "url": doc.metadata.get("url", ""),
                 "published_date": doc.metadata.get("published_date", "未知"),
-                "highlights": doc.metadata.get("highlights", doc.page_content[:500] if doc.page_content else "无内容")
+                "highlights": doc.metadata.get("highlights", doc.page_content[:500] or "无内容")
             }
         )
         | document_prompt
@@ -82,7 +82,7 @@ def search_crypto_market_news(
         documents = retrieval_chain.invoke(query)
         return documents
     except Exception as e:
-        return [f"搜索失败: {str(e)}"]
+        return []
 
 
 @tool

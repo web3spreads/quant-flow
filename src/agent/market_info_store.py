@@ -55,8 +55,9 @@ class MarketInfoStore:
             # 每日：YYYY-MM-DD.json
             filename = date.strftime("%Y-%m-%d.json")
         elif period == TimePeriod.WEEKLY:
-            # 每周：YYYY-Www.json（ISO 周数）
-            filename = date.strftime("%Y-W%W.json")
+            # 每周：YYYY-W##.json（周数）
+            iso_year, iso_week, _ = date.isocalendar()
+            filename = f"{iso_year}-W{iso_week:02d}.json"
         elif period == TimePeriod.BIWEEKLY:
             # 两周：使用两周周期的起始日期
             # 计算两周周期的起始日期（以年初为基准）

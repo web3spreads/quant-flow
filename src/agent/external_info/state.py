@@ -4,7 +4,7 @@ LangGraph 状态定义
 """
 
 from typing import List, Dict, Any, Optional, TypedDict
-from langgraph.graph import MessagesState
+
 
 
 class ResearchState(TypedDict):
