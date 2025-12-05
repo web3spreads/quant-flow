@@ -17,6 +17,7 @@ from langchain_exa import ExaSearchRetriever
 @tool
 def search_crypto_market_news(
     query: str,
+    exa_api_key: str,
     num_results: int = 5,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
@@ -26,6 +27,7 @@ def search_crypto_market_news(
     
     Args:
         query: 搜索查询字符串
+        exa_api_key: Exa API 密钥
         num_results: 返回结果数量
         start_date: 开始日期 (YYYY-MM-DD 格式)
         end_date: 结束日期 (YYYY-MM-DD 格式)
@@ -38,7 +40,8 @@ def search_crypto_market_news(
     retriever_kwargs = {
         "k": num_results,
         "highlights": True,
-        "text_length_limit": 1000
+        "text_length_limit": 1000,
+        "exa_api_key": exa_api_key
     }
     
     # 添加日期过滤
@@ -85,6 +88,7 @@ def search_crypto_market_news(
 @tool
 def search_crypto_regulatory_news(
     query: str,
+    exa_api_key: str,
     num_results: int = 5,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
@@ -94,6 +98,7 @@ def search_crypto_regulatory_news(
     
     Args:
         query: 搜索查询字符串
+        exa_api_key: Exa API 密钥
         num_results: 返回结果数量
         start_date: 开始日期 (YYYY-MM-DD 格式)
         end_date: 结束日期 (YYYY-MM-DD 格式)
@@ -105,6 +110,7 @@ def search_crypto_regulatory_news(
     enhanced_query = f"{query} regulation policy SEC compliance"
     return search_crypto_market_news.invoke({
         "query": enhanced_query,
+        "exa_api_key": exa_api_key,
         "num_results": num_results,
         "start_date": start_date,
         "end_date": end_date
@@ -114,6 +120,7 @@ def search_crypto_regulatory_news(
 @tool
 def search_crypto_macro_news(
     query: str,
+    exa_api_key: str,
     num_results: int = 5,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
@@ -123,6 +130,7 @@ def search_crypto_macro_news(
     
     Args:
         query: 搜索查询字符串
+        exa_api_key: Exa API 密钥
         num_results: 返回结果数量
         start_date: 开始日期 (YYYY-MM-DD 格式)
         end_date: 结束日期 (YYYY-MM-DD 格式)
@@ -134,6 +142,7 @@ def search_crypto_macro_news(
     enhanced_query = f"{query} Federal Reserve interest rate inflation economic impact"
     return search_crypto_market_news.invoke({
         "query": enhanced_query,
+        "exa_api_key": exa_api_key,
         "num_results": num_results,
         "start_date": start_date,
         "end_date": end_date

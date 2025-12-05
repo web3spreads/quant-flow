@@ -3,16 +3,12 @@
 负责使用 Exa 搜索 API 收集市场信息，并汇总生成报告
 """
 
-import os
-import json
 import asyncio
-import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
 from jinja2 import Environment, FileSystemLoader
 
 from src.agent.market_info_store import MarketInfoStore, TimePeriod
@@ -92,7 +88,7 @@ class ExternalInfoAgent:
         temperature: float = 0.1,
         symbols: Optional[List[str]] = None,
         store_dir: str = "data/market_info",
-        prompts_dir: str = "prompts"
+        prompt_manager=None
     ):
         """
         初始化外部信息收集 Agent
@@ -106,16 +102,20 @@ class ExternalInfoAgent:
             temperature: LLM 温度参数
             symbols: 关注的币种列表
             store_dir: 市场信息存储目录
-            prompts_dir: Prompt 模板目录
+            prompt_manager: Prompt 管理器（用于加载提示词）
         """
         self.logger = logger
         self.symbols = symbols or ["BTC", "ETH"]
         self.store = MarketInfoStore(store_dir)
+        self.prompt_manager = prompt_manager
 
-        # 设置 Exa API 密钥（用于 LangChain 集成）
-        self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
-        if self.exa_api_key:
-            os.environ["EXA_API_KEY"] = self.exa_api_key
+        # 保存 Exa API 密钥（必须通过参数传入）
+        if not exa_api_key:
+            raise ValueError(
+                "exa_api_key 参数不能为空。"
+                "请在配置文件中设置 external_info_agent.exa_api_key"
+            )
+        self.exa_api_key = exa_api_key
 
         # 初始化 LLM
         self.llm = ChatOpenAI(
@@ -127,7 +127,6 @@ class ExternalInfoAgent:
         )
 
         # 加载 Prompt 模板
-        self.prompts_dir = Path(prompts_dir)
         self._load_prompts()
         
         # 初始化 LangChain 工作流
@@ -137,7 +136,8 @@ class ExternalInfoAgent:
             self.workflow = ExternalInfoWorkflow(
                 llm=self.llm,
                 system_prompt=self.system_prompt,
-                research_template=self.research_template.template
+                research_template=self.research_template.template,
+                exa_api_key=self.exa_api_key
             )
             self.logger.print_info("✅ LangChain 工作流初始化成功")
         except ImportError as e:
@@ -147,49 +147,30 @@ class ExternalInfoAgent:
 
     def _load_prompts(self):
         """加载 Prompt 模板"""
-        # 初始化 Jinja2 环境
-        self.jinja_env = Environment(
-            loader=FileSystemLoader(str(self.prompts_dir)),
-            autoescape=False,
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-
-        # 加载系统提示
-        system_prompt_path = self.prompts_dir / "default" / "research_system_prompt.md"
-        if system_prompt_path.exists():
-            with open(system_prompt_path, "r", encoding="utf-8") as f:
-                self.system_prompt = f.read()
-        else:
-            self.system_prompt = self._get_default_system_prompt()
-
-        # 加载研究提示模板
-        template_path = self.prompts_dir / "default" / "research_prompt_template.md"
-        if template_path.exists():
-            with open(template_path, "r", encoding="utf-8") as f:
-                template_content = f.read()
-                self.research_template = self.jinja_env.from_string(template_content)
-        else:
-            self.research_template = self.jinja_env.from_string(
-                self._get_default_template()
+        if not self.prompt_manager:
+            raise ValueError(
+                "未提供 PromptManager，无法加载提示词。"
+                "请在初始化 ExternalInfoAgent 时传入 prompt_manager 参数"
             )
-
-    def _get_default_system_prompt(self) -> str:
-        """获取默认系统提示"""
-        return """你是一名专业的加密货币市场研究分析师，负责收集和汇总市场信息，为交易决策提供参考。
-请保持客观中立，聚焦于可能影响市场的重要信息。输出需要是结构化的 JSON 格式。"""
-
-    def _get_default_template(self) -> str:
-        """获取默认研究模板"""
-        return """# 市场信息研究任务
-
-当前时间: {{ current_time }}
-研究周期: {{ time_period }}（{{ period_description }}）
-
-搜索结果:
-{{ search_results }}
-
-请基于上述搜索结果，生成一份结构化的市场信息报告（JSON 格式）。"""
+        
+        # 使用 PromptManager 加载提示词
+        try:
+            self.system_prompt = self.prompt_manager.get_research_system_prompt()
+            research_template_content = self.prompt_manager.get_research_prompt_template()
+            
+            # 初始化 Jinja2 环境用于渲染模板
+            from jinja2 import Template
+            self.research_template = Template(
+                research_template_content,
+                autoescape=False,
+                trim_blocks=True,
+                lstrip_blocks=True
+            )
+            
+            self.logger.print_info("✅ 已从 PromptManager 加载研究提示词")
+        except Exception as e:
+            self.logger.print_error(f"从 PromptManager 加载提示词失败: {e}")
+            raise
 
     def collect_and_save(
         self,

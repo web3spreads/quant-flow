@@ -210,6 +210,9 @@ class Config:
         self.external_info_store_dir: str = external_info.get(
             "store_dir", "data/market_info"
         )
+        # 从环境变量读取 Exa API 密钥
+        self.external_info_exa_api_key: str = os.getenv("EXA_API_KEY")
+        
         self.external_info_model: str = external_info.get(
             "model", self.openai_model
         )

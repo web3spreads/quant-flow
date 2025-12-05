@@ -35,7 +35,8 @@ class ExternalInfoWorkflow:
         self,
         llm: ChatOpenAI,
         system_prompt: str,
-        research_template: str
+        research_template: str,
+        exa_api_key: str
     ):
         """
         初始化工作流
@@ -44,10 +45,12 @@ class ExternalInfoWorkflow:
             llm: LangChain LLM 实例
             system_prompt: 系统提示
             research_template: 研究模板
+            exa_api_key: Exa API 密钥
         """
         self.llm = llm
         self.system_prompt = system_prompt
         self.research_template = research_template
+        self.exa_api_key = exa_api_key
         self.parser = JsonOutputParser()
         
         # 构建工作流图
@@ -98,13 +101,16 @@ class ExternalInfoWorkflow:
             
             for query_config in topic_queries:
                 try:
+                    # 添加 exa_api_key 到查询配置
+                    query_config_with_key = {**query_config, "exa_api_key": self.exa_api_key}
+                    
                     # 根据主题选择合适的工具
                     if topic == "regulatory":
-                        search_results = search_crypto_regulatory_news.invoke(query_config)
+                        search_results = search_crypto_regulatory_news.invoke(query_config_with_key)
                     elif topic == "macro":
-                        search_results = search_crypto_macro_news.invoke(query_config)
+                        search_results = search_crypto_macro_news.invoke(query_config_with_key)
                     else:
-                        search_results = search_crypto_market_news.invoke(query_config)
+                        search_results = search_crypto_market_news.invoke(query_config_with_key)
                     
                     topic_results.extend(search_results)
                 except Exception as e:

@@ -24,13 +24,19 @@ def test_langchain_workflow():
     
     logger = get_logger()
     
-    # 创建 Agent（使用 LangChain 工作流）
+    # 从环境变量读取 API 密钥
+    exa_api_key = os.getenv("EXA_API_KEY")
+    if not exa_api_key:
+        print("❌ 未设置 EXA_API_KEY 环境变量")
+        return
+    
+    # 创建 Agent
     agent = ExternalInfoAgent(
         logger=logger,
-        openai_api_base=os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),
+        openai_api_base=os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4"),
-        exa_api_key=os.getenv("EXA_API_KEY"),
+        openai_model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
+        exa_api_key=exa_api_key,  # 必须显式传入
         symbols=["BTC", "ETH"]
     )
     

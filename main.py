@@ -234,8 +234,13 @@ class QuantFlowBot:
         if getattr(self.config, "external_info_enabled", False):
             self.logger.print_info("初始化外部信息收集 Agent...")
             try:
-                import os
-                exa_api_key = os.getenv("EXA_API_KEY")
+                # 从配置读取 Exa API 密钥（配置已从环境变量加载）
+                exa_api_key = self.config.external_info_exa_api_key
+                if not exa_api_key:
+                    raise ValueError(
+                        "未设置 EXA_API_KEY 环境变量。"
+                        "请在 .env 文件中设置 EXA_API_KEY"
+                    )
 
                 self.external_info_agent = ExternalInfoAgent(
                     logger=self.logger,
@@ -250,6 +255,7 @@ class QuantFlowBot:
                     store_dir=getattr(
                         self.config, "external_info_store_dir", "data/market_info"
                     ),
+                    prompt_manager=self.prompt_manager  # 传递 PromptManager
                 )
 
                 # 创建市场信息存储实例（用于读取）

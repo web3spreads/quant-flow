@@ -3,7 +3,6 @@
 负责存储和读取外部市场信息，供交易决策 Agent 使用
 """
 
-import os
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
