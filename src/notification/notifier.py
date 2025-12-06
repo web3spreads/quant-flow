@@ -776,6 +776,7 @@ class Notifier:
             file_path: 保存的文件路径
         """
         from datetime import datetime
+        from pathlib import Path
         
         title = "📰 外部信息汇总完成"
         
@@ -784,8 +785,8 @@ class Notifier:
         ]
         
         if file_path:
-            # 只显示文件名，不显示完整路径
-            file_name = file_path.split('/')[-1] if '/' in file_path else file_path
+            # 使用 pathlib 提取文件名（跨平台兼容）
+            file_name = Path(file_path).name
             lines.append(f"【报告文件】{file_name}")
         
         if summary:

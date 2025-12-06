@@ -254,7 +254,7 @@ class ExternalInfoWorkflow:
     def run(
         self,
         interval_hours: float,
-        symbols: list[str],
+        symbols: List[str],
         start_time: datetime,
         end_time: datetime
     ) -> Dict[str, Any]:

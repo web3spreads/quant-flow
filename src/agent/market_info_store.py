@@ -223,7 +223,9 @@ class MarketInfoStore:
                 mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
                 if mtime < cutoff_date:
                     file_path.unlink()
-            except Exception:
+            except Exception as e:
+                # 记录清理失败的文件，但继续处理其他文件
+                print(f"⚠️ 清理文件失败 {file_path}: {e}")
                 continue
 
     def get_report_status(self) -> Dict[str, Any]:
