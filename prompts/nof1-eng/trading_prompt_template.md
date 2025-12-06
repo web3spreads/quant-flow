@@ -72,6 +72,8 @@ RSI Indicators (14-period, 4-Hour): {{ rsi_14_4h_indicators }}
 
 ---
 
+{{ historical_summary }}
+
 ## Decision Guidelines
 
 ### Core Principles:

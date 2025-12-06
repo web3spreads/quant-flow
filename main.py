@@ -26,6 +26,8 @@ from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
 from src.agent.review_agent import ReviewAgent
 from src.agent.review_memory import ReviewMemoryStore
+from src.agent.external_info_agent import ExternalInfoAgent, ExternalInfoScheduler
+from src.agent.market_info_store import MarketInfoStore
 from src.notification import Notifier
 from src.prompt_manager import PromptManager
 
@@ -174,7 +176,7 @@ class QuantFlowBot:
                     prompt_manager=self.prompt_manager,
                     openai_api_base=self.config.openai_api_base,
                     openai_api_key=self.config.openai_api_key,
-                    model=self.config.review_model,
+                    model=self.config.openai_model,
                     temperature=self.config.review_temperature,
                     lookback_decisions=self.config.review_lookback_decisions,
                     memory_store=self.review_memory_store,
@@ -183,6 +185,7 @@ class QuantFlowBot:
                     similarity_weights=self.config.review_similarity_weights,
                     confidence_decay_factor=self.config.review_confidence_decay_factor,
                     similarity_method=self.config.review_similarity_method,
+                    notifier=self.notifier,  # 传递通知器
                 )
         else:
             self.review_agent = None
@@ -225,11 +228,76 @@ class QuantFlowBot:
             prompt_manager=self.prompt_manager,
         )
 
+        # 8. 外部信息收集 Agent
+        self.external_info_agent = None
+        self.external_info_scheduler = None
+        self.market_info_store = None
+
+        if getattr(self.config, "external_info_enabled", False):
+            self.logger.print_info("初始化外部信息收集 Agent...")
+            try:
+                # 从配置读取 Exa API 密钥（配置已从环境变量加载）
+                exa_api_key = self.config.external_info_exa_api_key
+                if not exa_api_key:
+                    raise ValueError(
+                        f"未设置 EXA_API_KEY 环境变量。"
+                        f"请在 .env 文件中设置 EXA_API_KEY\n"
+                        f"当前读取到的值: {repr(exa_api_key)}"
+                    )
+
+                self.external_info_agent = ExternalInfoAgent(
+                    logger=self.logger,
+                    openai_api_base=self.config.openai_api_base,
+                    openai_api_key=self.config.openai_api_key,
+                    openai_model=self.config.openai_model,
+                    exa_api_key=exa_api_key,
+                    temperature=getattr(self.config, "external_info_temperature", 0.1),
+                    symbols=self.config.symbols,
+                    store_dir=getattr(
+                        self.config, "external_info_store_dir", "data/market_info"
+                    ),
+                    prompt_manager=self.prompt_manager,  # 传递 PromptManager
+                    interval_hours=getattr(
+                        self.config, "external_info_interval_hours", 3.0
+                    )
+                )
+
+                # 创建市场信息存储实例（用于读取）
+                self.market_info_store = MarketInfoStore(
+                    base_dir=getattr(
+                        self.config, "external_info_store_dir", "data/market_info"
+                    )
+                )
+
+                # 创建调度器
+                self.external_info_scheduler = ExternalInfoScheduler(
+                    agent=self.external_info_agent,
+                    interval_hours=getattr(
+                        self.config, "external_info_interval_hours", 3.0
+                    ),
+                    logger=self.logger
+                )
+
+                self.logger.print_info("✅ 外部信息收集 Agent 初始化完成")
+            except Exception as e:
+                self.logger.print_warning(f"外部信息收集 Agent 初始化失败: {e}")
+                self.external_info_agent = None
+                self.external_info_scheduler = None
+        else:
+            # 即使未启用 Agent，也创建存储实例以便读取已有的报告
+            store_dir = getattr(
+                self.config, "external_info_store_dir", "data/market_info"
+            )
+            self.market_info_store = MarketInfoStore(base_dir=store_dir)
+
         self.logger.print_info(f"✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info(f"  - 1 个汇总 Agent")
-        self.logger.print_info(f"  - 1 个复盘 Agent")
         self.logger.print_info(f"  - 1 个现货定投 Agent")
+        if self.review_agent:
+            self.logger.print_info(f"  - 1 个复盘 Agent")
+        if self.external_info_agent:
+            self.logger.print_info(f"  - 1 个外部信息收集 Agent")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -528,6 +596,23 @@ class QuantFlowBot:
                                 else lessons_text
                             )
 
+                    # 追加外部市场信息，帮助 Agent 基于市场环境做决策
+                    if self.market_info_store:
+                        max_summary_length = getattr(
+                            self.config, "external_info_max_summary_length", 2000
+                        )
+                        market_info_summary = self.market_info_store.get_combined_summary(
+                            symbols=[symbol],
+                            max_length=max_summary_length
+                        )
+                        if market_info_summary:
+                            external_info_header = "\n\n## 📰 外部市场信息\n"
+                            historical_summary = (
+                                f"{historical_summary}{external_info_header}{market_info_summary}"
+                                if historical_summary
+                                else f"{external_info_header}{market_info_summary}"
+                            )
+
                     # 调用单币 Agent 决策
                     agent = self.symbol_agents[symbol]
                     decision, details = agent.make_decision(
@@ -666,6 +751,29 @@ class QuantFlowBot:
                 replace_existing=True,
             )
 
+            # 添加外部信息收集定时任务
+            if self.external_info_agent:
+                interval_hours = getattr(
+                    self.config, "external_info_interval_hours", 3.0
+                )
+                # 将小时转换为分钟
+                interval_minutes = int(interval_hours * 60)
+
+                self.scheduler.add_job(
+                    self._run_external_info_collection,
+                    trigger=IntervalTrigger(minutes=interval_minutes),
+                    id="external_info_collection",
+                    name="外部信息收集任务",
+                    replace_existing=True,
+                )
+                self.logger.print_info(
+                    f"📡 外部信息收集任务已添加，间隔: {interval_hours} 小时"
+                )
+
+                # 首次启动时立即执行一次外部信息收集
+                self.logger.print_info("立即执行首次外部信息收集...")
+                self._run_external_info_collection()
+
             # 如果配置了立即执行，先执行一次
             if self.config.run_immediately:
                 self.logger.print_info("立即执行第一次交易循环...")
@@ -706,6 +814,48 @@ class QuantFlowBot:
         self._send_shutdown_notification(reason)
 
         self.logger.print_info("机器人已停止")
+
+    def _run_external_info_collection(self):
+        """执行外部信息收集任务"""
+        if not self.external_info_agent:
+            return
+
+        try:
+            self.logger.print_section(
+                "📡 开始外部信息收集任务",
+                style="bold blue"
+            )
+
+            # 执行收集（使用配置的间隔时间）
+            saved_file = self.external_info_agent.collect_and_save()
+
+            if saved_file:
+                self.logger.print_info(f"✅ 外部信息收集完成")
+                self.logger.print_info(f"  报告文件: {saved_file}")
+                
+                # 发送通知（包含报告内容）
+                if self.notifier and self.notifier.enabled:
+                    # 获取报告摘要
+                    summary = self.external_info_agent.get_latest_summary(
+                        symbols=self.config.symbols,
+                        max_length=2000
+                    )
+                    
+                    if summary:
+                        self.notifier.notify_external_info_summary(
+                            summary=summary,
+                            file_path=saved_file
+                        )
+            else:
+                self.logger.print_warning("⚠️ 外部信息收集未生成任何报告")
+            # 清理过期报告
+            cleanup_days = getattr(self.config, "external_info_cleanup_days", 30)
+            if self.market_info_store:
+                self.market_info_store.cleanup_old_reports(days_to_keep=cleanup_days)
+
+        except Exception as e:
+            self.logger.print_error(f"外部信息收集任务异常: {e}")
+            self.logger.logger.exception(e)
 
     def _maybe_run_review_cycle(self):
         """根据配置触发复盘 Agent"""

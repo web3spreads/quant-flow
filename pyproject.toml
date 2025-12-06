@@ -3,25 +3,26 @@ name = "quant-flow"
 version = "0.4.0"
 description = "基于 LangChain Agent 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "langchain>=1.0.3",
-    "langchain-core>=1.0.2",
-    "langchain-openai>=1.0.1",
+    "langchain>=1.1.2",
+    "langchain-core>=1.1.1",
+    "langchain-openai>=1.1.0",
     "langchain-community>=0.4.1",
-    "langgraph>=1.0.2",
-    "openai>=1.60.0",
-    "hyperliquid-python-sdk>=0.6.0",
-    "eth-account>=0.11.0",
-    "pandas>=2.2.0",
-    "numpy>=2.0.0",
-    "pyyaml>=6.0.2",
-    "python-dotenv>=1.0.1",
-    "apscheduler>=3.10.4",
+    "langchain-exa>=1.0.0",
+    "langgraph>=1.0.4",
+    "openai>=2.9.0",
+    "hyperliquid-python-sdk>=0.21.0",
+    "eth-account>=0.13.7",
+    "pandas>=2.3.3",
+    "numpy>=2.3.5",
+    "pyyaml>=6.0.3",
+    "python-dotenv>=1.2.1",
+    "apscheduler>=3.11.1",
     "colorama>=0.4.6",
-    "rich>=13.9.0",
-    "apprise>=1.9.0",
-    "jinja2>=3.1.0",
+    "rich>=14.2.0",
+    "apprise>=1.9.5",
+    "jinja2>=3.1.6",
 ]
 
 [build-system]
@@ -30,10 +31,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
-
-[tool.uv]
-preview = true
-
-[tool.uv.sources]
-langchain-core = { git = "https://github.com/loadchange/langchain", subdirectory = "libs/core", branch = "feat/tool-call-extra-content" }
-langchain-openai = { git = "https://github.com/loadchange/langchain", subdirectory = "libs/partners/openai", branch = "feat/tool-call-extra-content" }

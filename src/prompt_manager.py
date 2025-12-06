@@ -265,6 +265,17 @@ class PromptManager:
 
         self.review_system_prompt = self._load_prompt_file(review_system_file)
         self.review_prompt_template = self._load_prompt_template(review_template_file)
+        
+        # Research prompts: 优先使用当前 prompt set 的配置，如果没有则 fallback 到 default
+        research_system_file = self.prompt_set.get(
+            "research_system_prompt_file", "default/research_system_prompt.md"
+        )
+        research_template_file = self.prompt_set.get(
+            "research_prompt_template_file", "default/research_prompt_template.md"
+        )
+        
+        self.research_system_prompt = self._load_prompt_file(research_system_file)
+        self.research_prompt_template_content = self._load_prompt_file(research_template_file)
 
         print(
             f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}"
@@ -375,6 +386,24 @@ class PromptManager:
             复盘 Agent 的系统 Prompt 字符串，用于指导复盘 Agent 的行为。
         """
         return self.review_system_prompt
+    
+    def get_research_system_prompt(self) -> str:
+        """
+        获取外部信息收集 Agent 的系统 Prompt。
+
+        Returns:
+            研究 Agent 的系统 Prompt 字符串。
+        """
+        return self.research_system_prompt
+    
+    def get_research_prompt_template(self) -> str:
+        """
+        获取外部信息收集 Agent 的 Prompt 模板内容。
+
+        Returns:
+            研究 Prompt 模板的字符串内容（非 Jinja2 Template 对象）。
+        """
+        return self.research_prompt_template_content
 
     def format_trading_prompt(
         self,

@@ -135,6 +135,8 @@ ATR(14, 4H): {{ atr_14_4h }}
 
 ---
 
+{{ historical_summary }}
+
 ## 🎯 激进决策框架 (Alpha Arena Improved)
 
 ### 核心理念: 把握高确定性机会,快速进出

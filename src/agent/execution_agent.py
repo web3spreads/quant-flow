@@ -164,7 +164,7 @@ class ExecutionAgent:
         self,
         openai_api_base: str,
         openai_api_key: str,
-        openai_model: str = "gpt-4",
+        openai_model: str = "deepseek-chat",
         temperature: float = 0.0
     ):
         """

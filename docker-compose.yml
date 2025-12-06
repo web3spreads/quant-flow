@@ -15,6 +15,9 @@ services:
       - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.deepseek.com/v1}
       - OPENAI_MODEL=${OPENAI_MODEL:-deepseek-chat}
 
+      # Exa Search API Configuration (Optional)
+      - EXA_API_KEY=${EXA_API_KEY:-}
+
       # Hyperliquid Configuration
       - HYPERLIQUID_PRIVATE_KEY=${HYPERLIQUID_PRIVATE_KEY}
       - HYPERLIQUID_ACCOUNT_ADDRESS=${HYPERLIQUID_ACCOUNT_ADDRESS:-}

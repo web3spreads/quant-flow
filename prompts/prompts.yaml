@@ -33,6 +33,10 @@ prompt_sets:
     spot_prompt_template_file: "default/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
+    
+    # 外部信息收集 Prompt
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
   # 实时信号优先策略
   realtime:
@@ -45,6 +49,8 @@ prompt_sets:
     spot_prompt_template_file: "realtime/spot_prompt_template.md"
     review_system_prompt_file: "realtime/review_system_prompt.md"
     review_prompt_template_file: "realtime/review_prompt_template.md"
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
   # Real-time Signal Priority Strategy (English)
   realtime-eng:
@@ -57,6 +63,8 @@ prompt_sets:
     spot_prompt_template_file: "realtime-eng/spot_prompt_template.md"
     review_system_prompt_file: "realtime-eng/review_system_prompt.md"
     review_prompt_template_file: "realtime-eng/review_prompt_template.md"
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
   # 保守策略（低风险）
   conservative:
@@ -69,6 +77,8 @@ prompt_sets:
     spot_prompt_template_file: "conservative/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
   # 激进策略（高风险高收益）
   aggressive:
@@ -81,6 +91,8 @@ prompt_sets:
     spot_prompt_template_file: "aggressive/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
   # Alpha Arena博客复刻版
   nof1:
@@ -93,6 +105,8 @@ prompt_sets:
     spot_prompt_template_file: "nof1/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
   # Alpha Arena 重制版
   nof1-improved:
@@ -105,6 +119,8 @@ prompt_sets:
     spot_prompt_template_file: "nof1-improved/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
   # Alpha Arena English Version
   nof1-eng:
@@ -117,6 +133,8 @@ prompt_sets:
     spot_prompt_template_file: "nof1-eng/spot_prompt_template.md"
     review_system_prompt_file: "nof1-eng/review_system_prompt.md"
     review_prompt_template_file: "nof1-eng/review_prompt_template.md"
+    research_system_prompt_file: "default/research_system_prompt.md"
+    research_prompt_template_file: "default/research_prompt_template.md"
 
 # 使用说明:
 # 1. 创建新的 Prompt 集合:
