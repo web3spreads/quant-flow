@@ -100,13 +100,12 @@ prompt:
 
 # 复盘 Agent 配置
 review_agent:
-  enabled: true                  # 是否启用复盘 Agent
-  run_every_cycles: 3            # 每多少个交易周期触发一次复盘
-  lookback_decisions: 12         # 复盘时回顾的最近决策数量
-  model: deepseek-chat           # 复盘 Agent 使用的模型（默认与交易 Agent 相同）
-  temperature: 0.05              # 复盘 Agent 温度，建议较低确保稳定
-  memory_file: logs/review_memory.json  # 复盘经验持久化文件
-  max_lessons: 30                # 每个符号最多保留的经验数量
+  enabled: true                 # 是否启用复盘 Agent
+  run_every_cycles: 3            # 每隔多少个交易周期运行一次复盘
+  lookback_decisions: 12         # 复盘时回顾多少条历史决策
+  temperature: 0.05              # 复盘时的 LLM 温度（更低以保证稳定性）
+  memory_file: logs/review_memory.json  # 复盘经验存储文件
+  max_lessons: 30                # 最多保留多少条经验教训数量
   min_confidence: 0.35           # 采纳经验所需的最小置信度
   similarity_threshold: 0.5      # 当前环境与历史经验的最小相似度
   similarity_method: cosine      # 相似度计算方法: cosine / euclidean / hybrid
@@ -120,6 +119,29 @@ review_agent:
     price_position: 0.7
     time_of_day: 0.3
   confidence_decay_factor: 0.6   # 低相似度时的置信度衰减因子
+
+# 外部信息收集 Agent 配置
+# 使用 Exa 搜索 API 收集市场新闻、监管动态等外部信息
+# 定期汇总后供交易决策 Agent 参考
+external_info_agent:
+  enabled: false                 # 是否启用外部信息收集 Agent
+  interval_hours: 3.0            # 收集间隔（小时），每次触发会汇总各时间周期信息
+  store_dir: data/market_info    # 市场信息存储目录
+  temperature: 0.1               # 汇总时的 LLM 温度
+  max_summary_length: 2000       # 注入决策时的摘要最大长度（字符）
+  # 收集的时间周期配置
+  # 每次触发时会生成以下时间周期的报告：
+  # - daily: 过去24小时
+  # - weekly: 过去一周
+  # - biweekly: 过去两周
+  # - monthly: 过去一个月
+  periods:
+    - daily
+    - weekly
+    - biweekly
+    - monthly
+  # 报告清理配置
+  cleanup_days: 30               # 保留报告的天数，超过则自动清理
 
 # 风控配置
 risk_management:
@@ -197,22 +219,25 @@ notifications:
         - "recipient2@example.com"
 
   # 通知事件配置（控制哪些事件会触发通知）
+  # 事件过滤配置（可选）
+  # 如果不配置，默认所有事件都会发送通知
+  # 配置后，只有 enabled: true 的事件才会发送通知
   events:
-    # 系统启动通知
-    system_startup: true
-    # 系统关闭通知
-    system_shutdown: true
-    # 开仓通知（买入/卖空开仓）
-    trade_opened: true
-    # 平仓通知（卖出/买入平仓）
-    trade_closed: true
-    # 止损通知
-    stop_loss: true
-    # 止盈通知
-    take_profit: true
-    # 现货定投通知
-    spot_investment: true
-    # 错误通知（交易失败、系统异常等）
-    error: true
-    # 熔断机制触发通知
-    circuit_breaker: true
+    system_startup: true          # 系统启动
+    trade_opened: true            # 开仓
+    trade_closed: true            # 平仓
+    stop_loss: true               # 止损
+    take_profit: true             # 止盈
+    spot_investment: true         # 现货定投
+    error: true                   # 错误
+    circuit_breaker: true         # 熔断
+    system_shutdown: true         # 系统关闭
+    external_info_summary: true   # 外部信息汇总完成
+    review_lesson_learned: true   # 复盘获得新经验
+
+  # 通知频率限制（可选）
+  # rate_limit:
+  #   # 同一事件类型的最小通知间隔（秒）
+  #   min_interval: 60
+  #   # 每小时最大通知数量
+  #   max_per_hour: 20

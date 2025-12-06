@@ -72,6 +72,8 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 
 ---
 
+{{ historical_summary }}
+
 ## 决策指南
 
 ### 核心原则:

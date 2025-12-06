@@ -34,6 +34,7 @@ class ReviewAgent:
         similarity_weights: Optional[Dict[str, float]] = None,
         confidence_decay_factor: float = 0.6,
         similarity_method: str = "cosine",
+        notifier=None,
     ):
         self.logger = logger
         self.prompt_manager = prompt_manager
@@ -42,6 +43,7 @@ class ReviewAgent:
         self.min_confidence = min_confidence
         self.similarity_threshold = similarity_threshold
         self.confidence_decay_factor = confidence_decay_factor
+        self.notifier = notifier
 
         self.llm = ChatOpenAI(
             base_url=openai_api_base,
@@ -119,6 +121,17 @@ class ReviewAgent:
             lessons=lessons,
             context_features=current_context,
         )
+
+        # 发送通知（如果有新经验且通知器可用）
+        if filtered_lessons and self.notifier:
+            try:
+                self.notifier.notify_review_lesson(
+                    symbol=symbol,
+                    lessons=filtered_lessons,
+                    summary=parsed.get("summary", "")
+                )
+            except Exception as e:
+                self.logger.print_warning(f"发送复盘通知失败: {e}")
 
         result = {
             "summary": parsed.get("summary", ""),
