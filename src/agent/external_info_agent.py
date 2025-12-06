@@ -9,7 +9,6 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
-from jinja2 import Environment, FileSystemLoader
 
 from src.agent.market_info_store import MarketInfoStore
 from src.utils.logger import TradingLogger
