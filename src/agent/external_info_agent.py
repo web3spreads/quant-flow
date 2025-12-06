@@ -303,6 +303,7 @@ class ExternalInfoScheduler:
             try:
                 await self._task
             except asyncio.CancelledError:
+                # 任务被取消时正常退出，无需处理
                 pass
 
         if self.logger:
