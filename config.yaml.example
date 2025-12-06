@@ -241,4 +241,3 @@ notifications:
   #   min_interval: 60
   #   # 每小时最大通知数量
   #   max_per_hour: 20
-```
