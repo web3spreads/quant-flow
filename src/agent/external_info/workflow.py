@@ -3,7 +3,7 @@ LangGraph 工作流定义
 用于外部信息收集和报告生成
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from langgraph.graph import StateGraph, END
