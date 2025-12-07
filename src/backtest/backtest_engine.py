@@ -77,7 +77,8 @@ class BacktestEngine:
                 take_profit_ratio=config.take_profit_ratio,
                 stop_loss_ratio=config.stop_loss_ratio,
                 notifier=None,  # 回测不需要通知
-                prompt_manager=prompt_manager
+                prompt_manager=prompt_manager,
+                limit_order_enabled=config.limit_order_enabled if hasattr(config, 'limit_order_enabled') else False
             )
         else:
             self.agent = None

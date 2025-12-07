@@ -119,6 +119,7 @@ class Config:
         self.take_profit_ratio: float = float(trading.get("take_profit_ratio", 0.05))
         self.stop_loss_ratio: float = float(trading.get("stop_loss_ratio", 0.02))
         self.max_positions: int = int(trading.get("max_positions", 2))
+        self.limit_order_enabled: bool = trading.get("limit_order_enabled", False)
 
         # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
         # 向后兼容：支持旧字段名 default_leverage

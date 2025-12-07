@@ -207,6 +207,7 @@ class QuantFlowBot:
                 notifier=self.notifier,
                 prompt_manager=self.prompt_manager,
                 fee_rates=self.fee_rates,
+                limit_order_enabled=self.config.limit_order_enabled,
             )
             self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
 

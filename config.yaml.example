@@ -31,6 +31,10 @@ trading:
   # AI 可以根据市场情况自主决定实际交易金额，但不超过此上限
   max_leverage: 10
 
+  # 是否启用限价单功能（默认 false）
+  # 启用后，AI 可以使用限价单提前埋伏，等待价格回调成交
+  limit_order_enabled: false
+
 # 调度配置
 scheduler:
   # 决策间隔（分钟）

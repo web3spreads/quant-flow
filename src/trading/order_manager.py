@@ -239,11 +239,17 @@ class OrderManager:
             print(f"   设置杠杆: {lev}x (逐仓模式)")
             leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-            # 检查杠杆设置是否成功
+            # 检查杠杆设置结果
             if leverage_result.get('status') == 'error':
                 print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
                 print(f"❌ 无法继续下单")
                 return None
+            elif leverage_result.get('status') == 'warning':
+                # 无法降低杠杆，但可以使用当前杠杆继续
+                current_lev = leverage_result.get('current_leverage', lev)
+                print(f"⚠️ {leverage_result.get('message')}")
+                print(f"   使用当前杠杆 {current_lev}x 继续下单")
+                lev = current_lev
 
             # 4. 计算止盈止损价格
             if with_tpsl:
@@ -332,11 +338,17 @@ class OrderManager:
             print(f"   设置杠杆: {lev}x (逐仓模式)")
             leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-            # 检查杠杆设置是否成功
+            # 检查杠杆设置结果
             if leverage_result.get('status') == 'error':
                 print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
                 print(f"❌ 无法继续下单")
                 return None
+            elif leverage_result.get('status') == 'warning':
+                # 无法降低杠杆，但可以使用当前杠杆继续
+                current_lev = leverage_result.get('current_leverage', lev)
+                print(f"⚠️ {leverage_result.get('message')}")
+                print(f"   使用当前杠杆 {current_lev}x 继续下单")
+                lev = current_lev
 
             # 4. 计算止盈止损价格（做空时方向相反）
             if with_tpsl:
@@ -579,3 +591,280 @@ class OrderManager:
         except Exception as e:
             print(f"❌ 获取现货持仓失败: {e}")
             return []
+
+    def execute_long_limit(
+        self,
+        symbol: str,
+        usdt_amount: float,
+        limit_price: float,
+        leverage: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        执行限价开多操作（带止盈止损计算）
+        
+        Args:
+            symbol: 交易对符号
+            usdt_amount: 投入金额
+            limit_price: 限价价格
+            leverage: 杠杆倍数
+            
+        Returns:
+            订单信息（包含止盈止损价格）
+        """
+        try:
+            # 1. 计算仓位大小
+            current_price = limit_price  # 使用限价作为参考价格计算数量
+            lev = leverage if leverage else self.default_leverage
+            
+            # 合约数量 = (投入金额 * 杠杆) / 限价
+            size = (usdt_amount * lev) / limit_price
+            
+            # 获取交易对的精度信息
+            asset_info = self.client.get_asset_info(symbol)
+            if asset_info and 'szDecimals' in asset_info:
+                decimals = asset_info['szDecimals']
+                size = round(size, decimals)
+            else:
+                size = round(size, 3)
+            
+            print(f"📈 限价开多 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
+            
+            # 2. 设置杠杆
+            print(f"   设置杠杆: {lev}x (逐仓模式)")
+            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+            
+            if leverage_result.get('status') == 'error':
+                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                return None
+            
+            # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
+            tp_price = limit_price * (1 + self.take_profit_ratio)
+            sl_price = limit_price * (1 - self.stop_loss_ratio)
+            
+            # 格式化价格
+            tp_price = self.client.format_price(symbol, tp_price)
+            sl_price = self.client.format_price(symbol, sl_price)
+            
+            print(f"   止盈价: ${tp_price:.2f} (+{self.take_profit_ratio*100}%)")
+            print(f"   止损价: ${sl_price:.2f} (-{self.stop_loss_ratio*100}%)")
+            
+            # 4. 下限价单
+            limit_order = self.client.place_limit_order(
+                symbol=symbol,
+                is_buy=True,
+                size=size,
+                price=limit_price
+            )
+            
+            if limit_order.get('status') == 'ok':
+                result = {
+                    'success': True,
+                    'limit_order': limit_order,
+                    'quantity': size,
+                    'price': limit_price,
+                    'leverage': lev,
+                    'take_profit_price': tp_price,
+                    'stop_loss_price': sl_price,
+                    'message': '限价单已提交，成交后将自动设置止盈止损'
+                }
+                return result
+            else:
+                print(f"❌ 限价单失败: {limit_order.get('message')}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ 执行限价开多失败: {e}")
+            return None
+
+    def execute_short_limit(
+        self,
+        symbol: str,
+        usdt_amount: float,
+        limit_price: float,
+        leverage: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        执行限价开空操作（带止盈止损计算）
+        
+        Args:
+            symbol: 交易对符号
+            usdt_amount: 投入金额
+            limit_price: 限价价格
+            leverage: 杠杆倍数
+            
+        Returns:
+            订单信息（包含止盈止损价格）
+        """
+        try:
+            # 1. 计算仓位大小
+            lev = leverage if leverage else self.default_leverage
+            
+            # 合约数量 = (投入金额 * 杠杆) / 限价
+            size = (usdt_amount * lev) / limit_price
+            
+            # 获取交易对的精度信息
+            asset_info = self.client.get_asset_info(symbol)
+            if asset_info and 'szDecimals' in asset_info:
+                decimals = asset_info['szDecimals']
+                size = round(size, decimals)
+            else:
+                size = round(size, 3)
+            
+            print(f"📉 限价开空 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
+            
+            # 2. 设置杠杆
+            print(f"   设置杠杆: {lev}x (逐仓模式)")
+            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+            
+            if leverage_result.get('status') == 'error':
+                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                return None
+            
+            # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
+            # 做空：止盈价 = 限价 * (1 - take_profit_ratio)，止损价 = 限价 * (1 + stop_loss_ratio)
+            tp_price = limit_price * (1 - self.take_profit_ratio)
+            sl_price = limit_price * (1 + self.stop_loss_ratio)
+            
+            # 格式化价格
+            tp_price = self.client.format_price(symbol, tp_price)
+            sl_price = self.client.format_price(symbol, sl_price)
+            
+            print(f"   止盈价: ${tp_price:.2f} (-{self.take_profit_ratio*100}%)")
+            print(f"   止损价: ${sl_price:.2f} (+{self.stop_loss_ratio*100}%)")
+            
+            # 4. 下限价单
+            limit_order = self.client.place_limit_order(
+                symbol=symbol,
+                is_buy=False,
+                size=size,
+                price=limit_price
+            )
+            
+            if limit_order.get('status') == 'ok':
+                result = {
+                    'success': True,
+                    'limit_order': limit_order,
+                    'quantity': size,
+                    'price': limit_price,
+                    'leverage': lev,
+                    'take_profit_price': tp_price,
+                    'stop_loss_price': sl_price,
+                    'message': '限价单已提交，成交后将自动设置止盈止损'
+                }
+                return result
+            else:
+                print(f"❌ 限价单失败: {limit_order.get('message')}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ 执行限价开空失败: {e}")
+            return None
+
+    def get_open_limit_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        获取待处理的限价单列表
+        
+        Args:
+            symbol: 交易对符号（可选，如果提供则只返回该交易对的限价单）
+            
+        Returns:
+            格式化的限价单列表:
+            [{
+                'order_id': int,  # 订单ID
+                'symbol': str,  # 交易对
+                'side': str,  # 'buy' 或 'sell'
+                'limit_price': float,  # 限价
+                'size': float,  # 数量
+                'current_price': float,  # 当前价格
+                'price_diff_percent': float,  # 与当前价格的差距百分比
+            }]
+        """
+        try:
+            open_orders = self.client.get_open_orders()
+            current_price_map = {}
+            
+            # 格式化限价单
+            formatted_orders = []
+            for order in open_orders:
+                order_symbol = order.get('coin', '')
+                
+                # 如果指定了symbol，只返回该交易对的订单
+                if symbol and order_symbol != symbol:
+                    continue
+                
+                # 获取当前价格（缓存）
+                if order_symbol not in current_price_map:
+                    current_price = self.client.get_current_price(order_symbol)
+                    current_price_map[order_symbol] = current_price
+                else:
+                    current_price = current_price_map[order_symbol]
+                
+                # 解析订单信息
+                order_id = order.get('oid')
+                limit_price = float(order.get('limitPx', 0))
+                size = float(order.get('sz', 0))
+                side = 'buy' if order.get('side') == 'B' else 'sell'
+                
+                # 计算与当前价格的差距
+                price_diff_percent = 0.0
+                if current_price:
+                    if side == 'buy':
+                        price_diff_percent = ((limit_price - current_price) / current_price) * 100
+                    else:
+                        price_diff_percent = ((current_price - limit_price) / current_price) * 100
+                
+                formatted_orders.append({
+                    'order_id': order_id,
+                    'symbol': order_symbol,
+                    'side': side,
+                    'limit_price': limit_price,
+                    'size': size,
+                    'current_price': current_price,
+                    'price_diff_percent': price_diff_percent
+                })
+            
+            return formatted_orders
+            
+        except Exception as e:
+            print(f"❌ 获取限价单列表失败: {e}")
+            return []
+
+    def cancel_limit_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
+        """
+        取消限价单
+        
+        Args:
+            symbol: 交易对符号
+            order_id: 订单ID
+            
+        Returns:
+            取消结果
+        """
+        try:
+            result = self.client.cancel_order(symbol, order_id)
+            if result.get('status') == 'ok':
+                print(f"✅ 限价单 {order_id} 已取消")
+                return {
+                    'success': True,
+                    'message': f'限价单 {order_id} 已成功取消',
+                    'order_id': order_id,
+                    'symbol': symbol
+                }
+            else:
+                error_msg = result.get('message', '未知错误')
+                print(f"❌ 取消限价单失败: {error_msg}")
+                return {
+                    'success': False,
+                    'message': f'取消限价单失败: {error_msg}',
+                    'order_id': order_id,
+                    'symbol': symbol
+                }
+        except Exception as e:
+            error_msg = f"取消限价单异常: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {
+                'success': False,
+                'message': error_msg,
+                'order_id': order_id,
+                'symbol': symbol
+            }

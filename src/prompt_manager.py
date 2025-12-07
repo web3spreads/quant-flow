@@ -390,6 +390,8 @@ class PromptManager:
         historical_summary: Optional[str] = None,
         balance_info: Optional[Dict[str, float]] = None,
         enriched_data: Optional[Dict[str, Any]] = None,
+        limit_order_enabled: bool = False,
+        open_limit_orders: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         格式化交易决策 Prompt
@@ -626,7 +628,66 @@ class PromptManager:
             # 历史和余额信息
             "historical_summary": historical_text,
             "balance_info": balance_text,
+            # 限价单信息
+            "limit_order_enabled": limit_order_enabled,
+            "open_limit_orders": open_limit_orders or [],
         }
+        
+        # 格式化限价单信息文本（根据语言选择）
+        limit_orders_text = ""
+        if limit_order_enabled and open_limit_orders:
+            if self.language == "en":
+                limit_orders_text = "\n## 📋 Pending Limit Orders\n\n"
+                if open_limit_orders:
+                    for order in open_limit_orders:
+                        order_id = order.get('order_id', 0)
+                        side = order.get('side', 'unknown')
+                        limit_price = order.get('limit_price', 0)
+                        size = order.get('size', 0)
+                        current_price = order.get('current_price', 0)
+                        price_diff = order.get('price_diff_percent', 0)
+                        
+                        side_emoji = "📈" if side == 'buy' else "📉"
+                        side_text = "Limit Long" if side == 'buy' else "Limit Short"
+                        price_diff_str = f"{price_diff:+.2f}%"
+                        
+                        limit_orders_text += (
+                            f"- **Order #{order_id}** {side_emoji} {side_text}\n"
+                            f"  - Limit Price: ${limit_price:.2f}\n"
+                            f"  - Current Price: ${current_price:.2f}\n"
+                            f"  - Price Gap: {price_diff_str}\n"
+                            f"  - Size: {size:.6f}\n\n"
+                        )
+                else:
+                    limit_orders_text += "No pending limit orders\n"
+            else:
+                limit_orders_text = "\n## 📋 待处理限价单\n\n"
+                if open_limit_orders:
+                    for order in open_limit_orders:
+                        order_id = order.get('order_id', 0)
+                        side = order.get('side', 'unknown')
+                        limit_price = order.get('limit_price', 0)
+                        size = order.get('size', 0)
+                        current_price = order.get('current_price', 0)
+                        price_diff = order.get('price_diff_percent', 0)
+                        
+                        side_emoji = "📈" if side == 'buy' else "📉"
+                        side_text = "限价开多" if side == 'buy' else "限价开空"
+                        price_diff_str = f"{price_diff:+.2f}%"
+                        
+                        limit_orders_text += (
+                            f"- **订单 #{order_id}** {side_emoji} {side_text}\n"
+                            f"  - 限价: ${limit_price:.2f}\n"
+                            f"  - 当前价: ${current_price:.2f}\n"
+                            f"  - 价格差距: {price_diff_str}\n"
+                            f"  - 数量: {size:.6f}\n\n"
+                        )
+                else:
+                    limit_orders_text += "暂无待处理的限价单\n"
+            
+            context["limit_orders_text"] = limit_orders_text
+        else:
+            context["limit_orders_text"] = ""
 
         # 添加enriched_data中的额外字段（用于nof1和nof1-improved prompts）
         if enriched_data:

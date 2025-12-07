@@ -69,3 +69,5 @@ data/
 .venv
 backtest_results/
 !.env.example
+.env.testnet
+.env.backtest
