@@ -247,17 +247,17 @@ class OrderManager:
                 print(f"   设置杠杆: {lev}x (逐仓模式)")
                 leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-                # 检查杠杆设置结果
-                if leverage_result.get('status') == 'error':
-                    print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                    print(f"❌ 无法继续下单")
-                    return None
-                elif leverage_result.get('status') == 'warning':
-                    # 无法降低杠杆，但可以使用当前杠杆继续
-                    current_lev = leverage_result.get('current_leverage', lev)
-                    print(f"⚠️ {leverage_result.get('message')}")
-                    print(f"   使用当前杠杆 {current_lev}x 继续下单")
-                    lev = current_lev
+            # 检查杠杆设置结果
+            if leverage_result.get('status') == 'error':
+                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                print(f"❌ 无法继续下单")
+                return None
+            elif leverage_result.get('status') == 'warning':
+                # 无法降低杠杆，但可以使用当前杠杆继续
+                current_lev = leverage_result.get('current_leverage', lev)
+                print(f"⚠️ {leverage_result.get('message')}")
+                print(f"   使用当前杠杆 {current_lev}x 继续下单")
+                lev = current_lev
 
             # 4. 计算止盈止损价格
             if with_tpsl:
@@ -354,17 +354,17 @@ class OrderManager:
                 print(f"   设置杠杆: {lev}x (逐仓模式)")
                 leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-                # 检查杠杆设置结果
-                if leverage_result.get('status') == 'error':
-                    print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                    print(f"❌ 无法继续下单")
-                    return None
-                elif leverage_result.get('status') == 'warning':
-                    # 无法降低杠杆，但可以使用当前杠杆继续
-                    current_lev = leverage_result.get('current_leverage', lev)
-                    print(f"⚠️ {leverage_result.get('message')}")
-                    print(f"   使用当前杠杆 {current_lev}x 继续下单")
-                    lev = current_lev
+            # 检查杠杆设置结果
+            if leverage_result.get('status') == 'error':
+                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                print(f"❌ 无法继续下单")
+                return None
+            elif leverage_result.get('status') == 'warning':
+                # 无法降低杠杆，但可以使用当前杠杆继续
+                current_lev = leverage_result.get('current_leverage', lev)
+                print(f"⚠️ {leverage_result.get('message')}")
+                print(f"   使用当前杠杆 {current_lev}x 继续下单")
+                lev = current_lev
 
             # 4. 计算止盈止损价格（做空时方向相反）
             if with_tpsl:
