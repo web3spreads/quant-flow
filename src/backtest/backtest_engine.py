@@ -19,6 +19,7 @@ from src.agent.review_memory import ReviewMemoryStore
 from src.utils.logger import TradingLogger
 from src.prompt_manager import PromptManager
 from src.config import FEE_RATE_PER_SIDE
+from src.i18n import get_text
 
 
 class BacktestEngine:
@@ -110,12 +111,15 @@ class BacktestEngine:
                     path=config.review_memory_file,
                     max_lessons=config.review_max_lessons,
                 )
+                # 使用 review_model 如果存在，否则使用 openai_model
+                review_model = config.review_model if hasattr(config, 'review_model') and config.review_model else config.openai_model
+                
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
                     prompt_manager=prompt_manager,
                     openai_api_base=config.openai_api_base,
                     openai_api_key=config.openai_api_key,
-                    model=config.review_model,
+                    model=review_model,
                     temperature=config.review_temperature,
                     lookback_decisions=config.review_lookback_decisions,
                     memory_store=self.review_memory_store,
@@ -141,6 +145,10 @@ class BacktestEngine:
         self.live_report_interval: int = 1
         self._last_live_report_index: int = -1
         self._total_decision_points: int = 0
+
+        # 数据增强相关
+        self.start_time = datetime.now()  # 用于计算elapsed_minutes
+        self.language = "zh"  # 默认中文，可以从config读取
 
         print(f"✅ 回测引擎初始化完成")
         print(f"   交易对: {symbol}")
@@ -497,6 +505,14 @@ class BacktestEngine:
                 # 获取多周期趋势（简化版本，回测中只使用当前周期）
                 multi_timeframe_trends = {'15m': 'NEUTRAL'}  # 简化处理
 
+                # 生成增强数据（为nof1策略提供额外指标）
+                enriched_data = self._enrich_market_data_for_backtest(
+                    df=df,
+                    timestamp=timestamp,
+                    market_data=market_data,
+                    balance_info=balance_info
+                )
+
                 # 调用Agent做出决策
                 decision, details = self.agent.make_decision(
                     market_data=market_data,
@@ -504,7 +520,7 @@ class BacktestEngine:
                     current_positions=current_positions,
                     max_positions=self.config.max_positions if self.config else 2,
                     historical_summary=historical_summary,
-                    enriched_data={}
+                    enriched_data=enriched_data
                 )
 
                 # 记录决策历史
@@ -1177,3 +1193,381 @@ class BacktestEngine:
             clean['output'] = output[:800] + "...[truncated]"
 
         return clean
+
+    def _enrich_market_data_for_backtest(
+        self,
+        df: pd.DataFrame,
+        timestamp: datetime,
+        market_data: Dict[str, Any],
+        balance_info: Optional[Dict[str, float]] = None
+    ) -> Dict[str, Any]:
+        """
+        为回测环境生成增强的市场数据（用于nof1策略）
+        
+        Args:
+            df: 15分钟K线数据（已计算指标）
+            timestamp: 当前时间戳
+            market_data: 基础市场数据
+            balance_info: 账户余额信息
+            
+        Returns:
+            增强后的市场数据字典
+        """
+        enriched = {}
+        
+        # 1. 计算程序运行时长（从回测开始时间计算）
+        elapsed = timestamp - self.historical_data.iloc[0]['timestamp']
+        enriched['elapsed_minutes'] = int(elapsed.total_seconds() / 60)
+        
+        # 2. 找到当前时间点的数据索引
+        time_diffs = (df['timestamp'] - timestamp).abs()
+        closest_idx = time_diffs.idxmin()
+        current_data = df.iloc[:closest_idx+1]
+        
+        # 3. 提取历史序列数据（最近10个数据点）
+        period = min(10, len(current_data))
+        if period > 0:
+            recent_df = current_data.tail(period)
+            
+            # 中间价格序列
+            enriched['mid_prices_raw'] = recent_df['close'].tolist()
+            enriched['mid_prices'] = [f"{p:.2f}" for p in enriched['mid_prices_raw']]
+            
+            # EMA(20)序列
+            if 'ema_20' in recent_df.columns:
+                ema_values = recent_df['ema_20'].fillna(recent_df['close']).tolist()
+                enriched['ema_indicators_raw'] = ema_values
+                enriched['ema_indicators'] = [f"{v:.2f}" for v in ema_values]
+            else:
+                enriched['ema_indicators_raw'] = recent_df['close'].tolist()
+                enriched['ema_indicators'] = enriched['mid_prices']
+            
+            # MACD序列
+            if 'macd' in recent_df.columns:
+                macd_values = recent_df['macd'].fillna(0).tolist()
+                enriched['macd_indicators_raw'] = macd_values
+                enriched['macd_indicators'] = [f"{v:.4f}" for v in macd_values]
+            else:
+                enriched['macd_indicators_raw'] = [0.0] * period
+                enriched['macd_indicators'] = ['0.0000'] * period
+            
+            # RSI序列（使用相同的rsi列）
+            if 'rsi' in recent_df.columns:
+                rsi_values = recent_df['rsi'].fillna(50).tolist()
+                enriched['rsi_7_indicators_raw'] = rsi_values
+                enriched['rsi_7_indicators'] = [f"{v:.2f}" for v in rsi_values]
+                enriched['rsi_14_indicators_raw'] = rsi_values
+                enriched['rsi_14_indicators'] = [f"{v:.2f}" for v in rsi_values]
+            else:
+                enriched['rsi_7_indicators_raw'] = [50.0] * period
+                enriched['rsi_7_indicators'] = ['50.00'] * period
+                enriched['rsi_14_indicators_raw'] = [50.0] * period
+                enriched['rsi_14_indicators'] = ['50.00'] * period
+        else:
+            # 没有足够数据，提供空序列
+            enriched.update({
+                'mid_prices': [],
+                'mid_prices_raw': [],
+                'ema_indicators': [],
+                'ema_indicators_raw': [],
+                'macd_indicators': [],
+                'macd_indicators_raw': [],
+                'rsi_7_indicators': [],
+                'rsi_7_indicators_raw': [],
+                'rsi_14_indicators': [],
+                'rsi_14_indicators_raw': [],
+            })
+        
+        # 4. 添加当前时刻指标
+        current_price = market_data.get('current_price', 0)
+        enriched['current_ema20'] = market_data.get('ema_20', current_price)
+        enriched['current_rsi'] = market_data.get('rsi', 50)
+        enriched['current_macd'] = market_data.get('macd', 0)
+        
+        # 5. 生成4小时K线数据
+        df_4h = self._generate_4h_dataframe(df.iloc[:closest_idx+1])
+        if df_4h is not None and not df_4h.empty:
+            # 计算4小时数据的指标
+            if self.config:
+                df_4h = TechnicalIndicators.calculate_all_indicators(
+                    df_4h,
+                    ema_periods=[20, 50],
+                    atr_periods=[3, 14],
+                    ma_periods=self.config.ma_periods,
+                    rsi_period=self.config.rsi_period,
+                    macd_params={
+                        'fast': self.config.macd_fast,
+                        'slow': self.config.macd_slow,
+                        'signal': self.config.macd_signal
+                    },
+                    bollinger_params={
+                        'period': self.config.bollinger_period,
+                        'std_dev': self.config.bollinger_std
+                    }
+                )
+            
+            # 提取4小时数据
+            latest_4h = df_4h.iloc[-1]
+            recent_4h = df_4h.tail(10)
+            
+            enriched['ema_20_4h'] = latest_4h.get('ema_20', latest_4h['close'])
+            enriched['ema_50_4h'] = latest_4h.get('ema_50', latest_4h['close'])
+            enriched['atr_3_4h'] = latest_4h.get('atr_3', 0)
+            enriched['atr_14_4h'] = latest_4h.get('atr_14', 0)
+            enriched['current_volume'] = latest_4h['volume']
+            enriched['avg_volume'] = df_4h['volume'].mean()
+            
+            # MACD和RSI序列
+            if 'macd' in recent_4h.columns:
+                enriched['macd_4h_indicators'] = recent_4h['macd'].fillna(0).tolist()
+            else:
+                enriched['macd_4h_indicators'] = [0.0] * 10
+            
+            if 'rsi' in recent_4h.columns:
+                enriched['rsi_14_4h_indicators'] = recent_4h['rsi'].fillna(50).tolist()
+            else:
+                enriched['rsi_14_4h_indicators'] = [50.0] * 10
+        else:
+            # 没有4小时数据，提供默认值
+            enriched.update({
+                'ema_20_4h': current_price,
+                'ema_50_4h': current_price,
+                'atr_3_4h': 0,
+                'atr_14_4h': 0,
+                'current_volume': 0,
+                'avg_volume': 0,
+                'macd_4h_indicators': [0.0] * 10,
+                'rsi_14_4h_indicators': [50.0] * 10,
+            })
+            df_4h = None
+        
+        # 6. 添加持仓量和资金费率（回测中设为0）
+        enriched['oi_latest'] = 0
+        enriched['oi_average'] = 0
+        enriched['funding_rate'] = 0
+        
+        # 7. 生成指标分析文本
+        analysis = self._analyze_indicators_for_backtest(
+            enriched, current_data, df_4h
+        )
+        enriched.update(analysis)
+        
+        # 8. 添加账户数据
+        if balance_info:
+            total = balance_info.get('total', self.initial_balance)
+            available = balance_info.get('available', 0)
+            
+            if self.initial_balance > 0:
+                total_return_pct = ((total - self.initial_balance) / self.initial_balance) * 100
+            else:
+                total_return_pct = 0.0
+            
+            enriched.update({
+                'total_return_pct': total_return_pct,
+                'available_cash': available,
+                'account_value': total,
+                'sharpe_ratio': 0,  # 回测中暂不计算
+            })
+        else:
+            enriched.update({
+                'total_return_pct': 0,
+                'available_cash': 0,
+                'account_value': self.initial_balance,
+                'sharpe_ratio': 0,
+            })
+        
+        # 9. 格式化数据为模板友好的字符串格式
+        enriched = self._format_enriched_data(enriched)
+        
+        return enriched
+
+    def _generate_4h_dataframe(self, df_15m: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """
+        从15分钟K线数据生成4小时K线数据
+        
+        Args:
+            df_15m: 15分钟K线数据
+            
+        Returns:
+            4小时K线DataFrame
+        """
+        if df_15m.empty:
+            return None
+        
+        # 按4小时分组
+        df_15m = df_15m.copy()
+        df_15m['timestamp_4h'] = df_15m['timestamp'].dt.floor('4H')
+        
+        # 聚合为4小时K线
+        df_4h = df_15m.groupby('timestamp_4h').agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }).reset_index()
+        
+        df_4h.rename(columns={'timestamp_4h': 'timestamp'}, inplace=True)
+        
+        return df_4h
+
+    def _analyze_indicators_for_backtest(
+        self,
+        enriched: Dict[str, Any],
+        df_15m: pd.DataFrame,
+        df_4h: Optional[pd.DataFrame] = None
+    ) -> Dict[str, str]:
+        """
+        分析指标数据，生成文本性结论（回测版本）
+        """
+        analysis = {}
+        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        
+        # 1. 分析价格趋势
+        if 'mid_prices_raw' in enriched and len(enriched['mid_prices_raw']) >= 5:
+            prices = enriched['mid_prices_raw']
+            if prices[0] != 0:
+                price_change_pct = ((prices[-1] - prices[0]) / prices[0]) * 100
+                if price_change_pct > 1.0:
+                    trend = f"{t('trend_rising')}(+{price_change_pct:.2f}%)"
+                elif price_change_pct < -1.0:
+                    trend = f"{t('trend_falling')}({price_change_pct:.2f}%)"
+                else:
+                    trend = f"{t('trend_sideways')}({price_change_pct:.2f}%)"
+                analysis['price_trend_analysis'] = trend
+            else:
+                analysis['price_trend_analysis'] = t('price_data_error_zero')
+        else:
+            analysis['price_trend_analysis'] = f"{t('trend_sideways')}(0.00%)"
+        
+        # 2. 分析MACD
+        current_macd = enriched.get('current_macd', 0)
+        macd_signal = df_15m.iloc[-1].get('macd_signal', 0) if not df_15m.empty else 0
+        
+        if current_macd > macd_signal and current_macd > 0:
+            macd_status = t('macd_golden_cross_above_zero')
+        elif current_macd > macd_signal and current_macd <= 0:
+            macd_status = t('macd_golden_cross_below_zero')
+        elif current_macd < macd_signal and current_macd < 0:
+            macd_status = t('macd_death_cross_below_zero')
+        elif current_macd < macd_signal and current_macd >= 0:
+            macd_status = t('macd_death_cross_above_zero')
+        else:
+            macd_status = f"MACD={current_macd:.4f}"
+        
+        analysis['macd_analysis'] = macd_status
+        
+        # 3. 分析RSI
+        current_rsi = enriched.get('current_rsi', 50)
+        if current_rsi >= 70:
+            rsi_status = f"{t('rsi_overbought')}({current_rsi:.1f})"
+        elif current_rsi <= 30:
+            rsi_status = f"{t('rsi_oversold')}({current_rsi:.1f})"
+        elif current_rsi >= 60:
+            rsi_status = f"{t('rsi_strong')}({current_rsi:.1f})"
+        elif current_rsi <= 40:
+            rsi_status = f"{t('rsi_weak')}({current_rsi:.1f})"
+        else:
+            rsi_status = f"{t('rsi_neutral')}({current_rsi:.1f})"
+        
+        analysis['rsi_analysis'] = rsi_status
+        
+        # 4. 分析EMA关系
+        current_price = df_15m.iloc[-1]['close'] if not df_15m.empty else 0
+        current_ema20 = enriched.get('current_ema20', current_price)
+        
+        if current_ema20 != 0 and current_price > 0:
+            if current_price > current_ema20 * 1.01:
+                ema_status = f"{t('price_above_ema20')}({((current_price/current_ema20 - 1) * 100):.2f}%)"
+            elif current_price < current_ema20 * 0.99:
+                ema_status = f"{t('price_below_ema20')}({((current_price/current_ema20 - 1) * 100):.2f}%)"
+            else:
+                ema_status = t('price_near_ema20')
+        else:
+            ema_status = t('ema_data_error')
+        
+        analysis['ema_analysis'] = ema_status
+        
+        # 5. 分析成交量
+        if not df_15m.empty and 'volume' in df_15m.columns:
+            current_volume = df_15m.iloc[-1]['volume']
+            avg_volume = df_15m['volume'].tail(20).mean()
+            
+            if avg_volume != 0:
+                times_unit = t('times_unit')
+                if current_volume > avg_volume * 1.5:
+                    volume_status = f"{t('volume_surge')}({(current_volume/avg_volume):.1f}{times_unit})"
+                elif current_volume > avg_volume * 1.2:
+                    volume_status = f"{t('volume_increase')}({(current_volume/avg_volume):.1f}{times_unit})"
+                elif current_volume < avg_volume * 0.5:
+                    volume_status = f"{t('volume_decline')}({(current_volume/avg_volume):.1f}{times_unit})"
+                else:
+                    volume_status = f"{t('volume_normal')}({(current_volume/avg_volume):.1f}{times_unit})"
+            else:
+                volume_status = t('volume_data_error')
+            
+            analysis['volume_analysis'] = volume_status
+        else:
+            analysis['volume_analysis'] = f"{t('volume_normal')}(1.0{t('times_unit')})"
+        
+        # 6. 分析4小时趋势
+        if df_4h is not None and not df_4h.empty:
+            h4_price = df_4h.iloc[-1]['close']
+            h4_ema20 = enriched.get('ema_20_4h', h4_price)
+            h4_ema50 = enriched.get('ema_50_4h', h4_price)
+            
+            if h4_price > h4_ema20 and h4_ema20 > h4_ema50:
+                h4_trend = t('h4_bullish_alignment')
+            elif h4_price < h4_ema20 and h4_ema20 < h4_ema50:
+                h4_trend = t('h4_bearish_alignment')
+            elif h4_price > h4_ema20:
+                h4_trend = t('h4_bullish')
+            elif h4_price < h4_ema20:
+                h4_trend = t('h4_bearish')
+            else:
+                h4_trend = t('h4_ranging')
+            
+            analysis['h4_trend_analysis'] = h4_trend
+        else:
+            analysis['h4_trend_analysis'] = t('h4_ranging')
+        
+        # 7. 综合分析
+        signals = []
+        current_macd = enriched.get('current_macd', 0)
+        macd_signal = df_15m.iloc[-1].get('macd_signal', 0) if not df_15m.empty else 0
+        
+        if current_macd > macd_signal:
+            signals.append(t('signal_macd_bullish'))
+        elif current_macd < macd_signal:
+            signals.append(t('signal_macd_bearish'))
+        
+        if current_rsi >= 70:
+            signals.append(t('signal_rsi_overbought'))
+        elif current_rsi <= 30:
+            signals.append(t('signal_rsi_oversold'))
+        
+        if current_price > current_ema20:
+            signals.append(t('signal_price_above_ema'))
+        else:
+            signals.append(t('signal_price_below_ema'))
+        
+        analysis['composite_signal'] = ', '.join(signals) if signals else t('signal_none')
+        
+        return analysis
+
+    def _format_enriched_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """格式化数据为模板友好的字符串格式"""
+        formatted = data.copy()
+        
+        # 格式化序列为逗号分隔字符串
+        list_fields = [
+            'mid_prices', 'ema_indicators', 'macd_indicators',
+            'rsi_7_indicators', 'rsi_14_indicators',
+            'macd_4h_indicators', 'rsi_14_4h_indicators'
+        ]
+        
+        for field in list_fields:
+            if field in formatted and isinstance(formatted[field], list):
+                formatted[field] = ', '.join(map(str, formatted[field]))
+        
+        return formatted

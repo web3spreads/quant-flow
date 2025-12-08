@@ -182,6 +182,8 @@ class Config:
         self.review_run_every_cycles: int = int(review.get("run_every_cycles", 3))
         self.review_lookback_decisions: int = int(review.get("lookback_decisions", 12))
         self.review_temperature: float = float(review.get("temperature", 0.05))
+        # 如果配置文件中指定了 model，使用它；否则使用默认的 openai_model
+        self.review_model: str = review.get("model", None)
         self.review_memory_file: str = review.get(
             "memory_file", "logs/review_memory.json"
         )
