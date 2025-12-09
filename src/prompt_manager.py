@@ -711,8 +711,6 @@ class PromptManager:
                             f"  - 价格差距: {price_diff_str}\n"
                             f"  - 数量: {size:.6f}\n\n"
                         )
-                else:
-                    limit_orders_text += "暂无待处理的限价单\n"
             
             context["limit_orders_text"] = limit_orders_text
         else:
