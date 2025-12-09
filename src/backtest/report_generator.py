@@ -256,7 +256,7 @@ class BacktestReportGenerator:
             if isinstance(exit_time, str):
                 try:
                     return datetime.fromisoformat(exit_time.replace('Z', '+00:00'))
-                except:
+                except (ValueError, TypeError):
                     return datetime.now()
             return datetime.now()
         
