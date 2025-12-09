@@ -214,10 +214,14 @@ class HyperliquidClient:
 
     def format_price(self, symbol: str, price: float) -> float:
         """
-        根据交易对的 tick size 格式化价格
+        根据 Hyperliquid 的价格精度要求格式化价格
 
-        Hyperliquid 要求价格必须是 tick size 的整数倍
-        对于大多数资产，tick size 是 0.1
+        Hyperliquid 价格要求:
+        1. 最多5位有效数字
+        2. 最多 MAX_DECIMALS - szDecimals 位小数（永续合约 MAX_DECIMALS=6）
+        3. 必须是 tick size 的整数倍
+
+        参考: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 
         Args:
             symbol: 交易对符号
@@ -227,22 +231,46 @@ class HyperliquidClient:
             格式化后的价格
         """
         try:
-            # Hyperliquid 的标准 tick size 是 0.1
-            # 将价格四舍五入到 0.1 的整数倍
+            # 1. 首先限制到5位有效数字
+            # 例如: 94283.7 -> 94284 (5位有效数字)
+            if price > 0:
+                from math import floor, log10
+                # 计算数量级
+                magnitude = floor(log10(abs(price)))
+                # 保留5位有效数字
+                sig_figs = 5
+                # 计算需要保留的小数位数
+                decimal_places = sig_figs - magnitude - 1
+                if decimal_places < 0:
+                    # 价格很大，需要四舍五入到整数位
+                    factor = 10 ** (-decimal_places)
+                    formatted = round(price / factor) * factor
+                else:
+                    formatted = round(price, decimal_places)
+            else:
+                formatted = price
+
+            # 2. 确保是 tick size (0.1) 的整数倍
             tick_size = 0.1
-            formatted = round(price / tick_size) * tick_size
+            formatted = round(formatted / tick_size) * tick_size
 
-            # 确保结果是 1 位小数
-            formatted = round(formatted, 1)
+            # 3. 获取 szDecimals，计算最大小数位数
+            # 永续合约: max_decimals = 6 - szDecimals
+            asset_info = self.get_asset_info(symbol)
+            if asset_info:
+                sz_decimals = asset_info.get('szDecimals', 0)
+                max_price_decimals = 6 - sz_decimals
+                # 限制小数位数
+                formatted = round(formatted, max(0, max_price_decimals))
 
-            return formatted
+            return float(formatted)
 
         except Exception as e:
             print(f"❌ 格式化价格失败: {e}")
             import traceback
             traceback.print_exc()
-            # 返回四舍五入到 0.1 的值
-            return round(round(price / 0.1) * 0.1, 1)
+            # 回退：四舍五入到整数（最安全）
+            return float(round(price))
 
     @staticmethod
     def check_order_success(order_result: Dict[str, Any]) -> tuple[bool, Optional[str]]:
@@ -430,6 +458,7 @@ class HyperliquidClient:
                 return result
             
             # 2. 下止盈单（如果提供）
+            tp_success = True
             if take_profit_price:
                 tp_result = self.place_tpsl_order(
                     symbol=symbol,
@@ -439,14 +468,16 @@ class HyperliquidClient:
                     is_tp=True
                 )
                 result['take_profit_order'] = tp_result
-                if tp_result.get('status') != 'ok':
-                    # 包含请求参数以便调试
-                    error_msg = f"止盈单失败: {tp_result.get('message', 'Unknown error')}"
+                # 使用 check_order_success 进行深度检查
+                tp_success, tp_error = self.check_order_success(tp_result)
+                if not tp_success:
+                    error_msg = f"止盈单失败: {tp_error}"
                     if 'request_params' in tp_result:
                         error_msg += f"\n请求参数: {tp_result['request_params']}"
                     result['errors'].append(error_msg)
-            
+
             # 3. 下止损单（如果提供）
+            sl_success = True
             if stop_loss_price:
                 sl_result = self.place_tpsl_order(
                     symbol=symbol,
@@ -456,19 +487,17 @@ class HyperliquidClient:
                     is_tp=False
                 )
                 result['stop_loss_order'] = sl_result
-                if sl_result.get('status') != 'ok':
-                    # 包含请求参数以便调试
-                    error_msg = f"止损单失败: {sl_result.get('message', 'Unknown error')}"
+                # 使用 check_order_success 进行深度检查
+                sl_success, sl_error = self.check_order_success(sl_result)
+                if not sl_success:
+                    error_msg = f"止损单失败: {sl_error}"
                     if 'request_params' in sl_result:
                         error_msg += f"\n请求参数: {sl_result['request_params']}"
                     result['errors'].append(error_msg)
-            
-            # 判断整体成功
-            result['success'] = (
-                market_order.get('status') == 'ok' and
-                (not take_profit_price or result['take_profit_order'].get('status') == 'ok') and
-                (not stop_loss_price or result['stop_loss_order'].get('status') == 'ok')
-            )
+
+            # 判断整体成功 - 使用深度检查结果
+            market_success, _ = self.check_order_success(market_order)
+            result['success'] = market_success and tp_success and sl_success
             
             return result
             
