@@ -2,13 +2,17 @@
 Hyperliquid 永续合约客户端
 基于官方 hyperliquid-python-sdk
 """
+import traceback
+from decimal import Decimal, ROUND_HALF_UP
+from math import floor, log10
 from typing import Optional, Dict, Any, List
+
 import eth_account
 from eth_account.signers.local import LocalAccount
-
 from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+
 from src.fees import FeeRates, calculate_fee_rates
 
 
@@ -234,7 +238,6 @@ class HyperliquidClient:
             # 1. 首先限制到5位有效数字
             # 例如: 94283.7 -> 94284 (5位有效数字)
             if price > 0:
-                from math import floor, log10
                 # 计算数量级
                 magnitude = floor(log10(abs(price)))
                 # 保留5位有效数字
@@ -251,8 +254,13 @@ class HyperliquidClient:
                 formatted = price
 
             # 2. 确保是 tick size (0.1) 的整数倍
-            tick_size = 0.1
-            formatted = round(formatted / tick_size) * tick_size
+            # 使用 Decimal 避免浮点数精度问题
+            tick_size = Decimal('0.1')
+            price_decimal = Decimal(str(formatted))
+
+            # 转换为 tick 单位，四舍五入，再转回价格
+            ticks = (price_decimal / tick_size).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            formatted = float(ticks * tick_size)
 
             # 3. 获取 szDecimals，计算最大小数位数
             # 永续合约: max_decimals = 6 - szDecimals
@@ -260,14 +268,15 @@ class HyperliquidClient:
             if asset_info:
                 sz_decimals = asset_info.get('szDecimals', 0)
                 max_price_decimals = 6 - sz_decimals
-                # 限制小数位数
-                formatted = round(formatted, max(0, max_price_decimals))
+                # 限制小数位数（使用 Decimal 确保精度）
+                formatted_decimal = Decimal(str(formatted))
+                quantize_str = '0.' + '0' * max(0, max_price_decimals) if max_price_decimals > 0 else '1'
+                formatted = float(formatted_decimal.quantize(Decimal(quantize_str), rounding=ROUND_HALF_UP))
 
             return float(formatted)
 
         except Exception as e:
             print(f"❌ 格式化价格失败: {e}")
-            import traceback
             traceback.print_exc()
             # 回退：四舍五入到整数（最安全）
             return float(round(price))
@@ -621,7 +630,6 @@ class HyperliquidClient:
 
         except Exception as e:
             print(f"❌ 下止盈止损单失败: {e}")
-            import traceback
             traceback.print_exc()
             return {
                 'status': 'error',
@@ -862,7 +870,6 @@ class HyperliquidClient:
 
         except Exception as e:
             print(f"❌ 获取现货资产索引失败: {e}")
-            import traceback
             traceback.print_exc()
             return None
 
@@ -960,7 +967,6 @@ class HyperliquidClient:
 
         except Exception as e:
             print(f"❌ 现货买入异常: {e}")
-            import traceback
             traceback.print_exc()
             return {'status': 'error', 'message': str(e)}
 
@@ -1054,7 +1060,6 @@ class HyperliquidClient:
 
         except Exception as e:
             print(f"❌ 现货卖出异常: {e}")
-            import traceback
             traceback.print_exc()
             return {'status': 'error', 'message': str(e)}
 
