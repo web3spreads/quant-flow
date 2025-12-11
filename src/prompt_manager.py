@@ -7,6 +7,7 @@ Prompt 管理模块
 import os
 import json
 import yaml
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from jinja2 import Environment, FileSystemLoader, Template
@@ -217,7 +218,7 @@ class PromptManager:
             symbol: 交易对
             recent_trades: 最近1小时的交易记录列表，每条记录包含:
                 - time: 时间戳（毫秒）
-                - side: 方向 (buy/sell)
+                - side: 方向 ('B' 表示买入, 'A' 表示卖出)
                 - dir: 开平方向 (Open Long/Close Long/Open Short/Close Short)
                 - px: 成交价格
                 - sz: 成交数量
@@ -252,7 +253,6 @@ class PromptManager:
         for trade in sorted_trades:
             # 解析时间
             time_ms = trade.get("time", 0)
-            from datetime import datetime
             trade_time = datetime.fromtimestamp(time_ms / 1000).strftime("%H:%M:%S")
 
             # 解析方向
