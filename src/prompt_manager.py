@@ -205,6 +205,89 @@ class PromptManager:
             "position_text": position_text,
         }
 
+    def format_recent_trades_text(
+        self,
+        symbol: str,
+        recent_trades: List[Dict[str, Any]],
+    ) -> str:
+        """
+        格式化最近1小时操作记录文本
+
+        Args:
+            symbol: 交易对
+            recent_trades: 最近1小时的交易记录列表，每条记录包含:
+                - time: 时间戳（毫秒）
+                - side: 方向 (buy/sell)
+                - dir: 开平方向 (Open Long/Close Long/Open Short/Close Short)
+                - px: 成交价格
+                - sz: 成交数量
+                - closedPnl: 已实现盈亏
+
+        Returns:
+            格式化后的操作记录文本，如果没有记录则返回空字符串
+        """
+        # 如果没有记录，返回空字符串（不注入任何信息）
+        if not recent_trades:
+            return ""
+
+        # 获取国际化文本的快捷方法
+        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+
+        # 计算统计信息
+        total_pnl = sum(float(trade.get("closedPnl", 0)) for trade in recent_trades)
+        trade_count = len(recent_trades)
+
+        # 构建操作记录文本
+        lines = []
+        lines.append(f"## {t('recent_trades_title')}")
+        lines.append("")
+        lines.append(f"- {t('recent_trades_count')}: {trade_count}")
+        lines.append(f"- {t('recent_trades_total_pnl')}: ${total_pnl:+.2f}")
+        lines.append("")
+        lines.append(f"**{t('recent_trades_list_header')}:**")
+
+        # 按时间顺序排列（从旧到新）
+        sorted_trades = sorted(recent_trades, key=lambda x: x.get("time", 0))
+
+        for trade in sorted_trades:
+            # 解析时间
+            time_ms = trade.get("time", 0)
+            from datetime import datetime
+            trade_time = datetime.fromtimestamp(time_ms / 1000).strftime("%H:%M:%S")
+
+            # 解析方向
+            dir_text = trade.get("dir", "")
+            if dir_text == "Open Long":
+                dir_display = t("recent_trades_open_long")
+            elif dir_text == "Close Long":
+                dir_display = t("recent_trades_close_long")
+            elif dir_text == "Open Short":
+                dir_display = t("recent_trades_open_short")
+            elif dir_text == "Close Short":
+                dir_display = t("recent_trades_close_short")
+            else:
+                # 如果没有 dir，根据 side 显示
+                side = trade.get("side", "")
+                dir_display = t("recent_trades_buy") if side == "B" else t("recent_trades_sell")
+
+            # 价格和数量
+            price = float(trade.get("px", 0))
+            size = abs(float(trade.get("sz", 0)))
+            pnl = float(trade.get("closedPnl", 0))
+
+            # 格式化单条记录
+            pnl_text = f"{t('recent_trades_pnl')}: ${pnl:+.2f}" if pnl != 0 else ""
+            line = f"- {trade_time}: {dir_display} {size:.4f} @ ${price:.2f}"
+            if pnl_text:
+                line += f" ({pnl_text})"
+            lines.append(line)
+
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+        return "\n".join(lines)
+
     def __init__(
         self,
         config_file: str = "prompts/prompts.yaml",
@@ -690,6 +773,7 @@ class PromptManager:
             )
             context.setdefault("sharpe_ratio", 0)
             context.setdefault("current_positions", str(current_positions))
+            context.setdefault("recent_trades_text", "")
 
         # 使用 Jinja2 渲染模板
         prompt = self.trading_prompt_template.render(context)

@@ -127,6 +127,19 @@ LANGUAGE_RESOURCES = {
         "hint_label": "提示",
         "unknown": "未知",
         "times_unit": "倍",
+
+        # 最近操作记录相关
+        "recent_trades_title": "最近 1 小时该币种的操作记录",
+        "recent_trades_count": "成交笔数",
+        "recent_trades_total_pnl": "合计已实现盈亏",
+        "recent_trades_list_header": "交易明细（时间顺序）",
+        "recent_trades_buy": "买入",
+        "recent_trades_sell": "卖出",
+        "recent_trades_open_long": "开多",
+        "recent_trades_close_long": "平多",
+        "recent_trades_open_short": "开空",
+        "recent_trades_close_short": "平空",
+        "recent_trades_pnl": "盈亏",
     },
     "en": {
         # Position status related
@@ -247,6 +260,19 @@ LANGUAGE_RESOURCES = {
         "hint_label": "Hint",
         "unknown": "Unknown",
         "times_unit": "x",
+
+        # Recent trades related
+        "recent_trades_title": "Recent Trades for This Symbol (Last 1 Hour)",
+        "recent_trades_count": "Number of Trades",
+        "recent_trades_total_pnl": "Total Realized P&L",
+        "recent_trades_list_header": "Trade Details (Chronological Order)",
+        "recent_trades_buy": "Buy",
+        "recent_trades_sell": "Sell",
+        "recent_trades_open_long": "Open Long",
+        "recent_trades_close_long": "Close Long",
+        "recent_trades_open_short": "Open Short",
+        "recent_trades_close_short": "Close Short",
+        "recent_trades_pnl": "P&L",
     }
 }
 

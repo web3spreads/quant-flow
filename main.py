@@ -9,7 +9,7 @@ import signal
 import argparse
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, List
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -541,6 +541,17 @@ class QuantFlowBot:
                     )
                     enriched_data.update(account_enriched)
 
+                    # 获取最近1小时的操作记录并注入到 enriched_data
+                    recent_fills = self._get_recent_fills_for_symbol(symbol, hours=1)
+                    if recent_fills and self.prompt_manager:
+                        recent_trades_text = self.prompt_manager.format_recent_trades_text(
+                            symbol=symbol,
+                            recent_trades=recent_fills,
+                        )
+                        enriched_data["recent_trades_text"] = recent_trades_text
+                    else:
+                        enriched_data["recent_trades_text"] = ""
+
                     # 生成历史汇总（如果有足够的历史记录）
                     historical_summary = None
                     history_count = self.decision_history.get_history_count(symbol)
@@ -929,6 +940,42 @@ class QuantFlowBot:
                 },
                 status="SUCCESS",
             )
+
+    def _get_recent_fills_for_symbol(self, symbol: str, hours: int = 1) -> List[Dict[str, Any]]:
+        """
+        获取指定币种最近N小时的交易记录
+
+        Args:
+            symbol: 币种名称（如 BTC, ETH）
+            hours: 回溯时间（小时），默认1小时
+
+        Returns:
+            该币种最近N小时的交易记录列表，按时间排序（从旧到新）
+        """
+        try:
+            user_address = self.hyperliquid_client.address
+            fills = self.hyperliquid_client.info.user_fills(user_address)
+
+            if not fills:
+                return []
+
+            # 计算N小时前的时间戳（毫秒）
+            cutoff_time = int((datetime.now() - timedelta(hours=hours)).timestamp() * 1000)
+
+            # 过滤出该币种最近N小时的交易
+            recent_fills = [
+                f for f in fills
+                if f.get("coin") == symbol and f.get("time", 0) >= cutoff_time
+            ]
+
+            # 按时间排序（从旧到新）
+            recent_fills.sort(key=lambda x: x.get("time", 0))
+
+            return recent_fills
+
+        except Exception as e:
+            self.logger.print_warning(f"获取 {symbol} 最近交易记录失败: {e}")
+            return []
 
     def _gather_statistics(self) -> Dict[str, Any]:
         """收集交易统计信息"""
