@@ -7,6 +7,7 @@ ReviewDailyLogger 单元测试
 - 训练数据导出
 """
 
+import copy
 import json
 import os
 import tempfile
@@ -142,7 +143,7 @@ class TestReviewDailyLogger:
         """测试同一天多条记录"""
         # 写入多条记录
         for i in range(3):
-            data = sample_review_data.copy()
+            data = copy.deepcopy(sample_review_data)
             data["symbol"] = f"SYMBOL_{i}"
             logger.log_review(**data)
 
@@ -213,7 +214,7 @@ class TestReviewDailyLogger:
         logger.log_review(**sample_review_data)
 
         # 写入 ETH 数据（无经验）
-        eth_data = sample_review_data.copy()
+        eth_data = copy.deepcopy(sample_review_data)
         eth_data["symbol"] = "ETH"
         eth_data["lessons"] = []  # 无经验
         logger.log_review(**eth_data)
@@ -252,7 +253,7 @@ class TestReviewDailyLogger:
         # 写入一些数据
         logger.log_review(**sample_review_data)
 
-        eth_data = sample_review_data.copy()
+        eth_data = copy.deepcopy(sample_review_data)
         eth_data["symbol"] = "ETH"
         eth_data["lessons"] = [{"rule": "ETH 规则", "action": "ETH 动作"}]
         logger.log_review(**eth_data)
@@ -283,7 +284,7 @@ class TestReviewDailyLogger:
         results = []
 
         def write_record(symbol):
-            data = sample_review_data.copy()
+            data = copy.deepcopy(sample_review_data)
             data["symbol"] = symbol
             result = logger.log_review(**data)
             results.append(result)
