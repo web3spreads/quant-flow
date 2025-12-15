@@ -10,7 +10,7 @@ import json
 import platform
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
 import threading
 
 # 跨平台文件锁支持：Unix 使用 fcntl，Windows 仅使用线程锁
