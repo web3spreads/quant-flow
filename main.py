@@ -166,20 +166,20 @@ class QuantFlowBot:
             max_lessons=self.config.review_max_lessons,
         )
 
-        # 初始化每日日志记录器（用于 LoRA 训练数据收集）
-        self.review_daily_logger = ReviewDailyLogger(
-            base_dir=self.config.review_daily_log_dir,
-            logger=self.logger,
-        )
-        self.logger.print_info(
-            f"复盘每日日志目录: {self.config.review_daily_log_dir}"
-        )
-
         if self.config.review_enabled:
             if not self.prompt_manager:
                 self.logger.print_warning("Prompt 管理器不可用，复盘 Agent 已禁用")
                 self.review_agent = None
             else:
+                # 初始化每日日志记录器（用于 LoRA 训练数据收集）
+                review_daily_logger = ReviewDailyLogger(
+                    base_dir=self.config.review_daily_log_dir,
+                    logger=self.logger,
+                )
+                self.logger.print_info(
+                    f"复盘每日日志目录: {self.config.review_daily_log_dir}"
+                )
+
                 self.logger.print_info("初始化复盘 Agent...")
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
@@ -196,7 +196,7 @@ class QuantFlowBot:
                     confidence_decay_factor=self.config.review_confidence_decay_factor,
                     similarity_method=self.config.review_similarity_method,
                     notifier=self.notifier,  # 传递通知器
-                    daily_logger=self.review_daily_logger,  # 传递每日日志记录器
+                    daily_logger=review_daily_logger,  # 传递每日日志记录器
                 )
         else:
             self.review_agent = None

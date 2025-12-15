@@ -127,6 +127,9 @@ class ReviewDailyLogger:
                 "spot_checks": spot_checks or [],
             },
 
+            # ===== 决策历史（用于训练上下文理解）=====
+            "decision_digest": decision_digest,
+
             # ===== 环境特征（便于按相似场景筛选训练数据）=====
             "context_features": context_features,
 
@@ -189,7 +192,7 @@ class ReviewDailyLogger:
             return True
         except Exception as e:
             # 记录失败不应影响主流程
-            self._log_warning(f"写入失败: {e}")
+            self._log_warning(f"写入日志文件失败 {file_path}: {e}")
             return False
 
     def read_daily_records(
@@ -220,7 +223,7 @@ class ReviewDailyLogger:
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
-            self._log_warning(f"读取失败: {e}")
+            self._log_warning(f"读取日志文件失败 {file_path}: {e}")
 
         return records
 
@@ -270,7 +273,10 @@ class ReviewDailyLogger:
             start_date: 开始日期
             end_date: 结束日期
             format_type: 输出格式 ("alpaca", "sharegpt", "raw")
-            min_lesson_count: 最少经验数量（过滤无效复盘）
+            min_lesson_count: 最少经验数量，用于过滤低质量复盘记录。
+                默认为 1，即只导出至少有一条经验的记录。
+                设置为 0 可包含所有记录（含无经验的"负面样本"，
+                这些样本可能对训练模型识别无效场景有价值）。
             symbols: 筛选特定交易对
 
         Returns:
@@ -291,9 +297,12 @@ class ReviewDailyLogger:
             # 读取所有文件
             records = []
             for file_path in sorted(self.base_dir.glob("*.jsonl")):
-                daily_records = self.read_daily_records(
-                    datetime.strptime(file_path.stem, self.date_format)
-                )
+                try:
+                    file_date = datetime.strptime(file_path.stem, self.date_format)
+                except ValueError:
+                    # 跳过文件名格式不匹配的文件
+                    continue
+                daily_records = self.read_daily_records(file_date)
                 records.extend(daily_records)
         else:
             records = self.read_date_range(start_date, end_date)
@@ -368,16 +377,20 @@ class ReviewDailyLogger:
         }
 
         for file_path in sorted(self.base_dir.glob("*.jsonl")):
+            date_str = file_path.stem
+            try:
+                file_date = datetime.strptime(date_str, self.date_format)
+            except ValueError:
+                # 跳过文件名格式不匹配的文件
+                continue
+
             stats["total_files"] += 1
 
-            date_str = file_path.stem
             if stats["date_range"]["earliest"] is None:
                 stats["date_range"]["earliest"] = date_str
             stats["date_range"]["latest"] = date_str
 
-            records = self.read_daily_records(
-                datetime.strptime(date_str, self.date_format)
-            )
+            records = self.read_daily_records(file_date)
 
             for record in records:
                 stats["total_records"] += 1
