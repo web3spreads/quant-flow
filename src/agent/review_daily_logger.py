@@ -1,0 +1,370 @@
+"""
+复盘经验每日日志记录器
+
+按日期存储复盘经验，便于后续 LoRA 训练使用。
+每条记录以 JSONL 格式存储，包含完整的输入输出对，
+可直接转换为 Alpaca/ShareGPT 等训练格式。
+"""
+
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+import threading
+import fcntl
+
+
+class ReviewDailyLogger:
+    """
+    复盘经验每日日志记录器
+
+    数据格式设计（便于 LoRA 训练）：
+    - instruction: 系统指令（复盘任务描述）
+    - input: 市场环境和决策历史
+    - output: LLM 生成的复盘经验
+    - metadata: 元数据（时间、交易对、统计信息等）
+
+    文件结构：
+    logs/review_daily/
+    ├── 2025-12-15.jsonl
+    ├── 2025-12-16.jsonl
+    └── ...
+    """
+
+    def __init__(
+        self,
+        base_dir: str = "logs/review_daily",
+        date_format: str = "%Y-%m-%d",
+    ):
+        """
+        初始化日志记录器
+
+        Args:
+            base_dir: 日志存储基础目录
+            date_format: 日期格式，用于生成文件名
+        """
+        self.base_dir = Path(base_dir)
+        self.date_format = date_format
+        self._lock = threading.Lock()
+
+        # 确保目录存在
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_daily_file_path(self, date: Optional[datetime] = None) -> Path:
+        """获取指定日期的日志文件路径"""
+        if date is None:
+            date = datetime.now()
+        filename = f"{date.strftime(self.date_format)}.jsonl"
+        return self.base_dir / filename
+
+    def log_review(
+        self,
+        symbol: str,
+        prompt: str,
+        raw_output: str,
+        lessons: List[Dict[str, Any]],
+        summary: str,
+        context_features: Dict[str, Any],
+        decision_digest: List[Dict[str, Any]],
+        stats: Dict[str, Any],
+        fills_summary: Optional[Dict[str, Any]] = None,
+        existing_lessons: Optional[List[Dict[str, Any]]] = None,
+        spot_checks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """
+        记录一次完整的复盘经验
+
+        Args:
+            symbol: 交易对
+            prompt: 发送给 LLM 的完整 prompt（作为训练的 input）
+            raw_output: LLM 的原始输出（作为训练的 output）
+            lessons: 解析后的经验列表
+            summary: 复盘摘要
+            context_features: 当前市场环境特征
+            decision_digest: 压缩后的决策历史
+            stats: 统计信息
+            fills_summary: 成交摘要（可选）
+            existing_lessons: 历史经验（可选）
+            spot_checks: 抽查点（可选）
+
+        Returns:
+            是否成功写入
+        """
+        timestamp = datetime.now()
+
+        # 构建训练数据格式
+        record = {
+            # ===== 训练核心字段 =====
+            # instruction: 任务描述（可用于构建 system prompt）
+            "instruction": self._build_instruction(symbol),
+            # input: 完整的 prompt（包含市场数据、历史决策等）
+            "input": prompt,
+            # output: LLM 的原始输出
+            "output": raw_output,
+
+            # ===== 结构化数据（便于筛选和分析）=====
+            "parsed_output": {
+                "lessons": lessons,
+                "summary": summary,
+                "spot_checks": spot_checks or [],
+            },
+
+            # ===== 环境特征（便于按相似场景筛选训练数据）=====
+            "context_features": context_features,
+
+            # ===== 元数据 =====
+            "metadata": {
+                "timestamp": timestamp.isoformat(),
+                "symbol": symbol,
+                "stats": stats,
+                "fills_summary": fills_summary or {},
+                "decision_count": len(decision_digest),
+                "lesson_count": len(lessons),
+                "existing_lesson_count": len(existing_lessons) if existing_lessons else 0,
+            },
+        }
+
+        return self._write_record(record, timestamp)
+
+    def _build_instruction(self, symbol: str) -> str:
+        """
+        构建训练用的 instruction
+
+        这个 instruction 描述了复盘任务，可用于：
+        1. 构建训练数据的 system prompt
+        2. 作为 Alpaca 格式的 instruction 字段
+        """
+        return (
+            f"你是一个专业的加密货币量化交易复盘专家。"
+            f"请分析 {symbol} 的近期交易决策记录，"
+            f"提取可复用的交易经验规则，包括：\n"
+            f"1. 识别成功和失败的交易模式\n"
+            f"2. 总结有效的入场/出场时机判断\n"
+            f"3. 评估风险控制的执行效果\n"
+            f"4. 提炼可用于未来决策的具体规则\n"
+            f"请以 JSON 格式输出，包含 summary、lessons 和 spot_checks 字段。"
+        )
+
+    def _write_record(self, record: Dict[str, Any], timestamp: datetime) -> bool:
+        """
+        写入单条记录到日志文件
+
+        使用文件锁确保并发安全
+        """
+        file_path = self._get_daily_file_path(timestamp)
+
+        try:
+            with self._lock:
+                # 使用追加模式写入
+                with open(file_path, "a", encoding="utf-8") as f:
+                    # 获取文件锁（阻塞模式）
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    try:
+                        # 写入 JSON 行
+                        json_line = json.dumps(record, ensure_ascii=False)
+                        f.write(json_line + "\n")
+                    finally:
+                        # 释放文件锁
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            return True
+        except Exception as e:
+            # 记录失败不应影响主流程
+            print(f"[ReviewDailyLogger] 写入失败: {e}")
+            return False
+
+    def read_daily_records(
+        self, date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        读取指定日期的所有记录
+
+        Args:
+            date: 日期，默认为今天
+
+        Returns:
+            记录列表
+        """
+        file_path = self._get_daily_file_path(date)
+
+        if not file_path.exists():
+            return []
+
+        records = []
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            records.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            print(f"[ReviewDailyLogger] 读取失败: {e}")
+
+        return records
+
+    def read_date_range(
+        self,
+        start_date: datetime,
+        end_date: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        读取日期范围内的所有记录
+
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期，默认为今天
+
+        Returns:
+            记录列表
+        """
+        if end_date is None:
+            end_date = datetime.now()
+
+        all_records = []
+        current_date = start_date
+
+        while current_date <= end_date:
+            records = self.read_daily_records(current_date)
+            all_records.extend(records)
+            # 移动到下一天
+            current_date = datetime(
+                current_date.year,
+                current_date.month,
+                current_date.day,
+            )
+            from datetime import timedelta
+            current_date += timedelta(days=1)
+
+        return all_records
+
+    def export_for_training(
+        self,
+        output_path: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        format_type: str = "alpaca",
+        min_lesson_count: int = 1,
+        symbols: Optional[List[str]] = None,
+    ) -> int:
+        """
+        导出训练数据
+
+        Args:
+            output_path: 输出文件路径
+            start_date: 开始日期
+            end_date: 结束日期
+            format_type: 输出格式 ("alpaca", "sharegpt", "raw")
+            min_lesson_count: 最少经验数量（过滤无效复盘）
+            symbols: 筛选特定交易对
+
+        Returns:
+            导出的记录数量
+        """
+        # 获取所有日志文件
+        if start_date is None:
+            # 读取所有文件
+            records = []
+            for file_path in sorted(self.base_dir.glob("*.jsonl")):
+                daily_records = self.read_daily_records(
+                    datetime.strptime(file_path.stem, self.date_format)
+                )
+                records.extend(daily_records)
+        else:
+            records = self.read_date_range(start_date, end_date)
+
+        # 筛选
+        filtered_records = []
+        for record in records:
+            # 检查经验数量
+            lesson_count = record.get("metadata", {}).get("lesson_count", 0)
+            if lesson_count < min_lesson_count:
+                continue
+
+            # 检查交易对
+            if symbols:
+                symbol = record.get("metadata", {}).get("symbol", "")
+                if symbol not in symbols:
+                    continue
+
+            filtered_records.append(record)
+
+        # 转换格式
+        training_data = []
+        for record in filtered_records:
+            if format_type == "alpaca":
+                training_data.append({
+                    "instruction": record.get("instruction", ""),
+                    "input": record.get("input", ""),
+                    "output": record.get("output", ""),
+                })
+            elif format_type == "sharegpt":
+                training_data.append({
+                    "conversations": [
+                        {
+                            "from": "system",
+                            "value": record.get("instruction", ""),
+                        },
+                        {
+                            "from": "human",
+                            "value": record.get("input", ""),
+                        },
+                        {
+                            "from": "gpt",
+                            "value": record.get("output", ""),
+                        },
+                    ],
+                })
+            else:  # raw
+                training_data.append(record)
+
+        # 写入输出文件
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(training_data, f, ensure_ascii=False, indent=2)
+
+        return len(training_data)
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        获取日志统计信息
+
+        Returns:
+            统计信息字典
+        """
+        stats = {
+            "total_files": 0,
+            "total_records": 0,
+            "total_lessons": 0,
+            "symbols": {},
+            "date_range": {"earliest": None, "latest": None},
+        }
+
+        for file_path in sorted(self.base_dir.glob("*.jsonl")):
+            stats["total_files"] += 1
+
+            date_str = file_path.stem
+            if stats["date_range"]["earliest"] is None:
+                stats["date_range"]["earliest"] = date_str
+            stats["date_range"]["latest"] = date_str
+
+            records = self.read_daily_records(
+                datetime.strptime(date_str, self.date_format)
+            )
+
+            for record in records:
+                stats["total_records"] += 1
+                lesson_count = record.get("metadata", {}).get("lesson_count", 0)
+                stats["total_lessons"] += lesson_count
+
+                symbol = record.get("metadata", {}).get("symbol", "unknown")
+                if symbol not in stats["symbols"]:
+                    stats["symbols"][symbol] = {"records": 0, "lessons": 0}
+                stats["symbols"][symbol]["records"] += 1
+                stats["symbols"][symbol]["lessons"] += lesson_count
+
+        return stats

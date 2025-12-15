@@ -14,6 +14,7 @@ from src.utils.logger import TradingLogger
 from src.agent.review_memory import ReviewMemoryStore
 from src.agent.context_extractor import ContextExtractor
 from src.agent.similarity_scorer import SimilarityScorer
+from src.agent.review_daily_logger import ReviewDailyLogger
 
 
 class ReviewAgent:
@@ -35,6 +36,7 @@ class ReviewAgent:
         confidence_decay_factor: float = 0.6,
         similarity_method: str = "cosine",
         notifier=None,
+        daily_logger: Optional[ReviewDailyLogger] = None,
     ):
         self.logger = logger
         self.prompt_manager = prompt_manager
@@ -44,6 +46,7 @@ class ReviewAgent:
         self.similarity_threshold = similarity_threshold
         self.confidence_decay_factor = confidence_decay_factor
         self.notifier = notifier
+        self.daily_logger = daily_logger
 
         self.llm = ChatOpenAI(
             base_url=openai_api_base,
@@ -132,6 +135,25 @@ class ReviewAgent:
                 )
             except Exception as e:
                 self.logger.print_warning(f"发送复盘通知失败: {e}")
+
+        # 记录到每日日志（用于 LoRA 训练）
+        if self.daily_logger:
+            try:
+                self.daily_logger.log_review(
+                    symbol=symbol,
+                    prompt=prompt,
+                    raw_output=raw_text,
+                    lessons=filtered_lessons,
+                    summary=parsed.get("summary", ""),
+                    context_features=current_context,
+                    decision_digest=digest,
+                    stats=stats,
+                    fills_summary=fills_summary,
+                    existing_lessons=existing_lessons,
+                    spot_checks=parsed.get("spot_checks", []),
+                )
+            except Exception as e:
+                self.logger.print_warning(f"记录每日日志失败: {e}")
 
         result = {
             "summary": parsed.get("summary", ""),
