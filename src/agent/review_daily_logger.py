@@ -7,6 +7,7 @@
 """
 
 import json
+import os
 import platform
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -186,6 +187,9 @@ class ReviewDailyLogger:
                         # 写入 JSON 行
                         json_line = json.dumps(record, ensure_ascii=False)
                         f.write(json_line + "\n")
+                        # 确保数据写入磁盘（对训练数据尤为重要）
+                        f.flush()
+                        os.fsync(f.fileno())
                     finally:
                         if not _IS_WINDOWS:
                             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
@@ -215,12 +219,15 @@ class ReviewDailyLogger:
         records = []
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if line:
                         try:
                             records.append(json.loads(line))
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            self._log_warning(
+                                f"日志文件 {file_path} 第 {line_num} 行格式错误: {e}"
+                            )
                             continue
         except Exception as e:
             self._log_warning(f"读取日志文件失败 {file_path}: {e}")
@@ -248,7 +255,8 @@ class ReviewDailyLogger:
         all_records = []
         current_date = start_date
 
-        while current_date <= end_date:
+        # 使用 .date() 比较，避免时间组件导致的问题
+        while current_date.date() <= end_date.date():
             records = self.read_daily_records(current_date)
             all_records.extend(records)
             # 移动到下一天

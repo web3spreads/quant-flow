@@ -167,6 +167,29 @@ class TestReviewDailyLogger:
         records = logger.read_daily_records(future_date)
         assert records == []
 
+    def test_read_date_range(self, temp_dir, sample_review_data):
+        """测试读取日期范围内的记录"""
+        logger = ReviewDailyLogger(base_dir=temp_dir)
+
+        # 写入今天的数据
+        logger.log_review(**sample_review_data)
+
+        # 测试读取今天的范围
+        today = datetime.now()
+        records = logger.read_date_range(today, today)
+        assert len(records) == 1
+        assert records[0]["metadata"]["symbol"] == "BTC"
+
+        # 测试空范围（未来日期）
+        future = today + timedelta(days=10)
+        future_end = future + timedelta(days=5)
+        empty_records = logger.read_date_range(future, future_end)
+        assert empty_records == []
+
+        # 测试 end_date 默认为今天
+        records_default = logger.read_date_range(today)
+        assert len(records_default) == 1
+
     def test_export_alpaca_format(self, logger, temp_dir, sample_review_data):
         """测试导出 Alpaca 格式"""
         # 写入一些数据
@@ -212,6 +235,31 @@ class TestReviewDailyLogger:
         assert conversations[0]["from"] == "system"
         assert conversations[1]["from"] == "human"
         assert conversations[2]["from"] == "gpt"
+
+    def test_export_raw_format(self, logger, temp_dir, sample_review_data):
+        """测试导出 raw 格式（完整记录）"""
+        logger.log_review(**sample_review_data)
+
+        output_path = os.path.join(temp_dir, "training_raw.json")
+        count = logger.export_for_training(
+            output_path=output_path,
+            format_type="raw",
+        )
+
+        assert count == 1
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        assert len(data) == 1
+        # raw 格式应该包含所有字段
+        assert "instruction" in data[0]
+        assert "input" in data[0]
+        assert "output" in data[0]
+        assert "parsed_output" in data[0]
+        assert "context_features" in data[0]
+        assert "metadata" in data[0]
+        assert "decision_digest" in data[0]
 
     def test_export_with_filter(self, logger, temp_dir, sample_review_data):
         """测试带过滤条件的导出"""
