@@ -139,6 +139,11 @@ class TestReviewDailyLogger:
         assert "context_features" in record
         assert record["context_features"]["rsi"] == 65.5
 
+        # 检查决策历史（用于训练上下文理解）
+        assert "decision_digest" in record
+        assert len(record["decision_digest"]) == 1
+        assert record["decision_digest"][0]["decision"] == "BUY"
+
     def test_multiple_records_same_day(self, logger, sample_review_data):
         """测试同一天多条记录"""
         # 写入多条记录
