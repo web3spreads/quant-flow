@@ -169,6 +169,7 @@ class QuantFlowBot:
         # 初始化每日日志记录器（用于 LoRA 训练数据收集）
         self.review_daily_logger = ReviewDailyLogger(
             base_dir=self.config.review_daily_log_dir,
+            logger=self.logger,
         )
         self.logger.print_info(
             f"复盘每日日志目录: {self.config.review_daily_log_dir}"

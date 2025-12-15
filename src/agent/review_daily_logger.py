@@ -7,12 +7,16 @@
 """
 
 import json
-import os
-from datetime import datetime
+import platform
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 import threading
-import fcntl
+
+# 跨平台文件锁支持：Unix 使用 fcntl，Windows 仅使用线程锁
+_IS_WINDOWS = platform.system() == "Windows"
+if not _IS_WINDOWS:
+    import fcntl
 
 
 class ReviewDailyLogger:
@@ -32,10 +36,14 @@ class ReviewDailyLogger:
     └── ...
     """
 
+    # 支持的导出格式
+    SUPPORTED_FORMATS = ("alpaca", "sharegpt", "raw")
+
     def __init__(
         self,
         base_dir: str = "logs/review_daily",
         date_format: str = "%Y-%m-%d",
+        logger: Optional[Any] = None,
     ):
         """
         初始化日志记录器
@@ -43,13 +51,22 @@ class ReviewDailyLogger:
         Args:
             base_dir: 日志存储基础目录
             date_format: 日期格式，用于生成文件名
+            logger: 可选的日志记录器，用于输出警告信息
         """
         self.base_dir = Path(base_dir)
         self.date_format = date_format
         self._lock = threading.Lock()
+        self._logger = logger
 
         # 确保目录存在
         self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    def _log_warning(self, message: str) -> None:
+        """输出警告信息"""
+        if self._logger and hasattr(self._logger, "print_warning"):
+            self._logger.print_warning(message)
+        else:
+            print(f"[ReviewDailyLogger] {message}")
 
     def _get_daily_file_path(self, date: Optional[datetime] = None) -> Path:
         """获取指定日期的日志文件路径"""
@@ -150,7 +167,8 @@ class ReviewDailyLogger:
         """
         写入单条记录到日志文件
 
-        使用文件锁确保并发安全
+        使用线程锁 + 文件锁（Unix）确保并发安全
+        Windows 系统仅使用线程锁
         """
         file_path = self._get_daily_file_path(timestamp)
 
@@ -158,19 +176,20 @@ class ReviewDailyLogger:
             with self._lock:
                 # 使用追加模式写入
                 with open(file_path, "a", encoding="utf-8") as f:
-                    # 获取文件锁（阻塞模式）
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    # Unix 系统使用文件锁
+                    if not _IS_WINDOWS:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                     try:
                         # 写入 JSON 行
                         json_line = json.dumps(record, ensure_ascii=False)
                         f.write(json_line + "\n")
                     finally:
-                        # 释放文件锁
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                        if not _IS_WINDOWS:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             return True
         except Exception as e:
             # 记录失败不应影响主流程
-            print(f"[ReviewDailyLogger] 写入失败: {e}")
+            self._log_warning(f"写入失败: {e}")
             return False
 
     def read_daily_records(
@@ -201,7 +220,7 @@ class ReviewDailyLogger:
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
-            print(f"[ReviewDailyLogger] 读取失败: {e}")
+            self._log_warning(f"读取失败: {e}")
 
         return records
 
@@ -230,12 +249,6 @@ class ReviewDailyLogger:
             records = self.read_daily_records(current_date)
             all_records.extend(records)
             # 移动到下一天
-            current_date = datetime(
-                current_date.year,
-                current_date.month,
-                current_date.day,
-            )
-            from datetime import timedelta
             current_date += timedelta(days=1)
 
         return all_records
@@ -262,7 +275,17 @@ class ReviewDailyLogger:
 
         Returns:
             导出的记录数量
+
+        Raises:
+            ValueError: 当 format_type 不是支持的格式时
         """
+        # 验证 format_type
+        if format_type not in self.SUPPORTED_FORMATS:
+            raise ValueError(
+                f"不支持的导出格式: {format_type}，"
+                f"支持的格式: {self.SUPPORTED_FORMATS}"
+            )
+
         # 获取所有日志文件
         if start_date is None:
             # 读取所有文件
