@@ -184,6 +184,10 @@ class Config:
         self.review_memory_file: str = review.get(
             "memory_file", "logs/review_memory.json"
         )
+        # 每日日志目录（用于 LoRA 训练数据收集）
+        self.review_daily_log_dir: str = review.get(
+            "daily_log_dir", "logs/review_daily"
+        )
         self.review_max_lessons: int = int(review.get("max_lessons", 30))
         self.review_min_confidence: float = float(review.get("min_confidence", 0.35))
         self.review_similarity_threshold: float = float(

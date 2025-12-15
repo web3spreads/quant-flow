@@ -104,7 +104,8 @@ review_agent:
   run_every_cycles: 3            # 每隔多少个交易周期运行一次复盘
   lookback_decisions: 12         # 复盘时回顾多少条历史决策
   temperature: 0.05              # 复盘时的 LLM 温度（更低以保证稳定性）
-  memory_file: logs/review_memory.json  # 复盘经验存储文件
+  memory_file: logs/review_memory.json  # 复盘经验存储文件（保留用于快速查询）
+  daily_log_dir: logs/review_daily     # 每日日志目录（用于 LoRA 训练数据收集）
   max_lessons: 30                # 最多保留多少条经验教训数量
   min_confidence: 0.35           # 采纳经验所需的最小置信度
   similarity_threshold: 0.5      # 当前环境与历史经验的最小相似度
