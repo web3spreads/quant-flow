@@ -9,7 +9,6 @@ ReviewDailyLogger 单元测试
 
 import json
 import os
-import sys
 import tempfile
 import shutil
 from datetime import datetime, timedelta
@@ -96,7 +95,7 @@ class TestReviewDailyLogger:
     def test_init_creates_directory(self, temp_dir):
         """测试初始化时创建目录"""
         log_dir = os.path.join(temp_dir, "nested", "log", "dir")
-        logger = ReviewDailyLogger(base_dir=log_dir)
+        ReviewDailyLogger(base_dir=log_dir)
         assert os.path.exists(log_dir)
 
     def test_log_review_creates_file(self, logger, temp_dir, sample_review_data):
@@ -236,6 +235,17 @@ class TestReviewDailyLogger:
             min_lesson_count=1,
         )
         assert count2 == 1  # 只有 BTC 有经验
+
+    def test_export_invalid_format_raises_error(self, logger, temp_dir, sample_review_data):
+        """测试无效的导出格式抛出异常"""
+        logger.log_review(**sample_review_data)
+
+        output_path = os.path.join(temp_dir, "invalid.json")
+        with pytest.raises(ValueError, match="不支持的导出格式"):
+            logger.export_for_training(
+                output_path=output_path,
+                format_type="invalid_format",
+            )
 
     def test_get_statistics(self, logger, sample_review_data):
         """测试统计信息"""
