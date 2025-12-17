@@ -4,17 +4,8 @@
 按日期存储复盘经验，便于后续 LoRA 训练使用。
 每条记录以 JSONL 格式存储，包含完整的输入输出对，
 可直接转换为 Alpaca/ShareGPT 等训练格式。
-
-注意：此模块已迁移到 src.agents.common.utils.review_daily_logger
-此文件保留用于向后兼容，请使用新位置。
 """
 
-# 从新位置导入（兼容层）
-from src.agents.common.utils.review_daily_logger import ReviewDailyLogger
-
-__all__ = ["ReviewDailyLogger"]
-
-# 以下为原始实现，已被新位置取代
 import json
 import os
 import platform
@@ -23,12 +14,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import threading
 
+# 跨平台文件锁支持：Unix 使用 fcntl，Windows 仅使用线程锁
 _IS_WINDOWS = platform.system() == "Windows"
 if not _IS_WINDOWS:
     import fcntl
 
 
-class _DeprecatedReviewDailyLogger:
+class ReviewDailyLogger:
     """
     复盘经验每日日志记录器
 

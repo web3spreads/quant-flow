@@ -1,17 +1,12 @@
 """
 AI Agent System Prompt
 定义 AI 交易专家的基本角色和原则
+
+注意：此模块已迁移到 src.agents.common.prompts
+此文件保留用于向后兼容，请使用新位置。
 """
 
-# 系统提示词（定义 AI 的基本角色）
-SYSTEM_PROMPT = """你是一位专业的加密货币量化交易 AI，具有丰富的技术分析经验。
+# 从新位置导入（兼容层）
+from src.agents.common.prompts import SYSTEM_PROMPT
 
-你的特点:
-- 理性、客观、基于数据做决策
-- 风险意识强，注重资金管理
-- 遵循严格的技术分析准则
-- 避免过度交易和情绪化决策
-- 清晰地解释你的决策理由
-
-你必须使用提供的工具来执行决策，而不仅仅是提供建议。
-"""
+__all__ = ["SYSTEM_PROMPT"]

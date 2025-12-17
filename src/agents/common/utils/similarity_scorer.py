@@ -1,23 +1,13 @@
 """
 环境特征相似度计算
 支持欧氏距离与余弦相似度，并允许为不同特征设置权重
-
-注意：此模块已迁移到 src.agents.common.utils.similarity_scorer
-此文件保留用于向后兼容，请使用新位置。
 """
 
-# 从新位置导入（兼容层）
-from src.agents.common.utils.similarity_scorer import (
-    SimilarityScorer,
-    DEFAULT_WEIGHTS,
-)
+from typing import Any, Dict, Optional
+import math
 
-__all__ = ["SimilarityScorer", "DEFAULT_WEIGHTS"]
 
-# 以下为原始实现，已被新位置取代
-# 保留注释以供参考
-
-_DEPRECATED_DEFAULT_WEIGHTS = {
+DEFAULT_WEIGHTS: Dict[str, float] = {
     "rsi": 1.2,
     "macd_signal": 1.0,
     "ema_trend": 1.0,
@@ -29,7 +19,7 @@ _DEPRECATED_DEFAULT_WEIGHTS = {
 }
 
 
-class _DeprecatedSimilarityScorer:
+class SimilarityScorer:
     """按特征权重计算相似度（0-1）"""
 
     def __init__(

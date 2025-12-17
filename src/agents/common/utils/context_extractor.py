@@ -1,23 +1,14 @@
 """
 环境特征提取模块
 从市场数据和决策记录中提取用于相似度计算的特征
-
-注意：此模块已迁移到 src.agents.common.utils.context_extractor
-此文件保留用于向后兼容，请使用新位置。
 """
 
-# 从新位置导入（兼容层）
-from src.agents.common.utils.context_extractor import ContextExtractor
-
-__all__ = ["ContextExtractor"]
-
-# 以下为原始实现，已被新位置取代
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import math
 
 
-class _DeprecatedContextExtractor:
+class ContextExtractor:
     """将原始市场数据转换为轻量的环境特征向量"""
 
     def __init__(self, volatility_window: int = 10):
