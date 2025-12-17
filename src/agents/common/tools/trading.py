@@ -65,6 +65,60 @@ class BuySpotInput(BaseModel):
     )
 
 
+class BuyLimitInput(BaseModel):
+    """限价开多工具的输入模式"""
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    amount: Optional[float] = Field(
+        default=None,
+        description="交易金额（USD），不填则使用配置上限"
+    )
+    leverage: Optional[int] = Field(
+        default=None,
+        description="杠杆倍数，不填则使用配置最大杠杆"
+    )
+    price: float = Field(description="限价价格（USD），必须明确指定")
+
+    @field_validator('leverage', mode='before')
+    @classmethod
+    def convert_leverage_to_int(cls, v):
+        """将浮点数杠杆转换为整数"""
+        if v is None:
+            return v
+        if isinstance(v, (int, float)):
+            return int(v)
+        return v
+
+
+class SellShortLimitInput(BaseModel):
+    """限价开空工具的输入模式"""
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    amount: Optional[float] = Field(
+        default=None,
+        description="交易金额（USD），不填则使用配置上限"
+    )
+    leverage: Optional[int] = Field(
+        default=None,
+        description="杠杆倍数，不填则使用配置最大杠杆"
+    )
+    price: float = Field(description="限价价格（USD），必须明确指定")
+
+    @field_validator('leverage', mode='before')
+    @classmethod
+    def convert_leverage_to_int(cls, v):
+        """将浮点数杠杆转换为整数"""
+        if v is None:
+            return v
+        if isinstance(v, (int, float)):
+            return int(v)
+        return v
+
+
+class CancelLimitOrderInput(BaseModel):
+    """取消限价单工具的输入模式"""
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    order_id: int = Field(description="订单ID，必须明确指定")
+
+
 # 工具描述常量
 BUY_TOOL_DESCRIPTION = """执行买入开多操作。当市场出现明确的做多信号时使用此工具。
 
@@ -174,6 +228,62 @@ BUY_SPOT_TOOL_DESCRIPTION = """执行现货买入操作（长期持有策略）�
 3. 技术指标显示超卖
 4. 资产基本面良好"""
 
+BUY_LIMIT_TOOL_DESCRIPTION = """执行限价开多操作。当市场出现做多信号但希望以更好的价格成交时使用此工具。
+
+使用条件:
+- 未持有该币种的多头仓位（或允许加仓）
+- 未达到最大持仓数量
+- 技术指标显示看涨信号
+- 希望以低于当前价格的价格买入（提前埋伏）
+
+你的权限:
+- 可以根据信号强度自主决定交易金额（不超过配置上限）
+- 可以根据风险承受力选择杠杆倍数（1到配置最大值之间）
+- 必须明确指定限价价格
+
+系统会自动:
+- 在限价单成交后设置止盈单（价格上涨 5%）
+- 在限价单成交后设置止损单（价格下跌 2%）
+
+注意:
+- 限价单可能不会立即成交，需要等待价格回调到限价
+- 如果价格已远离限价，成交可能性较低，可考虑取消限价单"""
+
+SELL_SHORT_LIMIT_TOOL_DESCRIPTION = """执行限价开空操作。当市场出现做空信号但希望以更好的价格成交时使用此工具。
+
+使用条件:
+- 未持有该币种的空头仓位（或允许加仓）
+- 未达到最大持仓数量
+- 技术指标显示看跌信号
+- 希望以高于当前价格的价格卖出（提前埋伏）
+
+你的权限:
+- 可以根据信号强度自主决定交易金额（不超过配置上限）
+- 可以根据风险承受力选择杠杆倍数（1到配置最大值之间）
+- 必须明确指定限价价格
+
+系统会自动:
+- 在限价单成交后设置止盈单（价格下跌 5%）
+- 在限价单成交后设置止损单（价格上涨 2%）
+
+注意:
+- 限价单可能不会立即成交，需要等待价格回调到限价
+- 如果价格已远离限价，成交可能性较低，可考虑取消限价单"""
+
+CANCEL_LIMIT_ORDER_TOOL_DESCRIPTION = """取消待处理的限价单。当市场条件变化，限价单不再合理时使用此工具。
+
+使用场景:
+- 市场趋势已改变，限价单价格不再合理
+- 价格已远离限价单价格，成交可能性低
+- 需要释放资金用于其他交易机会
+- 限价单挂单时间过长，市场条件已变化
+
+参数:
+- symbol: 交易对符号
+- order_id: 订单ID（从待处理限价单列表中获取）
+
+返回: 取消结果描述"""
+
 
 class TradingToolFactory:
     """
@@ -189,7 +299,10 @@ class TradingToolFactory:
         sell_short_callback: Callable[[str, Optional[float], Optional[int]], str],
         buy_to_cover_callback: Callable[[str], str],
         do_nothing_callback: Callable[[str], str],
-        buy_spot_callback: Optional[Callable[[str, Optional[float]], str]] = None
+        buy_spot_callback: Optional[Callable[[str, Optional[float]], str]] = None,
+        buy_limit_callback: Optional[Callable[[str, Optional[float], Optional[int], float], str]] = None,
+        sell_short_limit_callback: Optional[Callable[[str, Optional[float], Optional[int], float], str]] = None,
+        cancel_limit_order_callback: Optional[Callable[[str, int], str]] = None
     ):
         """
         初始化工厂
@@ -201,6 +314,9 @@ class TradingToolFactory:
             buy_to_cover_callback: 买入平空回调函数，接收 symbol
             do_nothing_callback: 不操作回调函数，接收 reason
             buy_spot_callback: 现货买入回调函数（可选），接收 (symbol, amount)
+            buy_limit_callback: 限价开多回调函数（可选），接收 (symbol, amount, leverage, price)
+            sell_short_limit_callback: 限价开空回调函数（可选），接收 (symbol, amount, leverage, price)
+            cancel_limit_order_callback: 取消限价单回调函数（可选），接收 (symbol, order_id)
         """
         self.buy_callback = buy_callback
         self.sell_callback = sell_callback
@@ -208,6 +324,9 @@ class TradingToolFactory:
         self.buy_to_cover_callback = buy_to_cover_callback
         self.do_nothing_callback = do_nothing_callback
         self.buy_spot_callback = buy_spot_callback
+        self.buy_limit_callback = buy_limit_callback
+        self.sell_short_limit_callback = sell_short_limit_callback
+        self.cancel_limit_order_callback = cancel_limit_order_callback
 
     def create_buy_tool(self) -> StructuredTool:
         """创建买入开多工具"""
@@ -291,12 +410,105 @@ class TradingToolFactory:
             args_schema=BuySpotInput
         )
 
-    def get_all_tools(self, include_spot: bool = True) -> List:
+    def create_buy_limit_tool(self) -> StructuredTool:
+        """创建限价开多工具"""
+        if not self.buy_limit_callback:
+            def disabled_func(
+                symbol: str,
+                amount: Optional[float] = None,
+                leverage: Optional[int] = None,
+                price: float = 0.0
+            ) -> str:
+                return "限价单功能未启用"
+
+            return StructuredTool.from_function(
+                func=disabled_func,
+                name="buy_limit",
+                description="限价单功能未启用",
+                args_schema=BuyLimitInput
+            )
+
+        def buy_limit_func(
+            symbol: str,
+            amount: Optional[float] = None,
+            leverage: Optional[int] = None,
+            price: float = 0.0
+        ) -> str:
+            """执行限价开多操作"""
+            return self.buy_limit_callback(symbol, amount, leverage, price)
+
+        return StructuredTool.from_function(
+            func=buy_limit_func,
+            name="buy_limit",
+            description=BUY_LIMIT_TOOL_DESCRIPTION,
+            args_schema=BuyLimitInput
+        )
+
+    def create_sell_short_limit_tool(self) -> StructuredTool:
+        """创建限价开空工具"""
+        if not self.sell_short_limit_callback:
+            def disabled_func(
+                symbol: str,
+                amount: Optional[float] = None,
+                leverage: Optional[int] = None,
+                price: float = 0.0
+            ) -> str:
+                return "限价单功能未启用"
+
+            return StructuredTool.from_function(
+                func=disabled_func,
+                name="sell_short_limit",
+                description="限价单功能未启用",
+                args_schema=SellShortLimitInput
+            )
+
+        def sell_short_limit_func(
+            symbol: str,
+            amount: Optional[float] = None,
+            leverage: Optional[int] = None,
+            price: float = 0.0
+        ) -> str:
+            """执行限价开空操作"""
+            return self.sell_short_limit_callback(symbol, amount, leverage, price)
+
+        return StructuredTool.from_function(
+            func=sell_short_limit_func,
+            name="sell_short_limit",
+            description=SELL_SHORT_LIMIT_TOOL_DESCRIPTION,
+            args_schema=SellShortLimitInput
+        )
+
+    def create_cancel_limit_order_tool(self) -> StructuredTool:
+        """创建取消限价单工具"""
+        if not self.cancel_limit_order_callback:
+            def disabled_func(symbol: str, order_id: int = 0) -> str:
+                return "限价单功能未启用"
+
+            return StructuredTool.from_function(
+                func=disabled_func,
+                name="cancel_limit_order",
+                description="限价单功能未启用",
+                args_schema=CancelLimitOrderInput
+            )
+
+        def cancel_limit_order_func(symbol: str, order_id: int = 0) -> str:
+            """执行取消限价单操作"""
+            return self.cancel_limit_order_callback(symbol, order_id)
+
+        return StructuredTool.from_function(
+            func=cancel_limit_order_func,
+            name="cancel_limit_order",
+            description=CANCEL_LIMIT_ORDER_TOOL_DESCRIPTION,
+            args_schema=CancelLimitOrderInput
+        )
+
+    def get_all_tools(self, include_spot: bool = True, include_limit: bool = True) -> List:
         """
         获取所有工具
 
         Args:
             include_spot: 是否包含现货工具
+            include_limit: 是否包含限价单工具
 
         Returns:
             工具列表
@@ -311,6 +523,15 @@ class TradingToolFactory:
 
         if include_spot and self.buy_spot_callback:
             tools.append(self.create_buy_spot_tool())
+
+        # 添加限价单工具
+        if include_limit:
+            if self.buy_limit_callback:
+                tools.append(self.create_buy_limit_tool())
+            if self.sell_short_limit_callback:
+                tools.append(self.create_sell_short_limit_tool())
+            if self.cancel_limit_order_callback:
+                tools.append(self.create_cancel_limit_order_tool())
 
         return tools
 
@@ -333,6 +554,12 @@ class TradingToolFactory:
         }
         if self.buy_spot_callback:
             callbacks['buy_spot'] = self.buy_spot_callback
+        if self.buy_limit_callback:
+            callbacks['buy_limit'] = self.buy_limit_callback
+        if self.sell_short_limit_callback:
+            callbacks['sell_short_limit'] = self.sell_short_limit_callback
+        if self.cancel_limit_order_callback:
+            callbacks['cancel_limit_order'] = self.cancel_limit_order_callback
         return callbacks
 
 
@@ -342,7 +569,8 @@ def create_mock_callbacks():
 
     Returns:
         (buy_callback, sell_callback, sell_short_callback,
-         buy_to_cover_callback, do_nothing_callback, buy_spot_callback)
+         buy_to_cover_callback, do_nothing_callback, buy_spot_callback,
+         buy_limit_callback, sell_short_limit_callback, cancel_limit_order_callback)
     """
     def buy_callback(
         symbol: str,
@@ -375,6 +603,29 @@ def create_mock_callbacks():
         amount_str = f"${amount}" if amount else "默认金额"
         return f"✅ [模拟] 已执行现货买入: {symbol} ({amount_str})"
 
+    def buy_limit_callback(
+        symbol: str,
+        amount: Optional[float] = None,
+        leverage: Optional[int] = None,
+        price: float = 0.0
+    ) -> str:
+        amount_str = f"${amount}" if amount else "默认金额"
+        leverage_str = f"{leverage}x" if leverage else "默认杠杆"
+        return f"✅ [模拟] 已挂限价开多单: {symbol} ({amount_str}, {leverage_str}) @ ${price}"
+
+    def sell_short_limit_callback(
+        symbol: str,
+        amount: Optional[float] = None,
+        leverage: Optional[int] = None,
+        price: float = 0.0
+    ) -> str:
+        amount_str = f"${amount}" if amount else "默认金额"
+        leverage_str = f"{leverage}x" if leverage else "默认杠杆"
+        return f"✅ [模拟] 已挂限价开空单: {symbol} ({amount_str}, {leverage_str}) @ ${price}"
+
+    def cancel_limit_order_callback(symbol: str, order_id: int) -> str:
+        return f"✅ [模拟] 已取消限价单: {symbol} (订单ID: {order_id})"
+
     return (
         buy_callback,
         sell_callback,
@@ -382,4 +633,7 @@ def create_mock_callbacks():
         buy_to_cover_callback,
         do_nothing_callback,
         buy_spot_callback,
+        buy_limit_callback,
+        sell_short_limit_callback,
+        cancel_limit_order_callback,
     )
