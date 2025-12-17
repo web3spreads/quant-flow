@@ -20,6 +20,19 @@ class DecisionType(str, Enum):
     BUY_TO_COVER = "BUY_TO_COVER"
     DO_NOTHING = "DO_NOTHING"
     BUY_SPOT = "BUY_SPOT"
+    BUY_LIMIT = "BUY_LIMIT"
+    SELL_SHORT_LIMIT = "SELL_SHORT_LIMIT"
+    CANCEL_LIMIT_ORDER = "CANCEL_LIMIT_ORDER"
+
+
+# ExecutionPlan 字段名常量（避免硬编码字符串）
+FIELD_DECISION = 'decision'
+FIELD_SYMBOL = 'symbol'
+FIELD_REASON = 'reason'
+FIELD_AMOUNT = 'amount'
+FIELD_LEVERAGE = 'leverage'
+FIELD_PRICE = 'price'
+FIELD_ORDER_ID = 'order_id'
 
 
 class ExecutionPlan(BaseModel):
@@ -32,6 +45,8 @@ class ExecutionPlan(BaseModel):
     symbol: str = Field(description="交易对符号")
     amount: Optional[float] = Field(default=None, description="交易金额（仅开仓时需要）")
     leverage: Optional[int] = Field(default=None, description="杠杆倍数（仅开仓时需要）")
+    price: Optional[float] = Field(default=None, description="限价单价格（仅限价单时需要）")
+    order_id: Optional[int] = Field(default=None, description="订单ID（仅取消限价单时需要）")
     reason: str = Field(description="决策理由的简短摘要")
 
 
@@ -66,8 +81,8 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 
 你的任务：
 1. 读取交易 Agent 的决策分析文本
-2. 识别决策意图（开多、平多、开空、平空、现货买入、观望）
-3. 提取关键参数（交易对、金额、杠杆等）
+2. 识别决策意图（开多、平多、开空、平空、现货买入、限价单、观望）
+3. 提取关键参数（交易对、金额、杠杆、限价价格等）
 4. 输出结构化的执行计划
 
 决策类型映射：
@@ -77,10 +92,15 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 - BUY_TO_COVER (平空/买入平空/CLOSE) → 调用 buy_to_cover() 工具
 - DO_NOTHING (观望/HOLD/不操作) → 调用 do_nothing() 工具
 - BUY_SPOT (现货买入/定投) → 调用 buy_spot() 工具
+- BUY_LIMIT (限价开多) → 调用 buy_limit() 工具，需要提供 price 字段
+- SELL_SHORT_LIMIT (限价开空) → 调用 sell_short_limit() 工具，需要提供 price 字段
+- CANCEL_LIMIT_ORDER (取消限价单) → 调用 cancel_limit_order() 工具，需要提供 order_id 字段
 
 重要规则：
 - 从文本中准确提取交易对、金额、杠杆等参数
 - 如果文本中没有明确指定金额或杠杆，设置为 null
+- 限价单（BUY_LIMIT/SELL_SHORT_LIMIT）必须提供 price 字段
+- 取消限价单（CANCEL_LIMIT_ORDER）必须提供 order_id 字段
 - 决策理由应简短明确，总结关键要点
 - 如果文本中决策不明确，默认为 DO_NOTHING
 
