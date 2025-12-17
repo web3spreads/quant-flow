@@ -11,6 +11,9 @@ from src.agents.common.tools.trading import (
     BuyInput,
     SellShortInput,
     BuySpotInput,
+    BuyLimitInput,
+    SellShortLimitInput,
+    CancelLimitOrderInput,
     create_mock_callbacks,
 )
 
@@ -19,5 +22,8 @@ __all__ = [
     "BuyInput",
     "SellShortInput",
     "BuySpotInput",
+    "BuyLimitInput",
+    "SellShortLimitInput",
+    "CancelLimitOrderInput",
     "create_mock_callbacks",
 ]

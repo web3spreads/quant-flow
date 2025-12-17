@@ -128,9 +128,10 @@ class TestTradingToolFactory:
     def test_create_mock_callbacks(self):
         """测试创建模拟回调"""
         callbacks = create_mock_callbacks()
-        assert len(callbacks) == 6
+        assert len(callbacks) == 9  # 现在包含限价单回调
 
-        buy_cb, sell_cb, sell_short_cb, buy_to_cover_cb, nothing_cb, spot_cb = callbacks
+        (buy_cb, sell_cb, sell_short_cb, buy_to_cover_cb, nothing_cb, spot_cb,
+         buy_limit_cb, sell_short_limit_cb, cancel_limit_cb) = callbacks
 
         # 测试 buy 回调
         result = buy_cb("BTC", 100.0, 5)
@@ -146,13 +147,23 @@ class TestTradingToolFactory:
         result = nothing_cb("市场不明确")
         assert "市场不明确" in result
 
+        # 测试限价单回调
+        result = buy_limit_cb("BTC", 100.0, 5, 50000.0)
+        assert "BTC" in result
+        assert "限价" in result
+        assert "$50000" in result
+
+        result = cancel_limit_cb("BTC", 12345)
+        assert "BTC" in result
+        assert "12345" in result
+
     def test_tool_factory_creation(self):
         """测试工具工厂创建"""
         callbacks = create_mock_callbacks()
         factory = TradingToolFactory(*callbacks)
 
         tools = factory.get_all_tools()
-        assert len(tools) == 6  # 包含现货工具
+        assert len(tools) == 9  # 包含现货工具和限价单工具
 
         # 检查工具名称
         tool_names = [t.name for t in tools]
@@ -162,6 +173,9 @@ class TestTradingToolFactory:
         assert "buy_to_cover" in tool_names
         assert "do_nothing" in tool_names
         assert "buy_spot" in tool_names
+        assert "buy_limit" in tool_names
+        assert "sell_short_limit" in tool_names
+        assert "cancel_limit_order" in tool_names
 
     def test_get_callbacks_dict(self):
         """测试获取回调字典"""
@@ -175,6 +189,9 @@ class TestTradingToolFactory:
         assert "buy_to_cover" in callbacks_dict
         assert "do_nothing" in callbacks_dict
         assert "buy_spot" in callbacks_dict
+        assert "buy_limit" in callbacks_dict
+        assert "sell_short_limit" in callbacks_dict
+        assert "cancel_limit_order" in callbacks_dict
 
 
 class TestBuyInput:
@@ -296,15 +313,24 @@ class TestImports:
 
     def test_import_trading_agent(self):
         """测试导入交易 Agent"""
-        from src.agents.trading import TradingAgentState, TradingAgentWorkflow
+        from src.agents.trading import TradingAgentState, get_trading_workflow
+        # 测试延迟导入
+        TradingAgentWorkflow = get_trading_workflow()
+        assert TradingAgentWorkflow is not None
 
     def test_import_execution_agent(self):
         """测试导入执行 Agent"""
-        from src.agents.execution import ExecutionAgentState, ExecutionAgentWorkflow
+        from src.agents.execution import ExecutionAgentState, get_execution_workflow
+        # 测试延迟导入
+        ExecutionAgentWorkflow = get_execution_workflow()
+        assert ExecutionAgentWorkflow is not None
 
     def test_import_review_agent(self):
         """测试导入复盘 Agent"""
-        from src.agents.review import ReviewAgentState, ReviewAgentWorkflow
+        from src.agents.review import ReviewAgentState, get_review_workflow
+        # 测试延迟导入
+        ReviewAgentWorkflow = get_review_workflow()
+        assert ReviewAgentWorkflow is not None
 
     def test_import_common_modules(self):
         """测试导入通用模块"""
