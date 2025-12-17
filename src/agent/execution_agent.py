@@ -20,6 +20,8 @@ FIELD_SYMBOL = 'symbol'
 FIELD_REASON = 'reason'
 FIELD_AMOUNT = 'amount'
 FIELD_LEVERAGE = 'leverage'
+FIELD_PRICE = 'price'
+FIELD_ORDER_ID = 'order_id'
 
 
 class DecisionType(str, Enum):
@@ -30,6 +32,9 @@ class DecisionType(str, Enum):
     BUY_TO_COVER = "BUY_TO_COVER"
     DO_NOTHING = "DO_NOTHING"
     BUY_SPOT = "BUY_SPOT"
+    BUY_LIMIT = "BUY_LIMIT"
+    SELL_SHORT_LIMIT = "SELL_SHORT_LIMIT"
+    CANCEL_LIMIT_ORDER = "CANCEL_LIMIT_ORDER"
 
 
 class ExecutionPlan(BaseModel):
@@ -38,6 +43,8 @@ class ExecutionPlan(BaseModel):
     symbol: str = Field(description="交易对符号")
     amount: Optional[float] = Field(default=None, description="交易金额（仅开仓时需要）")
     leverage: Optional[int] = Field(default=None, description="杠杆倍数（仅开仓时需要）")
+    price: Optional[float] = Field(default=None, description="限价单价格（仅限价单时需要）")
+    order_id: Optional[int] = Field(default=None, description="订单ID（仅取消限价单时需要）")
     reason: str = Field(description="决策理由的简短摘要")
 
 
@@ -56,6 +63,9 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 - BUY_TO_COVER (平空/买入平空/CLOSE) → 调用 buy_to_cover() 工具
 - DO_NOTHING (观望/HOLD/不操作) → 调用 do_nothing() 工具
 - BUY_SPOT (现货买入/定投) → 调用 buy_spot() 工具
+- BUY_LIMIT (限价开多) → 调用 buy_limit() 工具，需要提供 price 字段
+- SELL_SHORT_LIMIT (限价开空) → 调用 sell_short_limit() 工具，需要提供 price 字段
+- CANCEL_LIMIT_ORDER (取消限价单) → 调用 cancel_limit_order() 工具，需要提供 order_id 字段
 
 重要规则：
 - 从文本中准确提取交易对、金额、杠杆等参数
@@ -220,16 +230,20 @@ class ExecutionAgent:
 {decision_text}
 
 请识别：
-1. 决策类型（BUY/SELL/SELL_SHORT/BUY_TO_COVER/DO_NOTHING/BUY_SPOT）
-2. 交易金额（如果提到）
-3. 杠杆倍数（如果提到）
-4. 决策理由摘要
+1. 决策类型（BUY/SELL/SELL_SHORT/BUY_TO_COVER/DO_NOTHING/BUY_SPOT/BUY_LIMIT/SELL_SHORT_LIMIT/CANCEL_LIMIT_ORDER）
+2. 交易金额（如果提到，限价单也需要）
+3. 杠杆倍数（如果提到，限价单也需要）
+4. 限价价格（如果是限价单，必须提供 price 字段）
+5. 订单ID（如果是取消限价单，必须提供 order_id 字段）
+6. 决策理由摘要
 
 注意：
 - 仔细区分"开多/买入"(BUY)和"平空/买入平空/CLOSE"(BUY_TO_COVER)
 - 仔细区分"平多/卖出"(SELL)和"开空/卖空"(SELL_SHORT)
 - 如果文本中说"决策: CLOSE"或"平空"，应该是 BUY_TO_COVER
-- 如果金额或杠杆没有明确提到，设置为 null
+- 限价单（BUY_LIMIT/SELL_SHORT_LIMIT）必须提供 price 字段
+- 取消限价单（CANCEL_LIMIT_ORDER）必须提供 order_id 字段
+- 如果金额、杠杆、价格或订单ID没有明确提到，设置为 null
 """
 
             messages = [
@@ -411,6 +425,40 @@ class ExecutionAgent:
                     return callback(reason=execution_plan.reason)
                 else:
                     return f"❌ 未找到 DO_NOTHING 工具回调"
+
+            elif decision == DecisionType.BUY_LIMIT:
+                callback = tools_callbacks.get('buy_limit')
+                if callback:
+                    return callback(
+                        symbol=symbol,
+                        amount=execution_plan.amount,
+                        leverage=execution_plan.leverage,
+                        price=execution_plan.price
+                    )
+                else:
+                    return f"❌ 未找到 BUY_LIMIT 工具回调"
+
+            elif decision == DecisionType.SELL_SHORT_LIMIT:
+                callback = tools_callbacks.get('sell_short_limit')
+                if callback:
+                    return callback(
+                        symbol=symbol,
+                        amount=execution_plan.amount,
+                        leverage=execution_plan.leverage,
+                        price=execution_plan.price
+                    )
+                else:
+                    return f"❌ 未找到 SELL_SHORT_LIMIT 工具回调"
+
+            elif decision == DecisionType.CANCEL_LIMIT_ORDER:
+                callback = tools_callbacks.get('cancel_limit_order')
+                if callback:
+                    return callback(
+                        symbol=symbol,
+                        order_id=execution_plan.order_id
+                    )
+                else:
+                    return f"❌ 未找到 CANCEL_LIMIT_ORDER 工具回调"
 
             return f"❌ 未识别的决策类型: {decision}"
 
