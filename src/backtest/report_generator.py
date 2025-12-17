@@ -5,6 +5,7 @@
 
 import json
 import csv
+import shutil
 from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
@@ -140,33 +141,59 @@ class BacktestReportGenerator:
     def generate_full_report(
         self,
         output_dir: str = "backtest_results",
-        symbol: str = "BTC"
+        symbol: str = "BTC",
+        backtest_params: Optional[Dict[str, Any]] = None,
+        config: Optional[Any] = None
     ):
         """
-        生成完整报告（JSON + CSV）
+        生成完整报告（JSON + CSV + 配置文件夹）
         
         Args:
             output_dir: 输出目录
             symbol: 交易对符号
+            backtest_params: 回测运行参数
+            config: 配置对象
         """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         
-        # 生成文件名（带时间戳）
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        json_file = output_path / f"backtest_{symbol}_{timestamp}.json"
-        csv_file = output_path / f"backtest_{symbol}_{timestamp}.csv"
+        # 如果输出目录已经是回测工作空间目录（包含 backtest_ 前缀且包含 symbol），直接使用
+        # 否则创建新的报告子目录
+        is_workspace = (
+            output_path.name.startswith("backtest_") and 
+            symbol.upper() in output_path.name.upper()
+        )
+        if is_workspace:
+            report_dir = output_path
+        else:
+            # 生成文件名（带时间戳）
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_dir = output_path / f"backtest_{symbol}_{timestamp}"
+            report_dir.mkdir(parents=True, exist_ok=True)
+        
+        json_file = report_dir / "report.json"
+        csv_file = report_dir / "trades.csv"
+        pnl_file = report_dir / "pnl_history.csv"
         
         # 保存报告
         self.save_json(str(json_file))
         self.save_csv(str(csv_file))
         
+        # 生成盈亏历史记录（用于图表展示）
+        self._save_pnl_history(str(pnl_file))
+        
+        # 保存回测参数和配置信息
+        if backtest_params or config:
+            self._save_backtest_metadata(report_dir, backtest_params, config)
+        
         # 打印摘要
         self.print_summary()
         
         return {
+            'report_dir': str(report_dir),
             'json_file': str(json_file),
-            'csv_file': str(csv_file)
+            'csv_file': str(csv_file),
+            'pnl_file': str(pnl_file)
         }
 
     def _write_json(
@@ -201,3 +228,191 @@ class BacktestReportGenerator:
 
         message = success_message or f"✅ JSON报告已保存: {file_path}"
         print(message)
+
+    def _save_pnl_history(self, file_path: str):
+        """
+        保存盈亏历史记录（用于图表展示）
+        每笔交易记录：时间、盈亏金额、累计盈亏
+        
+        Args:
+            file_path: 文件路径
+        """
+        if not self.result.get('trades'):
+            return
+        
+        path = Path(file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        trades = self.result['trades']
+        cumulative_pnl = self.result['initial_balance']
+        
+        # 按时间排序
+        def get_exit_time(trade):
+            exit_time = trade.get('exit_time')
+            if exit_time is None:
+                return datetime.now()
+            if isinstance(exit_time, datetime):
+                return exit_time
+            if isinstance(exit_time, str):
+                try:
+                    return datetime.fromisoformat(exit_time.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    return datetime.now()
+            return datetime.now()
+        
+        sorted_trades = sorted(trades, key=get_exit_time)
+        
+        csv_data = []
+        for trade in sorted_trades:
+            exit_time = trade.get('exit_time', '')
+            if isinstance(exit_time, datetime):
+                exit_time = exit_time.isoformat()
+            
+            net_pnl = trade.get('net_pnl', 0)
+            cumulative_pnl += net_pnl
+            
+            row = {
+                'timestamp': exit_time,
+                'trade_id': len(csv_data) + 1,
+                'pnl': net_pnl,
+                'cumulative_pnl': cumulative_pnl,
+                'is_profitable': 'Yes' if net_pnl > 0 else 'No',
+                'symbol': trade.get('symbol', ''),
+                'direction': 'LONG' if trade.get('is_long', True) else 'SHORT',
+                'entry_price': trade.get('entry_price', 0),
+                'exit_price': trade.get('exit_price', 0),
+                'return_pct': trade.get('return_pct', 0)
+            }
+            csv_data.append(row)
+        
+        # 写入CSV
+        if csv_data:
+            fieldnames = csv_data[0].keys()
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(csv_data)
+            
+            print(f"✅ 盈亏历史记录已保存: {file_path}")
+
+    def _save_backtest_metadata(
+        self,
+        report_dir: Path,
+        backtest_params: Optional[Dict[str, Any]],
+        config: Optional[Any]
+    ):
+        """
+        保存回测元数据（参数、配置、模型信息等）
+        
+        Args:
+            report_dir: 报告目录
+            backtest_params: 回测参数
+            config: 配置对象
+        """
+        metadata = {
+            'backtest_timestamp': datetime.now().isoformat(),
+            'backtest_params': backtest_params or {},
+            'model_info': {},
+            'config_info': {}
+        }
+        
+        # 保存模型信息
+        if config:
+            metadata['model_info'] = {
+                'openai_api_base': getattr(config, 'openai_api_base', ''),
+                'openai_model': getattr(config, 'openai_model', ''),
+                'prompt_set': getattr(config, 'prompt_set', ''),
+                'agent_temperature': getattr(config, 'agent_temperature', 0),
+                'agent_max_iterations': getattr(config, 'agent_max_iterations', 0)
+            }
+            
+            metadata['config_info'] = {
+                'config_path': str(getattr(config, 'config_path', '')),
+                'env_file': getattr(config, '_env_file', ''),
+                'max_trade_amount': getattr(config, 'max_trade_amount', 0),
+                'max_leverage': getattr(config, 'max_leverage', 0),
+                'take_profit_ratio': getattr(config, 'take_profit_ratio', 0),
+                'stop_loss_ratio': getattr(config, 'stop_loss_ratio', 0),
+                'timeframe': getattr(config, 'timeframe', ''),
+                'candles_limit': getattr(config, 'candles_limit', 0)
+            }
+            
+            # 保存配置文件副本（不包含敏感信息）
+            if hasattr(config, 'config_path'):
+                config_path = Path(config.config_path)
+                if config_path.exists():
+                    config_copy = report_dir / "config.yaml"
+                    try:
+                        shutil.copy2(config_path, config_copy)
+                        print(f"✅ 配置文件副本已保存: {config_copy}")
+                    except Exception as e:
+                        print(f"⚠️ 保存配置文件副本失败: {e}")
+                else:
+                    print(f"⚠️ 配置文件不存在: {config_path}，跳过保存副本")
+        
+        # 保存元数据JSON
+        metadata_file = report_dir / "metadata.json"
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
+        
+        # 生成README文件
+        self._generate_readme(report_dir, metadata)
+        
+        print(f"✅ 回测元数据已保存: {metadata_file}")
+
+    def _generate_readme(self, report_dir: Path, metadata: Dict[str, Any]):
+        """
+        生成报告README文件
+        
+        Args:
+            report_dir: 报告目录
+            metadata: 元数据字典
+        """
+        readme_content = f"""# 回测报告
+
+## 报告信息
+
+- **生成时间**: {metadata.get('backtest_timestamp', '')}
+- **交易对**: {self.result.get('symbol', 'N/A')}
+- **初始余额**: ${self.result.get('initial_balance', 0):.2f}
+- **最终余额**: ${self.result.get('final_balance', 0):.2f}
+- **总盈亏**: ${self.result.get('total_pnl', 0):+.2f}
+- **总收益率**: {self.result.get('total_return', 0)*100:+.2f}%
+- **胜率**: {self.result.get('win_rate', 0)*100:.2f}%
+
+## 文件说明
+
+- `report.json`: 完整的回测结果（JSON格式）
+- `trades.csv`: 所有交易的明细记录
+- `pnl_history.csv`: 盈亏历史记录（按时间排序，包含累计盈亏，可用于图表展示）
+- `metadata.json`: 回测参数、配置和模型信息
+- `config.yaml`: 使用的配置文件副本
+- `README.md`: 本文件
+
+## 回测参数
+
+"""
+        
+        params = metadata.get('backtest_params', {})
+        for key, value in params.items():
+            readme_content += f"- **{key}**: {value}\n"
+        
+        readme_content += "\n## 模型信息\n\n"
+        model_info = metadata.get('model_info', {})
+        for key, value in model_info.items():
+            readme_content += f"- **{key}**: {value}\n"
+        
+        readme_content += "\n## 交易统计\n\n"
+        readme_content += f"- **总交易数**: {self.result.get('total_trades', 0)}\n"
+        readme_content += f"- **盈利交易**: {self.result.get('profitable_trades', 0)}\n"
+        readme_content += f"- **亏损交易**: {self.result.get('losing_trades', 0)}\n"
+        readme_content += f"- **平均盈利**: ${self.result.get('avg_profit', 0):.2f}\n"
+        readme_content += f"- **平均亏损**: ${self.result.get('avg_loss', 0):.2f}\n"
+        readme_content += f"- **盈亏比**: {self.result.get('profit_factor', 0):.2f}\n"
+        readme_content += f"- **最大回撤**: {self.result.get('max_drawdown', 0)*100:.2f}%\n"
+        
+        readme_file = report_dir / "README.md"
+        with open(readme_file, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+        
+        print(f"✅ README文件已生成: {readme_file}")

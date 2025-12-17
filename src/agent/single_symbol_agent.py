@@ -91,6 +91,7 @@ class SingleSymbolAgent:
         notifier=None,
         prompt_manager: Optional[PromptManager] = None,
         fee_rates: Optional[FeeRates] = None,
+        limit_order_enabled: bool = False,
     ):
         """
         初始化单币种交易 Agent
@@ -118,6 +119,7 @@ class SingleSymbolAgent:
         self.max_leverage = max_leverage
         self.take_profit_ratio = take_profit_ratio
         self.stop_loss_ratio = stop_loss_ratio
+        self.limit_order_enabled = limit_order_enabled
         self.current_price = 0.0
         self.max_iterations = max_iterations
         self.notifier = notifier
@@ -614,13 +616,155 @@ class SingleSymbolAgent:
             self.logger.print_info(f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})，将交给现货 Agent 评估")
             return f"📝 已推荐 {symbol} 现货定投 (建议金额: ${actual_amount})，等待现货 Agent 评估"
 
+        # 限价单回调（仅在启用时创建）
+        buy_limit_callback = None
+        sell_short_limit_callback = None
+        cancel_limit_order_callback = None
+
+        if self.limit_order_enabled:
+            def buy_limit_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None, price: float = 0.0) -> str:
+                """限价开多回调"""
+                try:
+                    if self.trade_amount <= 0:
+                        return f"❌ 当前余额不足，无法开新仓。"
+                    
+                    if price <= 0:
+                        return f"❌ 限价价格必须大于0"
+                    
+                    fee_guard_msg = self._check_fee_guard()
+                    if fee_guard_msg:
+                        return fee_guard_msg
+
+                    actual_amount = amount if amount is not None else self.trade_amount
+                    actual_leverage = leverage if leverage is not None else self.max_leverage
+
+                    if actual_amount > self.trade_amount:
+                        return f"❌ 交易金额 ${actual_amount} 超过上限 ${self.trade_amount}"
+                    if actual_leverage > self.max_leverage:
+                        return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
+
+                    self.logger.print_info(f"[{self.symbol}Agent] 执行限价开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})")
+
+                    if not self.order_manager.check_sufficient_balance(actual_amount):
+                        return f"❌ 余额不足，需要 {actual_amount} USDT"
+
+                    result = self.order_manager.execute_long_limit(
+                        symbol=self.symbol,
+                        usdt_amount=actual_amount,
+                        limit_price=price,
+                        leverage=actual_leverage
+                    )
+
+                    if result and result.get('success'):
+                        tp_price = result.get('take_profit_price', 0)
+                        sl_price = result.get('stop_loss_price', 0)
+                        return (
+                            f"✅ 限价开多订单已提交！\n"
+                            f"  币种: {symbol}\n"
+                            f"  限价: ${price:.2f}\n"
+                            f"  投入: ${actual_amount:.2f}\n"
+                            f"  杠杆: {actual_leverage}x\n"
+                            f"  数量: {result.get('quantity', 0):.6f}\n"
+                            f"  止盈价: ${tp_price:.2f} (成交后设置)\n"
+                            f"  止损价: ${sl_price:.2f} (成交后设置)\n"
+                            f"  ⏳ 等待价格回调到限价成交"
+                        )
+                    else:
+                        return f"❌ 限价开多失败: {result.get('message', '未知错误') if result else '订单提交失败'}"
+
+                except Exception as e:
+                    error_msg = f"限价开多异常: {str(e)}"
+                    self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                    return f"❌ {error_msg}"
+
+            def sell_short_limit_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None, price: float = 0.0) -> str:
+                """限价开空回调"""
+                try:
+                    if self.trade_amount <= 0:
+                        return f"❌ 当前余额不足，无法开新仓。"
+                    
+                    if price <= 0:
+                        return f"❌ 限价价格必须大于0"
+                    
+                    fee_guard_msg = self._check_fee_guard()
+                    if fee_guard_msg:
+                        return fee_guard_msg
+
+                    actual_amount = amount if amount is not None else self.trade_amount
+                    actual_leverage = leverage if leverage is not None else self.max_leverage
+
+                    if actual_amount > self.trade_amount:
+                        return f"❌ 交易金额 ${actual_amount} 超过上限 ${self.trade_amount}"
+                    if actual_leverage > self.max_leverage:
+                        return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
+
+                    self.logger.print_info(f"[{self.symbol}Agent] 执行限价开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})")
+
+                    if not self.order_manager.check_sufficient_balance(actual_amount):
+                        return f"❌ 余额不足，需要 {actual_amount} USDT"
+
+                    result = self.order_manager.execute_short_limit(
+                        symbol=self.symbol,
+                        usdt_amount=actual_amount,
+                        limit_price=price,
+                        leverage=actual_leverage
+                    )
+
+                    if result and result.get('success'):
+                        tp_price = result.get('take_profit_price', 0)
+                        sl_price = result.get('stop_loss_price', 0)
+                        return (
+                            f"✅ 限价开空订单已提交！\n"
+                            f"  币种: {symbol}\n"
+                            f"  限价: ${price:.2f}\n"
+                            f"  投入: ${actual_amount:.2f}\n"
+                            f"  杠杆: {actual_leverage}x\n"
+                            f"  数量: {result.get('quantity', 0):.6f}\n"
+                            f"  止盈价: ${tp_price:.2f} (成交后设置)\n"
+                            f"  止损价: ${sl_price:.2f} (成交后设置)\n"
+                            f"  ⏳ 等待价格回调到限价成交"
+                        )
+                    else:
+                        return f"❌ 限价开空失败: {result.get('message', '未知错误') if result else '订单提交失败'}"
+
+                except Exception as e:
+                    error_msg = f"限价开空异常: {str(e)}"
+                    self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                    return f"❌ {error_msg}"
+
+            def cancel_limit_order_callback(symbol: str, order_id: int = 0) -> str:
+                """取消限价单回调"""
+                try:
+                    if order_id <= 0:
+                        return f"❌ 订单ID无效: {order_id}"
+
+                    self.logger.print_info(f"[{self.symbol}Agent] 取消限价单 (订单ID: {order_id})")
+
+                    result = self.order_manager.cancel_limit_order(
+                        symbol=symbol,
+                        order_id=order_id
+                    )
+
+                    if result and result.get('success'):
+                        return f"✅ 限价单 {order_id} 已成功取消"
+                    else:
+                        return f"❌ 取消限价单失败: {result.get('message', '未知错误') if result else '取消失败'}"
+
+                except Exception as e:
+                    error_msg = f"取消限价单异常: {str(e)}"
+                    self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
+                    return f"❌ {error_msg}"
+
         trading_tools = TradingTools(
             buy_callback,
             sell_callback,
             sell_short_callback,
             buy_to_cover_callback,
             do_nothing_callback,
-            buy_spot_callback
+            buy_spot_callback,
+            buy_limit_callback if self.limit_order_enabled else None,
+            sell_short_limit_callback if self.limit_order_enabled else None,
+            cancel_limit_order_callback if self.limit_order_enabled else None
         )
 
         # 保存回调函数引用以供后续使用
@@ -630,6 +774,14 @@ class SingleSymbolAgent:
         self._buy_to_cover_callback = buy_to_cover_callback
         self._do_nothing_callback = do_nothing_callback
         self._buy_spot_callback = buy_spot_callback
+        if self.limit_order_enabled:
+            self._buy_limit_callback = buy_limit_callback
+            self._sell_short_limit_callback = sell_short_limit_callback
+            self._cancel_limit_order_callback = cancel_limit_order_callback
+        else:
+            self._buy_limit_callback = None
+            self._sell_short_limit_callback = None
+            self._cancel_limit_order_callback = None
 
         return trading_tools.get_all_tools()
 
@@ -640,7 +792,7 @@ class SingleSymbolAgent:
         Returns:
             工具回调函数字典
         """
-        return {
+        callbacks = {
             'buy': self._buy_callback,
             'sell': self._sell_callback,
             'sell_short': self._sell_short_callback,
@@ -648,6 +800,14 @@ class SingleSymbolAgent:
             'do_nothing': self._do_nothing_callback,
             'buy_spot': self._buy_spot_callback
         }
+        
+        # 如果限价单功能启用，添加限价单回调
+        if self.limit_order_enabled:
+            callbacks['buy_limit'] = self._buy_limit_callback
+            callbacks['sell_short_limit'] = self._sell_short_limit_callback
+            callbacks['cancel_limit_order'] = self._cancel_limit_order_callback
+        
+        return callbacks
 
     def _check_fee_guard(self) -> Optional[str]:
         """
@@ -706,6 +866,14 @@ class SingleSymbolAgent:
             if not self.prompt_manager:
                 raise ValueError("PromptManager 是必需的，但未提供")
 
+            # 获取待处理的限价单（如果限价单功能启用）
+            open_limit_orders = []
+            if self.limit_order_enabled:
+                try:
+                    open_limit_orders = self.order_manager.get_open_limit_orders(symbol=self.symbol)
+                except Exception as e:
+                    self.logger.print_warning(f"[{self.symbol}Agent] 获取限价单列表失败: {e}")
+
             prompt = self.prompt_manager.format_trading_prompt(
                 symbol=self.symbol,
                 market_data=market_data,
@@ -718,7 +886,9 @@ class SingleSymbolAgent:
                 stop_loss_ratio=self.stop_loss_ratio,
                 historical_summary=historical_summary,
                 balance_info=balance_dict,
-                enriched_data=enriched_data
+                enriched_data=enriched_data,
+                limit_order_enabled=self.limit_order_enabled,
+                open_limit_orders=open_limit_orders
             )
 
             # 显示 Prompt

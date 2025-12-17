@@ -52,6 +52,7 @@ logs/trades/*
 
 # Config (保留模板文件)
 config.yaml
+config.*.yaml
 
 # macOS
 .DS_Store
@@ -60,9 +61,13 @@ config.yaml
 .pytest_cache/
 .coverage
 htmlcov/
+data/
 
 # Backup files
 *.bak
 *.backup
 .venv
 backtest_results/
+!.env.example
+.env.testnet
+.env.backtest

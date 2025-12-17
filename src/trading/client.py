@@ -172,6 +172,43 @@ class HyperliquidClient:
             print(f"❌ 获取持仓失败: {e}")
             return []
 
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        """
+        获取待处理的订单列表
+        
+        Returns:
+            List of open orders:
+            [{
+                'oid': int,  # 订单ID
+                'coin': str,  # 交易对符号
+                'side': str,  # 'B'=买入, 'A'=卖出
+                'sz': str,  # 订单数量
+                'limitPx': str,  # 限价价格
+                'orderType': dict,  # 订单类型信息
+                ...
+            }]
+        """
+        try:
+            user_state = self.info.user_state(self.address)
+            open_orders = user_state.get('openOrders', [])
+            
+            # 过滤出限价单（非触发单、非市价单）
+            limit_orders = []
+            for order in open_orders:
+                order_type = order.get('orderType', {})
+                # 限价单的orderType通常是 {"limit": {"tif": "Gtc"}} 或类似结构
+                # 触发单的orderType是 {"trigger": {...}}
+                # 市价单通常没有limitPx或orderType不同
+                if 'limit' in order_type or 'limitPx' in order:
+                    # 确保不是触发单
+                    if 'trigger' not in order_type:
+                        limit_orders.append(order)
+            
+            return limit_orders
+        except Exception as e:
+            print(f"❌ 获取待处理订单失败: {e}")
+            return []
+
     def get_asset_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         获取交易对的元数据信息
@@ -682,6 +719,49 @@ class HyperliquidClient:
                     error_msg = f"杠杆 {leverage}x 超过 {symbol} 的最大杠杆 {max_leverage}x"
                     print(f"❌ {error_msg}")
                     return {'status': 'error', 'message': error_msg}
+
+            # 如果是逐仓模式，检查当前持仓的杠杆
+            if not is_cross:
+                positions = self.get_positions()
+                for position in positions:
+                    if position.get('coin') == symbol:
+                        # 获取当前持仓的杠杆
+                        leverage_info = position.get('leverage', {})
+                        if isinstance(leverage_info, dict):
+                            current_leverage = int(leverage_info.get('value', 1))
+                        else:
+                            current_leverage = int(leverage_info) if leverage_info else 1
+                        
+                        # 如果目标杠杆低于当前杠杆，可能需要更多保证金
+                        if leverage < current_leverage:
+                            print(f"⚠️ 当前持仓杠杆: {current_leverage}x, 目标杠杆: {leverage}x")
+                            print(f"⚠️ 降低杠杆可能需要增加保证金，如果失败将使用当前杠杆")
+                            
+                            # 尝试设置杠杆
+                            result = self.exchange.update_leverage(leverage, symbol, is_cross=is_cross)
+                            
+                            # 如果失败，返回特殊状态，允许使用当前杠杆
+                            if result.get('status') == 'err':
+                                error_msg = result.get('response', '未知错误')
+                                if 'sufficient margin' in error_msg.lower() or 'decrease leverage' in error_msg.lower():
+                                    print(f"⚠️ 降低杠杆失败（保证金不足），将使用当前杠杆 {current_leverage}x")
+                                    return {
+                                        'status': 'warning',
+                                        'message': f'无法降低杠杆（需要更多保证金），使用当前杠杆 {current_leverage}x',
+                                        'current_leverage': current_leverage,
+                                        'target_leverage': leverage
+                                    }
+                                else:
+                                    print(f"❌ 杠杆设置失败: {error_msg}")
+                                    return {'status': 'error', 'message': error_msg}
+                            
+                            return result
+                        # 如果目标杠杆高于或等于当前杠杆，直接设置
+                        elif leverage > current_leverage:
+                            print(f"ℹ️ 当前持仓杠杆: {current_leverage}x, 提高至: {leverage}x")
+                        else:
+                            print(f"ℹ️ 当前持仓杠杆: {current_leverage}x, 保持不变")
+                            return {'status': 'ok', 'message': f'杠杆已为 {leverage}x，无需更改'}
 
             # 设置杠杆
             result = self.exchange.update_leverage(leverage, symbol, is_cross=is_cross)
