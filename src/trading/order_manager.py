@@ -629,7 +629,6 @@ class OrderManager:
         """
         try:
             # 1. 计算仓位大小
-            current_price = limit_price  # 使用限价作为参考价格计算数量
             lev = leverage if leverage else self.default_leverage
             
             # 合约数量 = (投入金额 * 杠杆) / 限价
