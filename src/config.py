@@ -332,11 +332,24 @@ class Config:
         
         Returns:
             LLMClientConfig: LLM 客户端配置
+            
+        Raises:
+            ValueError: 如果 llm_client_type 配置无效
         """
         from src.llm import LLMClientType, LLMClientConfig
         
+        # 验证 llm_client_type 以提供清晰的错误信息
+        try:
+            client_type_enum = LLMClientType(self.llm_client_type)
+        except ValueError as exc:
+            valid_values = [t.value for t in LLMClientType]
+            raise ValueError(
+                f"Invalid llm_client_type '{self.llm_client_type}' in configuration. "
+                f"Expected one of: {valid_values}"
+            ) from exc
+        
         return LLMClientConfig(
-            client_type=LLMClientType(self.llm_client_type),
+            client_type=client_type_enum,
             model=self.llm_model,
             temperature=self.llm_temperature,
             top_p=self.llm_top_p,
