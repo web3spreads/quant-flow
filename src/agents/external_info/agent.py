@@ -294,6 +294,7 @@ class ExternalInfoScheduler:
             try:
                 await self._task
             except asyncio.CancelledError:
+                # Expected when cancelling the task - suppress the exception
                 pass
 
         if self.logger:

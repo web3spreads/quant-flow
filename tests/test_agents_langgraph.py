@@ -5,8 +5,6 @@ LangGraph Agent 迁移测试
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock, patch
-from typing import Dict, Any, Optional
 
 # 导入通用模块
 from src.agents.common.utils.helpers import (
@@ -16,18 +14,13 @@ from src.agents.common.utils.helpers import (
     shorten_text,
     extract_json_from_text,
 )
-from src.agents.common.utils.llm import LLMConfig, create_llm, create_json_llm
+from src.agents.common.utils.llm import LLMConfig
 from src.agents.common.tools.trading import (
     TradingToolFactory,
     BuyInput,
-    SellShortInput,
     create_mock_callbacks,
 )
-from src.agents.common.state.base import (
-    BaseAgentState,
-    MessageState,
-    add_messages,
-)
+from src.agents.common.state.base import add_messages
 
 
 class TestHelperFunctions:

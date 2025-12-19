@@ -6,12 +6,11 @@
 """
 
 from typing import Dict, Any, Tuple, Optional
-from langchain_core.messages import SystemMessage
 
-from src.agents.trading.state import TradingAgentState, create_initial_state
+from src.agents.trading.state import create_initial_state
 from src.agents.trading.workflow import TradingAgentWorkflow
 from src.agents.common.tools.trading import TradingToolFactory
-from src.agents.common.utils.llm import LLMConfig, create_llm
+from src.agents.common.utils.llm import LLMConfig
 from src.agents.common.utils.helpers import safe_float, safe_leverage
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger

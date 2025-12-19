@@ -7,7 +7,7 @@
 2. execute_plan: 执行计划
 """
 
-from typing import Dict, Any, Literal, Optional
+from typing import Dict, Any, Literal
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, SystemMessage
