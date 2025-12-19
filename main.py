@@ -21,6 +21,7 @@ from src.data.indicators import TechnicalIndicators
 from src.data.data_enricher import MarketDataEnricher
 from src.trading.client import HyperliquidClient
 from src.trading.order_manager import OrderManager
+from src.llm import LLMClientManager
 from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
@@ -144,22 +145,27 @@ class QuantFlowBot:
             )
             self.prompt_manager = None
 
-        # 4. 决策历史管理器
+        # 4. LLM 客户端管理器（单例）
+        self.logger.print_info("初始化 LLM 客户端管理器...")
+        llm_client_config = self.config.get_llm_client_config()
+        self.llm_manager = LLMClientManager.get_instance(llm_client_config)
+        self.logger.print_info(f"✅ LLM 客户端类型: {self.config.llm_client_type}")
+        self.logger.print_info(f"✅ LLM 模型: {self.config.llm_model}")
+
+        # 5. 决策历史管理器
         self.logger.print_info("初始化决策历史管理器...")
         self.decision_history = DecisionHistory(max_history=50)
 
-        # 5. 汇总 Agent (V2 - 使用上下文压缩)
+        # 6. 汇总 Agent (V2 - 使用上下文压缩)
         self.logger.print_info("初始化汇总 Agent V2 (使用上下文压缩)...")
         self.summary_agent = SummaryAgentV2(
             logger=self.logger,
-            openai_api_base=self.config.openai_api_base,
-            openai_api_key=self.config.openai_api_key,
-            openai_model=self.config.openai_model,
+            llm_manager=self.llm_manager,
             temperature=0.1,
             max_context_tokens=2000,  # 限制汇总长度
         )
 
-        # 5.5 复盘经验存储与复盘 Agent
+        # 7. 复盘经验存储与复盘 Agent
         self.logger.print_info("初始化复盘经验存储...")
         self.review_memory_store = ReviewMemoryStore(
             path=self.config.review_memory_file,
@@ -187,9 +193,7 @@ class QuantFlowBot:
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
                     prompt_manager=self.prompt_manager,
-                    openai_api_base=self.config.openai_api_base,
-                    openai_api_key=self.config.openai_api_key,
-                    model=review_model,
+                    llm_manager=self.llm_manager,
                     temperature=self.config.review_temperature,
                     lookback_decisions=self.config.review_lookback_decisions,
                     memory_store=self.review_memory_store,
@@ -198,13 +202,13 @@ class QuantFlowBot:
                     similarity_weights=self.config.review_similarity_weights,
                     confidence_decay_factor=self.config.review_confidence_decay_factor,
                     similarity_method=self.config.review_similarity_method,
-                    notifier=self.notifier,  # 传递通知器
-                    daily_logger=review_daily_logger,  # 传递每日日志记录器
+                    notifier=self.notifier,
+                    daily_logger=review_daily_logger,
                 )
         else:
             self.review_agent = None
 
-        # 6. 为每个交易对创建独立的单币 Agent
+        # 8. 为每个交易对创建独立的单币 Agent
         self.logger.print_info("为每个交易对创建独立 Agent...")
         self.symbol_agents = {}
         for symbol in self.config.symbols:
@@ -212,9 +216,7 @@ class QuantFlowBot:
                 symbol=symbol,
                 order_manager=self.order_manager,
                 logger=self.logger,
-                openai_api_base=self.config.openai_api_base,
-                openai_api_key=self.config.openai_api_key,
-                openai_model=self.config.openai_model,
+                llm_manager=self.llm_manager,
                 temperature=self.config.agent_temperature,
                 max_iterations=self.config.agent_max_iterations,
                 trade_amount=self.config.max_trade_amount,
@@ -228,21 +230,19 @@ class QuantFlowBot:
             )
             self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
 
-        # 7. 现货定投 Agent
+        # 9. 现货定投 Agent
         self.logger.print_info("初始化现货定投 Agent...")
         self.spot_agent = SpotAgent(
             order_manager=self.order_manager,
             logger=self.logger,
-            openai_api_base=self.config.openai_api_base,
-            openai_api_key=self.config.openai_api_key,
-            openai_model=self.config.openai_model,
+            llm_manager=self.llm_manager,
             temperature=0.05,  # 更保守
             trade_amount=self.config.max_trade_amount,
             notifier=self.notifier,
             prompt_manager=self.prompt_manager,
         )
 
-        # 8. 外部信息收集 Agent
+        # 10. 外部信息收集 Agent
         self.external_info_agent = None
         self.external_info_scheduler = None
         self.market_info_store = None
@@ -261,16 +261,14 @@ class QuantFlowBot:
 
                 self.external_info_agent = ExternalInfoAgent(
                     logger=self.logger,
-                    openai_api_base=self.config.openai_api_base,
-                    openai_api_key=self.config.openai_api_key,
-                    openai_model=self.config.openai_model,
+                    llm_manager=self.llm_manager,
                     exa_api_key=exa_api_key,
                     temperature=getattr(self.config, "external_info_temperature", 0.1),
                     symbols=self.config.symbols,
                     store_dir=getattr(
                         self.config, "external_info_store_dir", "data/market_info"
                     ),
-                    prompt_manager=self.prompt_manager,  # 传递 PromptManager
+                    prompt_manager=self.prompt_manager,
                     interval_hours=getattr(
                         self.config, "external_info_interval_hours", 3.0
                     )

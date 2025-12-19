@@ -4,10 +4,10 @@
 """
 
 from typing import Dict, Any, Tuple
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
+from src.llm import LLMClientManager
 from src.agent.tools import TradingTools
 from src.agent.execution_agent import ExecutionAgent
 from src.trading.order_manager import OrderManager
@@ -211,9 +211,7 @@ class SpotAgent:
         self,
         order_manager: OrderManager,
         logger: TradingLogger,
-        openai_api_base: str,
-        openai_api_key: str,
-        openai_model: str,
+        llm_manager: LLMClientManager,
         temperature: float = 0.05,  # 更低的温度，更保守
         trade_amount: float = 100.0,
         notifier=None,
@@ -225,32 +223,24 @@ class SpotAgent:
         Args:
             order_manager: 订单管理器
             logger: 日志记录器
-            openai_api_base: OpenAI API Base URL
-            openai_api_key: OpenAI API Key
-            openai_model: 模型名称
+            llm_manager: LLM 客户端管理器
             temperature: 温度参数（建议较低）
             trade_amount: 定投金额
             notifier: 通知管理器（可选）
         """
         self.order_manager = order_manager
         self.logger = logger
+        self.llm_manager = llm_manager
         self.trade_amount = trade_amount
         self.notifier = notifier
         self.prompt_manager = prompt_manager
 
         # 初始化 LLM（更保守的参数）
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=temperature,
-        )
+        self.llm = self.llm_manager.get_client(temperature=temperature)
 
         # 初始化执行 Agent
         self.execution_agent = ExecutionAgent(
-            openai_api_base=openai_api_base,
-            openai_api_key=openai_api_key,
-            openai_model=openai_model,
+            llm_manager=llm_manager,
             temperature=0.0
         )
 

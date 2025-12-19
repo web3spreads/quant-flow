@@ -92,6 +92,30 @@ agent:
   # Agent 超时时间（秒）
   timeout: 60
 
+# LLM 配置
+llm:
+  # 客户端类型: langchain_openai, langchain_cloudflare, langchain_google, langchain_litellm, langchain_nvidia
+  # - langchain_openai: 符合 OpenAI 规范的供应商（DeepSeek、OpenAI、本地部署等）
+  # - langchain_litellm: 更宽泛的多模型支持（通过 LiteLLM 代理）
+  # - langchain_cloudflare: Cloudflare AI Gateway 转发的模型
+  # - langchain_google: Google Gemini 模型
+  # - langchain_nvidia: NVIDIA AI Endpoints
+  client_type: langchain_openai
+  
+  # 模型名称
+  # model: deepseek-chat
+  
+  # 基础参数（可选，如不指定则使用默认值）
+  # temperature: 0.1
+  # top_p: 0.95
+  # max_tokens: 8192
+  
+  # 额外参数（可选，JSON 格式）
+  # 用于特定客户端的高级配置，如 NVIDIA 的 thinking 模式
+  # extra_body:
+  #   chat_template_kwargs:
+  #     thinking: true
+
 # Prompt 配置
 prompt:
   # 使用的 Prompt 集合名称

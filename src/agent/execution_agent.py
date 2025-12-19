@@ -6,12 +6,13 @@
 """
 
 from typing import Dict, Any, Optional
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from enum import Enum
 import json
 import re
+
+from src.llm import LLMClientManager
 
 
 # ExecutionPlan 字段名常量（避免硬编码字符串）
@@ -162,32 +163,28 @@ class ExecutionAgent:
 
     def __init__(
         self,
-        openai_api_base: str,
-        openai_api_key: str,
-        openai_model: str = "deepseek-chat",
+        llm_manager: LLMClientManager,
         temperature: float = 0.0
     ):
         """
         初始化执行 Agent
 
         Args:
-            openai_api_base: OpenAI API Base URL
-            openai_api_key: OpenAI API Key
-            openai_model: 模型名称
+            llm_manager: LLM 客户端管理器
             temperature: 温度参数（建议使用 0 以确保确定性输出）
         """
-        # 启用 JSON Mode 以确保 LLM 返回纯 JSON 格式
-        # 这可以显著提高 structured output 的成功率
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=temperature,
-            model_kwargs={"response_format": {"type": "json_object"}}
-        )
+        self.llm_manager = llm_manager
+        self.temperature = temperature
+        
+        # 获取启用 JSON Mode 的 LLM 客户端
+        # JSON Mode 可以显著提高 structured output 的成功率
+        self.llm = self.llm_manager.get_client(json_mode=True, temperature=temperature)
 
         # 使用 structured output
-        self.structured_llm = self.llm.with_structured_output(ExecutionPlan)
+        self.structured_llm = self.llm_manager.get_structured_client(
+            output_schema=ExecutionPlan,
+            temperature=temperature
+        )
 
     def parse_decision(
         self,

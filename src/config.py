@@ -50,6 +50,7 @@ class Config:
         self.config_data = self._load_yaml_config()
 
         # 初始化各配置项
+        self._init_llm_config()
         self._init_openai_config()
         self._init_hyperliquid_config()
         self._init_trading_config()
@@ -74,6 +75,42 @@ class Config:
 
         with open(self.config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
+
+    def _init_llm_config(self):
+        """初始化 LLM 客户端配置"""
+        llm_config = self.config_data.get("llm", {})
+        
+        # 客户端类型：优先从 YAML 配置读取，如果没有则从环境变量读取
+        self.llm_client_type = llm_config.get("client_type") or os.getenv("LLM_CLIENT_TYPE", "langchain_openai")
+        
+        # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取
+        self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", "deepseek-chat")
+        
+        # 基础参数（可选）
+        self.llm_temperature = llm_config.get("temperature")
+        self.llm_top_p = llm_config.get("top_p")
+        self.llm_max_tokens = llm_config.get("max_tokens")
+        
+        # 额外参数（可选）
+        self.llm_extra_body = llm_config.get("extra_body")
+        
+        # OpenAI / OpenAI-compatible 配置
+        self.llm_openai_api_base = os.getenv("OPENAI_API_BASE")
+        self.llm_openai_api_key = os.getenv("OPENAI_API_KEY")
+        
+        # Cloudflare 配置
+        self.llm_cloudflare_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        self.llm_cloudflare_api_token = os.getenv("CLOUDFLARE_API_TOKEN")
+        
+        # Google 配置
+        self.llm_google_api_key = os.getenv("GOOGLE_API_KEY")
+        
+        # LiteLLM 配置
+        self.llm_litellm_api_base = os.getenv("LITELLM_API_BASE")
+        self.llm_litellm_api_key = os.getenv("LITELLM_API_KEY")
+        
+        # NVIDIA 配置
+        self.llm_nvidia_api_key = os.getenv("NVIDIA_API_KEY")
 
     def _init_openai_config(self):
         """初始化 OpenAI API 配置"""
@@ -289,6 +326,32 @@ class Config:
                 "配置验证失败:\n" + "\n".join(f"- {err}" for err in errors)
             )
 
+    def get_llm_client_config(self):
+        """
+        创建 LLM 客户端配置对象
+        
+        Returns:
+            LLMClientConfig: LLM 客户端配置
+        """
+        from src.llm import LLMClientType, LLMClientConfig
+        
+        return LLMClientConfig(
+            client_type=LLMClientType(self.llm_client_type),
+            model=self.llm_model,
+            temperature=self.llm_temperature,
+            top_p=self.llm_top_p,
+            max_tokens=self.llm_max_tokens,
+            extra_body=self.llm_extra_body,
+            openai_api_base=self.llm_openai_api_base,
+            openai_api_key=self.llm_openai_api_key,
+            cloudflare_account_id=self.llm_cloudflare_account_id,
+            cloudflare_api_token=self.llm_cloudflare_api_token,
+            google_api_key=self.llm_google_api_key,
+            litellm_api_base=self.llm_litellm_api_base,
+            litellm_api_key=self.llm_litellm_api_key,
+            nvidia_api_key=self.llm_nvidia_api_key,
+        )
+
     def __str__(self) -> str:
         """返回配置摘要（不包含敏感信息）"""
         # 确定运行模式
@@ -300,8 +363,8 @@ class Config:
 
         return f"""
         === Quant Flow 配置摘要 ===
-        OpenAI API Base: {self.openai_api_base}
-        OpenAI Model: {self.openai_model}
+        LLM 客户端: {self.llm_client_type}
+        模型: {self.llm_model}
         交易平台: Hyperliquid（永续合约）
         运行模式: {mode}
         交易对: {', '.join(self.symbols)}

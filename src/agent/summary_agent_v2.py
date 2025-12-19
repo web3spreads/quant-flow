@@ -5,12 +5,12 @@
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.messages.utils import trim_messages, count_tokens_approximately
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, Field
 
+from src.llm import LLMClientManager
 from src.utils.logger import TradingLogger
 
 
@@ -43,9 +43,7 @@ class SummaryAgentV2:
     def __init__(
         self,
         logger: TradingLogger,
-        openai_api_base: str,
-        openai_api_key: str,
-        openai_model: str,
+        llm_manager: LLMClientManager,
         temperature: float = 0.1,
         max_context_tokens: int = 2000,
     ):
@@ -54,30 +52,19 @@ class SummaryAgentV2:
 
         Args:
             logger: 日志记录器
-            openai_api_base: OpenAI API Base URL
-            openai_api_key: OpenAI API Key
-            openai_model: 模型名称
+            llm_manager: LLM 客户端管理器
             temperature: 温度参数
             max_context_tokens: 最大上下文 token 数
         """
         self.logger = logger
+        self.llm_manager = llm_manager
         self.max_context_tokens = max_context_tokens
         
         # 初始化主 LLM
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=temperature,
-        )
+        self.llm = self.llm_manager.get_client(temperature=temperature)
         
-        # 初始化压缩用的快速 LLM (使用更便宜的模型)
-        self.compression_llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=0.1,
-        )
+        # 初始化压缩用的快速 LLM
+        self.compression_llm = self.llm_manager.get_client(temperature=0.1)
 
     def compress_market_history(
         self,
