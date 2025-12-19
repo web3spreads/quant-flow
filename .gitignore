@@ -45,9 +45,11 @@ logs/*.json
 logs/*.csv
 logs/decisions/*
 logs/trades/*
+logs/review_daily/*
 !logs/.gitkeep
 !logs/decisions/.gitkeep
 !logs/trades/.gitkeep
+!logs/review_daily/.gitkeep
 *.log
 
 # Config (保留模板文件)
