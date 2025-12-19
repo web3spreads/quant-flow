@@ -6,8 +6,9 @@
 import json
 import re
 from typing import List, Dict, Any, Optional
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+
+from src.llm import LLMClientManager
 
 from src.prompt_manager import PromptManager
 from src.utils.logger import TradingLogger
@@ -24,9 +25,7 @@ class ReviewAgent:
         self,
         logger: TradingLogger,
         prompt_manager: PromptManager,
-        openai_api_base: str,
-        openai_api_key: str,
-        model: str,
+        llm_manager: LLMClientManager,
         temperature: float = 0.05,
         lookback_decisions: int = 12,
         memory_store: Optional[ReviewMemoryStore] = None,
@@ -40,6 +39,7 @@ class ReviewAgent:
     ):
         self.logger = logger
         self.prompt_manager = prompt_manager
+        self.llm_manager = llm_manager
         self.lookback_decisions = lookback_decisions
         self.memory_store = memory_store
         self.min_confidence = min_confidence
@@ -48,13 +48,7 @@ class ReviewAgent:
         self.notifier = notifier
         self.daily_logger = daily_logger
 
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=model,
-            temperature=temperature,
-            model_kwargs={"response_format": {"type": "json_object"}},
-        )
+        self.llm = self.llm_manager.get_client(json_mode=True, temperature=temperature)
 
         system_prompt = self.prompt_manager.get_review_system_prompt()
         self.system_message = SystemMessage(content=system_prompt)

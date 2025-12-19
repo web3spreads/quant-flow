@@ -9,8 +9,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 
-from langchain_openai import ChatOpenAI
-
+from src.llm import LLMClientManager
 from src.agents.common.utils import MarketInfoStore
 
 
@@ -24,9 +23,7 @@ class ExternalInfoAgent:
     def __init__(
         self,
         logger,
-        openai_api_base: str,
-        openai_api_key: str,
-        openai_model: str,
+        llm_manager: LLMClientManager,
         exa_api_key: Optional[str] = None,
         temperature: float = 0.1,
         symbols: Optional[List[str]] = None,
@@ -39,9 +36,7 @@ class ExternalInfoAgent:
 
         Args:
             logger: 日志记录器
-            openai_api_base: OpenAI API 基础 URL
-            openai_api_key: OpenAI API 密钥
-            openai_model: OpenAI 模型名称
+            llm_manager: LLM 客户端管理器
             exa_api_key: Exa API 密钥（必须提供）
             temperature: LLM 温度参数
             symbols: 关注的币种列表
@@ -50,6 +45,7 @@ class ExternalInfoAgent:
             interval_hours: 收集间隔（小时）
         """
         self.logger = logger
+        self.llm_manager = llm_manager
         self.symbols = symbols or ["BTC", "ETH"]
         self.store = MarketInfoStore(store_dir)
         self.prompt_manager = prompt_manager
@@ -64,13 +60,7 @@ class ExternalInfoAgent:
         self.exa_api_key = exa_api_key
 
         # 初始化 LLM
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=temperature,
-            model_kwargs={"response_format": {"type": "json_object"}}
-        )
+        self.llm = self.llm_manager.get_client(json_mode=True, temperature=temperature)
 
         # 加载 Prompt 模板
         self._load_prompts()

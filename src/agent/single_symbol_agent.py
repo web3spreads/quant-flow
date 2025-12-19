@@ -4,9 +4,10 @@
 """
 
 from typing import Dict, Any, Tuple, Optional
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
+
+from src.llm import LLMClientManager
 
 from src.agent.tools import TradingTools
 from src.agent.prompts import SYSTEM_PROMPT
@@ -79,9 +80,7 @@ class SingleSymbolAgent:
         symbol: str,
         order_manager: OrderManager,
         logger: TradingLogger,
-        openai_api_base: str,
-        openai_api_key: str,
-        openai_model: str,
+        llm_manager: LLMClientManager,
         temperature: float = 0.1,
         max_iterations: int = 5,
         trade_amount: float = 100.0,
@@ -100,9 +99,7 @@ class SingleSymbolAgent:
             symbol: 交易对
             order_manager: 订单管理器
             logger: 日志记录器
-            openai_api_base: OpenAI API Base URL
-            openai_api_key: OpenAI API Key
-            openai_model: 模型名称
+            llm_manager: LLM 客户端管理器
             temperature: 温度参数
             max_iterations: 最大迭代次数
             trade_amount: 单笔交易金额上限
@@ -115,6 +112,7 @@ class SingleSymbolAgent:
         self.symbol = symbol
         self.order_manager = order_manager
         self.logger = logger
+        self.llm_manager = llm_manager
         self.trade_amount = trade_amount
         self.max_leverage = max_leverage
         self.take_profit_ratio = take_profit_ratio
@@ -131,19 +129,12 @@ class SingleSymbolAgent:
         # 用于去重：记录本次决策周期中已执行的工具调用
         self._executed_callbacks = set()
 
-        # 初始化 LLM
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=temperature,
-        )
+        # 初始化 LLM（从管理器获取）
+        self.llm = self.llm_manager.get_client(temperature=temperature)
 
         # 初始化执行 Agent（用于解析决策文本并执行）
         self.execution_agent = ExecutionAgent(
-            openai_api_base=openai_api_base,
-            openai_api_key=openai_api_key,
-            openai_model=openai_model,
+            llm_manager=llm_manager,
             temperature=0.0  # 执行 Agent 使用零温度确保确定性
         )
 
