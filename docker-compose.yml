@@ -10,10 +10,20 @@ services:
 
     # Environment variables (override with .env file)
     environment:
+      # LLM Client Configuration
       # OpenAI/DeepSeek API Configuration
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.deepseek.com/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-deepseek-chat}
+      # Cloudflare Workers AI Configuration
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      # Google Gemini Configuration
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      # LiteLLM Configuration
+      - LITELLM_API_BASE=${LITELLM_API_BASE}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      # NVIDIA AI Endpoints Configuration
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
 
       # Exa Search API Configuration (Optional)
       - EXA_API_KEY=${EXA_API_KEY:-}
