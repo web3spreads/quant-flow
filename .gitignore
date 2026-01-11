@@ -63,7 +63,7 @@ config.*.yaml
 .pytest_cache/
 .coverage
 htmlcov/
-data/
+/data/
 
 # Backup files
 *.bak
