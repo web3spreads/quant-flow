@@ -15,6 +15,14 @@ def __getattr__(name):
         from src.agent.single_symbol_agent import SingleSymbolAgent
         return SingleSymbolAgent
 
+    if name == "EnhancedSingleSymbolAgent":
+        from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent
+        return EnhancedSingleSymbolAgent
+
+    if name == "create_enhanced_agent":
+        from src.agent.enhanced_single_symbol_agent import create_enhanced_agent
+        return create_enhanced_agent
+
     if name == "SpotAgent":
         from src.agent.spot_agent import SpotAgent
         return SpotAgent
@@ -67,6 +75,8 @@ def __getattr__(name):
 
 __all__ = [
     'SingleSymbolAgent',
+    'EnhancedSingleSymbolAgent',
+    'create_enhanced_agent',
     'SpotAgent',
     'SummaryAgentV2',
     'DecisionHistory',

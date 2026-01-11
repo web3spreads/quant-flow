@@ -62,6 +62,7 @@ class Config:
         self._init_review_agent_config()
         self._init_external_info_agent_config()
         self._init_risk_config()
+        self._init_enhanced_analysis_config()
         self._init_logging_config()
         self._init_notifications_config()
 
@@ -278,6 +279,51 @@ class Config:
         )
         self.circuit_breaker_window: int = int(risk.get("circuit_breaker_window", 5))
         self.circuit_breaker_pause: int = int(risk.get("circuit_breaker_pause", 30))
+
+    def _init_enhanced_analysis_config(self):
+        """初始化增强分析配置"""
+        enhanced = self.config_data.get("enhanced_analysis", {})
+
+        # 是否启用增强分析
+        self.enhanced_analysis_enabled: bool = enhanced.get("enabled", True)
+
+        # 信号过滤配置
+        self.enhanced_min_signal_quality: str = enhanced.get("min_signal_quality", "fair")
+        self.enhanced_min_confidence: float = float(enhanced.get("min_confidence", 0.4))
+        self.enhanced_enable_risk_filter: bool = enhanced.get("enable_risk_filter", True)
+        self.enhanced_enable_timing_filter: bool = enhanced.get("enable_timing_filter", True)
+
+        # 风险管理配置
+        risk_config = enhanced.get("risk", {})
+        self.enhanced_max_risk_per_trade: float = float(
+            risk_config.get("max_risk_per_trade", 0.02)
+        )
+        self.enhanced_max_total_exposure: float = float(
+            risk_config.get("max_total_exposure", 0.5)
+        )
+        self.enhanced_atr_sl_multiplier: float = float(
+            risk_config.get("atr_sl_multiplier", 1.5)
+        )
+        self.enhanced_atr_tp_multiplier: float = float(
+            risk_config.get("atr_tp_multiplier", 3.0)
+        )
+        self.enhanced_trailing_stop_enabled: bool = risk_config.get(
+            "trailing_stop_enabled", True
+        )
+        self.enhanced_volatility_adjustment: bool = risk_config.get(
+            "volatility_adjustment", True
+        )
+
+        # 信号权重配置
+        signal_config = enhanced.get("signal_weights", {})
+        self.enhanced_signal_weights: Dict[str, float] = {
+            "trend": float(signal_config.get("trend", 0.25)),
+            "momentum": float(signal_config.get("momentum", 0.20)),
+            "volume": float(signal_config.get("volume", 0.15)),
+            "volatility": float(signal_config.get("volatility", 0.10)),
+            "price_action": float(signal_config.get("price_action", 0.15)),
+            "multi_timeframe": float(signal_config.get("multi_timeframe", 0.15)),
+        }
 
     def _init_logging_config(self):
         """初始化日志配置"""

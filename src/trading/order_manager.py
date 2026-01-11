@@ -3,8 +3,259 @@ Hyperliquid 订单管理器
 管理永续合约的订单创建、监控和执行，包括止盈止损逻辑
 """
 
-from typing import Optional, Dict, Any, List
+import time
+import threading
+from datetime import datetime
+from typing import Optional, Dict, Any, List, Callable
 from src.trading.client import HyperliquidClient
+
+
+class LimitOrderMonitor:
+    """
+    限价单成交监控器
+
+    监控限价单成交状态，成交后自动设置止盈止损
+    解决限价单成交后裸仓风险问题
+    """
+
+    def __init__(
+        self,
+        client: HyperliquidClient,
+        check_interval: float = 5.0,
+        max_check_duration: float = 3600.0  # 最长监控1小时
+    ):
+        """
+        初始化限价单监控器
+
+        Args:
+            client: Hyperliquid 客户端
+            check_interval: 检查间隔（秒）
+            max_check_duration: 最长监控时长（秒）
+        """
+        self.client = client
+        self.check_interval = check_interval
+        self.max_check_duration = max_check_duration
+
+        # 待监控的限价单列表
+        # {order_id: {symbol, is_buy, size, tp_price, sl_price, created_at, ...}}
+        self._pending_orders: Dict[int, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+
+    def add_order(
+        self,
+        order_id: int,
+        symbol: str,
+        is_buy: bool,
+        size: float,
+        entry_price: float,
+        take_profit_price: float,
+        stop_loss_price: float,
+        on_tpsl_set: Optional[Callable] = None
+    ) -> None:
+        """
+        添加限价单到监控列表
+
+        Args:
+            order_id: 订单ID
+            symbol: 交易对
+            is_buy: 是否做多
+            size: 仓位大小
+            entry_price: 入场价格
+            take_profit_price: 止盈价格
+            stop_loss_price: 止损价格
+            on_tpsl_set: 止盈止损设置成功后的回调
+        """
+        with self._lock:
+            self._pending_orders[order_id] = {
+                'symbol': symbol,
+                'is_buy': is_buy,
+                'size': size,
+                'entry_price': entry_price,
+                'take_profit_price': take_profit_price,
+                'stop_loss_price': stop_loss_price,
+                'created_at': datetime.now(),
+                'on_tpsl_set': on_tpsl_set,
+                'tpsl_attempts': 0
+            }
+            print(f"📋 限价单 {order_id} 已加入监控队列")
+
+        # 确保监控线程运行
+        self._ensure_monitor_running()
+
+    def remove_order(self, order_id: int) -> None:
+        """从监控列表移除订单"""
+        with self._lock:
+            if order_id in self._pending_orders:
+                del self._pending_orders[order_id]
+                print(f"📋 限价单 {order_id} 已从监控队列移除")
+
+    def _ensure_monitor_running(self) -> None:
+        """确保监控线程运行"""
+        if self._monitor_thread is None or not self._monitor_thread.is_alive():
+            self._stop_event.clear()
+            self._monitor_thread = threading.Thread(
+                target=self._monitor_loop,
+                daemon=True,
+                name="LimitOrderMonitor"
+            )
+            self._monitor_thread.start()
+            print("🔄 限价单监控线程已启动")
+
+    def stop(self) -> None:
+        """停止监控"""
+        self._stop_event.set()
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=10)
+            print("🛑 限价单监控线程已停止")
+
+    def _monitor_loop(self) -> None:
+        """监控循环"""
+        while not self._stop_event.is_set():
+            try:
+                self._check_orders()
+            except Exception as e:
+                print(f"❌ 限价单监控异常: {e}")
+
+            # 如果没有待监控订单，退出循环
+            with self._lock:
+                if not self._pending_orders:
+                    print("📋 无待监控限价单，监控线程休眠")
+                    break
+
+            # 等待下一次检查
+            self._stop_event.wait(self.check_interval)
+
+    def _check_orders(self) -> None:
+        """检查所有待监控的限价单"""
+        with self._lock:
+            orders_to_check = list(self._pending_orders.items())
+
+        # 获取当前持仓
+        positions = self.client.get_positions()
+        position_map = {p['coin']: p for p in positions}
+
+        # 获取当前挂单
+        open_orders = self.client.get_open_orders()
+        open_order_ids = {o.get('oid') for o in open_orders}
+
+        for order_id, order_info in orders_to_check:
+            symbol = order_info['symbol']
+            created_at = order_info['created_at']
+
+            # 检查是否超时
+            elapsed = (datetime.now() - created_at).total_seconds()
+            if elapsed > self.max_check_duration:
+                print(f"⏰ 限价单 {order_id} 监控超时，移除")
+                self.remove_order(order_id)
+                continue
+
+            # 检查订单是否还在挂单中
+            if order_id in open_order_ids:
+                # 订单仍未成交，继续监控
+                continue
+
+            # 订单不在挂单中，检查是否有对应持仓
+            position = position_map.get(symbol)
+            if position:
+                position_size = float(position.get('szi', 0))
+                expected_size = order_info['size']
+                is_buy = order_info['is_buy']
+
+                # 检查持仓方向是否匹配
+                if (is_buy and position_size > 0) or (not is_buy and position_size < 0):
+                    # 限价单成交，设置止盈止损
+                    print(f"✅ 限价单 {order_id} 已成交，正在设置止盈止损")
+                    self._set_tpsl_for_order(order_id, order_info, abs(position_size))
+                else:
+                    # 持仓方向不匹配，可能已被平仓
+                    print(f"⚠️ 限价单 {order_id} 持仓方向不匹配，可能已平仓")
+                    self.remove_order(order_id)
+            else:
+                # 无持仓，订单可能被取消或已平仓
+                print(f"⚠️ 限价单 {order_id} 无对应持仓，移除监控")
+                self.remove_order(order_id)
+
+    def _set_tpsl_for_order(
+        self,
+        order_id: int,
+        order_info: Dict[str, Any],
+        actual_size: float
+    ) -> None:
+        """为成交的限价单设置止盈止损"""
+        symbol = order_info['symbol']
+        is_buy = order_info['is_buy']
+        tp_price = order_info['take_profit_price']
+        sl_price = order_info['stop_loss_price']
+
+        order_info['tpsl_attempts'] += 1
+        max_attempts = 3
+
+        try:
+            # 先设置止损（更重要）
+            sl_success = True
+            if sl_price:
+                sl_result = self.client.place_tpsl_order(
+                    symbol=symbol,
+                    trigger_price=sl_price,
+                    is_buy=not is_buy,
+                    size=actual_size,
+                    is_tp=False
+                )
+                sl_success, sl_error = self.client.check_order_success(sl_result)
+                if not sl_success:
+                    print(f"❌ 限价单 {order_id} 止损设置失败: {sl_error}")
+
+                    # 重试或紧急平仓
+                    if order_info['tpsl_attempts'] >= max_attempts:
+                        print(f"⚠️ 【安全机制】止损设置多次失败，紧急平仓")
+                        self.client.close_position(symbol)
+                        self.remove_order(order_id)
+                        return
+                    else:
+                        # 稍后重试
+                        return
+                else:
+                    print(f"✅ 限价单 {order_id} 止损已设置: ${sl_price}")
+
+            # 设置止盈
+            tp_success = True
+            if tp_price:
+                tp_result = self.client.place_tpsl_order(
+                    symbol=symbol,
+                    trigger_price=tp_price,
+                    is_buy=not is_buy,
+                    size=actual_size,
+                    is_tp=True
+                )
+                tp_success, tp_error = self.client.check_order_success(tp_result)
+                if not tp_success:
+                    print(f"⚠️ 限价单 {order_id} 止盈设置失败: {tp_error}")
+                else:
+                    print(f"✅ 限价单 {order_id} 止盈已设置: ${tp_price}")
+
+            # 调用回调
+            if sl_success:
+                callback = order_info.get('on_tpsl_set')
+                if callback:
+                    try:
+                        callback(order_id, sl_success and tp_success)
+                    except Exception as e:
+                        print(f"⚠️ 止盈止损回调异常: {e}")
+
+                # 移除已处理的订单
+                self.remove_order(order_id)
+
+        except Exception as e:
+            print(f"❌ 设置止盈止损异常: {e}")
+            if order_info['tpsl_attempts'] >= max_attempts:
+                print(f"⚠️ 【安全机制】异常次数过多，紧急平仓")
+                try:
+                    self.client.close_position(symbol)
+                except:
+                    pass
+                self.remove_order(order_id)
 
 
 class OrderManager:
@@ -15,26 +266,153 @@ class OrderManager:
         client: HyperliquidClient,
         take_profit_ratio: float = 0.05,
         stop_loss_ratio: float = 0.02,
-        default_leverage: int = 10
+        default_leverage: int = 10,
+        min_risk_reward_ratio: float = 1.5,  # 最小风险回报比
+        enable_limit_order_monitor: bool = True
     ):
         """
         初始化订单管理器
-        
+
         Args:
             client: Hyperliquid 客户端
             take_profit_ratio: 止盈比例（默认 5%）
             stop_loss_ratio: 止损比例（默认 2%）
             default_leverage: 默认杠杆倍数（默认 10倍）
+            min_risk_reward_ratio: 最小风险回报比（默认 1.5）
+            enable_limit_order_monitor: 是否启用限价单监控（默认 True）
         """
         self.client = client
         self.take_profit_ratio = take_profit_ratio
         self.stop_loss_ratio = stop_loss_ratio
         self.default_leverage = default_leverage
-        
+        self.min_risk_reward_ratio = min_risk_reward_ratio
+
+        # 初始化限价单监控器
+        self.limit_order_monitor: Optional[LimitOrderMonitor] = None
+        if enable_limit_order_monitor:
+            self.limit_order_monitor = LimitOrderMonitor(client)
+
         print(f"✅ 订单管理器初始化完成")
         print(f"   止盈比例: {take_profit_ratio*100}%")
         print(f"   止损比例: {stop_loss_ratio*100}%")
         print(f"   默认杠杆: {default_leverage}x")
+        print(f"   最小风险回报比: {min_risk_reward_ratio}")
+        print(f"   限价单监控: {'启用' if enable_limit_order_monitor else '禁用'}")
+
+    def validate_risk_reward(
+        self,
+        take_profit_ratio: float,
+        stop_loss_ratio: float,
+        leverage: int,
+        fee_rate: float = 0.0005
+    ) -> Dict[str, Any]:
+        """
+        验证风险回报比是否合理（考虑杠杆）
+
+        【重要】这是防止亏损的关键检查
+        - 杠杆会放大止损的实际损失
+        - 手续费会侵蚀利润
+
+        Args:
+            take_profit_ratio: 止盈比例（如 0.05 = 5%）
+            stop_loss_ratio: 止损比例（如 0.02 = 2%）
+            leverage: 杠杆倍数
+            fee_rate: 单边手续费率（如 0.0005 = 0.05%）
+
+        Returns:
+            {
+                'is_valid': bool,
+                'risk_reward_ratio': float,  # 实际风险回报比
+                'profit_after_fees': float,  # 扣除手续费后的实际利润率
+                'loss_with_leverage': float,  # 考虑杠杆后的实际损失率
+                'message': str
+            }
+        """
+        # 计算双边手续费（开仓+平仓）
+        total_fee = fee_rate * 2 * leverage  # 手续费也被杠杆放大
+
+        # 止盈时的实际收益（扣除手续费）
+        profit_after_fees = (take_profit_ratio * leverage) - total_fee
+
+        # 止损时的实际损失（考虑杠杆）
+        loss_with_leverage = (stop_loss_ratio * leverage) + total_fee
+
+        # 计算实际风险回报比
+        if loss_with_leverage > 0:
+            risk_reward_ratio = profit_after_fees / loss_with_leverage
+        else:
+            risk_reward_ratio = float('inf')
+
+        # 判断是否合理
+        is_valid = risk_reward_ratio >= self.min_risk_reward_ratio and profit_after_fees > 0
+
+        if not is_valid:
+            if profit_after_fees <= 0:
+                message = f"止盈不足以覆盖手续费！利润率: {profit_after_fees*100:.2f}%"
+            else:
+                message = f"风险回报比过低: {risk_reward_ratio:.2f} < {self.min_risk_reward_ratio}"
+        else:
+            message = f"风险回报比: {risk_reward_ratio:.2f}, 实际利润: {profit_after_fees*100:.2f}%, 实际损失: {loss_with_leverage*100:.2f}%"
+
+        return {
+            'is_valid': is_valid,
+            'risk_reward_ratio': risk_reward_ratio,
+            'profit_after_fees': profit_after_fees,
+            'loss_with_leverage': loss_with_leverage,
+            'message': message
+        }
+
+    def calculate_safe_tpsl(
+        self,
+        leverage: int,
+        fee_rate: float = 0.0005,
+        target_risk_reward: float = 2.0
+    ) -> Dict[str, float]:
+        """
+        根据杠杆计算安全的止盈止损比例
+
+        Args:
+            leverage: 杠杆倍数
+            fee_rate: 单边手续费率
+            target_risk_reward: 目标风险回报比
+
+        Returns:
+            {'take_profit_ratio': float, 'stop_loss_ratio': float}
+        """
+        # 双边手续费
+        total_fee = fee_rate * 2
+
+        # 为了确保利润覆盖手续费，止盈至少需要 > 手续费/杠杆
+        min_tp_ratio = total_fee * 2 / leverage  # 2倍手续费作为最小利润
+
+        # 根据目标风险回报比计算止损
+        # risk_reward = (tp * leverage - fee) / (sl * leverage + fee)
+        # 假设 sl = tp / (target_risk_reward * 2)，简化计算
+
+        # 使用保守的计算方式
+        suggested_tp = max(self.take_profit_ratio, min_tp_ratio)
+
+        # 根据风险回报比反推止损
+        # profit = suggested_tp * leverage - total_fee
+        # loss = suggested_sl * leverage + total_fee
+        # ratio = profit / loss = target_risk_reward
+        # suggested_sl = (profit / target_risk_reward - total_fee) / leverage
+
+        profit = suggested_tp * leverage - total_fee * leverage
+        suggested_sl = (profit / target_risk_reward - total_fee * leverage) / leverage
+
+        # 确保止损在合理范围内
+        suggested_sl = max(0.005, min(suggested_sl, 0.05))  # 0.5% - 5%
+
+        return {
+            'take_profit_ratio': suggested_tp,
+            'stop_loss_ratio': suggested_sl
+        }
+
+    def shutdown(self) -> None:
+        """关闭订单管理器，停止所有后台任务"""
+        if self.limit_order_monitor:
+            self.limit_order_monitor.stop()
 
     def get_available_balance(self) -> float:
         """

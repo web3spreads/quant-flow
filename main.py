@@ -23,6 +23,8 @@ from src.trading.client import HyperliquidClient
 from src.trading.order_manager import OrderManager
 from src.llm import LLMClientManager
 from src.agent.single_symbol_agent import SingleSymbolAgent
+from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
+from src.trading.risk_manager import RiskParameters
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
 from src.agent.review_agent import ReviewAgent
@@ -211,24 +213,70 @@ class QuantFlowBot:
         # 8. 为每个交易对创建独立的单币 Agent
         self.logger.print_info("为每个交易对创建独立 Agent...")
         self.symbol_agents = {}
-        for symbol in self.config.symbols:
-            self.symbol_agents[symbol] = SingleSymbolAgent(
-                symbol=symbol,
-                order_manager=self.order_manager,
-                logger=self.logger,
-                llm_manager=self.llm_manager,
-                temperature=self.config.agent_temperature,
-                max_iterations=self.config.agent_max_iterations,
-                trade_amount=self.config.max_trade_amount,
-                max_leverage=self.config.max_leverage,
-                take_profit_ratio=self.config.take_profit_ratio,
-                stop_loss_ratio=self.config.stop_loss_ratio,
-                notifier=self.notifier,
-                prompt_manager=self.prompt_manager,
-                fee_rates=self.fee_rates,
-                limit_order_enabled=self.config.limit_order_enabled,
-            )
-            self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
+
+        # 检查是否启用增强分析
+        use_enhanced = getattr(self.config, "enhanced_analysis_enabled", True)
+
+        if use_enhanced:
+            self.logger.print_info("✅ 使用增强型交易分析系统")
+            # 构建增强配置
+            enhanced_config = {
+                'agent_temperature': self.config.agent_temperature,
+                'agent_max_iterations': self.config.agent_max_iterations,
+                'max_trade_amount': self.config.max_trade_amount,
+                'max_leverage': self.config.max_leverage,
+                'take_profit_ratio': self.config.take_profit_ratio,
+                'stop_loss_ratio': self.config.stop_loss_ratio,
+                'limit_order_enabled': self.config.limit_order_enabled,
+                'enhanced_analysis': {
+                    'enabled': True,
+                    'min_signal_quality': getattr(self.config, 'enhanced_min_signal_quality', 'fair'),
+                    'min_confidence': getattr(self.config, 'enhanced_min_confidence', 0.4),
+                    'enable_risk_filter': getattr(self.config, 'enhanced_enable_risk_filter', True),
+                    'enable_timing_filter': getattr(self.config, 'enhanced_enable_timing_filter', True),
+                    'risk': {
+                        'max_risk_per_trade': getattr(self.config, 'enhanced_max_risk_per_trade', 0.02),
+                        'max_total_exposure': getattr(self.config, 'enhanced_max_total_exposure', 0.5),
+                        'atr_sl_multiplier': getattr(self.config, 'enhanced_atr_sl_multiplier', 1.5),
+                        'atr_tp_multiplier': getattr(self.config, 'enhanced_atr_tp_multiplier', 3.0),
+                        'trailing_stop_enabled': getattr(self.config, 'enhanced_trailing_stop_enabled', True),
+                        'volatility_adjustment': getattr(self.config, 'enhanced_volatility_adjustment', True),
+                    }
+                }
+            }
+
+            for symbol in self.config.symbols:
+                self.symbol_agents[symbol] = create_enhanced_agent(
+                    symbol=symbol,
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    llm_manager=self.llm_manager,
+                    config=enhanced_config,
+                    notifier=self.notifier,
+                    prompt_manager=self.prompt_manager,
+                    fee_rates=self.fee_rates
+                )
+                self.logger.print_info(f"  ✅ {symbol} 增强型 Agent 创建完成")
+        else:
+            self.logger.print_info("使用标准交易分析系统")
+            for symbol in self.config.symbols:
+                self.symbol_agents[symbol] = SingleSymbolAgent(
+                    symbol=symbol,
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    llm_manager=self.llm_manager,
+                    temperature=self.config.agent_temperature,
+                    max_iterations=self.config.agent_max_iterations,
+                    trade_amount=self.config.max_trade_amount,
+                    max_leverage=self.config.max_leverage,
+                    take_profit_ratio=self.config.take_profit_ratio,
+                    stop_loss_ratio=self.config.stop_loss_ratio,
+                    notifier=self.notifier,
+                    prompt_manager=self.prompt_manager,
+                    fee_rates=self.fee_rates,
+                    limit_order_enabled=self.config.limit_order_enabled,
+                )
+                self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
 
         # 9. 现货定投 Agent
         self.logger.print_info("初始化现货定投 Agent...")
@@ -638,14 +686,38 @@ class QuantFlowBot:
 
                     # 调用单币 Agent 决策
                     agent = self.symbol_agents[symbol]
-                    decision, details = agent.make_decision(
-                        market_data=market_data,
-                        multi_timeframe_trends=multi_timeframe_trends,
-                        current_positions=current_positions,
-                        max_positions=self.config.max_positions,
-                        historical_summary=historical_summary,
-                        enriched_data=enriched_data,
-                    )
+
+                    # 如果是增强型Agent，使用增强决策方法
+                    if isinstance(agent, EnhancedSingleSymbolAgent) and agent.enable_enhanced_analysis:
+                        decision, details = agent.make_decision_with_enhanced_analysis(
+                            market_data=market_data,
+                            multi_timeframe_trends=multi_timeframe_trends,
+                            current_positions=current_positions,
+                            max_positions=self.config.max_positions,
+                            historical_summary=historical_summary,
+                            enriched_data=enriched_data,
+                            df=df,  # 传入DataFrame用于增强分析
+                            account_balance=balance_info.get('available', 0)
+                        )
+
+                        # 如果有增强决策信息，记录到日志
+                        enhanced_decision = agent.get_last_enhanced_decision()
+                        if enhanced_decision:
+                            self.logger.print_info(
+                                f"  增强分析: 状态={enhanced_decision.market_analysis.state.value}, "
+                                f"信号={enhanced_decision.trading_signal.signal_type.value}, "
+                                f"置信度={enhanced_decision.overall_confidence:.0%}"
+                            )
+                    else:
+                        # 标准Agent决策
+                        decision, details = agent.make_decision(
+                            market_data=market_data,
+                            multi_timeframe_trends=multi_timeframe_trends,
+                            current_positions=current_positions,
+                            max_positions=self.config.max_positions,
+                            historical_summary=historical_summary,
+                            enriched_data=enriched_data,
+                        )
 
                     # 显示决策
                     self.logger.print_info(f"[{symbol}Agent] 决策: {decision}")

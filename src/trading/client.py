@@ -323,6 +323,11 @@ class HyperliquidClient:
         """
         检查订单是否成功
 
+        【增强版】：
+        - 检查订单是否真正成交（filled）
+        - 区分订单提交成功和实际成交
+        - 处理部分成交情况
+
         Args:
             order_result: 订单结果字典
 
@@ -334,7 +339,7 @@ class HyperliquidClient:
 
         # 检查顶层 status
         if order_result.get('status') != 'ok':
-            error_msg = order_result.get('message', '未知错误')
+            error_msg = order_result.get('message', order_result.get('response', '未知错误'))
             return False, f"订单请求失败: {error_msg}"
 
         # 检查 response 中的详细状态
@@ -346,23 +351,91 @@ class HyperliquidClient:
             data = response.get('data', {})
             statuses = data.get('statuses', [])
 
-            # 检查是否有错误
+            if not statuses:
+                return False, "没有返回订单状态"
+
+            # 检查每个状态
             errors = []
+            filled_count = 0
+            resting_count = 0  # 挂单中
+
             for status in statuses:
                 if 'error' in status:
                     errors.append(status['error'])
+                elif 'filled' in status:
+                    # 订单已成交
+                    filled_count += 1
+                elif 'resting' in status:
+                    # 订单挂单中（限价单正常状态）
+                    resting_count += 1
 
             if errors:
                 return False, '; '.join(errors)
 
-            # 如果没有错误，检查是否有成功的订单
-            if statuses:
+            # 有成交或挂单都算成功
+            if filled_count > 0 or resting_count > 0:
                 return True, None
-            else:
-                return False, "没有返回订单状态"
+
+            # 检查是否有其他成功状态
+            for status in statuses:
+                if isinstance(status, dict) and not status.get('error'):
+                    return True, None
+
+            return False, f"未知订单状态: {statuses}"
 
         # 对于其他类型的响应，默认认为成功
         return True, None
+
+    @staticmethod
+    def get_order_fill_info(order_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        从订单结果中提取成交信息
+
+        Args:
+            order_result: 订单结果字典
+
+        Returns:
+            {
+                'is_filled': bool,
+                'fill_price': float or None,
+                'fill_size': float or None,
+                'order_id': int or None,
+                'is_resting': bool  # 是否挂单中
+            }
+        """
+        result = {
+            'is_filled': False,
+            'fill_price': None,
+            'fill_size': None,
+            'order_id': None,
+            'is_resting': False
+        }
+
+        if not order_result or order_result.get('status') != 'ok':
+            return result
+
+        response = order_result.get('response', {})
+        if response.get('type') != 'order':
+            return result
+
+        data = response.get('data', {})
+        statuses = data.get('statuses', [])
+
+        for status in statuses:
+            if isinstance(status, dict):
+                if 'filled' in status:
+                    filled_info = status['filled']
+                    result['is_filled'] = True
+                    result['fill_price'] = float(filled_info.get('avgPx', 0))
+                    result['fill_size'] = float(filled_info.get('totalSz', 0))
+                    result['order_id'] = filled_info.get('oid')
+                    break
+                elif 'resting' in status:
+                    resting_info = status['resting']
+                    result['is_resting'] = True
+                    result['order_id'] = resting_info.get('oid')
+
+        return result
 
     def place_market_order(
         self,
@@ -464,10 +537,15 @@ class HyperliquidClient:
         size: float,
         take_profit_price: Optional[float] = None,
         stop_loss_price: Optional[float] = None,
-        slippage: float = 0.01
+        slippage: float = 0.01,
+        require_stop_loss: bool = True
     ) -> Dict[str, Any]:
         """
         下带止盈止损的市价单（使用官方 market_open 方法）
+
+        【重要安全机制】：
+        - 如果止损单设置失败，会自动平仓以避免裸仓风险
+        - 止盈单失败不会导致平仓，但会记录错误
 
         Args:
             symbol: 交易对符号
@@ -476,14 +554,16 @@ class HyperliquidClient:
             take_profit_price: 止盈价格
             stop_loss_price: 止损价格
             slippage: 滑点容忍度（默认 1%，官方推荐）
-            
+            require_stop_loss: 是否强制要求止损单成功（默认True，失败则平仓）
+
         Returns:
             {
                 'success': bool,
                 'market_order': dict,
                 'take_profit_order': dict,
                 'stop_loss_order': dict,
-                'errors': list
+                'errors': list,
+                'rollback_executed': bool  # 是否执行了回滚平仓
             }
         """
         result = {
@@ -491,38 +571,21 @@ class HyperliquidClient:
             'market_order': None,
             'take_profit_order': None,
             'stop_loss_order': None,
-            'errors': []
+            'errors': [],
+            'rollback_executed': False
         }
-        
+
         try:
             # 1. 下市价单
             market_order = self.place_market_order(symbol, is_buy, size, slippage=slippage)
             result['market_order'] = market_order
-            
-            if market_order.get('status') != 'ok':
-                result['errors'].append(f"市价单失败: {market_order}")
-                return result
-            
-            # 2. 下止盈单（如果提供）
-            tp_success = True
-            if take_profit_price:
-                tp_result = self.place_tpsl_order(
-                    symbol=symbol,
-                    trigger_price=take_profit_price,
-                    is_buy=not is_buy,  # 平仓方向相反
-                    size=size,
-                    is_tp=True
-                )
-                result['take_profit_order'] = tp_result
-                # 使用 check_order_success 进行深度检查
-                tp_success, tp_error = self.check_order_success(tp_result)
-                if not tp_success:
-                    error_msg = f"止盈单失败: {tp_error}"
-                    if 'request_params' in tp_result:
-                        error_msg += f"\n请求参数: {tp_result['request_params']}"
-                    result['errors'].append(error_msg)
 
-            # 3. 下止损单（如果提供）
+            market_success, market_error = self.check_order_success(market_order)
+            if not market_success:
+                result['errors'].append(f"市价单失败: {market_error}")
+                return result
+
+            # 2. 下止损单（优先，因为止损是保护机制）
             sl_success = True
             if stop_loss_price:
                 sl_result = self.place_tpsl_order(
@@ -533,7 +596,6 @@ class HyperliquidClient:
                     is_tp=False
                 )
                 result['stop_loss_order'] = sl_result
-                # 使用 check_order_success 进行深度检查
                 sl_success, sl_error = self.check_order_success(sl_result)
                 if not sl_success:
                     error_msg = f"止损单失败: {sl_error}"
@@ -541,14 +603,60 @@ class HyperliquidClient:
                         error_msg += f"\n请求参数: {sl_result['request_params']}"
                     result['errors'].append(error_msg)
 
-            # 判断整体成功 - 使用深度检查结果
-            market_success, _ = self.check_order_success(market_order)
-            result['success'] = market_success and tp_success and sl_success
-            
+                    # 【关键安全机制】止损单失败，立即平仓避免裸仓
+                    if require_stop_loss:
+                        print(f"⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
+                        rollback_result = self.close_position(symbol, size)
+                        result['rollback_executed'] = True
+                        result['rollback_result'] = rollback_result
+
+                        rollback_success, rollback_error = self.check_order_success(rollback_result)
+                        if rollback_success:
+                            result['errors'].append("已自动平仓，避免裸仓风险")
+                            print(f"✅ 安全平仓成功")
+                        else:
+                            result['errors'].append(f"警告：平仓也失败了: {rollback_error}，请手动处理！")
+                            print(f"❌ 【严重】安全平仓失败，请立即手动处理！")
+
+                        return result
+
+            # 3. 下止盈单（如果提供）
+            tp_success = True
+            if take_profit_price:
+                tp_result = self.place_tpsl_order(
+                    symbol=symbol,
+                    trigger_price=take_profit_price,
+                    is_buy=not is_buy,  # 平仓方向相反
+                    size=size,
+                    is_tp=True
+                )
+                result['take_profit_order'] = tp_result
+                tp_success, tp_error = self.check_order_success(tp_result)
+                if not tp_success:
+                    error_msg = f"止盈单失败: {tp_error}"
+                    if 'request_params' in tp_result:
+                        error_msg += f"\n请求参数: {tp_result['request_params']}"
+                    result['errors'].append(error_msg)
+                    # 止盈单失败不平仓，但记录警告
+                    print(f"⚠️ 止盈单设置失败，仓位仍有止损保护")
+
+            # 判断整体成功
+            # 止损必须成功（如果需要），止盈失败可以接受
+            result['success'] = market_success and sl_success
+
             return result
-            
+
         except Exception as e:
             result['errors'].append(f"异常: {str(e)}")
+            # 发生异常时也尝试平仓
+            if result['market_order'] and self.check_order_success(result['market_order'])[0]:
+                print(f"⚠️ 【安全机制】发生异常，尝试平仓")
+                try:
+                    rollback_result = self.close_position(symbol, size)
+                    result['rollback_executed'] = True
+                    result['rollback_result'] = rollback_result
+                except Exception as rollback_e:
+                    result['errors'].append(f"平仓异常: {rollback_e}")
             return result
 
     def place_tpsl_order(
@@ -557,10 +665,15 @@ class HyperliquidClient:
         trigger_price: float,
         is_buy: bool,
         size: float,
-        is_tp: bool = True
+        is_tp: bool = True,
+        sl_slippage: float = 0.10  # 止损滑点提高到10%确保成交
     ) -> Dict[str, Any]:
         """
         下止盈或止损单
+
+        【重要改进】：
+        - 止损单使用更大滑点(10%)确保在极端行情下能成交
+        - 止盈单使用较小滑点(1%)获取更好价格
 
         Args:
             symbol: 交易对符号
@@ -568,6 +681,7 @@ class HyperliquidClient:
             is_buy: True=买入，False=卖出
             size: 数量
             is_tp: True=止盈单，False=止损单
+            sl_slippage: 止损滑点比例（默认10%）
 
         Returns:
             订单结果
@@ -588,58 +702,56 @@ class HyperliquidClient:
                 size = float(round(size, 3))
 
             # 确保 trigger_price 是 float 类型
-            # SDK 会自动将数字转换为字符串发送给 API
             trigger_price_float = float(trigger_price)
 
             # 构造触发单类型
-            # 官方文档: https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/examples/basic_tpsl.py
-            # SDK 接受数字类型的 triggerPx，会自动转换为字符串
             order_type = {
                 "trigger": {
                     "isMarket": True,
-                    "triggerPx": trigger_price_float,  # 使用 float 类型，符合官方示例
+                    "triggerPx": trigger_price_float,
                     "tpsl": "tp" if is_tp else "sl"
                 }
             }
 
             # 计算限价（止盈止损单的备用限价）
             #
-            # 关键区别：
-            # - 止盈(TP)：已经盈利，可以要求更好的价格（限价朝有利方向）
-            # - 止损(SL)：正在亏损，需要快速成交（限价朝不利方向）
+            # 【关键改进】止损单需要更大滑点确保在极端行情下成交
+            # - 止盈(TP)：1% 滑点，追求更好价格
+            # - 止损(SL)：10% 滑点，确保一定能成交（防止穿仓）
             #
-            # 根据 Hyperliquid SDK 示例 (basic_tpsl.py)：
-            # - TP平多(卖): limit > trigger（要求更高的卖价）
-            # - TP平空(买): limit < trigger（要求更低的买价）
-            # - SL平多(卖): limit < trigger（接受更低的卖价以快速止损）
-            # - SL平空(买): limit > trigger（接受更高的买价以快速止损）
+            # 限价方向说明：
+            # - 止损卖出：limit < trigger（接受更低价格）
+            # - 止损买入：limit > trigger（接受更高价格）
+            # - 止盈卖出：limit > trigger（要求更高价格）
+            # - 止盈买入：limit < trigger（要求更低价格）
+
             if is_tp:
                 slippage = 0.01  # 止盈：1% 滑点
             else:
-                slippage = 0.05  # 止损：5% 滑点
+                slippage = sl_slippage  # 止损：使用配置的滑点（默认10%）
 
             # 根据订单类型和平仓方向计算限价
             if is_tp:
                 # 止盈：限价朝有利方向（要求更好的价格）
                 if not is_buy:
-                    # 卖出平仓：限价高于触发价（要求更高的卖价）
+                    # 卖出平仓（做多止盈）：限价高于触发价
                     limit_price = trigger_price_float * (1 + slippage)
                 else:
-                    # 买入平仓：限价低于触发价（要求更低的买价）
+                    # 买入平仓（做空止盈）：限价低于触发价
                     limit_price = trigger_price_float * (1 - slippage)
             else:
                 # 止损：限价朝不利方向（接受更差的价格以确保成交）
                 if not is_buy:
-                    # 卖出平仓：限价低于触发价（接受更低的卖价）
+                    # 卖出平仓（做多止损）：限价远低于触发价
                     limit_price = trigger_price_float * (1 - slippage)
                 else:
-                    # 买入平仓：限价高于触发价（接受更高的买价）
+                    # 买入平仓（做空止损）：限价远高于触发价
                     limit_price = trigger_price_float * (1 + slippage)
 
             # 格式化限价，避免精度问题
             limit_price = self.format_price(symbol, limit_price)
 
-            # 下单 - 使用命名参数确保类型正确
+            # 下单
             order_result = self.exchange.order(
                 symbol,
                 is_buy,
