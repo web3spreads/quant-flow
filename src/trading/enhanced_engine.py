@@ -18,15 +18,13 @@ import pandas as pd
 from src.data.market_state import (
     MarketStateAnalyzer,
     MarketAnalysisResult,
-    MarketState,
-    format_analysis_for_prompt
+    MarketState
 )
 from src.data.signal_scorer import (
     SignalScorer,
     TradingSignal,
     SignalType,
-    SignalQuality,
-    format_signal_for_prompt
+    SignalQuality
 )
 from src.trading.risk_manager import (
     RiskManager,
@@ -34,8 +32,7 @@ from src.trading.risk_manager import (
     RiskAssessment,
     PositionSizeResult,
     StopLossResult,
-    TakeProfitResult,
-    format_risk_assessment_for_prompt
+    TakeProfitResult
 )
 
 
@@ -302,7 +299,6 @@ class EnhancedTradingEngine:
             (should_trade, action, blockers)
         """
         blockers = []
-        action = "hold"
 
         # 检查信号类型
         if trading_signal.signal_type == SignalType.NO_SIGNAL:

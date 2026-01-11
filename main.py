@@ -24,7 +24,7 @@ from src.trading.order_manager import OrderManager
 from src.llm import LLMClientManager
 from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
-from src.trading.risk_manager import RiskParameters
+# RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
 from src.agent.review_agent import ReviewAgent

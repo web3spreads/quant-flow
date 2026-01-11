@@ -296,7 +296,6 @@ class TechnicalIndicators:
         for col in df.columns:
             if col.startswith('ma_'):
                 value = latest[col]
-                period = int(col.split('_')[1])
                 if pd.isna(value) or np.isnan(value):
                     # 数据不足时不用替代值，标记为 None
                     indicators[col] = None

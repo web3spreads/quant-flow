@@ -8,7 +8,7 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from enum import Enum
 
 

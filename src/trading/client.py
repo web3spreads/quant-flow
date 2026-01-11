@@ -603,20 +603,32 @@ class HyperliquidClient:
                         error_msg += f"\n请求参数: {sl_result['request_params']}"
                     result['errors'].append(error_msg)
 
-                    # 【关键安全机制】止损单失败，立即平仓避免裸仓
+                    # 【关键安全机制】止损单失败，立即平仓避免裸仓（带重试）
                     if require_stop_loss:
                         print(f"⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
-                        rollback_result = self.close_position(symbol, size)
-                        result['rollback_executed'] = True
-                        result['rollback_result'] = rollback_result
+                        max_rollback_retries = 3
+                        rollback_success = False
+                        rollback_error = None
+                        rollback_result = None
 
-                        rollback_success, rollback_error = self.check_order_success(rollback_result)
-                        if rollback_success:
-                            result['errors'].append("已自动平仓，避免裸仓风险")
-                            print(f"✅ 安全平仓成功")
-                        else:
-                            result['errors'].append(f"警告：平仓也失败了: {rollback_error}，请手动处理！")
-                            print(f"❌ 【严重】安全平仓失败，请立即手动处理！")
+                        for attempt in range(1, max_rollback_retries + 1):
+                            print(f"➡️ 安全平仓第 {attempt}/{max_rollback_retries} 次尝试")
+                            rollback_result = self.close_position(symbol, size)
+                            rollback_success, rollback_error = self.check_order_success(rollback_result)
+                            result['rollback_executed'] = True
+                            result['rollback_result'] = rollback_result
+
+                            if rollback_success:
+                                result['errors'].append("已自动平仓，避免裸仓风险")
+                                print(f"✅ 安全平仓成功（第 {attempt} 次尝试）")
+                                break
+                            else:
+                                print(f"⚠️ 安全平仓尝试失败（第 {attempt} 次）：{rollback_error}")
+
+                        if not rollback_success:
+                            critical_msg = f"警告：安全平仓在尝试 {max_rollback_retries} 次后仍然失败: {rollback_error}，请立即手动处理！"
+                            result['errors'].append(critical_msg)
+                            print(f"❌ 【严重】{critical_msg}")
 
                         return result
 
@@ -648,15 +660,25 @@ class HyperliquidClient:
 
         except Exception as e:
             result['errors'].append(f"异常: {str(e)}")
-            # 发生异常时也尝试平仓
+            # 发生异常时也尝试平仓（带重试）
             if result['market_order'] and self.check_order_success(result['market_order'])[0]:
                 print(f"⚠️ 【安全机制】发生异常，尝试平仓")
-                try:
-                    rollback_result = self.close_position(symbol, size)
-                    result['rollback_executed'] = True
-                    result['rollback_result'] = rollback_result
-                except Exception as rollback_e:
-                    result['errors'].append(f"平仓异常: {rollback_e}")
+                max_rollback_retries = 3
+                for attempt in range(1, max_rollback_retries + 1):
+                    try:
+                        print(f"➡️ 异常平仓第 {attempt}/{max_rollback_retries} 次尝试")
+                        rollback_result = self.close_position(symbol, size)
+                        result['rollback_executed'] = True
+                        result['rollback_result'] = rollback_result
+                        rollback_success, rollback_error = self.check_order_success(rollback_result)
+                        if rollback_success:
+                            print(f"✅ 异常平仓成功（第 {attempt} 次尝试）")
+                            break
+                        else:
+                            print(f"⚠️ 异常平仓尝试失败（第 {attempt} 次）：{rollback_error}")
+                    except Exception as rollback_e:
+                        result['errors'].append(f"平仓异常: {rollback_e}")
+                        print(f"⚠️ 异常平仓尝试异常（第 {attempt} 次）：{rollback_e}")
             return result
 
     def place_tpsl_order(

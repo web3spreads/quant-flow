@@ -3,7 +3,6 @@ Hyperliquid 订单管理器
 管理永续合约的订单创建、监控和执行，包括止盈止损逻辑
 """
 
-import time
 import threading
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Callable
@@ -160,7 +159,6 @@ class LimitOrderMonitor:
             position = position_map.get(symbol)
             if position:
                 position_size = float(position.get('szi', 0))
-                expected_size = order_info['size']
                 is_buy = order_info['is_buy']
 
                 # 检查持仓方向是否匹配
@@ -253,8 +251,8 @@ class LimitOrderMonitor:
                 print(f"⚠️ 【安全机制】异常次数过多，紧急平仓")
                 try:
                     self.client.close_position(symbol)
-                except:
-                    pass
+                except Exception as close_err:
+                    print(f"⚠️ 紧急平仓失败: {close_err}")
                 self.remove_order(order_id)
 
 

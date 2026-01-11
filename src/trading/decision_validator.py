@@ -12,8 +12,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple
-import numpy as np
+from typing import Dict, Any, List, Optional
 import pandas as pd
 
 
@@ -360,20 +359,20 @@ class DecisionValidator:
             score = 0.5
 
         # 判断结果
-        direction = "做多" if is_long else "做空"
+        direction_text = "做多" if is_long else "做空"
 
         if aligned_count >= self.min_aligned_timeframes and opposite_count == 0:
             result = ValidationResult.PASS
-            message = f"{aligned_count}个周期趋势与{direction}方向一致"
+            message = f"{aligned_count}个周期趋势与{direction_text}方向一致"
         elif aligned_count >= self.min_aligned_timeframes:
             result = ValidationResult.WARN
             message = f"{aligned_count}个周期一致，但{opposite_count}个周期相反"
         elif self.require_trend_alignment:
             result = ValidationResult.BLOCK
-            message = f"趋势不一致: 仅{aligned_count}个周期支持{direction}"
+            message = f"趋势不一致: 仅{aligned_count}个周期支持{direction_text}"
         else:
             result = ValidationResult.WARN
-            message = f"趋势较弱: {aligned_count}个周期支持{direction}"
+            message = f"趋势较弱: {aligned_count}个周期支持{direction_text}"
 
         return ValidationCheck(
             name="trend_alignment",
@@ -488,7 +487,6 @@ class DecisionValidator:
 
         # 均线排列
         ema_20 = indicators.get('ema_20')
-        ema_50 = indicators.get('ema_50')
         current_price = indicators.get('current_price', 0)
 
         if ema_20 is not None and current_price > 0:
@@ -521,8 +519,6 @@ class DecisionValidator:
             weighted_score = 0.5
 
         # 判断结果
-        direction = "做多" if is_long else "做空"
-
         if weighted_score >= 0.7:
             result = ValidationResult.PASS
             message = f"信号质量优秀 ({weighted_score:.2f})"
@@ -808,8 +804,6 @@ class DecisionValidator:
         details['should_wait'] = should_wait
 
         # 判断结果
-        direction = "做多" if is_long else "做空"
-
         if entry_score >= 0.7:
             result = ValidationResult.PASS
             message = f"入场时机良好"
