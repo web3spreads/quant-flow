@@ -6,7 +6,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from src.data.market_state import (
     MarketStateAnalyzer,
@@ -22,7 +22,6 @@ from src.trading.risk_manager import (
     RiskManager,
     RiskParameters,
     RiskLevel,
-    PositionSizingMethod,
     StopLossResult,
     TakeProfitResult,
     PositionSizeResult,

@@ -12,8 +12,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple
-import math
+from typing import Dict, Any, List, Optional
 
 
 class PositionSizeMethod(str, Enum):
