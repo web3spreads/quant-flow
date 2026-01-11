@@ -260,16 +260,24 @@ class TechnicalIndicators:
         """
         获取最新的指标数据（最后一行）
 
+        【重要改进】：
+        - 明确标记哪些指标是可用的，哪些是缺失的
+        - 不再用替代值掩盖数据不足的问题
+        - 返回 data_quality 字段告知调用方数据质量
+
         Args:
             df: 计算好指标的 DataFrame
 
         Returns:
-            包含最新指标的字典
+            包含最新指标的字典，包括 data_quality 评估
         """
         if df.empty:
-            return {}
+            return {'data_quality': 'no_data', 'missing_indicators': ['all']}
 
         latest = df.iloc[-1]
+        data_len = len(df)
+
+        # 基础数据
         indicators = {
             'timestamp': latest.name,
             'current_price': latest['close'],
@@ -277,79 +285,159 @@ class TechnicalIndicators:
             'high': latest['high'],
             'low': latest['low'],
             'volume': latest['volume'],
+            'data_points': data_len,
         }
 
-        # 添加 MA - 处理 nan 值
+        # 跟踪缺失和可用的指标
+        missing_indicators = []
+        available_indicators = []
+
+        # 添加 MA - 明确标记可用性
         for col in df.columns:
             if col.startswith('ma_'):
                 value = latest[col]
-                # 如果 MA 是 nan，使用当前价格作为替代
+                period = int(col.split('_')[1])
                 if pd.isna(value) or np.isnan(value):
-                    indicators[col] = latest['close']
+                    # 数据不足时不用替代值，标记为 None
+                    indicators[col] = None
+                    indicators[f'{col}_available'] = False
+                    missing_indicators.append(col)
                 else:
                     indicators[col] = value
+                    indicators[f'{col}_available'] = True
+                    available_indicators.append(col)
 
-        # 添加 RSI - 处理 nan 值
+        # 添加 EMA
+        for col in df.columns:
+            if col.startswith('ema_'):
+                value = latest[col]
+                if pd.isna(value) or np.isnan(value):
+                    indicators[col] = None
+                    indicators[f'{col}_available'] = False
+                    missing_indicators.append(col)
+                else:
+                    indicators[col] = value
+                    indicators[f'{col}_available'] = True
+                    available_indicators.append(col)
+
+        # 添加 RSI - 不再用 50 替代
         if 'rsi' in df.columns:
             rsi_value = latest['rsi']
-            # 如果 RSI 是 nan，使用中性值 50
             if pd.isna(rsi_value) or np.isnan(rsi_value):
-                indicators['rsi'] = 50.0
+                indicators['rsi'] = None
+                indicators['rsi_available'] = False
+                missing_indicators.append('rsi')
             else:
                 indicators['rsi'] = rsi_value
+                indicators['rsi_available'] = True
+                available_indicators.append('rsi')
 
-        # 添加 MACD - 处理 nan 值
+        # 添加 MACD - 不再用 0 替代
         if 'macd' in df.columns:
             macd_value = latest['macd']
             macd_signal_value = latest['macd_signal']
             macd_hist_value = latest['macd_hist']
 
-            # 如果 MACD 是 nan，使用 0
-            indicators['macd'] = 0.0 if pd.isna(macd_value) or np.isnan(macd_value) else macd_value
-            indicators['macd_signal'] = 0.0 if pd.isna(macd_signal_value) or np.isnan(macd_signal_value) else macd_signal_value
-            indicators['macd_hist'] = 0.0 if pd.isna(macd_hist_value) or np.isnan(macd_hist_value) else macd_hist_value
+            macd_valid = not (pd.isna(macd_value) or np.isnan(macd_value))
+            signal_valid = not (pd.isna(macd_signal_value) or np.isnan(macd_signal_value))
+            hist_valid = not (pd.isna(macd_hist_value) or np.isnan(macd_hist_value))
 
-        # 添加布林带 - 处理 nan 值
+            if macd_valid and signal_valid and hist_valid:
+                indicators['macd'] = macd_value
+                indicators['macd_signal'] = macd_signal_value
+                indicators['macd_hist'] = macd_hist_value
+                indicators['macd_available'] = True
+                available_indicators.append('macd')
+            else:
+                indicators['macd'] = None
+                indicators['macd_signal'] = None
+                indicators['macd_hist'] = None
+                indicators['macd_available'] = False
+                missing_indicators.append('macd')
+
+        # 添加布林带
         if 'bb_upper' in df.columns:
             bb_upper_value = latest['bb_upper']
             bb_middle_value = latest['bb_middle']
             bb_lower_value = latest['bb_lower']
             current_price = latest['close']
 
-            # 如果布林带是 nan，使用当前价格作为所有轨道的默认值
-            if pd.isna(bb_middle_value) or np.isnan(bb_middle_value):
-                indicators['bb_upper'] = current_price
-                indicators['bb_middle'] = current_price
-                indicators['bb_lower'] = current_price
-                indicators['bb_position'] = 0.5  # 中性位置
-            else:
+            bb_valid = not (pd.isna(bb_middle_value) or np.isnan(bb_middle_value))
+
+            if bb_valid:
                 indicators['bb_upper'] = bb_upper_value
                 indicators['bb_middle'] = bb_middle_value
                 indicators['bb_lower'] = bb_lower_value
+                indicators['bb_available'] = True
+                available_indicators.append('bollinger')
 
                 # 计算价格在布林带中的位置（0-1）
                 bb_range = bb_upper_value - bb_lower_value
                 if bb_range > 0 and not np.isnan(bb_range):
                     indicators['bb_position'] = (current_price - bb_lower_value) / bb_range
                 else:
-                    indicators['bb_position'] = 0.5  # 如果范围为0，返回中性位置
+                    indicators['bb_position'] = 0.5
+            else:
+                indicators['bb_upper'] = None
+                indicators['bb_middle'] = None
+                indicators['bb_lower'] = None
+                indicators['bb_position'] = None
+                indicators['bb_available'] = False
+                missing_indicators.append('bollinger')
 
-        # 添加成交量指标 - 处理 nan 和 inf 值
+        # 添加 ATR
+        for col in df.columns:
+            if col.startswith('atr_'):
+                value = latest[col]
+                if pd.isna(value) or np.isnan(value):
+                    indicators[col] = None
+                    indicators[f'{col}_available'] = False
+                    missing_indicators.append(col)
+                else:
+                    indicators[col] = value
+                    indicators[f'{col}_available'] = True
+                    available_indicators.append(col)
+
+        # 添加成交量指标
         if 'volume_ma_20' in df.columns:
             volume_ma_value = latest['volume_ma_20']
             volume_change_value = latest['volume_change']
 
-            # 处理成交量均线 nan
             if pd.isna(volume_ma_value) or np.isnan(volume_ma_value):
-                indicators['volume_ma_20'] = latest['volume']
+                indicators['volume_ma_20'] = None
+                indicators['volume_ma_available'] = False
             else:
                 indicators['volume_ma_20'] = volume_ma_value
+                indicators['volume_ma_available'] = True
+                available_indicators.append('volume_ma')
 
-            # 处理成交量变化 nan 或 inf
             if pd.isna(volume_change_value) or np.isnan(volume_change_value) or np.isinf(volume_change_value):
-                indicators['volume_change'] = 0.0  # 使用0表示无变化
+                indicators['volume_change'] = None
             else:
                 indicators['volume_change'] = volume_change_value
+
+        # 计算数据质量评分
+        total_expected = len(missing_indicators) + len(available_indicators)
+        if total_expected > 0:
+            quality_score = len(available_indicators) / total_expected
+        else:
+            quality_score = 0.0
+
+        if quality_score >= 0.9:
+            data_quality = 'excellent'
+        elif quality_score >= 0.7:
+            data_quality = 'good'
+        elif quality_score >= 0.5:
+            data_quality = 'fair'
+        elif quality_score >= 0.3:
+            data_quality = 'poor'
+        else:
+            data_quality = 'insufficient'
+
+        indicators['data_quality'] = data_quality
+        indicators['data_quality_score'] = quality_score
+        indicators['missing_indicators'] = missing_indicators
+        indicators['available_indicators'] = available_indicators
 
         return indicators
 
