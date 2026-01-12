@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-import math
 
 
 class SignalType(Enum):
@@ -502,7 +501,6 @@ class SignalScorer:
             return 0.0, "无波动性数据"
 
         vol_state = getattr(volatility, 'volatility_state', 'normal')
-        atr_percentile = getattr(volatility, 'atr_percentile', 50)
 
         descriptions = []
 
@@ -527,8 +525,6 @@ class SignalScorer:
         if not sr:
             return 0.0, "无支撑阻力数据"
 
-        support = getattr(sr, 'nearest_support', price * 0.95)
-        resistance = getattr(sr, 'nearest_resistance', price * 1.05)
         price_to_support = getattr(sr, 'price_to_support_pct', 5)
         price_to_resistance = getattr(sr, 'price_to_resistance_pct', 5)
 

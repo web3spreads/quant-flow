@@ -11,9 +11,8 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 import pandas as pd
-import numpy as np
 
 
 class MarketState(Enum):
