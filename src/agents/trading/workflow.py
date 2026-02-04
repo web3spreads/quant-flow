@@ -10,14 +10,15 @@
 5. fallback_execution: 后备执行（使用 ExecutionAgent）
 """
 
-from typing import Dict, Any, Literal, Optional
+from typing import Any, Literal
 
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import create_react_agent
 
-from src.agents.trading.state import TradingAgentState
 from src.agents.common.utils.llm import LLMConfig, create_llm
+from src.agents.trading.state import TradingAgentState
+from src.llm import LLMClientManager
 from src.prompt_manager import PromptManager
 
 
@@ -31,39 +32,46 @@ class TradingAgentWorkflow:
 
     def __init__(
         self,
-        llm_config: LLMConfig,
         prompt_manager: PromptManager,
         tools: list,
-        tools_callbacks: Dict[str, Any],
+        tools_callbacks: dict[str, Any],
         logger=None,
         max_iterations: int = 5,
+        llm_config: LLMConfig | None = None,
+        llm_manager: LLMClientManager | None = None,
+        temperature: float | None = None,
     ):
         """
         初始化工作流
 
         Args:
-            llm_config: LLM 配置
             prompt_manager: Prompt 管理器
             tools: 工具列表
             tools_callbacks: 工具回调函数字典
             logger: 日志记录器
             max_iterations: 最大迭代次数
+            llm_config: LLM 配置（旧版，与 llm_manager 二选一）
+            llm_manager: LLM 客户端管理器（新版，推荐使用）
+            temperature: 温度参数覆盖
         """
-        self.llm_config = llm_config
         self.prompt_manager = prompt_manager
         self.tools = tools
         self.tools_callbacks = tools_callbacks
         self.logger = logger
         self.max_iterations = max_iterations
+        self.llm_manager = llm_manager
+        self.llm_config = llm_config
 
-        # 初始化 LLM
-        self.llm = create_llm(llm_config)
+        # 初始化 LLM（优先使用 llm_manager）
+        if llm_manager:
+            self.llm = llm_manager.get_client(temperature=temperature)
+        elif llm_config:
+            self.llm = create_llm(llm_config, temperature=temperature)
+        else:
+            raise ValueError("必须提供 llm_config 或 llm_manager")
 
         # 创建 ReAct Agent（用于工具调用）
-        self.react_agent = create_react_agent(
-            model=self.llm,
-            tools=tools
-        )
+        self.react_agent = create_react_agent(model=self.llm, tools=tools)
 
         # 获取系统 Prompt
         self.system_prompt = prompt_manager.get_system_prompt()
@@ -115,7 +123,7 @@ class TradingAgentWorkflow:
                 "execute": "execute_trade",
                 "fallback": "fallback_execution",
                 "end": END,
-            }
+            },
         )
 
         workflow.add_edge("execute_trade", END)
@@ -123,7 +131,7 @@ class TradingAgentWorkflow:
 
         return workflow.compile()
 
-    def _prepare_prompt_node(self, state: TradingAgentState) -> Dict[str, Any]:
+    def _prepare_prompt_node(self, state: TradingAgentState) -> dict[str, Any]:
         """
         准备交易决策 Prompt
 
@@ -134,24 +142,23 @@ class TradingAgentWorkflow:
 
         try:
             prompt = self.prompt_manager.format_trading_prompt(
-                symbol=state['symbol'],
-                market_data=state['market_data'],
-                multi_timeframe_trends=state['multi_timeframe_trends'],
-                current_positions=state['current_positions'],
-                max_positions=state['max_positions'],
-                max_trade_amount=state['trade_amount'],
-                max_leverage=state['max_leverage'],
-                take_profit_ratio=state['take_profit_ratio'],
-                stop_loss_ratio=state['stop_loss_ratio'],
-                historical_summary=state['historical_summary'],
-                balance_info=state['balance_info'],
-                enriched_data=state['enriched_data'],
+                symbol=state["symbol"],
+                market_data=state["market_data"],
+                multi_timeframe_trends=state["multi_timeframe_trends"],
+                current_positions=state["current_positions"],
+                max_positions=state["max_positions"],
+                max_trade_amount=state["trade_amount"],
+                max_leverage=state["max_leverage"],
+                take_profit_ratio=state["take_profit_ratio"],
+                stop_loss_ratio=state["stop_loss_ratio"],
+                historical_summary=state["historical_summary"],
+                balance_info=state["balance_info"],
+                enriched_data=state["enriched_data"],
             )
 
             if self.logger:
                 self.logger.print_section(
-                    f"[{state['symbol']}Agent] 独立决策分析",
-                    style="bold magenta"
+                    f"[{state['symbol']}Agent] 独立决策分析", style="bold magenta"
                 )
                 self.logger.print_prompt(prompt)
 
@@ -165,11 +172,11 @@ class TradingAgentWorkflow:
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
             return {
-                "errors": state.get('errors', []) + [error_msg],
+                "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
             }
 
-    def _analyze_market_node(self, state: TradingAgentState) -> Dict[str, Any]:
+    def _analyze_market_node(self, state: TradingAgentState) -> dict[str, Any]:
         """
         分析市场并做出决策
 
@@ -182,7 +189,7 @@ class TradingAgentWorkflow:
             # 构建消息
             messages = [
                 SystemMessage(content=self.system_prompt),
-                HumanMessage(content=state['prompt'])
+                HumanMessage(content=state["prompt"]),
             ]
 
             # 配置递归限制
@@ -194,26 +201,25 @@ class TradingAgentWorkflow:
             last_printed_content = ""
 
             for event in self.react_agent.stream(
-                {"messages": messages},
-                stream_mode="values",
-                config=config
+                {"messages": messages}, stream_mode="values", config=config
             ):
                 all_events.append(event)
                 if "messages" in event and len(event["messages"]) > 0:
                     last_message = event["messages"][-1]
-                    if hasattr(last_message, 'content'):
+                    if hasattr(last_message, "content"):
                         content = last_message.content
-                        if content and content != state['prompt']:
+                        if content and content != state["prompt"]:
                             agent_output = content
 
                         # 流式输出（避免重复打印）
-                        if (content and
-                            content != state['prompt'] and
-                            len(content) > len(last_printed_content)):
+                        if (
+                            content
+                            and content != state["prompt"]
+                            and len(content) > len(last_printed_content)
+                        ):
                             if self.logger:
                                 self.logger.print_ai_response(
-                                    content,
-                                    f"🎯 {state['symbol']} Agent 分析中..."
+                                    content, f"🎯 {state['symbol']} Agent 分析中..."
                                 )
                             last_printed_content = content
 
@@ -222,8 +228,8 @@ class TradingAgentWorkflow:
                 "decision_details": {
                     "output": agent_output,
                     "events": all_events,
-                    "prompt": state['prompt'],
-                    "symbol": state['symbol'],
+                    "prompt": state["prompt"],
+                    "symbol": state["symbol"],
                 },
                 "current_step": "analyze_market",
             }
@@ -233,11 +239,11 @@ class TradingAgentWorkflow:
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
             return {
-                "errors": state.get('errors', []) + [error_msg],
+                "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
             }
 
-    def _parse_decision_node(self, state: TradingAgentState) -> Dict[str, Any]:
+    def _parse_decision_node(self, state: TradingAgentState) -> dict[str, Any]:
         """
         解析决策结果
 
@@ -248,7 +254,7 @@ class TradingAgentWorkflow:
             self.logger.print_info(f"[{state['symbol']}] 解析决策结果...")
 
         try:
-            events = state['decision_details'].get('events', [])
+            events = state["decision_details"].get("events", [])
             decision_type = self._parse_decision_from_events(events)
 
             if decision_type and decision_type != "DO_NOTHING":
@@ -272,27 +278,25 @@ class TradingAgentWorkflow:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
             return {
                 "decision_type": "ERROR",
-                "errors": state.get('errors', []) + [error_msg],
+                "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
             }
 
-    def _execute_trade_node(self, state: TradingAgentState) -> Dict[str, Any]:
+    def _execute_trade_node(self, state: TradingAgentState) -> dict[str, Any]:
         """
         执行交易
 
         工具已经在 ReAct Agent 中被调用，这里记录执行结果。
         """
         if self.logger:
-            self.logger.print_info(
-                f"[{state['symbol']}] 交易已执行: {state['decision_type']}"
-            )
+            self.logger.print_info(f"[{state['symbol']}] 交易已执行: {state['decision_type']}")
 
         return {
             "execution_result": f"交易决策 {state['decision_type']} 已通过工具调用执行",
             "current_step": "execute_trade",
         }
 
-    def _fallback_execution_node(self, state: TradingAgentState) -> Dict[str, Any]:
+    def _fallback_execution_node(self, state: TradingAgentState) -> dict[str, Any]:
         """
         后备执行节点
 
@@ -300,17 +304,15 @@ class TradingAgentWorkflow:
         使用 ExecutionAgent 解析决策文本并执行。
         """
         if self.logger:
-            self.logger.print_info(
-                f"[{state['symbol']}] 使用后备执行 Agent..."
-            )
+            self.logger.print_info(f"[{state['symbol']}] 使用后备执行 Agent...")
 
         try:
             # 导入 ExecutionAgent（延迟导入避免循环依赖）
-            from src.agents.execution import ExecutionAgentWorkflow
             from src.agents.common.utils.llm import LLMConfig
+            from src.agents.execution import ExecutionAgentWorkflow
 
             # 获取 AI 输出文本
-            decision_text = state['decision_details'].get('output', '')
+            decision_text = state["decision_details"].get("output", "")
             if not decision_text:
                 return {
                     "decision_type": "DO_NOTHING",
@@ -319,32 +321,40 @@ class TradingAgentWorkflow:
                 }
 
             # 创建执行 Agent 工作流
-            execution_config = LLMConfig(
-                api_base=self.llm_config.api_base,
-                api_key=self.llm_config.api_key,
-                model=self.llm_config.model,
-                temperature=0.0,  # 执行 Agent 使用零温度
-            )
-
-            execution_workflow = ExecutionAgentWorkflow(
-                llm_config=execution_config,
-                tools_callbacks=self.tools_callbacks,
-                logger=self.logger,
-            )
+            # 优先使用 llm_manager，否则使用 llm_config
+            if self.llm_manager:
+                execution_workflow = ExecutionAgentWorkflow(
+                    tools_callbacks=self.tools_callbacks,
+                    logger=self.logger,
+                    llm_manager=self.llm_manager,
+                    temperature=0.0,  # 执行 Agent 使用零温度
+                )
+            elif self.llm_config:
+                execution_config = LLMConfig(
+                    api_base=self.llm_config.api_base,
+                    api_key=self.llm_config.api_key,
+                    model=self.llm_config.model,
+                    temperature=0.0,  # 执行 Agent 使用零温度
+                )
+                execution_workflow = ExecutionAgentWorkflow(
+                    llm_config=execution_config,
+                    tools_callbacks=self.tools_callbacks,
+                    logger=self.logger,
+                )
+            else:
+                raise ValueError("无法创建执行 Agent：缺少 LLM 配置")
 
             # 执行
             result = execution_workflow.run(
                 decision_text=decision_text,
-                symbol=state['symbol'],
+                symbol=state["symbol"],
             )
 
-            decision_type = result.get('decision_type', 'DO_NOTHING')
-            execution_result = result.get('execution_result', '')
+            decision_type = result.get("decision_type", "DO_NOTHING")
+            execution_result = result.get("execution_result", "")
 
             if self.logger:
-                self.logger.print_info(
-                    f"[{state['symbol']}] 后备执行结果: {decision_type}"
-                )
+                self.logger.print_info(f"[{state['symbol']}] 后备执行结果: {decision_type}")
 
             return {
                 "decision_type": decision_type,
@@ -358,14 +368,11 @@ class TradingAgentWorkflow:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
             return {
                 "decision_type": "ERROR",
-                "errors": state.get('errors', []) + [error_msg],
+                "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
             }
 
-    def _route_after_parse(
-        self,
-        state: TradingAgentState
-    ) -> Literal["execute", "fallback", "end"]:
+    def _route_after_parse(self, state: TradingAgentState) -> Literal["execute", "fallback", "end"]:
         """
         条件路由：根据决策解析结果选择下一步
 
@@ -374,16 +381,16 @@ class TradingAgentWorkflow:
             "fallback": 需要使用后备执行 Agent
             "end": 出错或无需进一步处理
         """
-        if state.get('current_step') == 'error':
+        if state.get("current_step") == "error":
             return "end"
 
-        if state.get('should_use_execution_agent', False):
+        if state.get("should_use_execution_agent", False):
             return "fallback"
 
         # 已经通过工具调用执行
         return "execute"
 
-    def _parse_decision_from_events(self, events: list) -> Optional[str]:
+    def _parse_decision_from_events(self, events: list) -> str | None:
         """
         从事件中解析决策类型
 
@@ -410,20 +417,19 @@ class TradingAgentWorkflow:
 
             for message in reversed(event["messages"]):
                 # 检查 tool_calls 属性
-                if hasattr(message, 'tool_calls') and message.tool_calls:
+                if hasattr(message, "tool_calls") and message.tool_calls:
                     for tool_call in message.tool_calls:
-                        tool_name = tool_call.get('name', '')
+                        tool_name = tool_call.get("name", "")
                         if tool_name in tool_decision_map:
                             return tool_decision_map[tool_name]
 
                 # 检查 name 属性（工具消息）
-                if hasattr(message, 'name'):
-                    if message.name in tool_decision_map:
-                        return tool_decision_map[message.name]
+                if hasattr(message, "name") and message.name in tool_decision_map:
+                    return tool_decision_map[message.name]
 
         return None
 
-    def run(self, initial_state: TradingAgentState) -> Dict[str, Any]:
+    def run(self, initial_state: TradingAgentState) -> dict[str, Any]:
         """
         运行工作流
 

@@ -7,29 +7,46 @@ v2.0 增强版：
 - 根据市场状态分类提取经验
 - 动态调整经验权重（时间衰减、有效性验证）
 - 增加反馈循环验证经验效果
+
+v2.1 抗过拟合增强：
+- 市场状态多样性检查
+- 经验泛化机制（将具体价格转为相对值）
+- 交叉验证机制
 """
 
 import json
 import re
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-from langchain_core.messages import SystemMessage, HumanMessage
+from typing import Any
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from src.agent.context_extractor import ContextExtractor
+from src.agent.review_daily_logger import ReviewDailyLogger
+from src.agent.review_memory import ReviewMemoryStore
+from src.agent.similarity_scorer import SimilarityScorer
 from src.llm import LLMClientManager
-
 from src.prompt_manager import PromptManager
 from src.utils.logger import TradingLogger
-from src.agent.review_memory import ReviewMemoryStore
-from src.agent.context_extractor import ContextExtractor
-from src.agent.similarity_scorer import SimilarityScorer
-from src.agent.review_daily_logger import ReviewDailyLogger
+
+# 抗过拟合泛化模块（延迟导入避免循环依赖）
+try:
+    from src.agents.review.generalization import (
+        LessonGeneralizer,  # noqa: F401
+        MarketStateClassifier,  # noqa: F401
+        enhance_lessons_with_generalization,  # noqa: F401
+    )
+
+    HAS_GENERALIZATION = True
+except ImportError:
+    HAS_GENERALIZATION = False
 
 
 class DecisionEffectivenessAnalyzer:
     """决策效果分析器"""
 
     @staticmethod
-    def analyze(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def analyze(records: list[dict[str, Any]]) -> dict[str, Any]:
         """
         分析决策记录的效果
 
@@ -66,7 +83,7 @@ class DecisionEffectivenessAnalyzer:
         max_consecutive_losses = 0
 
         # 按市况分类的表现
-        market_performance: Dict[str, Dict[str, Any]] = {}
+        market_performance: dict[str, dict[str, Any]] = {}
 
         for record in records:
             decision = record.get("decision", "").upper()
@@ -99,7 +116,7 @@ class DecisionEffectivenessAnalyzer:
                     "total": 0,
                     "profitable": 0,
                     "losing": 0,
-                    "total_pnl": 0
+                    "total_pnl": 0,
                 }
 
             market_performance[trend]["total"] += 1
@@ -145,7 +162,7 @@ class DecisionEffectivenessAnalyzer:
         return result
 
     @staticmethod
-    def _identify_patterns(records: List[Dict[str, Any]]) -> List[str]:
+    def _identify_patterns(records: list[dict[str, Any]]) -> list[str]:
         """识别决策模式"""
         patterns = []
 
@@ -153,7 +170,7 @@ class DecisionEffectivenessAnalyzer:
             return patterns
 
         # 统计各类决策
-        decision_counts: Dict[str, int] = {}
+        decision_counts: dict[str, int] = {}
         for r in records:
             d = r.get("decision", "UNKNOWN").upper()
             decision_counts[d] = decision_counts.get(d, 0) + 1
@@ -192,10 +209,10 @@ class LessonValidator:
 
     @staticmethod
     def validate_lesson(
-        lesson: Dict[str, Any],
-        recent_records: List[Dict[str, Any]],
-        similarity_scorer: "SimilarityScorer"
-    ) -> Dict[str, Any]:
+        lesson: dict[str, Any],
+        recent_records: list[dict[str, Any]],
+        similarity_scorer: "SimilarityScorer",
+    ) -> dict[str, Any]:
         """
         验证经验在最近交易中的有效性
 
@@ -213,7 +230,7 @@ class LessonValidator:
             "matching_records": 0,
             "successful_applications": 0,
             "failed_applications": 0,
-            "recommendation": "maintain"  # maintain, boost, demote, remove
+            "recommendation": "maintain",  # maintain, boost, demote, remove
         }
 
         if not recent_records or not lesson:
@@ -238,10 +255,7 @@ class LessonValidator:
             if lesson_context:
                 similarity = similarity_scorer.compute(lesson_context, record_context)
                 if similarity >= 0.6:  # 相似度阈值
-                    matching_records.append({
-                        "record": record,
-                        "similarity": similarity
-                    })
+                    matching_records.append({"record": record, "similarity": similarity})
 
         result["matching_records"] = len(matching_records)
 
@@ -258,11 +272,14 @@ class LessonValidator:
 
             # 检查决策是否符合经验建议
             action_matched = False
-            if "BUY" in lesson_action and "BUY" in decision:
-                action_matched = True
-            elif "SELL" in lesson_action and "SELL" in decision:
-                action_matched = True
-            elif "HOLD" in lesson_action and "DO_NOTHING" in decision:
+            if (
+                "BUY" in lesson_action
+                and "BUY" in decision
+                or "SELL" in lesson_action
+                and "SELL" in decision
+                or "HOLD" in lesson_action
+                and "DO_NOTHING" in decision
+            ):
                 action_matched = True
 
             if action_matched:
@@ -305,14 +322,14 @@ class ReviewAgent:
         llm_manager: LLMClientManager,
         temperature: float = 0.05,
         lookback_decisions: int = 12,
-        memory_store: Optional[ReviewMemoryStore] = None,
+        memory_store: ReviewMemoryStore | None = None,
         min_confidence: float = 0.35,
         similarity_threshold: float = 0.5,
-        similarity_weights: Optional[Dict[str, float]] = None,
+        similarity_weights: dict[str, float] | None = None,
         confidence_decay_factor: float = 0.6,
         similarity_method: str = "cosine",
         notifier=None,
-        daily_logger: Optional[ReviewDailyLogger] = None,
+        daily_logger: ReviewDailyLogger | None = None,
         enable_lesson_validation: bool = True,
         time_decay_days: int = 30,
     ):
@@ -345,15 +362,15 @@ class ReviewAgent:
     def review(
         self,
         symbol: str,
-        decision_records: List[Dict[str, Any]],
-        fills_summary: Optional[Dict[str, Any]] = None,
-        existing_lessons: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        decision_records: list[dict[str, Any]],
+        fills_summary: dict[str, Any] | None = None,
+        existing_lessons: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """执行复盘（增强版）"""
         if not decision_records:
             return {"lessons": [], "summary": "", "spot_checks": [], "effectiveness": {}}
 
-        records = decision_records[-self.lookback_decisions:]
+        records = decision_records[-self.lookback_decisions :]
         digest = self._build_decision_digest(records)
         stats = self._calculate_stats(records)
 
@@ -366,7 +383,7 @@ class ReviewAgent:
         )
 
         # 获取相似经验
-        similar_lessons: List[Dict[str, Any]] = []
+        similar_lessons: list[dict[str, Any]] = []
         if self.memory_store:
             similar_lessons = self.memory_store.get_similar_lessons(
                 symbol=symbol,
@@ -386,9 +403,7 @@ class ReviewAgent:
         # 增强：验证现有经验的有效性
         validated_lessons = []
         if self.enable_lesson_validation and existing_lessons:
-            validated_lessons = self._validate_existing_lessons(
-                existing_lessons, records
-            )
+            validated_lessons = self._validate_existing_lessons(existing_lessons, records)
 
         # 增强：添加效果分析到prompt
         enhanced_stats = {
@@ -422,18 +437,12 @@ class ReviewAgent:
 
         response = self.llm.invoke([self.system_message, HumanMessage(content=prompt)])
 
-        raw_text = (
-            response.content
-            if isinstance(response.content, str)
-            else str(response.content)
-        )
+        raw_text = response.content if isinstance(response.content, str) else str(response.content)
         parsed = self._parse_response(raw_text)
         lessons = parsed.get("lessons", [])
 
         # 增强：基于效果分析调整经验置信度
-        adjusted_lessons = self._adjust_lessons_by_effectiveness(
-            lessons, effectiveness
-        )
+        adjusted_lessons = self._adjust_lessons_by_effectiveness(lessons, effectiveness)
 
         filtered_lessons = self._enrich_lessons(
             lessons=adjusted_lessons,
@@ -447,9 +456,7 @@ class ReviewAgent:
         if filtered_lessons and self.notifier:
             try:
                 self.notifier.notify_review_lesson(
-                    symbol=symbol,
-                    lessons=filtered_lessons,
-                    summary=parsed.get("summary", "")
+                    symbol=symbol, lessons=filtered_lessons, summary=parsed.get("summary", "")
                 )
             except Exception as e:
                 self.logger.print_warning(f"发送复盘通知失败: {e}")
@@ -487,10 +494,8 @@ class ReviewAgent:
         return result
 
     def _validate_existing_lessons(
-        self,
-        lessons: List[Dict[str, Any]],
-        recent_records: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, lessons: list[dict[str, Any]], recent_records: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """验证现有经验的有效性并调整"""
         validated = []
 
@@ -523,9 +528,7 @@ class ReviewAgent:
             adjusted_lesson["effectiveness_score"] = validation_result.get(
                 "effectiveness_score", 0.5
             )
-            adjusted_lesson["matching_records"] = validation_result.get(
-                "matching_records", 0
-            )
+            adjusted_lesson["matching_records"] = validation_result.get("matching_records", 0)
 
             validated.append(adjusted_lesson)
 
@@ -534,10 +537,8 @@ class ReviewAgent:
         return validated
 
     def _adjust_lessons_by_effectiveness(
-        self,
-        lessons: List[Dict[str, Any]],
-        effectiveness: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, lessons: list[dict[str, Any]], effectiveness: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """根据整体决策效果调整新经验的置信度"""
         if not lessons:
             return lessons
@@ -570,19 +571,14 @@ class ReviewAgent:
             if max_consecutive_losses >= 5:
                 effect_factor *= 0.9  # 连续亏损过多时更谨慎
 
-            adjusted_lesson["confidence"] = min(
-                1.0, max(0.1, original_confidence * effect_factor)
-            )
+            adjusted_lesson["confidence"] = min(1.0, max(0.1, original_confidence * effect_factor))
             adjusted_lesson["effect_adjustment_factor"] = effect_factor
 
             adjusted.append(adjusted_lesson)
 
         return adjusted
 
-    def _apply_time_decay(
-        self,
-        lessons: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _apply_time_decay(self, lessons: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """应用时间衰减到经验置信度"""
         if not lessons or self.time_decay_days <= 0:
             return lessons
@@ -611,7 +607,7 @@ class ReviewAgent:
                     if days_elapsed > self.time_decay_days:
                         decay_factor = max(
                             0.5,  # 最低保留 50%
-                            1.0 - (days_elapsed - self.time_decay_days) * 0.01
+                            1.0 - (days_elapsed - self.time_decay_days) * 0.01,
                         )
                         original_confidence = decayed_lesson.get("confidence", 0.5)
                         decayed_lesson["confidence"] = original_confidence * decay_factor
@@ -624,9 +620,7 @@ class ReviewAgent:
 
         return decayed
 
-    def _build_decision_digest(
-        self, records: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _build_decision_digest(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         压缩决策历史为短摘要，控制 token 消耗。
 
@@ -646,14 +640,13 @@ class ReviewAgent:
                     "timestamp": record.get("timestamp", ""),
                     "decision": record.get("decision", "UNKNOWN"),
                     "price": float(market.get("current_price") or 0.0),
-                    "result": action_details.get("status")
-                    or action_details.get("decision", "N/A"),
+                    "result": action_details.get("status") or action_details.get("decision", "N/A"),
                     "reason": self._shorten(reason),
                 }
             )
         return digest
 
-    def _calculate_stats(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _calculate_stats(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         """
         统计基本指标，避免让 LLM 自己计算。
 
@@ -667,9 +660,7 @@ class ReviewAgent:
             - close_count: 平仓总数 (sell + buy_to_cover)
             - min_price, max_price, average_price: 价格统计
         """
-        prices = [
-            float(r.get("market_data", {}).get("current_price") or 0.0) for r in records
-        ]
+        prices = [float(r.get("market_data", {}).get("current_price") or 0.0) for r in records]
         avg_price = sum(prices) / len(prices) if prices else 0.0
 
         def count(decision_type: str) -> int:
@@ -689,13 +680,13 @@ class ReviewAgent:
         }
 
     def _enrich_lessons(
-        self, lessons: List[Dict[str, Any]], context_features: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, lessons: list[dict[str, Any]], context_features: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """为经验打上相似度、置信区间并按阈值过滤"""
         if not lessons:
             return []
 
-        enriched: List[Dict[str, Any]] = []
+        enriched: list[dict[str, Any]] = []
         for lesson in lessons:
             rule = (lesson.get("rule") or "").strip()
             action = (lesson.get("action") or "").strip()
@@ -714,9 +705,7 @@ class ReviewAgent:
                 context_features, lesson_context or {}
             )
             env_match_factor = self._environment_match_factor(similarity_score)
-            adjusted_confidence = round(
-                base_confidence * env_match_factor, 3
-            )
+            adjusted_confidence = round(base_confidence * env_match_factor, 3)
             support_count = int(lesson.get("support_count", 1) or 1)
             ci_low, ci_high = self._calculate_confidence_interval(
                 base_confidence,
@@ -764,7 +753,7 @@ class ReviewAgent:
         adjusted_confidence: float,
         support_count: int,
         similarity_score: float,
-    ) -> List[float]:
+    ) -> list[float]:
         """
         简易置信区间估算：方差基于原始置信度，相似度只影响区间宽度一次
         """
@@ -787,7 +776,7 @@ class ReviewAgent:
         return clean if len(clean) <= limit else clean[: limit - 3] + "..."
 
     @staticmethod
-    def _extract_json_block(text: str) -> Optional[str]:
+    def _extract_json_block(text: str) -> str | None:
         """尝试从文本中提取 JSON 块"""
         try:
             json.loads(text)
@@ -805,7 +794,7 @@ class ReviewAgent:
                 return None
         return None
 
-    def _parse_response(self, text: str) -> Dict[str, Any]:
+    def _parse_response(self, text: str) -> dict[str, Any]:
         """
         解析 LLM 响应为结构化数据。
 

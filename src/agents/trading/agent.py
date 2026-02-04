@@ -5,18 +5,18 @@
 内部使用 LangGraph 工作流实现。
 """
 
-from typing import Dict, Any, Tuple, Optional
+from typing import Any
 
+from src.agents.common.tools.trading import TradingToolFactory
+from src.agents.common.utils.helpers import safe_float, safe_leverage
 from src.agents.trading.state import create_initial_state
 from src.agents.trading.workflow import TradingAgentWorkflow
-from src.agents.common.tools.trading import TradingToolFactory
-from src.agents.common.utils.llm import LLMConfig
-from src.agents.common.utils.helpers import safe_float, safe_leverage
-from src.trading.order_manager import OrderManager
-from src.utils.logger import TradingLogger
-from src.prompt_manager import PromptManager
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
+from src.llm import LLMClientManager
+from src.prompt_manager import PromptManager
+from src.trading.order_manager import OrderManager
+from src.utils.logger import TradingLogger
 
 
 class TradingAgent:
@@ -36,9 +36,7 @@ class TradingAgent:
         symbol: str,
         order_manager: OrderManager,
         logger: TradingLogger,
-        openai_api_base: str,
-        openai_api_key: str,
-        openai_model: str,
+        llm_manager: LLMClientManager,
         temperature: float = 0.1,
         max_iterations: int = 5,
         trade_amount: float = 100.0,
@@ -46,8 +44,8 @@ class TradingAgent:
         take_profit_ratio: float = 0.05,
         stop_loss_ratio: float = 0.02,
         notifier=None,
-        prompt_manager: Optional[PromptManager] = None,
-        fee_rates: Optional[FeeRates] = None,
+        prompt_manager: PromptManager | None = None,
+        fee_rates: FeeRates | None = None,
     ):
         """
         初始化交易 Agent
@@ -56,9 +54,7 @@ class TradingAgent:
             symbol: 交易对
             order_manager: 订单管理器
             logger: 日志记录器
-            openai_api_base: OpenAI API Base URL
-            openai_api_key: OpenAI API Key
-            openai_model: 模型名称
+            llm_manager: LLM 客户端管理器
             temperature: 温度参数
             max_iterations: 最大迭代次数
             trade_amount: 单笔交易金额上限
@@ -72,6 +68,8 @@ class TradingAgent:
         self.symbol = symbol
         self.order_manager = order_manager
         self.logger = logger
+        self.llm_manager = llm_manager
+        self.temperature = temperature
         self.trade_amount = trade_amount
         self.max_leverage = max_leverage
         self.take_profit_ratio = take_profit_ratio
@@ -81,20 +79,11 @@ class TradingAgent:
         self.notifier = notifier
         self.prompt_manager = prompt_manager
         self.fee_rates = fee_rates or FeeRates(
-            maker_rate=MAKER_FEE_RATE_PER_SIDE,
-            taker_rate=FEE_RATE_PER_SIDE
+            maker_rate=MAKER_FEE_RATE_PER_SIDE, taker_rate=FEE_RATE_PER_SIDE
         )
 
         # 用于去重：记录本次决策周期中已执行的工具调用
         self._executed_callbacks = set()
-
-        # 创建 LLM 配置
-        self.llm_config = LLMConfig(
-            api_base=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=temperature,
-        )
 
         # 创建工具和回调
         self.tool_factory = self._create_tool_factory()
@@ -104,12 +93,13 @@ class TradingAgent:
         # 创建工作流
         if prompt_manager:
             self.workflow = TradingAgentWorkflow(
-                llm_config=self.llm_config,
                 prompt_manager=prompt_manager,
                 tools=self.tools,
                 tools_callbacks=self.tools_callbacks,
                 logger=logger,
                 max_iterations=max_iterations,
+                llm_manager=llm_manager,
+                temperature=temperature,
             )
         else:
             self.workflow = None
@@ -129,7 +119,7 @@ class TradingAgent:
             buy_spot_callback=self._buy_spot_callback,
         )
 
-    def _check_fee_guard(self) -> Optional[str]:
+    def _check_fee_guard(self) -> str | None:
         """
         确保当前止盈目标足以覆盖手续费
         """
@@ -145,10 +135,7 @@ class TradingAgent:
         return None
 
     def _buy_callback(
-        self,
-        symbol: str,
-        amount: Optional[float] = None,
-        leverage: Optional[int] = None
+        self, symbol: str, amount: float | None = None, leverage: int | None = None
     ) -> str:
         """买入开多回调"""
         try:
@@ -179,14 +166,14 @@ class TradingAgent:
                 symbol=self.symbol,
                 usdt_amount=actual_amount,
                 leverage=actual_leverage,
-                with_tpsl=True
+                with_tpsl=True,
             )
 
-            if result and result.get('success'):
+            if result and result.get("success"):
                 entry_price = self.current_price
                 tp_price = entry_price * (1 + self.take_profit_ratio)
                 sl_price = entry_price * (1 - self.stop_loss_ratio)
-                quantity = result.get('quantity', 0)
+                quantity = result.get("quantity", 0)
 
                 if self.notifier:
                     self.notifier.notify_trade_opened(
@@ -199,8 +186,8 @@ class TradingAgent:
                         take_profit=tp_price,
                         position_value=quantity * entry_price,
                         margin=actual_amount,
-                        reason=f"AI 策略分析，多头信号确认",
-                        order_hash=result.get('hash', '')
+                        reason="AI 策略分析，多头信号确认",
+                        order_hash=result.get("hash", ""),
                     )
 
                 return (
@@ -228,9 +215,12 @@ class TradingAgent:
 
             positions = self.order_manager.get_current_positions()
             position = next(
-                (p for p in positions
-                 if p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) > 0),
-                None
+                (
+                    p
+                    for p in positions
+                    if p.get("coin") == self.symbol and safe_float(p.get("szi", 0)) > 0
+                ),
+                None,
             )
 
             if not position:
@@ -238,16 +228,17 @@ class TradingAgent:
 
             result = self.order_manager.close_position(symbol=self.symbol, size=None)
 
-            if result and result.get('status') == 'ok':
+            if result and result.get("status") == "ok":
                 if self.notifier:
-                    entry_price = float(position.get('entryPx', 0))
+                    entry_price = float(position.get("entryPx", 0))
                     exit_price = self.current_price
-                    size = abs(float(position.get('szi', 0)))
-                    pnl = result.get('pnl', 0)
-                    leverage = safe_leverage(position.get('leverage'), 1)
+                    size = abs(float(position.get("szi", 0)))
+                    pnl = result.get("pnl", 0)
+                    leverage = safe_leverage(position.get("leverage"), 1)
                     pnl_percent = (
                         (exit_price - entry_price) / entry_price * leverage * 100
-                        if entry_price > 0 else 0
+                        if entry_price > 0
+                        else 0
                     )
 
                     self.notifier.notify_trade_closed(
@@ -258,7 +249,7 @@ class TradingAgent:
                         exit_price=exit_price,
                         pnl=pnl,
                         pnl_percent=pnl_percent,
-                        order_hash=result.get('hash', '')
+                        order_hash=result.get("hash", ""),
                     )
 
                 return "✅ 卖出平多成功！"
@@ -271,10 +262,7 @@ class TradingAgent:
             return error_msg
 
     def _sell_short_callback(
-        self,
-        symbol: str,
-        amount: Optional[float] = None,
-        leverage: Optional[int] = None
+        self, symbol: str, amount: float | None = None, leverage: int | None = None
     ) -> str:
         """卖空开空回调"""
         try:
@@ -305,14 +293,14 @@ class TradingAgent:
                 symbol=self.symbol,
                 usdt_amount=actual_amount,
                 leverage=actual_leverage,
-                with_tpsl=True
+                with_tpsl=True,
             )
 
-            if result and result.get('success'):
+            if result and result.get("success"):
                 entry_price = self.current_price
                 tp_price = entry_price * (1 - self.take_profit_ratio)
                 sl_price = entry_price * (1 + self.stop_loss_ratio)
-                quantity = result.get('quantity', 0)
+                quantity = result.get("quantity", 0)
 
                 if self.notifier:
                     self.notifier.notify_trade_opened(
@@ -325,8 +313,8 @@ class TradingAgent:
                         take_profit=tp_price,
                         position_value=quantity * entry_price,
                         margin=actual_amount,
-                        reason=f"AI 策略分析，空头信号确认",
-                        order_hash=result.get('hash', '')
+                        reason="AI 策略分析，空头信号确认",
+                        order_hash=result.get("hash", ""),
                     )
 
                 return (
@@ -354,9 +342,12 @@ class TradingAgent:
 
             positions = self.order_manager.get_current_positions()
             position = next(
-                (p for p in positions
-                 if p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) < 0),
-                None
+                (
+                    p
+                    for p in positions
+                    if p.get("coin") == self.symbol and safe_float(p.get("szi", 0)) < 0
+                ),
+                None,
             )
 
             if not position:
@@ -364,16 +355,17 @@ class TradingAgent:
 
             result = self.order_manager.close_position(symbol=self.symbol, size=None)
 
-            if result and result.get('status') == 'ok':
+            if result and result.get("status") == "ok":
                 if self.notifier:
-                    entry_price = float(position.get('entryPx', 0))
+                    entry_price = float(position.get("entryPx", 0))
                     exit_price = self.current_price
-                    size = abs(float(position.get('szi', 0)))
-                    pnl = result.get('pnl', 0)
-                    leverage = safe_leverage(position.get('leverage'), 1)
+                    size = abs(float(position.get("szi", 0)))
+                    pnl = result.get("pnl", 0)
+                    leverage = safe_leverage(position.get("leverage"), 1)
                     pnl_percent = (
                         (entry_price - exit_price) / entry_price * leverage * 100
-                        if entry_price > 0 else 0
+                        if entry_price > 0
+                        else 0
                     )
 
                     self.notifier.notify_trade_closed(
@@ -384,7 +376,7 @@ class TradingAgent:
                         exit_price=exit_price,
                         pnl=pnl,
                         pnl_percent=pnl_percent,
-                        order_hash=result.get('hash', '')
+                        order_hash=result.get("hash", ""),
                     )
 
                 return "✅ 买入平空成功！"
@@ -404,11 +396,7 @@ class TradingAgent:
             self._executed_callbacks.add(callback_key)
         return f"⏸️ 确认：不执行操作。原因：{reason}"
 
-    def _buy_spot_callback(
-        self,
-        symbol: str,
-        amount: Optional[float] = None
-    ) -> str:
+    def _buy_spot_callback(self, symbol: str, amount: float | None = None) -> str:
         """现货定投推荐回调"""
         if self.trade_amount <= 0:
             return "❌ 当前余额不足，无法进行现货定投。"
@@ -417,20 +405,18 @@ class TradingAgent:
         if actual_amount > self.trade_amount:
             return f"❌ 定投金额 ${actual_amount} 超过上限 ${self.trade_amount}"
 
-        self.logger.print_info(
-            f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})"
-        )
+        self.logger.print_info(f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})")
         return f"📝 已推荐 {symbol} 现货定投 (建议金额: ${actual_amount})"
 
     def make_decision(
         self,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
         current_positions: list,
         max_positions: int,
-        historical_summary: Optional[str] = None,
-        enriched_data: Optional[Dict[str, Any]] = None
-    ) -> Tuple[str, Dict[str, Any]]:
+        historical_summary: str | None = None,
+        enriched_data: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """
         做出交易决策
 
@@ -450,16 +436,16 @@ class TradingAgent:
             self._executed_callbacks.clear()
 
             # 更新当前价格
-            self.current_price = market_data.get('current_price', 0)
+            self.current_price = market_data.get("current_price", 0)
 
             # 获取实时余额信息
             balance_info = self.order_manager.get_available_balance_info()
             balance_dict = None
-            if balance_info.get('status') == 'ok':
+            if balance_info.get("status") == "ok":
                 balance_dict = {
-                    'total': balance_info['total'],
-                    'occupied': balance_info['occupied'],
-                    'available': balance_info['available']
+                    "total": balance_info["total"],
+                    "occupied": balance_info["occupied"],
+                    "available": balance_info["available"],
                 }
 
             if not self.prompt_manager:
@@ -488,13 +474,13 @@ class TradingAgent:
             final_state = self.workflow.run(initial_state)
 
             # 提取结果
-            decision_type = final_state.get('decision_type', 'DO_NOTHING')
+            decision_type = final_state.get("decision_type", "DO_NOTHING")
             decision_details = {
-                "output": final_state.get('decision_details', {}).get('output', ''),
-                "events": final_state.get('decision_details', {}).get('events', []),
-                "prompt": final_state.get('prompt', ''),
+                "output": final_state.get("decision_details", {}).get("output", ""),
+                "events": final_state.get("decision_details", {}).get("events", []),
+                "prompt": final_state.get("prompt", ""),
                 "symbol": self.symbol,
-                "execution_result": final_state.get('execution_result'),
+                "execution_result": final_state.get("execution_result"),
             }
 
             return decision_type, decision_details

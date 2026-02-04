@@ -7,20 +7,21 @@
 2. execute_plan: 执行计划
 """
 
-from typing import Dict, Any, Literal
+from typing import Any, Literal
 
-from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import END, StateGraph
 
+from src.agents.common.utils.helpers import extract_json_from_text
+from src.agents.common.utils.llm import LLMConfig, create_json_llm
 from src.agents.execution.state import (
+    EXECUTION_AGENT_SYSTEM_PROMPT,
+    DecisionType,
     ExecutionAgentState,
     ExecutionPlan,
-    DecisionType,
-    EXECUTION_AGENT_SYSTEM_PROMPT,
     create_initial_state,
 )
-from src.agents.common.utils.llm import LLMConfig, create_json_llm
-from src.agents.common.utils.helpers import extract_json_from_text
+from src.llm import LLMClientManager
 
 
 class ExecutionAgentWorkflow:
@@ -33,24 +34,34 @@ class ExecutionAgentWorkflow:
 
     def __init__(
         self,
-        llm_config: LLMConfig,
-        tools_callbacks: Dict[str, Any],
+        tools_callbacks: dict[str, Any],
         logger=None,
+        llm_config: LLMConfig | None = None,
+        llm_manager: LLMClientManager | None = None,
+        temperature: float | None = 0.0,
     ):
         """
         初始化工作流
 
         Args:
-            llm_config: LLM 配置
             tools_callbacks: 工具回调函数字典
             logger: 日志记录器
+            llm_config: LLM 配置（旧版，与 llm_manager 二选一）
+            llm_manager: LLM 客户端管理器（新版，推荐使用）
+            temperature: 温度参数覆盖（默认 0.0 以确保确定性）
         """
-        self.llm_config = llm_config
         self.tools_callbacks = tools_callbacks
         self.logger = logger
+        self.llm_manager = llm_manager
+        self.llm_config = llm_config
 
-        # 创建 JSON Mode LLM
-        self.llm = create_json_llm(llm_config, temperature=0.0)
+        # 初始化 LLM（优先使用 llm_manager）
+        if llm_manager:
+            self.llm = llm_manager.get_client(json_mode=True, temperature=temperature)
+        elif llm_config:
+            self.llm = create_json_llm(llm_config, temperature=temperature)
+        else:
+            raise ValueError("必须提供 llm_config 或 llm_manager")
 
         # 创建支持 structured output 的 LLM
         self.structured_llm = self.llm.with_structured_output(ExecutionPlan)
@@ -81,20 +92,20 @@ class ExecutionAgentWorkflow:
             {
                 "execute": "execute_plan",
                 "end": END,
-            }
+            },
         )
         workflow.add_edge("execute_plan", END)
 
         return workflow.compile()
 
-    def _parse_decision_node(self, state: ExecutionAgentState) -> Dict[str, Any]:
+    def _parse_decision_node(self, state: ExecutionAgentState) -> dict[str, Any]:
         """
         解析决策文本
 
         使用 LLM 将决策文本转换为结构化的执行计划。
         """
-        decision_text = state['decision_text']
-        symbol = state['symbol']
+        decision_text = state["decision_text"]
+        symbol = state["symbol"]
 
         if self.logger:
             self.logger.print_info(
@@ -113,7 +124,7 @@ class ExecutionAgentWorkflow:
                     "reason": "决策文本为空",
                 },
                 "current_step": "parse_decision",
-                "errors": state.get('errors', []) + ["决策文本为空"],
+                "errors": state.get("errors", []) + ["决策文本为空"],
             }
 
         try:
@@ -141,7 +152,7 @@ class ExecutionAgentWorkflow:
 
             messages = [
                 SystemMessage(content=EXECUTION_AGENT_SYSTEM_PROMPT),
-                HumanMessage(content=prompt)
+                HumanMessage(content=prompt),
             ]
 
             # 尝试使用 structured output
@@ -169,20 +180,19 @@ class ExecutionAgentWorkflow:
 
                 response = self.llm.invoke(messages)
                 response_content = (
-                    response.content if hasattr(response, 'content')
-                    else str(response)
+                    response.content if hasattr(response, "content") else str(response)
                 )
 
                 parsed_data = extract_json_from_text(response_content)
 
                 if parsed_data:
                     # 验证并补全必需字段
-                    if 'decision' not in parsed_data:
-                        parsed_data['decision'] = DecisionType.DO_NOTHING.value
-                    if 'symbol' not in parsed_data:
-                        parsed_data['symbol'] = symbol
-                    if 'reason' not in parsed_data:
-                        parsed_data['reason'] = "AI 决策解析"
+                    if "decision" not in parsed_data:
+                        parsed_data["decision"] = DecisionType.DO_NOTHING.value
+                    if "symbol" not in parsed_data:
+                        parsed_data["symbol"] = symbol
+                    if "reason" not in parsed_data:
+                        parsed_data["reason"] = "AI 决策解析"
 
                     try:
                         execution_plan = ExecutionPlan(**parsed_data)
@@ -215,7 +225,7 @@ class ExecutionAgentWorkflow:
                         "reason": "无法解析决策文本",
                     },
                     "current_step": "parse_decision",
-                    "errors": state.get('errors', []) + ["无法解析决策文本"],
+                    "errors": state.get("errors", []) + ["无法解析决策文本"],
                 }
 
         except Exception as e:
@@ -233,21 +243,21 @@ class ExecutionAgentWorkflow:
                     "reason": error_msg,
                 },
                 "current_step": "error",
-                "errors": state.get('errors', []) + [error_msg],
+                "errors": state.get("errors", []) + [error_msg],
             }
 
-    def _execute_plan_node(self, state: ExecutionAgentState) -> Dict[str, Any]:
+    def _execute_plan_node(self, state: ExecutionAgentState) -> dict[str, Any]:
         """
         执行计划
 
         调用相应的工具回调函数执行交易。
         """
-        plan = state.get('execution_plan', {})
-        decision = plan.get('decision', DecisionType.DO_NOTHING.value)
-        symbol = plan.get('symbol', state['symbol'])
-        amount = plan.get('amount')
-        leverage = plan.get('leverage')
-        reason = plan.get('reason', '')
+        plan = state.get("execution_plan", {})
+        decision = plan.get("decision", DecisionType.DO_NOTHING.value)
+        symbol = plan.get("symbol", state["symbol"])
+        amount = plan.get("amount")
+        leverage = plan.get("leverage")
+        reason = plan.get("reason", "")
 
         if self.logger:
             self.logger.print_info(
@@ -258,42 +268,42 @@ class ExecutionAgentWorkflow:
             result = ""
 
             if decision == DecisionType.BUY.value:
-                callback = self.tools_callbacks.get('buy')
+                callback = self.tools_callbacks.get("buy")
                 if callback:
                     result = callback(symbol=symbol, amount=amount, leverage=leverage)
                 else:
                     result = "❌ 未找到 BUY 工具回调"
 
             elif decision == DecisionType.SELL.value:
-                callback = self.tools_callbacks.get('sell')
+                callback = self.tools_callbacks.get("sell")
                 if callback:
                     result = callback(symbol=symbol)
                 else:
                     result = "❌ 未找到 SELL 工具回调"
 
             elif decision == DecisionType.SELL_SHORT.value:
-                callback = self.tools_callbacks.get('sell_short')
+                callback = self.tools_callbacks.get("sell_short")
                 if callback:
                     result = callback(symbol=symbol, amount=amount, leverage=leverage)
                 else:
                     result = "❌ 未找到 SELL_SHORT 工具回调"
 
             elif decision == DecisionType.BUY_TO_COVER.value:
-                callback = self.tools_callbacks.get('buy_to_cover')
+                callback = self.tools_callbacks.get("buy_to_cover")
                 if callback:
                     result = callback(symbol=symbol)
                 else:
                     result = "❌ 未找到 BUY_TO_COVER 工具回调"
 
             elif decision == DecisionType.BUY_SPOT.value:
-                callback = self.tools_callbacks.get('buy_spot')
+                callback = self.tools_callbacks.get("buy_spot")
                 if callback:
                     result = callback(symbol=symbol, amount=amount)
                 else:
                     result = "❌ 未找到 BUY_SPOT 工具回调"
 
             elif decision == DecisionType.DO_NOTHING.value:
-                callback = self.tools_callbacks.get('do_nothing')
+                callback = self.tools_callbacks.get("do_nothing")
                 if callback:
                     result = callback(reason=reason)
                 else:
@@ -322,21 +332,18 @@ class ExecutionAgentWorkflow:
                 "execution_result": f"❌ {error_msg}",
                 "success": False,
                 "current_step": "error",
-                "errors": state.get('errors', []) + [error_msg],
+                "errors": state.get("errors", []) + [error_msg],
             }
 
-    def _route_after_parse(
-        self,
-        state: ExecutionAgentState
-    ) -> Literal["execute", "end"]:
+    def _route_after_parse(self, state: ExecutionAgentState) -> Literal["execute", "end"]:
         """
         条件路由：决定是否执行计划
         """
-        if state.get('current_step') == 'error':
+        if state.get("current_step") == "error":
             return "end"
 
         # 有执行计划则执行
-        if state.get('execution_plan'):
+        if state.get("execution_plan"):
             return "execute"
 
         return "end"
@@ -345,7 +352,7 @@ class ExecutionAgentWorkflow:
         self,
         decision_text: str,
         symbol: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         运行工作流
 
@@ -364,9 +371,9 @@ class ExecutionAgentWorkflow:
         final_state = self.app.invoke(initial_state)
 
         return {
-            "decision_type": final_state.get('parsed_decision', 'DO_NOTHING'),
-            "execution_plan": final_state.get('execution_plan'),
-            "execution_result": final_state.get('execution_result', ''),
-            "success": final_state.get('success', False),
-            "errors": final_state.get('errors', []),
+            "decision_type": final_state.get("parsed_decision", "DO_NOTHING"),
+            "execution_plan": final_state.get("execution_plan"),
+            "execution_result": final_state.get("execution_result", ""),
+            "success": final_state.get("success", False),
+            "errors": final_state.get("errors", []),
         }
