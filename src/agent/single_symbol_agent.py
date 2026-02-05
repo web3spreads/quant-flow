@@ -191,6 +191,10 @@ class SingleSymbolAgent:
 
                 self.logger.print_info(f"[{self.symbol}Agent] 执行买入开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)")
 
+                # 检查余额方法已在 OrderManager 中修复
+                if not hasattr(self.order_manager, 'check_sufficient_balance'):
+                    self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
+                
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
@@ -404,6 +408,10 @@ class SingleSymbolAgent:
                     return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
 
                 self.logger.print_info(f"[{self.symbol}Agent] 执行卖空开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)")
+
+                # 检查余额方法已在 OrderManager 中修复
+                if not hasattr(self.order_manager, 'check_sufficient_balance'):
+                     self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
 
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"

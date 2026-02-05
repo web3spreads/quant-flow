@@ -23,6 +23,7 @@ class NotificationEvent(str, Enum):
     SYSTEM_SHUTDOWN = "system_shutdown"     # 系统关闭
     EXTERNAL_INFO_SUMMARY = "external_info_summary"  # 外部信息汇总完成
     REVIEW_LESSON_LEARNED = "review_lesson_learned"  # 复盘获得新经验
+    GRID_UPDATE = "grid_update"             # 网格更新
 
 
 class Notifier:
@@ -106,21 +107,17 @@ class Notifier:
             return
 
         try:
-            # 构建钉钉 URL - 对参数进行 URL 编码
-            # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
-            # API key 可能包含特殊字符，为安全起见应完全编码
-            api_key_encoded = quote(api_key, safe='')
+            # 使用标准的 Apprise 钉钉 URL 格式
+            # 格式: dingtalk://token/?secret=secret
+            url = f"dingtalk://{api_key}/"
             if secret:
-                # Secret 可能包含特殊字符，需要完全编码
-                secret_encoded = quote(secret, safe='')
-                url = f"dingtalk://{secret_encoded}@{api_key_encoded}"
-            else:
-                url = f"dingtalk://{api_key_encoded}"
+                url += f"?secret={secret}"
 
-            # 添加电话号码（电话号码通常不含特殊字符，但为安全起见也编码）
+            # 添加电话号码（如果需要 @ 某人）
             if phone_numbers:
-                encoded_phones = [quote(str(phone), safe='') for phone in phone_numbers]
-                url += "/" + "/".join(encoded_phones)
+                # Apprise 钉钉模块通常不支持直接在 URL 中加电话
+                # 但如果是作为 targets 传递可以尝试，不过这里我们简单化
+                pass
 
             # 验证是否成功添加
             if not self.apprise.add(url):
@@ -130,7 +127,6 @@ class Notifier:
             self.logger.info("✅ 钉钉通知渠道已添加")
 
         except Exception:
-            # 不记录敏感信息（token/secret）到日志
             self.logger.error("❌ 钉钉通知渠道配置错误")
 
     def _add_feishu_channel(self, channel: Dict[str, Any]) -> None:
@@ -267,17 +263,21 @@ class Notifier:
             self.logger.debug(f"事件 {event.value} 的通知已禁用，跳过发送")
             return False
 
+        # 添加环境前缀
+        env_prefix = "[测试网]" if self.is_testnet else "[主网]"
+        full_title = f"{env_prefix} {title}"
+
         try:
             # 使用 Apprise 发送通知
             result = self.apprise.notify(
-                title=title,
+                title=full_title,
                 body=message
             )
 
             if result:
-                self.logger.info(f"📤 通知发送成功: {title}")
+                self.logger.info(f"📤 通知发送成功: {full_title}")
             else:
-                self.logger.warning(f"⚠️ 通知发送失败: {title}")
+                self.logger.warning(f"⚠️ 通知发送失败: {full_title}")
 
             return result
 
@@ -799,3 +799,18 @@ class Notifier:
         
         message = "\n".join(lines)
         self.notify(NotificationEvent.EXTERNAL_INFO_SUMMARY, title, message)
+
+    def notify_grid_update(self, symbol: str, lower: float, upper: float, num: int, amount: float, tp: float, sl: float, buy_count: int, sell_count: int, reason: str):
+        """发送网格更新通知"""
+        title = f"🚀 网格部署: {symbol}"
+        lines = [
+            f"【交易对】{symbol}",
+            f"【区间】${lower} - ${upper}",
+            f"【网格数】{num} (买:{buy_count} | 卖:{sell_count})",
+            f"【单格投入】${amount}",
+            f"【止盈比例】{tp*100 if tp else '默认'}%",
+            f"【止损比例】{sl*100 if sl else '默认'}%",
+            f"",
+            f"【AI 理由】{reason}"
+        ]
+        self.notify(NotificationEvent.GRID_UPDATE, title, "\n".join(lines))

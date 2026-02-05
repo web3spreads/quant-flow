@@ -1,0 +1,259 @@
+# ==========================================
+# Quant Flow - 交易机器人配置文件 (Hyperliquid 永续合约)
+# ==========================================
+
+# 交易配置
+trading:
+  # 要交易的币种符号（Hyperliquid 永续合约，支持多个）
+  # 注意：Hyperliquid 使用简单符号，如 'BTC', 'ETH' 而不是 'BTC/USDT'
+  symbols:
+    - BTC
+    - ETH
+
+  # 单笔交易金额上限（USD）
+  # AI 可以根据市场情况自主决定实际交易金额，但不超过此上限
+  # 建议设置为初始余额的 3-5%，以控制单笔风险
+  max_trade_amount: 50
+
+  # 初始账户余额（USD）
+  # 用于计算总回报率等账户指标，应设置为账户实际起始金额
+  initial_balance: 1000.0
+
+  # 止盈比例（4% = 0.04）
+  # 配合分批止盈策略：30-40%目标时止盈30-50%，60-70%时再止盈50%，80%+时全部止盈
+  # 这个比例是单次交易的止盈目标，实际执行时会分批止盈
+  take_profit_ratio: 0.02
+
+  # 止损比例（2.5% = 0.025）
+  # 策略强调区分正常回撤（<2%）和趋势反转，给趋势更多耐心
+  # 只有趋势明确反转时才止损，所以止损比例可以稍微宽松一些
+  stop_loss_ratio: 0.025
+
+  # 最大持仓数量（同时持有的币种数量）
+  max_positions: 2
+
+  # 最大杠杆倍数（1-50倍，具体取决于交易对）
+  # AI 可以根据市场情况自主决定实际交易金额，但不超过此上限
+  max_leverage: 10
+
+  
+
+# 调度配置
+scheduler:
+  # 决策间隔（分钟）
+  # 15分钟K线周期下，10分钟间隔可以及时捕捉市场变化
+  # 太频繁可能增加手续费成本，太慢可能错过机会
+  interval_minutes: 10
+
+  # 是否立即执行一次（启动时）
+  run_immediately: true
+
+# 数据配置
+data:
+  # K线时间周期
+  timeframe: 15m
+
+  # 获取的K线数量（用于计算指标）
+  candles_limit: 200
+
+# 技术指标配置
+indicators:
+  # 移动平均线周期
+  ma_periods:
+    - 7
+    - 25
+    - 99
+
+  # RSI 周期
+  rsi_period: 14
+
+  # MACD 参数 [快线, 慢线, 信号线]
+  macd_params:
+    fast: 12
+    slow: 26
+    signal: 9
+
+  # 布林带参数
+  bollinger_params:
+    period: 20
+    std_dev: 2
+
+# AI Agent 配置
+agent:
+  # 记忆配置
+  memory:
+    # 最大 token 数
+    max_token_limit: 3000
+
+    # 保留的最近对话数
+    max_messages: 10
+
+  # 决策温度（0-1，越高越随机）
+  # realtime 策略强调灵活判断，但也要保持一定稳定性
+  # 0.1 是一个平衡值，既不会过于保守也不会过于随机
+  temperature: 0.1
+
+  # 最大迭代次数
+  # 允许 Agent 进行多轮思考和工具调用，但不要过多以免增加延迟
+  max_iterations: 5
+
+  # Agent 超时时间（秒）
+  # 60秒足够完成一次完整的决策流程
+  timeout: 60
+
+# Prompt 配置
+prompt:
+  # 使用的 Prompt 集合名称
+  # 可选值: default, conservative, aggressive 或自定义名称
+  # Prompt 集合在 prompts/prompts.yaml 中定义
+  set: realtime
+
+  # Prompt 配置文件路径
+  config_file: prompts/prompts.yaml
+
+# 复盘 Agent 配置
+review_agent:
+  enabled: true                  # 是否启用复盘 Agent
+  run_every_cycles: 12           # 复盘频率（每12个决策周期复盘一次）
+                                  # 10分钟间隔下，约每2小时复盘一次，可以及时学习经验
+  lookback_decisions: 10         # 复盘时回顾的最近决策数量
+                                  # 建议设置为 run_every_cycles 的 1-1.5 倍
+  # model: deepseek-chat           # 复盘 Agent 使用的模型（默认与交易 Agent 相同）
+  temperature: 0.05              # 复盘 Agent 温度，建议较低确保稳定
+  min_confidence: 0.35           # 采纳经验所需的最小置信度
+  memory_file: logs/review_memory.json  # 复盘经验持久化文件
+  max_lessons: 30                # 每个符号最多保留的经验数量
+  min_confidence: 0.35           # 采纳经验所需的最小置信度
+  similarity_threshold: 0.5      # 当前环境与历史经验的最小相似度
+  similarity_method: cosine      # 相似度计算方法: cosine / euclidean / hybrid
+  similarity_weights:            # 为特征设置权重，技术指标更高
+    rsi: 1.2
+    macd_signal: 1.0
+    ema_trend: 1.0
+    trend_direction: 1.0
+    volatility_level: 0.8
+    volume_ratio: 0.6
+    price_position: 0.7
+    time_of_day: 0.3
+  confidence_decay_factor: 0.6   # 低相似度时的置信度衰减因子
+# 外部信息收集 Agent 配置
+# 使用 Exa 搜索 API 收集市场新闻、监管动态等外部信息
+# 定期汇总后供交易决策 Agent 参考
+external_info_agent:
+  enabled: true                 # 是否启用外部信息收集 Agent
+  interval_hours: 3.0            # 收集间隔（小时），每次触发会汇总各时间周期信息
+  store_dir: data/market_info    # 市场信息存储目录
+  temperature: 0.1               # 汇总时的 LLM 温度
+  max_summary_length: 2000       # 注入决策时的摘要最大长度（字符）
+  # 收集的时间周期配置
+  # 每次触发时会生成以下时间周期的报告：
+  # - daily: 过去24小时
+  # - weekly: 过去一周
+  # - biweekly: 过去两周
+  # - monthly: 过去一个月
+  periods:
+    - daily
+    - weekly
+    - biweekly
+    - monthly
+  # 报告清理配置
+  cleanup_days: 30               # 保留报告的天数，超过则自动清理
+# 风控配置
+risk_management:
+  # 是否启用熔断机制
+  # 当市场出现异常波动时，自动暂停交易以保护资金
+  circuit_breaker_enabled: true
+
+  # 熔断阈值：价格波动百分比（6% = 0.06）
+  # 15分钟K线周期下，6%的波动已经相当大，适合作为熔断触发条件
+  circuit_breaker_threshold: 0.06
+
+  # 熔断时间窗口（分钟）
+  # 在5分钟内价格波动超过阈值则触发熔断
+  circuit_breaker_window: 5
+
+  # 熔断后暂停交易时间（分钟）
+  # 熔断触发后暂停30分钟，等待市场稳定
+  circuit_breaker_pause: 30
+
+# 日志配置
+logging:
+  # 是否启用控制台彩色输出
+  console_color: true
+
+  # 是否显示完整 Prompt
+  show_full_prompt: true
+
+  # 是否显示思维链
+  show_chain_of_thought: true
+
+  # 决策日志格式（json 或 csv）
+  decision_log_format: json
+
+# 通知配置
+notifications:
+  # 是否启用通知（总开关）
+  # 如果为 false，则所有通知都不会发送
+  enabled: true
+
+  # 通知渠道配置（支持多个渠道同时使用）
+  channels:
+    # 钉钉机器人通知
+    - type: dingtalk
+      enabled: true
+      # 钉钉机器人的 API Key（必填）
+      # 获取方式：登录钉钉管理后台 -> 应用开发 -> 机器人管理 -> 创建自定义机器人
+      api_key: "your_dingtalk_api_key_here"
+      # 钉钉机器人的 Secret（可选，用于加签验证）
+      secret: "your_dingtalk_secret_here"
+      # 接收通知的手机号列表（可选，留空则发送到群）
+      phone_numbers:
+        - "18800000000"
+        # - "13900139000"
+
+    # 飞书机器人通知
+    - type: feishu
+      enabled: false
+      # 飞书机器人的 Token（必填）
+      # 获取方式：登录飞书管理后台 -> 应用 -> 机器人 -> 创建自定义机器人 -> 获取 Webhook URL 中的 token
+      token: "your_feishu_token_here"
+
+    # 邮件通知
+    - type: email
+      enabled: false
+      # SMTP 服务器地址（必填）
+      smtp_server: "smtp.gmail.com"
+      # SMTP 端口（587 用于 TLS，465 用于 SSL）
+      smtp_port: 587
+      # SMTP 用户名（必填）
+      smtp_user: "your_email@gmail.com"
+      # SMTP 密码或应用专用密码（必填）
+      # Gmail 用户需要在账户安全设置中生成应用专用密码
+      smtp_password: "your_app_password_here"
+      # 发件人邮箱（可选，默认使用 smtp_user）
+      from_email: "your_email@gmail.com"
+      # 收件人邮箱列表（必填）
+      to_emails:
+        - "recipient1@example.com"
+        - "recipient2@example.com"
+
+  # 通知事件配置（控制哪些事件会触发通知）
+  events:
+    # 系统启动通知
+    system_startup: true
+    # 系统关闭通知
+    system_shutdown: true
+    # 开仓通知（买入/卖空开仓）
+    trade_opened: true
+    # 平仓通知（卖出/买入平仓）
+    trade_closed: true
+    # 止损通知
+    stop_loss: true
+    # 止盈通知
+    take_profit: true
+    # 现货定投通知
+    spot_investment: true
+    # 错误通知（交易失败、系统异常等）
+    error: true
+    # 熔断机制触发通知
+    circuit_breaker: true

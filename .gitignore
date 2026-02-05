@@ -1,26 +1,13 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
 
 # Virtual Environment
+.venv/
 venv/
 env/
 ENV/
@@ -34,40 +21,24 @@ uv.lock
 .idea/
 *.swp
 *.swo
-*~
 
 # Environment variables
 .env
+.env.*
 .env.local
 
 # Logs
-logs/*.json
-logs/*.csv
-logs/decisions/*
-logs/trades/*
-!logs/.gitkeep
-!logs/decisions/.gitkeep
-!logs/trades/.gitkeep
+logs/
 *.log
 
-# Config (保留模板文件)
+# Config
 config.yaml
 config.*.yaml
+!config.example.yaml
+
+# Data
+data/
+backtest_results/
 
 # macOS
 .DS_Store
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-data/
-
-# Backup files
-*.bak
-*.backup
-.venv
-backtest_results/
-!.env.example
-.env.testnet
-.env.backtest
