@@ -29,13 +29,9 @@ from src.llm import LLMClientManager
 from src.prompt_manager import PromptManager
 from src.utils.logger import TradingLogger
 
-# 抗过拟合泛化模块（延迟导入避免循环依赖）
+# 抗过拟合泛化模块（可选依赖）
 try:
-    from src.agents.review.generalization import (
-        LessonGeneralizer,  # noqa: F401
-        MarketStateClassifier,  # noqa: F401
-        enhance_lessons_with_generalization,  # noqa: F401
-    )
+    from src.agents.review.generalization import enhance_lessons_with_generalization
 
     HAS_GENERALIZATION = True
 except ImportError:
@@ -271,16 +267,11 @@ class LessonValidator:
             pnl = action_details.get("pnl", 0) or 0
 
             # 检查决策是否符合经验建议
-            action_matched = False
-            if (
-                "BUY" in lesson_action
-                and "BUY" in decision
-                or "SELL" in lesson_action
-                and "SELL" in decision
-                or "HOLD" in lesson_action
-                and "DO_NOTHING" in decision
-            ):
-                action_matched = True
+            action_matched = (
+                ("BUY" in lesson_action and "BUY" in decision)
+                or ("SELL" in lesson_action and "SELL" in decision)
+                or ("HOLD" in lesson_action and "DO_NOTHING" in decision)
+            )
 
             if action_matched:
                 if pnl > 0:
@@ -451,6 +442,16 @@ class ReviewAgent:
 
         # 增强：应用时间衰减
         filtered_lessons = self._apply_time_decay(filtered_lessons)
+
+        # 增强：抗过拟合泛化处理（将具体数值转为相对表达，按市场多样性调整置信度）
+        if HAS_GENERALIZATION and filtered_lessons:
+            try:
+                filtered_lessons = enhance_lessons_with_generalization(
+                    lessons=filtered_lessons,
+                    records=records,
+                )
+            except Exception as e:
+                self.logger.print_warning(f"经验泛化处理失败，跳过: {e}")
 
         # 发送通知（如果有新经验且通知器可用）
         if filtered_lessons and self.notifier:
