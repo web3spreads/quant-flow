@@ -325,16 +325,11 @@ class LessonGeneralizer:
             matches += 1
 
             # 检查决策是否与经验一致
-            action_aligned = False
-            if (
-                "BUY" in lesson_action
-                and "BUY" in decision
-                or "SELL" in lesson_action
-                and "SELL" in decision
-                or "HOLD" in lesson_action
-                and "DO_NOTHING" in decision
-            ):
-                action_aligned = True
+            action_aligned = (
+                ("BUY" in lesson_action and "BUY" in decision)
+                or ("SELL" in lesson_action and "SELL" in decision)
+                or ("HOLD" in lesson_action and "DO_NOTHING" in decision)
+            )
 
             if action_aligned:
                 if pnl > 0:
