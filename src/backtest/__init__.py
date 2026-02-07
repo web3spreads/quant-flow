@@ -8,8 +8,7 @@ from .data_loader import BacktestDataLoader
 from .report_generator import BacktestReportGenerator
 
 __all__ = [
-    'BacktestEngine',
-    'BacktestDataLoader',
-    'BacktestReportGenerator',
+    "BacktestEngine",
+    "BacktestDataLoader",
+    "BacktestReportGenerator",
 ]
-

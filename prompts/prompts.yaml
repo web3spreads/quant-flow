@@ -18,7 +18,7 @@ prompt_sets:
   default:
     name: "默认策略"
     description: "平衡的交易策略，适合大多数市场环境"
-    language: "zh" 
+    language: "zh"
 
     # 系统 Prompt（定义 AI 角色）
     system_prompt_file: "default/system_prompt.md"
@@ -33,7 +33,7 @@ prompt_sets:
     spot_prompt_template_file: "default/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
-    
+
     # 外部信息收集 Prompt
     research_system_prompt_file: "default/research_system_prompt.md"
     research_prompt_template_file: "default/research_prompt_template.md"
@@ -42,7 +42,7 @@ prompt_sets:
   realtime:
     name: "实时信号优先策略"
     description: "优先关注实时价格行为和成交量，指标用于确认而非等待"
-    language: "zh" 
+    language: "zh"
     system_prompt_file: "realtime/system_prompt.md"
     spot_system_prompt_file: "realtime/spot_system_prompt.md"
     trading_prompt_template_file: "realtime/trading_prompt_template.md"
@@ -70,7 +70,7 @@ prompt_sets:
   conservative:
     name: "保守策略"
     description: "极度严格的开仓条件，极低的杠杆使用，资金安全优先"
-    language: "zh" 
+    language: "zh"
     system_prompt_file: "conservative/system_prompt.md"
     spot_system_prompt_file: "conservative/spot_system_prompt.md"
     trading_prompt_template_file: "conservative/trading_prompt_template.md"
@@ -84,7 +84,7 @@ prompt_sets:
   aggressive:
     name: "激进策略"
     description: "宽松的开仓条件，高杠杆使用，追求收益最大化"
-    language: "zh" 
+    language: "zh"
     system_prompt_file: "aggressive/system_prompt.md"
     spot_system_prompt_file: "aggressive/spot_system_prompt.md"
     trading_prompt_template_file: "aggressive/trading_prompt_template.md"
@@ -98,7 +98,7 @@ prompt_sets:
   nof1:
     name: "nof1.ai复刻策略"
     description: "nof1.ai风格的prompt，模仿其交易逻辑和风格"
-    language: "zh" 
+    language: "zh"
     system_prompt_file: "nof1/system_prompt.md"
     spot_system_prompt_file: "nof1/spot_system_prompt.md"
     trading_prompt_template_file: "nof1/trading_prompt_template.md"
@@ -112,7 +112,7 @@ prompt_sets:
   nof1-improved:
     name: "nof1.ai改进策略"
     description: "nof1.ai风格的改进版prompt，优化了部分交易逻辑"
-    language: "zh" 
+    language: "zh"
     system_prompt_file: "nof1-improved/system_prompt.md"
     spot_system_prompt_file: "nof1-improved/spot_system_prompt.md"
     trading_prompt_template_file: "nof1-improved/trading_prompt_template.md"

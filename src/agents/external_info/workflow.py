@@ -5,20 +5,20 @@
 包含查询准备、搜索执行、结果格式化和报告生成四个阶段。
 """
 
-from typing import Dict, Any, List
 from datetime import datetime
+from typing import Any
 
-from langgraph.graph import StateGraph, END
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, StateGraph
 
 from src.agents.external_info.state import ResearchState
 from src.agents.external_info.tools import (
+    create_period_search_queries,
+    search_crypto_macro_news,
     search_crypto_market_news,
     search_crypto_regulatory_news,
-    search_crypto_macro_news,
-    create_period_search_queries
 )
 
 
@@ -39,7 +39,7 @@ class ExternalInfoWorkflow:
         system_prompt: str,
         research_template: str,
         exa_api_key: str,
-        logger=None
+        logger=None,
     ):
         """
         初始化工作流
@@ -57,6 +57,7 @@ class ExternalInfoWorkflow:
 
         # 将模板字符串转换为 Jinja2 Template 对象
         from jinja2 import Template
+
         self.research_template = Template(research_template)
 
         self.exa_api_key = exa_api_key
@@ -86,7 +87,7 @@ class ExternalInfoWorkflow:
 
         return workflow.compile()
 
-    def _prepare_queries_node(self, state: ResearchState) -> Dict[str, Any]:
+    def _prepare_queries_node(self, state: ResearchState) -> dict[str, Any]:
         """准备搜索查询"""
         interval_hours = state["interval_hours"]
         symbols = state["symbols"]
@@ -103,7 +104,7 @@ class ExternalInfoWorkflow:
 
         return {"search_queries": queries}
 
-    def _execute_searches_node(self, state: ResearchState) -> Dict[str, Any]:
+    def _execute_searches_node(self, state: ResearchState) -> dict[str, Any]:
         """执行搜索"""
         queries = state["search_queries"]
         results = {}
@@ -123,7 +124,9 @@ class ExternalInfoWorkflow:
 
                     # 记录查询
                     if self.logger:
-                        self.logger.print_info(f"  📤 查询 [{topic}]: {query_config.get('query', '')[:80]}...")
+                        self.logger.print_info(
+                            f"  📤 查询 [{topic}]: {query_config.get('query', '')[:80]}..."
+                        )
 
                     # 根据主题选择合适的工具
                     if topic == "regulatory":
@@ -135,7 +138,9 @@ class ExternalInfoWorkflow:
 
                     # 记录结果
                     if self.logger:
-                        result_count = len(search_results) if isinstance(search_results, list) else 1
+                        result_count = (
+                            len(search_results) if isinstance(search_results, list) else 1
+                        )
                         self.logger.print_info(f"  📥 收到 {result_count} 条结果")
 
                     topic_results.extend(search_results)
@@ -152,12 +157,9 @@ class ExternalInfoWorkflow:
             total_results = sum(len(r) for r in results.values())
             self.logger.print_info(f"✅ 搜索完成，共收到 {total_results} 条结果")
 
-        return {
-            "search_results": results,
-            "errors": errors
-        }
+        return {"search_results": results, "errors": errors}
 
-    def _format_results_node(self, state: ResearchState) -> Dict[str, Any]:
+    def _format_results_node(self, state: ResearchState) -> dict[str, Any]:
         """格式化搜索结果"""
         results = state["search_results"]
 
@@ -169,7 +171,7 @@ class ExternalInfoWorkflow:
             "regulatory": "监管政策",
             "macro": "宏观经济",
             "industry": "行业动态",
-            "sentiment": "市场情绪"
+            "sentiment": "市场情绪",
         }
 
         formatted_parts = []
@@ -189,7 +191,7 @@ class ExternalInfoWorkflow:
 
         return {"formatted_results": formatted_text}
 
-    def _generate_report_node(self, state: ResearchState) -> Dict[str, Any]:
+    def _generate_report_node(self, state: ResearchState) -> dict[str, Any]:
         """生成研究报告"""
         interval_hours = state["interval_hours"]
         formatted_results = state["formatted_results"]
@@ -207,18 +209,17 @@ class ExternalInfoWorkflow:
             interval_description=f"过去 {interval_hours} 小时",
             start_time=start_time.strftime("%Y-%m-%d %H:%M:%S"),
             symbols=symbols,
-            search_results=formatted_results
+            search_results=formatted_results,
         )
 
         # 调用 LLM
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(content=prompt_text)
-        ]
+        messages = [SystemMessage(content=self.system_prompt), HumanMessage(content=prompt_text)]
 
         try:
             response = self.llm.invoke(messages)
-            raw_text = response.content if isinstance(response.content, str) else str(response.content)
+            raw_text = (
+                response.content if isinstance(response.content, str) else str(response.content)
+            )
 
             # 尝试解析 JSON
             try:
@@ -236,7 +237,7 @@ class ExternalInfoWorkflow:
                     "market_overview": {
                         "summary": "报告生成失败",
                         "trend": "未知",
-                        "sentiment": "中性"
+                        "sentiment": "中性",
                     },
                     "key_events": [],
                     "regulatory_updates": [],
@@ -244,7 +245,7 @@ class ExternalInfoWorkflow:
                     "market_sentiment": {},
                     "risk_alerts": [],
                     "trading_implications": {},
-                    "raw_response": raw_text[:500]
+                    "raw_response": raw_text[:500],
                 }
 
             return {"report": report}
@@ -257,17 +258,13 @@ class ExternalInfoWorkflow:
                 "report": {
                     "interval_hours": interval_hours,
                     "generated_at": end_time.isoformat(),
-                    "error": str(e)
+                    "error": str(e),
                 }
             }
 
     def run(
-        self,
-        interval_hours: float,
-        symbols: List[str],
-        start_time: datetime,
-        end_time: datetime
-    ) -> Dict[str, Any]:
+        self, interval_hours: float, symbols: list[str], start_time: datetime, end_time: datetime
+    ) -> dict[str, Any]:
         """
         运行工作流
 
@@ -289,7 +286,7 @@ class ExternalInfoWorkflow:
             "search_results": {},
             "formatted_results": "",
             "report": None,
-            "errors": []
+            "errors": [],
         }
 
         final_state = self.app.invoke(initial_state)

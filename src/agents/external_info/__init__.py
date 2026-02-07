@@ -31,16 +31,19 @@ def __getattr__(name):
         "ALL_TOOLS",
     ):
         from src.agents.external_info import tools
+
         return getattr(tools, name)
 
     # 工作流
     if name == "ExternalInfoWorkflow":
         from src.agents.external_info.workflow import ExternalInfoWorkflow
+
         return ExternalInfoWorkflow
 
     # Agent 相关
     if name in ("ExternalInfoAgent", "ExternalInfoScheduler", "get_external_info_agent"):
         from src.agents.external_info import agent
+
         return getattr(agent, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -341,7 +341,7 @@ class MarketDataEnricher:
         # 检查MACD信号（使用MACD数值而非语言关键词）
         current_macd = enriched.get('current_macd', 0)
         macd_signal = df_15m.iloc[-1].get('macd_signal', 0) if not df_15m.empty else 0
-        
+
         if current_macd > macd_signal:
             signals.append(t('signal_macd_bullish'))
         elif current_macd < macd_signal:

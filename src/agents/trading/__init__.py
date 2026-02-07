@@ -14,12 +14,14 @@ from src.agents.trading.state import TradingAgentState, create_initial_state
 def get_trading_agent():
     """获取 TradingAgent 类（延迟导入）"""
     from src.agents.trading.agent import TradingAgent
+
     return TradingAgent
 
 
 def get_trading_workflow():
     """获取 TradingAgentWorkflow 类（延迟导入）"""
     from src.agents.trading.workflow import TradingAgentWorkflow
+
     return TradingAgentWorkflow
 
 

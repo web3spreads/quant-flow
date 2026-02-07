@@ -20,16 +20,16 @@ class MarketDataFetcher:
     ):
         """
         初始化市场数据获取器
-        
+
         Args:
             testnet: 是否使用测试网
         """
         self.testnet = testnet
         self.base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
-        
+
         # 初始化 Info API
         self.info = Info(self.base_url, skip_ws=True)
-        
+
         print(f"📊 市场数据获取器初始化完成 ({'测试网' if testnet else '主网'})")
 
     def fetch_ohlcv(
@@ -72,14 +72,14 @@ class MarketDataFetcher:
                 startTime=start_time,
                 endTime=end_time
             )
-            
+
             if not candles:
                 print(f"⚠️ 没有获取到 {symbol} 的K线数据")
                 return None
-            
+
             # 转换为 DataFrame
             df = pd.DataFrame(candles)
-            
+
             # 重命名列（Hyperliquid 返回的字段）
             # 格式: {'t': start_time_ms, 'T': end_time_ms, 'o': open, 'h': high, 'l': low, 'c': close, 'v': volume, 'n': trades}
             # 只保留需要的列并重命名
@@ -91,32 +91,32 @@ class MarketDataFetcher:
                 'c': 'close',
                 'v': 'volume'
             }
-            
+
             # 只选择存在的列
             df = df[[col for col in column_mapping.keys() if col in df.columns]]
             df = df.rename(columns=column_mapping)
-            
+
             # 确保有必需的列
             required_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
             if not all(col in df.columns for col in required_cols):
                 print(f"⚠️ K线数据缺少必需的列: {df.columns.tolist()}")
                 return None
-            
+
             # 转换数据类型
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             for col in ['open', 'high', 'low', 'close', 'volume']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-            
+
             # 按时间排序
             df = df.sort_values('timestamp').reset_index(drop=True)
-            
+
             # 只保留需要的列
             df = df[required_cols]
-            
+
             print(f"✅ 获取 {symbol} K线数据: {len(df)} 条 ({timeframe})")
-            
+
             return df
-            
+
         except Exception as e:
             print(f"❌ 获取K线数据失败: {e}")
             import traceback
@@ -126,16 +126,16 @@ class MarketDataFetcher:
     def _parse_timeframe(self, timeframe: str) -> int:
         """
         解析时间周期为分钟数
-        
+
         Args:
             timeframe: 如 '15m', '1h', '4h', '1d'
-            
+
         Returns:
             分钟数
         """
         unit = timeframe[-1]
         value = int(timeframe[:-1])
-        
+
         if unit == 'm':
             return value
         elif unit == 'h':
@@ -148,10 +148,10 @@ class MarketDataFetcher:
     def get_ticker(self, symbol: str) -> Optional[dict]:
         """
         获取 Ticker 信息（当前价格等）
-        
+
         Args:
             symbol: 交易对符号
-            
+
         Returns:
             {
                 'symbol': str,
@@ -164,20 +164,20 @@ class MarketDataFetcher:
         try:
             # 获取所有市场的中间价
             all_mids = self.info.all_mids()
-            
+
             if symbol not in all_mids:
                 print(f"⚠️ 找不到交易对 {symbol}")
                 return None
-            
+
             price = float(all_mids[symbol])
-            
+
             # 获取元数据（包含更多信息）
             meta = self.info.meta()
             universe = meta.get('universe', [])
-            
+
             # 查找对应的交易对信息
             asset_info = next((a for a in universe if a['name'] == symbol), None)
-            
+
             ticker = {
                 'symbol': symbol,
                 'last': price,
@@ -185,14 +185,14 @@ class MarketDataFetcher:
                 'ask': price,
                 'volume': 0  # 需要从其他接口获取
             }
-            
+
             if asset_info:
                 # 添加更多信息
                 ticker['szDecimals'] = asset_info.get('szDecimals', 0)
                 ticker['maxLeverage'] = asset_info.get('maxLeverage', 0)
-            
+
             return ticker
-            
+
         except Exception as e:
             print(f"❌ 获取Ticker失败: {e}")
             return None
@@ -233,10 +233,10 @@ class MarketDataFetcher:
     def get_funding_rate(self, symbol: str) -> Optional[float]:
         """
         获取资金费率
-        
+
         Args:
             symbol: 交易对符号
-            
+
         Returns:
             资金费率
         """
@@ -244,11 +244,11 @@ class MarketDataFetcher:
             meta = self.info.meta()
             universe = meta.get('universe', [])
             asset_info = next((a for a in universe if a['name'] == symbol), None)
-            
+
             if asset_info and 'funding' in asset_info:
                 return float(asset_info['funding'])
             return None
-            
+
         except Exception as e:
             print(f"❌ 获取资金费率失败: {e}")
             return None
@@ -260,21 +260,21 @@ class MarketDataFetcher:
     ) -> dict:
         """
         获取多个时间周期的K线数据
-        
+
         Args:
             symbol: 交易对符号
             timeframes: 时间周期列表
-            
+
         Returns:
             {timeframe: DataFrame}
         """
         if not timeframes:
             timeframes = ['1m', '15m', '1h', '4h', '1d']
-        
+
         result = {}
         for tf in timeframes:
             df = self.fetch_ohlcv(symbol, timeframe=tf, limit=100)
             if df is not None:
                 result[tf] = df
-        
+
         return result

@@ -1016,9 +1016,9 @@ class DecisionHistory:
             'reason': reason,
             'action_details': action_details
         }
-        
+
         self.histories[symbol].append(record)
-        
+
         # 保持历史记录数量限制
         if len(self.histories[symbol]) > self.max_history:
             self.histories[symbol] = self.histories[symbol][-self.max_history:]
@@ -1036,7 +1036,7 @@ class DecisionHistory:
         """
         if symbol not in self.histories:
             return []
-        
+
         return list(reversed(self.histories[symbol][-count:]))
 
     def get_decisions_range(
@@ -1058,16 +1058,16 @@ class DecisionHistory:
         """
         if symbol not in self.histories:
             return []
-        
+
         history = self.histories[symbol]
-        
+
         # 从后往前取
         if end_index > len(history):
             end_index = len(history)
-        
+
         if start_index >= end_index:
             return []
-        
+
         # 倒序返回
         return list(reversed(history[-end_index:-start_index])) if start_index > 0 else list(reversed(history[-end_index:]))
 

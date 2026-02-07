@@ -175,7 +175,7 @@ class ExecutionAgent:
         """
         self.llm_manager = llm_manager
         self.temperature = temperature
-        
+
         # 获取启用 JSON Mode 的 LLM 客户端
         # JSON Mode 可以显著提高 structured output 的成功率
         self.llm = self.llm_manager.get_client(json_mode=True, temperature=temperature)

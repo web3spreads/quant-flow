@@ -9,7 +9,7 @@
 
 from src.agents.common.state.base import BaseAgentState
 from src.agents.common.utils.helpers import safe_float, safe_leverage
-from src.agents.common.utils.llm import create_llm, create_json_llm
+from src.agents.common.utils.llm import create_json_llm, create_llm
 
 __all__ = [
     "BaseAgentState",

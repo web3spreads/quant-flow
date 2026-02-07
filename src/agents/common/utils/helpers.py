@@ -6,7 +6,7 @@
 
 import json
 import re
-from typing import Any, Optional, Dict, List
+from typing import Any
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -94,7 +94,7 @@ def safe_leverage(leverage_data: Any, default: int = 1) -> int:
 
         # 如果是字典，尝试提取 value 字段
         if isinstance(leverage_data, dict):
-            value = leverage_data.get('value', default)
+            value = leverage_data.get("value", default)
             return int(value)
 
         # 如果直接是数字，转换为整数
@@ -126,7 +126,7 @@ def shorten_text(text: str, limit: int = 140) -> str:
     return clean if len(clean) <= limit else clean[: limit - 3] + "..."
 
 
-def extract_json_from_text(text: str) -> Optional[Dict]:
+def extract_json_from_text(text: str) -> dict | None:
     """
     从文本中提取 JSON 对象
 
@@ -168,17 +168,17 @@ def extract_json_from_text(text: str) -> Optional[Dict]:
                     continue
 
     # 方法 2: 提取第一个平衡的 JSON 对象
-    start = text.find('{')
+    start = text.find("{")
     if start != -1:
         stack = []
         for i in range(start, len(text)):
-            if text[i] == '{':
-                stack.append('{')
-            elif text[i] == '}':
+            if text[i] == "{":
+                stack.append("{")
+            elif text[i] == "}":
                 if stack:
                     stack.pop()
                 if not stack:
-                    json_str = text[start:i + 1]
+                    json_str = text[start : i + 1]
                     try:
                         return json.loads(json_str)
                     except json.JSONDecodeError:
@@ -198,12 +198,13 @@ def format_timestamp(dt: Any = None) -> str:
         ISO 格式的时间戳字符串
     """
     from datetime import datetime
+
     if dt is None:
         dt = datetime.now()
     return dt.isoformat()
 
 
-def merge_dicts(base: Dict, override: Dict) -> Dict:
+def merge_dicts(base: dict, override: dict) -> dict:
     """
     深度合并两个字典
 
@@ -223,7 +224,7 @@ def merge_dicts(base: Dict, override: Dict) -> Dict:
     return result
 
 
-def batch_list(items: List, batch_size: int) -> List[List]:
+def batch_list(items: list, batch_size: int) -> list[list]:
     """
     将列表分批
 
@@ -234,4 +235,4 @@ def batch_list(items: List, batch_size: int) -> List[List]:
     Returns:
         分批后的列表的列表
     """
-    return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+    return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]

@@ -105,3 +105,8 @@ exclude = [
     "tests/",
     ".venv/",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.0.0",
+]

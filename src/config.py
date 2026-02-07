@@ -80,36 +80,36 @@ class Config:
     def _init_llm_config(self):
         """初始化 LLM 客户端配置"""
         llm_config = self.config_data.get("llm", {})
-        
+
         # 客户端类型：优先从 YAML 配置读取，如果没有则从环境变量读取
         self.llm_client_type = llm_config.get("client_type") or os.getenv("LLM_CLIENT_TYPE", "langchain_openai")
-        
+
         # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取
         self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", "deepseek-chat")
-        
+
         # 基础参数（可选）
         self.llm_temperature = llm_config.get("temperature")
         self.llm_top_p = llm_config.get("top_p")
         self.llm_max_tokens = llm_config.get("max_tokens")
-        
+
         # 额外参数（可选）
         self.llm_extra_body = llm_config.get("extra_body")
-        
+
         # OpenAI / OpenAI-compatible 配置
         self.llm_openai_api_base = os.getenv("OPENAI_API_BASE")
         self.llm_openai_api_key = os.getenv("OPENAI_API_KEY")
-        
+
         # Cloudflare 配置
         self.llm_cloudflare_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
         self.llm_cloudflare_api_token = os.getenv("CLOUDFLARE_API_TOKEN")
-        
+
         # Google 配置
         self.llm_google_api_key = os.getenv("GOOGLE_API_KEY")
-        
+
         # LiteLLM 配置
         self.llm_litellm_api_base = os.getenv("LITELLM_API_BASE")
         self.llm_litellm_api_key = os.getenv("LITELLM_API_KEY")
-        
+
         # NVIDIA 配置
         self.llm_nvidia_api_key = os.getenv("NVIDIA_API_KEY")
 
@@ -256,7 +256,7 @@ class Config:
         )
         # 从环境变量读取 Exa API 密钥
         self.external_info_exa_api_key: str = os.getenv("EXA_API_KEY")
-        
+
         self.external_info_temperature: float = float(
             external_info.get("temperature", 0.1)
         )
@@ -375,15 +375,15 @@ class Config:
     def get_llm_client_config(self):
         """
         创建 LLM 客户端配置对象
-        
+
         Returns:
             LLMClientConfig: LLM 客户端配置
-            
+
         Raises:
             ValueError: 如果 llm_client_type 配置无效
         """
         from src.llm import LLMClientType, LLMClientConfig
-        
+
         # 验证 llm_client_type 以提供清晰的错误信息
         try:
             client_type_enum = LLMClientType(self.llm_client_type)
@@ -393,7 +393,7 @@ class Config:
                 f"Invalid llm_client_type '{self.llm_client_type}' in configuration. "
                 f"Expected one of: {valid_values}"
             ) from exc
-        
+
         return LLMClientConfig(
             client_type=client_type_enum,
             model=self.llm_model,

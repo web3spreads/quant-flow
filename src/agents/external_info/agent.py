@@ -7,10 +7,10 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Any
 
-from src.llm import LLMClientManager
 from src.agents.common.utils import MarketInfoStore
+from src.llm import LLMClientManager
 
 
 class ExternalInfoAgent:
@@ -24,12 +24,12 @@ class ExternalInfoAgent:
         self,
         logger,
         llm_manager: LLMClientManager,
-        exa_api_key: Optional[str] = None,
+        exa_api_key: str | None = None,
         temperature: float = 0.1,
-        symbols: Optional[List[str]] = None,
+        symbols: list[str] | None = None,
         store_dir: str = "data/market_info",
         prompt_manager=None,
-        interval_hours: float = 3.0
+        interval_hours: float = 3.0,
     ):
         """
         初始化外部信息收集 Agent
@@ -54,8 +54,7 @@ class ExternalInfoAgent:
         # 验证 Exa API 密钥
         if not exa_api_key:
             raise ValueError(
-                "exa_api_key 参数不能为空。"
-                "请在配置文件中设置 external_info_agent.exa_api_key"
+                "exa_api_key 参数不能为空。" "请在配置文件中设置 external_info_agent.exa_api_key"
             )
         self.exa_api_key = exa_api_key
 
@@ -86,11 +85,9 @@ class ExternalInfoAgent:
 
             # 初始化 Jinja2 环境用于渲染模板
             from jinja2 import Template
+
             self.research_template = Template(
-                research_template_content,
-                autoescape=False,
-                trim_blocks=True,
-                lstrip_blocks=True
+                research_template_content, autoescape=False, trim_blocks=True, lstrip_blocks=True
             )
 
             self.logger.print_info("✅ 已从 PromptManager 加载研究提示词")
@@ -102,12 +99,13 @@ class ExternalInfoAgent:
         """初始化 LangGraph 工作流"""
         try:
             from src.agents.external_info.workflow import ExternalInfoWorkflow
+
             self.workflow = ExternalInfoWorkflow(
                 llm=self.llm,
                 system_prompt=self.system_prompt,
                 research_template=self.research_template_source,
                 exa_api_key=self.exa_api_key,
-                logger=self.logger
+                logger=self.logger,
             )
             self.logger.print_info("✅ LangGraph 工作流初始化成功")
         except ImportError as e:
@@ -115,7 +113,7 @@ class ExternalInfoAgent:
             self.logger.print_error("请确保已安装 langchain-exa: pip install langchain-exa")
             raise
 
-    def collect_and_save(self) -> Optional[str]:
+    def collect_and_save(self) -> str | None:
         """
         收集市场信息并保存报告
 
@@ -132,8 +130,7 @@ class ExternalInfoAgent:
             start_time = end_time - timedelta(hours=self.interval_hours)
 
             self.logger.print_section(
-                f"📡 收集市场信息 ({self.interval_hours} 小时)",
-                style="bold cyan"
+                f"📡 收集市场信息 ({self.interval_hours} 小时)", style="bold cyan"
             )
             self.logger.print_info(
                 f"时间范围: {start_time.strftime('%Y-%m-%d %H:%M')} "
@@ -145,7 +142,7 @@ class ExternalInfoAgent:
                 interval_hours=self.interval_hours,
                 symbols=self.symbols,
                 start_time=start_time,
-                end_time=end_time
+                end_time=end_time,
             )
 
             # 检查是否有错误
@@ -168,10 +165,11 @@ class ExternalInfoAgent:
         except Exception as e:
             self.logger.print_error(f"收集失败: {e}")
             import traceback
+
             traceback.print_exc()
             return None
 
-    async def collect_and_save_async(self) -> Optional[str]:
+    async def collect_and_save_async(self) -> str | None:
         """
         异步收集市场信息并保存报告
 
@@ -181,11 +179,7 @@ class ExternalInfoAgent:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.collect_and_save)
 
-    def get_latest_summary(
-        self,
-        symbols: Optional[List[str]] = None,
-        max_length: int = 2000
-    ) -> str:
+    def get_latest_summary(self, symbols: list[str] | None = None, max_length: int = 2000) -> str:
         """
         获取最新的市场信息摘要
 
@@ -197,15 +191,14 @@ class ExternalInfoAgent:
             格式化的摘要文本
         """
         return self.store.get_combined_summary(
-            symbols=symbols or self.symbols,
-            max_length=max_length
+            symbols=symbols or self.symbols, max_length=max_length
         )
 
-    def get_report_status(self) -> Dict[str, Any]:
+    def get_report_status(self) -> dict[str, Any]:
         """获取报告状态"""
         return self.store.get_report_status()
 
-    def get_latest_report_content(self) -> Optional[Dict[str, Any]]:
+    def get_latest_report_content(self) -> dict[str, Any] | None:
         """获取最新报告的完整内容"""
         report = self.store.load_latest_report()
         if not report:
@@ -220,12 +213,7 @@ class ExternalInfoScheduler:
     负责定时运行外部信息收集任务。
     """
 
-    def __init__(
-        self,
-        agent: ExternalInfoAgent,
-        interval_hours: float = 3.0,
-        logger=None
-    ):
+    def __init__(self, agent: ExternalInfoAgent, interval_hours: float = 3.0, logger=None):
         """
         初始化调度器
 
@@ -245,10 +233,7 @@ class ExternalInfoScheduler:
         while self._running:
             try:
                 if self.logger:
-                    self.logger.print_section(
-                        "🔄 开始定时市场信息收集",
-                        style="bold blue"
-                    )
+                    self.logger.print_section("🔄 开始定时市场信息收集", style="bold blue")
 
                 await self.agent.collect_and_save_async()
 
@@ -272,25 +257,22 @@ class ExternalInfoScheduler:
         self._task = asyncio.create_task(self._run_collection_loop())
 
         if self.logger:
-            self.logger.print_info(
-                f"📡 外部信息收集调度器已启动，间隔: {self.interval_hours} 小时"
-            )
+            self.logger.print_info(f"📡 外部信息收集调度器已启动，间隔: {self.interval_hours} 小时")
 
     async def stop(self):
         """停止调度器"""
+        import contextlib
+
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                # Expected when cancelling the task - suppress the exception
-                pass
 
         if self.logger:
             self.logger.print_info("📡 外部信息收集调度器已停止")
 
-    def run_once(self) -> Optional[str]:
+    def run_once(self) -> str | None:
         """立即执行一次收集"""
         return self.agent.collect_and_save()
 
@@ -300,11 +282,11 @@ def get_external_info_agent(
     openai_api_base: str,
     openai_api_key: str,
     openai_model: str,
-    exa_api_key: Optional[str] = None,
-    symbols: Optional[List[str]] = None,
+    exa_api_key: str | None = None,
+    symbols: list[str] | None = None,
     store_dir: str = "data/market_info",
     prompt_manager=None,
-    interval_hours: float = 3.0
+    interval_hours: float = 3.0,
 ) -> ExternalInfoAgent:
     """
     获取外部信息收集 Agent 实例
@@ -332,5 +314,5 @@ def get_external_info_agent(
         symbols=symbols,
         store_dir=store_dir,
         prompt_manager=prompt_manager,
-        interval_hours=interval_hours
+        interval_hours=interval_hours,
     )
