@@ -23,6 +23,7 @@ from src.utils.logger import TradingLogger
 
 class TrendStrength(StrEnum):
     """趋势强度枚举"""
+
     VERY_STRONG = "very_strong"
     STRONG = "strong"
     MODERATE = "moderate"
@@ -32,6 +33,7 @@ class TrendStrength(StrEnum):
 
 class VolatilityLevel(StrEnum):
     """波动性级别枚举"""
+
     EXTREME = "extreme"
     HIGH = "high"
     NORMAL = "normal"
@@ -41,8 +43,11 @@ class VolatilityLevel(StrEnum):
 # 结构化的市场走势汇总（增强版）
 class MarketTrendSummary(BaseModel):
     """市场走势汇总结构（增强版）"""
+
     price_trend: str = Field(description="价格趋势：上涨/下跌/震荡")
-    trend_strength: str = Field(default="moderate", description="趋势强度：very_strong/strong/moderate/weak/neutral")
+    trend_strength: str = Field(
+        default="moderate", description="趋势强度：very_strong/strong/moderate/weak/neutral"
+    )
     price_range: str = Field(description="价格区间：如 $60000-$62000")
     price_change_pct: float = Field(default=0.0, description="价格变化百分比")
     key_levels: list[float] = Field(description="关键价位列表")
@@ -52,14 +57,19 @@ class MarketTrendSummary(BaseModel):
     rsi_trend: str = Field(default="stable", description="RSI 趋势：rising/falling/stable")
     macd_status: str = Field(default="neutral", description="MACD 状态：bullish/bearish/neutral")
     volume_pattern: str = Field(description="成交量模式：放大/缩小/正常")
-    volatility_level: str = Field(default="normal", description="波动性级别：extreme/high/normal/low")
+    volatility_level: str = Field(
+        default="normal", description="波动性级别：extreme/high/normal/low"
+    )
     overall_sentiment: str = Field(description="整体市场情绪")
-    market_phase: str = Field(default="unknown", description="市场阶段：accumulation/markup/distribution/markdown")
+    market_phase: str = Field(
+        default="unknown", description="市场阶段：accumulation/markup/distribution/markdown"
+    )
 
 
 # 结构化的决策汇总（增强版）
 class DecisionSummary(BaseModel):
     """决策汇总结构（增强版）"""
+
     total_decisions: int = Field(description="决策总数")
     buy_count: int = Field(description="买入次数")
     sell_count: int = Field(description="卖出次数")
@@ -112,7 +122,7 @@ class SummaryAgentV2:
         self,
         prices: list[float],
         ma_short: list[float] | None = None,
-        ma_long: list[float] | None = None
+        ma_long: list[float] | None = None,
     ) -> tuple[str, str]:
         """
         计算趋势方向和强度
@@ -132,8 +142,8 @@ class SummaryAgentV2:
         price_change = (prices[-1] - prices[0]) / prices[0] if prices[0] != 0 else 0
 
         # 计算趋势一致性（价格单调性）
-        up_count = sum(1 for i in range(1, len(prices)) if prices[i] > prices[i-1])
-        down_count = sum(1 for i in range(1, len(prices)) if prices[i] < prices[i-1])
+        up_count = sum(1 for i in range(1, len(prices)) if prices[i] > prices[i - 1])
+        down_count = sum(1 for i in range(1, len(prices)) if prices[i] < prices[i - 1])
         total_moves = len(prices) - 1
 
         # 趋势方向
@@ -160,7 +170,9 @@ class SummaryAgentV2:
 
         return direction, strength
 
-    def _calculate_volatility_level(self, prices: list[float], atr_values: list[float] | None = None) -> str:
+    def _calculate_volatility_level(
+        self, prices: list[float], atr_values: list[float] | None = None
+    ) -> str:
         """
         计算波动性级别
 
@@ -195,10 +207,7 @@ class SummaryAgentV2:
             return "low"
 
     def _detect_market_phase(
-        self,
-        prices: list[float],
-        volumes: list[float],
-        trend_direction: str
+        self, prices: list[float], volumes: list[float], trend_direction: str
     ) -> str:
         """
         检测市场阶段（威科夫理论）
@@ -218,9 +227,15 @@ class SummaryAgentV2:
         (prices[-1] - prices[0]) / prices[0] if prices[0] != 0 else 0
 
         # 成交量趋势
-        vol_first_half = sum(volumes[:len(volumes)//2]) if volumes else 0
-        vol_second_half = sum(volumes[len(volumes)//2:]) if volumes else 0
-        vol_trend = "increasing" if vol_second_half > vol_first_half * 1.1 else "decreasing" if vol_second_half < vol_first_half * 0.9 else "stable"
+        vol_first_half = sum(volumes[: len(volumes) // 2]) if volumes else 0
+        vol_second_half = sum(volumes[len(volumes) // 2 :]) if volumes else 0
+        vol_trend = (
+            "increasing"
+            if vol_second_half > vol_first_half * 1.1
+            else "decreasing"
+            if vol_second_half < vol_first_half * 0.9
+            else "stable"
+        )
 
         # 根据价格趋势和成交量变化判断市场阶段
         if trend_direction == "上涨":
@@ -259,14 +274,14 @@ class SummaryAgentV2:
         # 寻找低于当前价格的局部最低点作为支撑
         lows = []
         for i in range(1, len(prices) - 1):
-            if prices[i] < prices[i-1] and prices[i] < prices[i+1]:
+            if prices[i] < prices[i - 1] and prices[i] < prices[i + 1]:
                 if prices[i] < current_price:
                     lows.append(prices[i])
 
         # 寻找高于当前价格的局部最高点作为阻力
         highs = []
         for i in range(1, len(prices) - 1):
-            if prices[i] > prices[i-1] and prices[i] > prices[i+1]:
+            if prices[i] > prices[i - 1] and prices[i] > prices[i + 1]:
                 if prices[i] > current_price:
                     highs.append(prices[i])
 
@@ -276,8 +291,7 @@ class SummaryAgentV2:
         return support, resistance
 
     def _analyze_decision_effectiveness(
-        self,
-        decision_records: list[dict[str, Any]]
+        self, decision_records: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """
         分析决策效果
@@ -295,7 +309,7 @@ class SummaryAgentV2:
             "avg_profit_pct": 0.0,
             "avg_loss_pct": 0.0,
             "max_consecutive_losses": 0,
-            "decision_quality_score": 0.5
+            "decision_quality_score": 0.5,
         }
 
         if not decision_records:
@@ -307,15 +321,15 @@ class SummaryAgentV2:
         max_consecutive_losses = 0
 
         for record in decision_records:
-            action_details = record.get('action_details', {})
-            pnl = action_details.get('pnl', 0) if action_details else 0
-            pnl_pct = action_details.get('pnl_pct', 0) if action_details else 0
+            action_details = record.get("action_details", {})
+            pnl = action_details.get("pnl", 0) if action_details else 0
+            pnl_pct = action_details.get("pnl_pct", 0) if action_details else 0
 
             # 如果没有 pnl 数据，尝试从其他字段推断
             if pnl == 0 and action_details:
                 # 检查是否有盈亏相关的字段
-                closed_pnl = action_details.get('closed_pnl', 0)
-                unrealized_pnl = action_details.get('unrealized_pnl', 0)
+                closed_pnl = action_details.get("closed_pnl", 0)
+                unrealized_pnl = action_details.get("unrealized_pnl", 0)
                 pnl = closed_pnl or unrealized_pnl
 
             if pnl > 0:
@@ -344,18 +358,20 @@ class SummaryAgentV2:
         # 计算决策质量得分
         # 综合考虑胜率、盈亏比、连续亏损
         win_rate_score = result["win_rate"]
-        profit_loss_ratio = result["avg_profit_pct"] / result["avg_loss_pct"] if result["avg_loss_pct"] > 0 else 1
+        profit_loss_ratio = (
+            result["avg_profit_pct"] / result["avg_loss_pct"] if result["avg_loss_pct"] > 0 else 1
+        )
         profit_loss_score = min(profit_loss_ratio / 2, 1)  # 盈亏比 2:1 得满分
         consecutive_loss_penalty = max(0, 1 - max_consecutive_losses * 0.1)  # 每次连续亏损扣 10%
 
-        result["decision_quality_score"] = (win_rate_score * 0.4 + profit_loss_score * 0.4 + consecutive_loss_penalty * 0.2)
+        result["decision_quality_score"] = (
+            win_rate_score * 0.4 + profit_loss_score * 0.4 + consecutive_loss_penalty * 0.2
+        )
 
         return result
 
     def compress_market_history(
-        self,
-        symbol: str,
-        market_records: list[dict[str, Any]]
+        self, symbol: str, market_records: list[dict[str, Any]]
     ) -> MarketTrendSummary:
         """
         压缩市场历史数据为结构化汇总（增强版）
@@ -374,18 +390,28 @@ class SummaryAgentV2:
                 key_levels=[],
                 rsi_status="未知",
                 volume_pattern="无数据",
-                overall_sentiment="无数据"
+                overall_sentiment="无数据",
             )
 
         try:
             # 提取关键市场数据
-            prices = [r.get('market_data', {}).get('current_price', 0) for r in market_records if r.get('market_data', {}).get('current_price', 0) > 0]
-            rsi_values = [r.get('market_data', {}).get('rsi', 50) for r in market_records]
-            volumes = [r.get('market_data', {}).get('volume', 0) for r in market_records]
-            volume_changes = [r.get('market_data', {}).get('volume_change', 0) for r in market_records]
-            atr_values = [r.get('market_data', {}).get('atr_14', 0) for r in market_records if r.get('market_data', {}).get('atr_14', 0) > 0]
-            macd_values = [r.get('market_data', {}).get('macd', 0) for r in market_records]
-            macd_signals = [r.get('market_data', {}).get('macd_signal', 0) for r in market_records]
+            prices = [
+                r.get("market_data", {}).get("current_price", 0)
+                for r in market_records
+                if r.get("market_data", {}).get("current_price", 0) > 0
+            ]
+            rsi_values = [r.get("market_data", {}).get("rsi", 50) for r in market_records]
+            volumes = [r.get("market_data", {}).get("volume", 0) for r in market_records]
+            volume_changes = [
+                r.get("market_data", {}).get("volume_change", 0) for r in market_records
+            ]
+            atr_values = [
+                r.get("market_data", {}).get("atr_14", 0)
+                for r in market_records
+                if r.get("market_data", {}).get("atr_14", 0) > 0
+            ]
+            macd_values = [r.get("market_data", {}).get("macd", 0) for r in market_records]
+            macd_signals = [r.get("market_data", {}).get("macd_signal", 0) for r in market_records]
 
             if not prices:
                 return MarketTrendSummary(
@@ -394,7 +420,7 @@ class SummaryAgentV2:
                     key_levels=[],
                     rsi_status="未知",
                     volume_pattern="无数据",
-                    overall_sentiment="数据不足"
+                    overall_sentiment="数据不足",
                 )
 
             # 基础统计
@@ -402,7 +428,9 @@ class SummaryAgentV2:
             price_max = max(prices)
             price_first = prices[0]
             price_last = prices[-1]
-            price_change_pct = ((price_last - price_first) / price_first * 100) if price_first > 0 else 0
+            price_change_pct = (
+                ((price_last - price_first) / price_first * 100) if price_first > 0 else 0
+            )
             avg_rsi = sum(rsi_values) / len(rsi_values) if rsi_values else 50
             avg_volume_change = sum(volume_changes) / len(volume_changes) if volume_changes else 0
 
@@ -426,8 +454,10 @@ class SummaryAgentV2:
             # RSI 趋势
             rsi_trend = "stable"
             if len(rsi_values) >= 3:
-                rsi_first_half = sum(rsi_values[:len(rsi_values)//2]) / (len(rsi_values)//2)
-                rsi_second_half = sum(rsi_values[len(rsi_values)//2:]) / (len(rsi_values) - len(rsi_values)//2)
+                rsi_first_half = sum(rsi_values[: len(rsi_values) // 2]) / (len(rsi_values) // 2)
+                rsi_second_half = sum(rsi_values[len(rsi_values) // 2 :]) / (
+                    len(rsi_values) - len(rsi_values) // 2
+                )
                 if rsi_second_half > rsi_first_half + 5:
                     rsi_trend = "rising"
                 elif rsi_second_half < rsi_first_half - 5:
@@ -499,7 +529,7 @@ class SummaryAgentV2:
                 volume_pattern=volume_pattern,
                 volatility_level=volatility_level,
                 overall_sentiment=overall_sentiment,
-                market_phase=market_phase
+                market_phase=market_phase,
             )
 
         except Exception as e:
@@ -510,13 +540,11 @@ class SummaryAgentV2:
                 key_levels=[],
                 rsi_status="未知",
                 volume_pattern="未知",
-                overall_sentiment=str(e)[:50]
+                overall_sentiment=str(e)[:50],
             )
 
     def compress_decision_history(
-        self,
-        symbol: str,
-        decision_records: list[dict[str, Any]]
+        self, symbol: str, decision_records: list[dict[str, Any]]
     ) -> DecisionSummary:
         """
         压缩决策历史为结构化汇总（增强版）
@@ -536,7 +564,7 @@ class SummaryAgentV2:
                 do_nothing_count=0,
                 key_reasons=[],
                 strategy_pattern="无决策历史",
-                risk_events=[]
+                risk_events=[],
             )
 
         try:
@@ -548,17 +576,17 @@ class SummaryAgentV2:
             close_count = 0
 
             for r in decision_records:
-                decision = r.get('decision', '').upper()
-                if 'BUY_LONG' in decision or (decision == 'BUY' and 'SHORT' not in decision):
+                decision = r.get("decision", "").upper()
+                if "BUY_LONG" in decision or (decision == "BUY" and "SHORT" not in decision):
                     buy_count += 1
-                elif 'SELL_SHORT' in decision or 'SHORT' in decision:
+                elif "SELL_SHORT" in decision or "SHORT" in decision:
                     short_count += 1
-                elif 'SELL' in decision or 'CLOSE' in decision or 'COVER' in decision:
-                    if 'BUY' not in decision:
+                elif "SELL" in decision or "CLOSE" in decision or "COVER" in decision:
+                    if "BUY" not in decision:
                         close_count += 1
                     else:
                         sell_count += 1
-                elif 'DO_NOTHING' in decision or 'HOLD' in decision:
+                elif "DO_NOTHING" in decision or "HOLD" in decision:
                     do_nothing_count += 1
 
             # 分析决策效果
@@ -567,7 +595,7 @@ class SummaryAgentV2:
             # 提取决策理由（智能压缩）
             reasons = []
             for r in decision_records:
-                reason = r.get('reason', '')
+                reason = r.get("reason", "")
                 if reason:
                     # 截取更有意义的部分
                     reason_clean = reason[:150].strip()
@@ -577,7 +605,7 @@ class SummaryAgentV2:
             key_reasons = []
             if len(reasons) > 5:
                 # 使用 LLM 压缩理由（仅在理由较多时）
-                reasons_text = "\n".join([f"{i+1}. {r}" for i, r in enumerate(reasons[:10])])
+                reasons_text = "\n".join([f"{i + 1}. {r}" for i, r in enumerate(reasons[:10])])
 
                 prompt = f"""总结以下 {symbol} 的决策理由，提取3-5个关键要点：
 
@@ -591,12 +619,16 @@ class SummaryAgentV2:
 
                 messages = [
                     SystemMessage(content="你是决策分析专家，善于提炼核心逻辑。"),
-                    HumanMessage(content=prompt)
+                    HumanMessage(content=prompt),
                 ]
 
                 try:
                     response = self.compression_llm.invoke(messages)
-                    key_reasons = [line.strip() for line in response.content.strip().split('\n') if line.strip() and not line.strip().startswith('#')][:5]
+                    key_reasons = [
+                        line.strip()
+                        for line in response.content.strip().split("\n")
+                        if line.strip() and not line.strip().startswith("#")
+                    ][:5]
                 except Exception:
                     # LLM 调用失败时使用简单方法
                     key_reasons = reasons[:3]
@@ -636,22 +668,33 @@ class SummaryAgentV2:
 
             # 识别风险事件（增强版）
             risk_events = []
-            risk_keywords = ['止损', '风险', '警告', '异常', '亏损', '熔断', '爆仓', 'stop', 'loss', 'risk']
+            risk_keywords = [
+                "止损",
+                "风险",
+                "警告",
+                "异常",
+                "亏损",
+                "熔断",
+                "爆仓",
+                "stop",
+                "loss",
+                "risk",
+            ]
 
             for record in decision_records:
-                reason = record.get('reason', '').lower()
-                decision = record.get('decision', '').upper()
+                reason = record.get("reason", "").lower()
+                decision = record.get("decision", "").upper()
 
                 # 检查风险关键词
                 if any(keyword in reason for keyword in risk_keywords):
-                    event_text = record.get('reason', '')[:60]
+                    event_text = record.get("reason", "")[:60]
                     if event_text not in risk_events:
                         risk_events.append(event_text)
 
                 # 检查强制平仓类决策
-                if 'STOP_LOSS' in decision or 'FORCE' in decision:
-                    action_details = record.get('action_details', {})
-                    pnl = action_details.get('pnl', 0) if action_details else 0
+                if "STOP_LOSS" in decision or "FORCE" in decision:
+                    action_details = record.get("action_details", {})
+                    pnl = action_details.get("pnl", 0) if action_details else 0
                     if pnl < 0:
                         risk_events.append(f"止损平仓: {pnl:.2f}")
 
@@ -671,7 +714,7 @@ class SummaryAgentV2:
                 avg_profit_pct=effectiveness["avg_profit_pct"],
                 avg_loss_pct=effectiveness["avg_loss_pct"],
                 max_consecutive_losses=effectiveness["max_consecutive_losses"],
-                decision_quality_score=effectiveness["decision_quality_score"]
+                decision_quality_score=effectiveness["decision_quality_score"],
             )
 
         except Exception as e:
@@ -683,14 +726,14 @@ class SummaryAgentV2:
                 do_nothing_count=0,
                 key_reasons=[],
                 strategy_pattern=f"压缩失败: {str(e)[:30]}",
-                risk_events=[]
+                risk_events=[],
             )
 
     def create_compressed_summary(
         self,
         symbol: str,
         recent_records: list[dict[str, Any]],
-        older_records: list[dict[str, Any]] | None = None
+        older_records: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         创建压缩的上下文汇总（增强版 - 包含更丰富的分析信息）
@@ -715,7 +758,6 @@ class SummaryAgentV2:
             # 3. 构建增强汇总文本
             summary_parts = [
                 f"## {symbol} 历史汇总 (增强版)\n",
-
                 "### 📊 市场状态",
                 f"- 趋势: {recent_market.price_trend} ({recent_market.trend_strength})",
                 f"- 价格: {recent_market.price_range} ({recent_market.price_change_pct:+.2f}%)",
@@ -730,28 +772,34 @@ class SummaryAgentV2:
                 )
 
             # 技术指标状态
-            summary_parts.extend([
-                "\n### 📈 技术指标",
-                f"- RSI: {recent_market.rsi_status} (趋势: {self._translate_trend(recent_market.rsi_trend)})",
-                f"- MACD: {self._translate_macd(recent_market.macd_status)}",
-                f"- 成交量: {recent_market.volume_pattern}",
-                f"- 综合: {recent_market.overall_sentiment}",
-            ])
+            summary_parts.extend(
+                [
+                    "\n### 📈 技术指标",
+                    f"- RSI: {recent_market.rsi_status} (趋势: {self._translate_trend(recent_market.rsi_trend)})",
+                    f"- MACD: {self._translate_macd(recent_market.macd_status)}",
+                    f"- 成交量: {recent_market.volume_pattern}",
+                    f"- 综合: {recent_market.overall_sentiment}",
+                ]
+            )
 
             # 决策统计
-            summary_parts.extend([
-                f"\n### 🎯 决策统计 (共{recent_decisions.total_decisions}次)",
-                f"- 做多: {recent_decisions.buy_count}次 | 做空: {recent_decisions.short_count}次 | 平仓: {recent_decisions.close_count}次 | 观望: {recent_decisions.do_nothing_count}次",
-                f"- 策略: {recent_decisions.strategy_pattern}",
-            ])
+            summary_parts.extend(
+                [
+                    f"\n### 🎯 决策统计 (共{recent_decisions.total_decisions}次)",
+                    f"- 做多: {recent_decisions.buy_count}次 | 做空: {recent_decisions.short_count}次 | 平仓: {recent_decisions.close_count}次 | 观望: {recent_decisions.do_nothing_count}次",
+                    f"- 策略: {recent_decisions.strategy_pattern}",
+                ]
+            )
 
             # 决策效果（如果有数据）
             if recent_decisions.profitable_decisions + recent_decisions.losing_decisions > 0:
-                summary_parts.extend([
-                    "\n### 💰 决策效果",
-                    f"- 胜率: {recent_decisions.win_rate:.1%} ({recent_decisions.profitable_decisions}盈/{recent_decisions.losing_decisions}亏)",
-                    f"- 质量得分: {recent_decisions.decision_quality_score:.2f}/1.00",
-                ])
+                summary_parts.extend(
+                    [
+                        "\n### 💰 决策效果",
+                        f"- 胜率: {recent_decisions.win_rate:.1%} ({recent_decisions.profitable_decisions}盈/{recent_decisions.losing_decisions}亏)",
+                        f"- 质量得分: {recent_decisions.decision_quality_score:.2f}/1.00",
+                    ]
+                )
                 if recent_decisions.max_consecutive_losses > 0:
                     summary_parts.append(f"- 最大连亏: {recent_decisions.max_consecutive_losses}次")
 
@@ -777,17 +825,21 @@ class SummaryAgentV2:
                 older_market = self.compress_market_history(symbol, older_records)
                 older_decisions = self.compress_decision_history(symbol, older_records)
 
-                summary_parts.extend([
-                    "\n### 🔄 趋势演变",
-                    f"- 市场: {older_market.price_trend} → {recent_market.price_trend}",
-                    f"- 波动: {self._translate_volatility(older_market.volatility_level)} → {self._translate_volatility(recent_market.volatility_level)}",
-                    f"- 策略: {older_decisions.strategy_pattern} → {recent_decisions.strategy_pattern}",
-                ])
+                summary_parts.extend(
+                    [
+                        "\n### 🔄 趋势演变",
+                        f"- 市场: {older_market.price_trend} → {recent_market.price_trend}",
+                        f"- 波动: {self._translate_volatility(older_market.volatility_level)} → {self._translate_volatility(recent_market.volatility_level)}",
+                        f"- 策略: {older_decisions.strategy_pattern} → {recent_decisions.strategy_pattern}",
+                    ]
+                )
 
                 # 效果对比
                 if older_decisions.win_rate > 0 or recent_decisions.win_rate > 0:
                     win_rate_change = recent_decisions.win_rate - older_decisions.win_rate
-                    change_symbol = "↑" if win_rate_change > 0 else "↓" if win_rate_change < 0 else "→"
+                    change_symbol = (
+                        "↑" if win_rate_change > 0 else "↓" if win_rate_change < 0 else "→"
+                    )
                     summary_parts.append(
                         f"- 胜率变化: {older_decisions.win_rate:.1%} {change_symbol} {recent_decisions.win_rate:.1%}"
                     )
@@ -825,7 +877,7 @@ class SummaryAgentV2:
             "markup": "上升阶段（趋势向上）",
             "distribution": "派发阶段（可能见顶）",
             "markdown": "下降阶段（趋势向下）",
-            "unknown": "未知"
+            "unknown": "未知",
         }
         return translations.get(phase, phase)
 
@@ -835,32 +887,22 @@ class SummaryAgentV2:
             "extreme": "极高波动",
             "high": "高波动",
             "normal": "正常波动",
-            "low": "低波动"
+            "low": "低波动",
         }
         return translations.get(level, level)
 
     def _translate_trend(self, trend: str) -> str:
         """翻译趋势方向"""
-        translations = {
-            "rising": "上升",
-            "falling": "下降",
-            "stable": "稳定"
-        }
+        translations = {"rising": "上升", "falling": "下降", "stable": "稳定"}
         return translations.get(trend, trend)
 
     def _translate_macd(self, status: str) -> str:
         """翻译MACD状态"""
-        translations = {
-            "bullish": "看涨信号",
-            "bearish": "看跌信号",
-            "neutral": "中性"
-        }
+        translations = {"bullish": "看涨信号", "bearish": "看跌信号", "neutral": "中性"}
         return translations.get(status, status)
 
     def _generate_trading_hints(
-        self,
-        market: MarketTrendSummary,
-        decisions: DecisionSummary
+        self, market: MarketTrendSummary, decisions: DecisionSummary
     ) -> str:
         """
         基于市场状态和决策历史生成交易提示
@@ -897,7 +939,9 @@ class SummaryAgentV2:
             hints.append("- 🟢 近期决策效果良好：可维持当前策略")
 
         if decisions.max_consecutive_losses >= 3:
-            hints.append(f"- ⚠️ 出现连续{decisions.max_consecutive_losses}次亏损：建议暂停交易或降低仓位")
+            hints.append(
+                f"- ⚠️ 出现连续{decisions.max_consecutive_losses}次亏损：建议暂停交易或降低仓位"
+            )
 
         # 基于RSI的提示
         if market.rsi_status == "超买" and market.rsi_trend == "falling":
@@ -923,23 +967,27 @@ class SummaryAgentV2:
         """
         try:
             # 先尝试简单删除次要部分
-            lines = text.split('\n')
-            essential_keywords = ['趋势', '价格', '策略', '胜率', '风险', '提示']
+            lines = text.split("\n")
+            essential_keywords = ["趋势", "价格", "策略", "胜率", "风险", "提示"]
             important_lines = []
             optional_lines = []
 
             for line in lines:
-                if any(kw in line for kw in essential_keywords) or line.startswith('##') or line.startswith('###'):
+                if (
+                    any(kw in line for kw in essential_keywords)
+                    or line.startswith("##")
+                    or line.startswith("###")
+                ):
                     important_lines.append(line)
                 else:
                     optional_lines.append(line)
 
             # 首先用重要行构建
-            result = '\n'.join(important_lines)
+            result = "\n".join(important_lines)
 
             # 如果还有空间，逐步添加可选行
             for line in optional_lines:
-                test_result = result + '\n' + line
+                test_result = result + "\n" + line
                 if count_tokens_approximately(test_result) <= max_tokens * 0.9:
                     result = test_result
                 else:
@@ -958,7 +1006,7 @@ class SummaryAgentV2:
 
                 messages = [
                     SystemMessage(content="你是信息压缩专家。"),
-                    HumanMessage(content=compress_prompt)
+                    HumanMessage(content=compress_prompt),
                 ]
 
                 response = self.compression_llm.invoke(messages)
@@ -969,7 +1017,7 @@ class SummaryAgentV2:
         except Exception as e:
             self.logger.logger.warning(f"智能压缩失败，返回截断文本: {e}")
             # 降级方案：简单截断
-            return text[:max_tokens * 4]  # 粗略估计每个 token 约 4 个字符
+            return text[: max_tokens * 4]  # 粗略估计每个 token 约 4 个字符
 
 
 class DecisionHistory:
@@ -992,7 +1040,7 @@ class DecisionHistory:
         decision: str,
         market_data: dict[str, Any],
         reason: str = "",
-        action_details: dict[str, Any] | None = None
+        action_details: dict[str, Any] | None = None,
     ):
         """
         添加决策记录
@@ -1007,21 +1055,21 @@ class DecisionHistory:
         if symbol not in self.histories:
             self.histories[symbol] = []
 
-        data_ts = market_data.get('timestamp') if isinstance(market_data, dict) else None
+        data_ts = market_data.get("timestamp") if isinstance(market_data, dict) else None
         record = {
             # 使用数据时间而不是当前时间，便于回测报告准确反映交易时间
-            'timestamp': data_ts if data_ts is not None else datetime.now(),
-            'decision': decision,
-            'market_data': market_data,
-            'reason': reason,
-            'action_details': action_details
+            "timestamp": data_ts if data_ts is not None else datetime.now(),
+            "decision": decision,
+            "market_data": market_data,
+            "reason": reason,
+            "action_details": action_details,
         }
 
         self.histories[symbol].append(record)
 
         # 保持历史记录数量限制
         if len(self.histories[symbol]) > self.max_history:
-            self.histories[symbol] = self.histories[symbol][-self.max_history:]
+            self.histories[symbol] = self.histories[symbol][-self.max_history :]
 
     def get_recent_decisions(self, symbol: str, count: int = 10) -> list[dict[str, Any]]:
         """
@@ -1040,10 +1088,7 @@ class DecisionHistory:
         return list(reversed(self.histories[symbol][-count:]))
 
     def get_decisions_range(
-        self,
-        symbol: str,
-        start_index: int,
-        end_index: int
+        self, symbol: str, start_index: int, end_index: int
     ) -> list[dict[str, Any]]:
         """
         获取指定范围的决策记录
@@ -1069,7 +1114,11 @@ class DecisionHistory:
             return []
 
         # 倒序返回
-        return list(reversed(history[-end_index:-start_index])) if start_index > 0 else list(reversed(history[-end_index:]))
+        return (
+            list(reversed(history[-end_index:-start_index]))
+            if start_index > 0
+            else list(reversed(history[-end_index:]))
+        )
 
     def get_history_count(self, symbol: str) -> int:
         """

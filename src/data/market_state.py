@@ -18,22 +18,24 @@ import pandas as pd
 
 class MarketState(Enum):
     """市场状态枚举"""
-    STRONG_UPTREND = "strong_uptrend"      # 强势上涨
-    UPTREND = "uptrend"                     # 上涨趋势
-    WEAK_UPTREND = "weak_uptrend"           # 弱势上涨
-    CONSOLIDATION = "consolidation"          # 盘整震荡
-    WEAK_DOWNTREND = "weak_downtrend"       # 弱势下跌
-    DOWNTREND = "downtrend"                 # 下跌趋势
-    STRONG_DOWNTREND = "strong_downtrend"   # 强势下跌
-    BREAKOUT_UP = "breakout_up"             # 向上突破
-    BREAKOUT_DOWN = "breakout_down"         # 向下突破
-    REVERSAL_BULLISH = "reversal_bullish"   # 看涨反转
-    REVERSAL_BEARISH = "reversal_bearish"   # 看跌反转
-    UNKNOWN = "unknown"                      # 无法判断
+
+    STRONG_UPTREND = "strong_uptrend"  # 强势上涨
+    UPTREND = "uptrend"  # 上涨趋势
+    WEAK_UPTREND = "weak_uptrend"  # 弱势上涨
+    CONSOLIDATION = "consolidation"  # 盘整震荡
+    WEAK_DOWNTREND = "weak_downtrend"  # 弱势下跌
+    DOWNTREND = "downtrend"  # 下跌趋势
+    STRONG_DOWNTREND = "strong_downtrend"  # 强势下跌
+    BREAKOUT_UP = "breakout_up"  # 向上突破
+    BREAKOUT_DOWN = "breakout_down"  # 向下突破
+    REVERSAL_BULLISH = "reversal_bullish"  # 看涨反转
+    REVERSAL_BEARISH = "reversal_bearish"  # 看跌反转
+    UNKNOWN = "unknown"  # 无法判断
 
 
 class SignalStrength(Enum):
     """信号强度枚举"""
+
     VERY_STRONG = 5
     STRONG = 4
     MODERATE = 3
@@ -45,6 +47,7 @@ class SignalStrength(Enum):
 @dataclass
 class TrendAnalysis:
     """趋势分析结果"""
+
     direction: str  # "bullish", "bearish", "neutral"
     strength: float  # 0-1 趋势强度
     ma_alignment: str  # "aligned_up", "aligned_down", "mixed"
@@ -55,6 +58,7 @@ class TrendAnalysis:
 @dataclass
 class VolatilityAnalysis:
     """波动性分析结果"""
+
     current_atr: float
     atr_percentile: float  # 当前ATR在历史中的百分位
     volatility_state: str  # "low", "normal", "high", "extreme"
@@ -67,6 +71,7 @@ class VolatilityAnalysis:
 @dataclass
 class MomentumAnalysis:
     """动量分析结果"""
+
     rsi_state: str  # "oversold", "neutral", "overbought"
     rsi_value: float
     rsi_divergence: str | None  # "bullish", "bearish", None
@@ -78,6 +83,7 @@ class MomentumAnalysis:
 @dataclass
 class VolumeAnalysis:
     """成交量分析结果"""
+
     volume_trend: str  # "increasing", "decreasing", "stable"
     volume_ratio: float  # 当前成交量/平均成交量
     volume_confirmation: bool  # 成交量是否确认趋势
@@ -87,6 +93,7 @@ class VolumeAnalysis:
 @dataclass
 class SupportResistance:
     """支撑阻力位分析"""
+
     nearest_support: float
     nearest_resistance: float
     support_strength: float  # 0-1
@@ -98,6 +105,7 @@ class SupportResistance:
 @dataclass
 class TradeSignal:
     """交易信号"""
+
     action: str  # "buy", "sell", "sell_short", "buy_to_cover", "hold"
     confidence: float  # 0-1 置信度
     strength: SignalStrength
@@ -113,6 +121,7 @@ class TradeSignal:
 @dataclass
 class MarketAnalysisResult:
     """综合市场分析结果"""
+
     state: MarketState
     trend: TrendAnalysis
     volatility: VolatilityAnalysis
@@ -135,7 +144,7 @@ class MarketStateAnalyzer:
         rsi_period: int = 14,
         ma_periods: list[int] = None,
         volatility_lookback: int = 100,
-        support_resistance_lookback: int = 50
+        support_resistance_lookback: int = 50,
     ):
         """
         初始化市场状态分析器
@@ -157,7 +166,7 @@ class MarketStateAnalyzer:
         self,
         df: pd.DataFrame,
         current_price: float,
-        multi_timeframe_trends: dict[str, str] | None = None
+        multi_timeframe_trends: dict[str, str] | None = None,
     ) -> MarketAnalysisResult:
         """
         执行完整的市场分析
@@ -186,14 +195,19 @@ class MarketStateAnalyzer:
         mtf_alignment = self._calculate_mtf_alignment(multi_timeframe_trends)
 
         # 计算综合评分
-        overall_score = self._calculate_overall_score(
-            trend, momentum, volume, mtf_alignment
-        )
+        overall_score = self._calculate_overall_score(trend, momentum, volume, mtf_alignment)
 
         # 生成交易信号
         signal = self._generate_signal(
-            state, trend, volatility, momentum, volume, sr,
-            current_price, overall_score, mtf_alignment
+            state,
+            trend,
+            volatility,
+            momentum,
+            volume,
+            sr,
+            current_price,
+            overall_score,
+            mtf_alignment,
         )
 
         return MarketAnalysisResult(
@@ -209,8 +223,8 @@ class MarketStateAnalyzer:
             analysis_timestamp=datetime.now().isoformat(),
             raw_data={
                 "current_price": current_price,
-                "multi_timeframe_trends": multi_timeframe_trends
-            }
+                "multi_timeframe_trends": multi_timeframe_trends,
+            },
         )
 
     def _analyze_trend(self, df: pd.DataFrame, current_price: float) -> TrendAnalysis:
@@ -221,7 +235,7 @@ class MarketStateAnalyzer:
                 strength=0.0,
                 ma_alignment="mixed",
                 price_position="at_ma",
-                momentum="stable"
+                momentum="stable",
             )
 
         latest = df.iloc[-1]
@@ -229,7 +243,7 @@ class MarketStateAnalyzer:
         # 获取均线值
         ma_values = {}
         for period in self.ma_periods:
-            col = f'ma_{period}'
+            col = f"ma_{period}"
             if col in df.columns:
                 val = latest.get(col)
                 if val is not None and not pd.isna(val):
@@ -241,7 +255,7 @@ class MarketStateAnalyzer:
                 strength=0.0,
                 ma_alignment="mixed",
                 price_position="at_ma",
-                momentum="stable"
+                momentum="stable",
             )
 
         # 判断均线排列
@@ -250,13 +264,11 @@ class MarketStateAnalyzer:
 
         # 检查是否多头排列（短期MA > 长期MA）
         is_bullish_aligned = all(
-            ma_sorted_values[i] >= ma_sorted_values[i+1]
-            for i in range(len(ma_sorted_values)-1)
+            ma_sorted_values[i] >= ma_sorted_values[i + 1] for i in range(len(ma_sorted_values) - 1)
         )
         # 检查是否空头排列
         is_bearish_aligned = all(
-            ma_sorted_values[i] <= ma_sorted_values[i+1]
-            for i in range(len(ma_sorted_values)-1)
+            ma_sorted_values[i] <= ma_sorted_values[i + 1] for i in range(len(ma_sorted_values) - 1)
         )
 
         if is_bullish_aligned:
@@ -277,9 +289,13 @@ class MarketStateAnalyzer:
 
         # 计算趋势强度
         if len(df) >= 10:
-            price_changes = df['close'].pct_change().tail(10)
+            price_changes = df["close"].pct_change().tail(10)
             avg_change = price_changes.mean()
-            trend_consistency = (price_changes > 0).sum() / len(price_changes) if avg_change > 0 else (price_changes < 0).sum() / len(price_changes)
+            trend_consistency = (
+                (price_changes > 0).sum() / len(price_changes)
+                if avg_change > 0
+                else (price_changes < 0).sum() / len(price_changes)
+            )
             strength = min(1.0, abs(avg_change) * 100 * trend_consistency)
         else:
             strength = 0.0
@@ -294,7 +310,7 @@ class MarketStateAnalyzer:
 
         # 判断动量变化
         if len(df) >= 5:
-            recent_changes = df['close'].pct_change().tail(5).values
+            recent_changes = df["close"].pct_change().tail(5).values
             if len(recent_changes) >= 5:
                 first_half = abs(recent_changes[:2]).mean() if len(recent_changes[:2]) > 0 else 0
                 second_half = abs(recent_changes[2:]).mean() if len(recent_changes[2:]) > 0 else 0
@@ -314,7 +330,7 @@ class MarketStateAnalyzer:
             strength=strength,
             ma_alignment=ma_alignment,
             price_position=price_position,
-            momentum=momentum
+            momentum=momentum,
         )
 
     def _analyze_volatility(self, df: pd.DataFrame, current_price: float) -> VolatilityAnalysis:
@@ -326,7 +342,7 @@ class MarketStateAnalyzer:
             bb_width=0.0,
             bb_width_percentile=50.0,
             suggested_sl_multiplier=1.5,
-            suggested_tp_multiplier=3.0
+            suggested_tp_multiplier=3.0,
         )
 
         if df.empty or len(df) < self.atr_period:
@@ -335,10 +351,10 @@ class MarketStateAnalyzer:
         latest = df.iloc[-1]
 
         # 获取ATR
-        atr_col = f'atr_{self.atr_period}'
+        atr_col = f"atr_{self.atr_period}"
         if atr_col not in df.columns:
             # 尝试其他ATR列
-            atr_cols = [c for c in df.columns if c.startswith('atr_')]
+            atr_cols = [c for c in df.columns if c.startswith("atr_")]
             if atr_cols:
                 atr_col = atr_cols[0]
             else:
@@ -358,18 +374,20 @@ class MarketStateAnalyzer:
         # 布林带宽度
         bb_width = 0.0
         bb_width_percentile = 50.0
-        if 'bb_upper' in df.columns and 'bb_lower' in df.columns:
-            bb_upper = latest.get('bb_upper', 0)
-            bb_lower = latest.get('bb_lower', 0)
-            bb_middle = latest.get('bb_middle', current_price)
+        if "bb_upper" in df.columns and "bb_lower" in df.columns:
+            bb_upper = latest.get("bb_upper", 0)
+            bb_lower = latest.get("bb_lower", 0)
+            bb_middle = latest.get("bb_middle", current_price)
 
             if bb_middle > 0 and not pd.isna(bb_upper) and not pd.isna(bb_lower):
                 bb_width = (bb_upper - bb_lower) / bb_middle
 
                 # 计算BB宽度历史百分位
                 df_copy = df.copy()
-                df_copy['bb_width'] = (df_copy['bb_upper'] - df_copy['bb_lower']) / df_copy['bb_middle']
-                bb_history = df_copy['bb_width'].dropna().tail(self.volatility_lookback)
+                df_copy["bb_width"] = (df_copy["bb_upper"] - df_copy["bb_lower"]) / df_copy[
+                    "bb_middle"
+                ]
+                bb_history = df_copy["bb_width"].dropna().tail(self.volatility_lookback)
                 if len(bb_history) > 0:
                     bb_width_percentile = (bb_history < bb_width).sum() / len(bb_history) * 100
 
@@ -394,7 +412,7 @@ class MarketStateAnalyzer:
             bb_width=float(bb_width),
             bb_width_percentile=float(bb_width_percentile),
             suggested_sl_multiplier=sl_mult,
-            suggested_tp_multiplier=tp_mult
+            suggested_tp_multiplier=tp_mult,
         )
 
     def _analyze_momentum(self, df: pd.DataFrame) -> MomentumAnalysis:
@@ -405,7 +423,7 @@ class MarketStateAnalyzer:
             rsi_divergence=None,
             macd_state="neutral",
             macd_histogram_trend="stable",
-            macd_crossover=None
+            macd_crossover=None,
         )
 
         if df.empty or len(df) < 2:
@@ -415,7 +433,7 @@ class MarketStateAnalyzer:
         previous = df.iloc[-2]
 
         # RSI分析
-        rsi = latest.get('rsi', 50)
+        rsi = latest.get("rsi", 50)
         if pd.isna(rsi):
             rsi = 50
 
@@ -429,8 +447,8 @@ class MarketStateAnalyzer:
         # RSI背离检测
         rsi_divergence = None
         if len(df) >= 10:
-            price_trend = df['close'].tail(10).diff().sum()
-            rsi_series = df['rsi'].tail(10).dropna()
+            price_trend = df["close"].tail(10).diff().sum()
+            rsi_series = df["rsi"].tail(10).dropna()
             if len(rsi_series) >= 2:
                 rsi_trend = rsi_series.diff().sum()
                 # 价格上涨但RSI下降 = 看跌背离
@@ -441,12 +459,12 @@ class MarketStateAnalyzer:
                     rsi_divergence = "bullish"
 
         # MACD分析
-        macd = latest.get('macd', 0)
-        macd_signal = latest.get('macd_signal', 0)
-        macd_hist = latest.get('macd_hist', 0)
-        prev_macd = previous.get('macd', 0)
-        prev_macd_signal = previous.get('macd_signal', 0)
-        prev_macd_hist = previous.get('macd_hist', 0)
+        macd = latest.get("macd", 0)
+        macd_signal = latest.get("macd_signal", 0)
+        macd_hist = latest.get("macd_hist", 0)
+        prev_macd = previous.get("macd", 0)
+        prev_macd_signal = previous.get("macd_signal", 0)
+        prev_macd_hist = previous.get("macd_hist", 0)
 
         # 处理NaN
         for var in [macd, macd_signal, macd_hist, prev_macd, prev_macd_signal, prev_macd_hist]:
@@ -485,34 +503,31 @@ class MarketStateAnalyzer:
             rsi_divergence=rsi_divergence,
             macd_state=macd_state,
             macd_histogram_trend=macd_histogram_trend,
-            macd_crossover=macd_crossover
+            macd_crossover=macd_crossover,
         )
 
     def _analyze_volume(self, df: pd.DataFrame) -> VolumeAnalysis:
         """分析成交量"""
         default_result = VolumeAnalysis(
-            volume_trend="stable",
-            volume_ratio=1.0,
-            volume_confirmation=False,
-            unusual_volume=False
+            volume_trend="stable", volume_ratio=1.0, volume_confirmation=False, unusual_volume=False
         )
 
-        if df.empty or 'volume' not in df.columns:
+        if df.empty or "volume" not in df.columns:
             return default_result
 
         if len(df) < 20:
             return default_result
 
-        latest_volume = df['volume'].iloc[-1]
+        latest_volume = df["volume"].iloc[-1]
         if pd.isna(latest_volume) or latest_volume == 0:
             return default_result
 
         # 计算成交量均值
-        volume_ma = df['volume'].tail(20).mean()
+        volume_ma = df["volume"].tail(20).mean()
         volume_ratio = latest_volume / volume_ma if volume_ma > 0 else 1.0
 
         # 成交量趋势
-        recent_volumes = df['volume'].tail(5)
+        recent_volumes = df["volume"].tail(5)
         if len(recent_volumes) >= 5:
             vol_change = recent_volumes.pct_change().mean()
             if vol_change > 0.1:
@@ -525,11 +540,11 @@ class MarketStateAnalyzer:
             volume_trend = "stable"
 
         # 是否异常成交量
-        volume_std = df['volume'].tail(50).std()
+        volume_std = df["volume"].tail(50).std()
         unusual_volume = latest_volume > volume_ma + 2 * volume_std
 
         # 成交量确认
-        price_change = df['close'].iloc[-1] - df['close'].iloc[-2] if len(df) >= 2 else 0
+        price_change = df["close"].iloc[-1] - df["close"].iloc[-2] if len(df) >= 2 else 0
         # 价格上涨+成交量放大 或 价格下跌+成交量放大 = 确认
         volume_confirmation = volume_ratio > 1.2 and abs(price_change) > 0
 
@@ -537,7 +552,7 @@ class MarketStateAnalyzer:
             volume_trend=volume_trend,
             volume_ratio=float(volume_ratio),
             volume_confirmation=volume_confirmation,
-            unusual_volume=unusual_volume
+            unusual_volume=unusual_volume,
         )
 
     def _analyze_support_resistance(
@@ -550,7 +565,7 @@ class MarketStateAnalyzer:
             support_strength=0.5,
             resistance_strength=0.5,
             price_to_support_pct=5.0,
-            price_to_resistance_pct=5.0
+            price_to_resistance_pct=5.0,
         )
 
         if df.empty or len(df) < self.sr_lookback:
@@ -559,8 +574,8 @@ class MarketStateAnalyzer:
         recent_df = df.tail(self.sr_lookback)
 
         # 找出局部高点和低点
-        highs = recent_df['high'].values
-        lows = recent_df['low'].values
+        highs = recent_df["high"].values
+        lows = recent_df["low"].values
 
         # 使用简单的方法找支撑阻力位
         # 支撑位：低于当前价格的局部低点
@@ -572,7 +587,9 @@ class MarketStateAnalyzer:
             # 找最近的支撑位（最高的低于当前价格的点）
             nearest_support = max(potential_supports)
             # 计算该价位被触及的次数作为强度
-            touches = sum(1 for low_val in lows if abs(low_val - nearest_support) / nearest_support < 0.01)
+            touches = sum(
+                1 for low_val in lows if abs(low_val - nearest_support) / nearest_support < 0.01
+            )
             support_strength = min(1.0, touches / 5)
         else:
             nearest_support = current_price * 0.95
@@ -580,7 +597,9 @@ class MarketStateAnalyzer:
 
         if potential_resistances:
             nearest_resistance = min(potential_resistances)
-            touches = sum(1 for h in highs if abs(h - nearest_resistance) / nearest_resistance < 0.01)
+            touches = sum(
+                1 for h in highs if abs(h - nearest_resistance) / nearest_resistance < 0.01
+            )
             resistance_strength = min(1.0, touches / 5)
         else:
             nearest_resistance = current_price * 1.05
@@ -595,14 +614,11 @@ class MarketStateAnalyzer:
             support_strength=float(support_strength),
             resistance_strength=float(resistance_strength),
             price_to_support_pct=float(price_to_support_pct),
-            price_to_resistance_pct=float(price_to_resistance_pct)
+            price_to_resistance_pct=float(price_to_resistance_pct),
         )
 
     def _determine_market_state(
-        self,
-        trend: TrendAnalysis,
-        momentum: MomentumAnalysis,
-        volatility: VolatilityAnalysis
+        self, trend: TrendAnalysis, momentum: MomentumAnalysis, volatility: VolatilityAnalysis
     ) -> MarketState:
         """确定市场状态"""
         # 检测突破
@@ -636,9 +652,7 @@ class MarketStateAnalyzer:
         else:
             return MarketState.CONSOLIDATION
 
-    def _calculate_mtf_alignment(
-        self, multi_timeframe_trends: dict[str, str] | None
-    ) -> float:
+    def _calculate_mtf_alignment(self, multi_timeframe_trends: dict[str, str] | None) -> float:
         """计算多周期一致性"""
         if not multi_timeframe_trends:
             return 0.5
@@ -669,7 +683,7 @@ class MarketStateAnalyzer:
         trend: TrendAnalysis,
         momentum: MomentumAnalysis,
         volume: VolumeAnalysis,
-        mtf_alignment: float
+        mtf_alignment: float,
     ) -> float:
         """计算综合评分 (-1 到 1)"""
         score = 0.0
@@ -728,7 +742,7 @@ class MarketStateAnalyzer:
         sr: SupportResistance,
         current_price: float,
         overall_score: float,
-        mtf_alignment: float
+        mtf_alignment: float,
     ) -> TradeSignal:
         """生成交易信号"""
         reasons = []
@@ -768,7 +782,11 @@ class MarketStateAnalyzer:
                     reasons.append("RSI看涨背离")
 
         elif overall_score < -score_threshold:
-            if state in [MarketState.STRONG_DOWNTREND, MarketState.DOWNTREND, MarketState.BREAKOUT_DOWN]:
+            if state in [
+                MarketState.STRONG_DOWNTREND,
+                MarketState.DOWNTREND,
+                MarketState.BREAKOUT_DOWN,
+            ]:
                 action = "sell_short"
                 confidence = min(0.9, 0.5 + abs(overall_score) * 0.4)
                 reasons.append(f"市场处于{state.value}状态")
@@ -821,7 +839,13 @@ class MarketStateAnalyzer:
         # 建议仓位比例（基于置信度和波动性调整）
         base_position = 0.1  # 基础10%
         confidence_factor = confidence
-        volatility_factor = 1.0 if volatility.volatility_state == "normal" else 0.7 if volatility.volatility_state == "high" else 0.5
+        volatility_factor = (
+            1.0
+            if volatility.volatility_state == "normal"
+            else 0.7
+            if volatility.volatility_state == "high"
+            else 0.5
+        )
         suggested_position_size_pct = base_position * confidence_factor * volatility_factor
 
         # 确定信号强度
@@ -849,7 +873,7 @@ class MarketStateAnalyzer:
             suggested_stop_loss=suggested_stop_loss,
             suggested_take_profit=suggested_take_profit,
             suggested_position_size_pct=suggested_position_size_pct,
-            warnings=warnings
+            warnings=warnings,
         )
 
 
@@ -916,7 +940,9 @@ def format_analysis_for_prompt(analysis: MarketAnalysisResult) -> str:
     sr = analysis.support_resistance
     lines.append("### 支撑阻力位")
     lines.append(f"- 最近支撑: ${sr.nearest_support:.2f} (距离: {sr.price_to_support_pct:.1f}%)")
-    lines.append(f"- 最近阻力: ${sr.nearest_resistance:.2f} (距离: {sr.price_to_resistance_pct:.1f}%)")
+    lines.append(
+        f"- 最近阻力: ${sr.nearest_resistance:.2f} (距离: {sr.price_to_resistance_pct:.1f}%)"
+    )
     lines.append("")
 
     # 交易信号

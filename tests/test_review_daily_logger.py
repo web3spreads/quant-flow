@@ -21,8 +21,7 @@ from pathlib import Path
 import pytest
 
 spec = importlib.util.spec_from_file_location(
-    "review_daily_logger",
-    Path(__file__).parent.parent / "src" / "agent" / "review_daily_logger.py"
+    "review_daily_logger", Path(__file__).parent.parent / "src" / "agent" / "review_daily_logger.py"
 )
 review_daily_logger_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(review_daily_logger_module)

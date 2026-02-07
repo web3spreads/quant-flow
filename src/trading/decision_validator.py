@@ -19,6 +19,7 @@ import pandas as pd
 
 class ValidationResult(StrEnum):
     """验证结果"""
+
     PASS = "pass"  # 通过验证
     WARN = "warn"  # 警告但允许
     BLOCK = "block"  # 阻止交易
@@ -26,6 +27,7 @@ class ValidationResult(StrEnum):
 
 class TrendDirection(StrEnum):
     """趋势方向"""
+
     STRONG_UP = "strong_up"
     UP = "up"
     NEUTRAL = "neutral"
@@ -36,6 +38,7 @@ class TrendDirection(StrEnum):
 
 class MarketRegime(StrEnum):
     """市场状态"""
+
     TRENDING_UP = "trending_up"
     TRENDING_DOWN = "trending_down"
     RANGING = "ranging"
@@ -47,6 +50,7 @@ class MarketRegime(StrEnum):
 @dataclass
 class TrendAnalysis:
     """趋势分析结果"""
+
     direction: TrendDirection
     strength: float  # 0-1
     consistency: float  # 趋势一致性 0-1
@@ -56,6 +60,7 @@ class TrendAnalysis:
 @dataclass
 class ValidationCheck:
     """单项验证检查结果"""
+
     name: str
     result: ValidationResult
     score: float  # 0-1
@@ -66,6 +71,7 @@ class ValidationCheck:
 @dataclass
 class DecisionValidation:
     """决策验证结果"""
+
     is_valid: bool
     overall_score: float  # 0-1 综合评分
     decision: str  # 原始决策
@@ -108,24 +114,20 @@ class DecisionValidator:
         require_trend_alignment: bool = True,
         min_aligned_timeframes: int = 2,  # 至少2个周期趋势一致
         trend_alignment_weight: float = 0.25,
-
         # 信号质量配置
         min_signal_score: float = 0.4,
         signal_quality_weight: float = 0.25,
-
         # 风险回报配置
         min_risk_reward_ratio: float = 1.5,
         risk_reward_weight: float = 0.20,
-
         # 市场环境配置
         avoid_high_volatility: bool = True,
         volatility_threshold: float = 2.5,  # ATR 倍数
         market_regime_weight: float = 0.15,
-
         # 入场时机配置
         prefer_pullback_entry: bool = True,
         max_chase_percent: float = 0.02,  # 追高/追低阈值
-        entry_timing_weight: float = 0.15
+        entry_timing_weight: float = 0.15,
     ):
         # 趋势共振
         self.require_trend_alignment = require_trend_alignment
@@ -161,7 +163,7 @@ class DecisionValidator:
         stop_loss_ratio: float,
         leverage: int = 1,
         df: pd.DataFrame | None = None,
-        signal_score: float | None = None
+        signal_score: float | None = None,
     ) -> DecisionValidation:
         """
         验证交易决策
@@ -196,15 +198,13 @@ class DecisionValidator:
                 checks=[],
                 blockers=[],
                 warnings=[],
-                suggestions=[]
+                suggestions=[],
             )
 
         is_long = decision == "BUY"
 
         # 1. 多周期趋势共振验证
-        trend_check = self._check_trend_alignment(
-            multi_timeframe_trends, is_long
-        )
+        trend_check = self._check_trend_alignment(multi_timeframe_trends, is_long)
         checks.append(trend_check)
         if trend_check.result == ValidationResult.BLOCK:
             blockers.append(trend_check.message)
@@ -212,9 +212,7 @@ class DecisionValidator:
             warnings.append(trend_check.message)
 
         # 2. 信号质量验证
-        signal_check = self._check_signal_quality(
-            indicators, signal_score, is_long
-        )
+        signal_check = self._check_signal_quality(indicators, signal_score, is_long)
         checks.append(signal_check)
         if signal_check.result == ValidationResult.BLOCK:
             blockers.append(signal_check.message)
@@ -222,9 +220,7 @@ class DecisionValidator:
             warnings.append(signal_check.message)
 
         # 3. 风险回报验证
-        rr_check = self._check_risk_reward(
-            take_profit_ratio, stop_loss_ratio, leverage
-        )
+        rr_check = self._check_risk_reward(take_profit_ratio, stop_loss_ratio, leverage)
         checks.append(rr_check)
         if rr_check.result == ValidationResult.BLOCK:
             blockers.append(rr_check.message)
@@ -232,9 +228,7 @@ class DecisionValidator:
             warnings.append(rr_check.message)
 
         # 4. 市场环境验证
-        market_check = self._check_market_regime(
-            indicators, df, is_long
-        )
+        market_check = self._check_market_regime(indicators, df, is_long)
         checks.append(market_check)
         if market_check.result == ValidationResult.BLOCK:
             blockers.append(market_check.message)
@@ -242,9 +236,7 @@ class DecisionValidator:
             warnings.append(market_check.message)
 
         # 5. 入场时机验证
-        entry_check = self._check_entry_timing(
-            current_price, indicators, df, is_long
-        )
+        entry_check = self._check_entry_timing(current_price, indicators, df, is_long)
         checks.append(entry_check)
         if entry_check.result == ValidationResult.BLOCK:
             blockers.append(entry_check.message)
@@ -257,7 +249,7 @@ class DecisionValidator:
             self.signal_quality_weight,
             self.risk_reward_weight,
             self.market_regime_weight,
-            self.entry_timing_weight
+            self.entry_timing_weight,
         ]
         scores = [check.score for check in checks]
         overall_score = sum(w * s for w, s in zip(weights, scores))
@@ -274,12 +266,10 @@ class DecisionValidator:
         size_multiplier = self._calculate_size_multiplier(checks, overall_score)
 
         # 计算建议入场价格
-        suggested_entry = self._calculate_suggested_entry(
-            current_price, indicators, df, is_long
-        )
+        suggested_entry = self._calculate_suggested_entry(current_price, indicators, df, is_long)
 
         # 是否等待回调
-        wait_for_pullback = entry_check.details.get('should_wait', False)
+        wait_for_pullback = entry_check.details.get("should_wait", False)
 
         return DecisionValidation(
             is_valid=is_valid,
@@ -292,13 +282,11 @@ class DecisionValidator:
             suggestions=suggestions,
             suggested_size_multiplier=size_multiplier,
             suggested_entry_price=suggested_entry,
-            wait_for_pullback=wait_for_pullback
+            wait_for_pullback=wait_for_pullback,
         )
 
     def _check_trend_alignment(
-        self,
-        multi_timeframe_trends: dict[str, str],
-        is_long: bool
+        self, multi_timeframe_trends: dict[str, str], is_long: bool
     ) -> ValidationCheck:
         """
         检查多周期趋势共振
@@ -320,7 +308,7 @@ class DecisionValidator:
             "15分钟": 0.8,
             "1小时": 1.0,
             "4小时": 1.2,
-            "日线": 1.5
+            "日线": 1.5,
         }
 
         weighted_alignment = 0.0
@@ -384,15 +372,12 @@ class DecisionValidator:
                 "aligned_count": aligned_count,
                 "opposite_count": opposite_count,
                 "total_count": total_count,
-                "weighted_alignment": weighted_alignment
-            }
+                "weighted_alignment": weighted_alignment,
+            },
         )
 
     def _check_signal_quality(
-        self,
-        indicators: dict[str, Any],
-        signal_score: float | None,
-        is_long: bool
+        self, indicators: dict[str, Any], signal_score: float | None, is_long: bool
     ) -> ValidationCheck:
         """
         检查信号质量
@@ -403,8 +388,8 @@ class DecisionValidator:
         details = {}
 
         # RSI 信号
-        rsi = indicators.get('rsi')
-        if rsi is not None and indicators.get('rsi_available', True):
+        rsi = indicators.get("rsi")
+        if rsi is not None and indicators.get("rsi_available", True):
             if is_long:
                 # 做多：RSI 在 30-50 较好（超卖区域），70以上危险
                 if rsi < 30:
@@ -426,15 +411,17 @@ class DecisionValidator:
                 else:
                     rsi_score = 0.2  # 超卖，不适合做空
 
-            scores.append(('rsi', rsi_score, 0.3))
-            details['rsi'] = {'value': rsi, 'score': rsi_score}
+            scores.append(("rsi", rsi_score, 0.3))
+            details["rsi"] = {"value": rsi, "score": rsi_score}
 
         # MACD 信号
-        macd = indicators.get('macd')
-        macd_signal = indicators.get('macd_signal')
-        macd_hist = indicators.get('macd_hist')
+        macd = indicators.get("macd")
+        macd_signal = indicators.get("macd_signal")
+        macd_hist = indicators.get("macd_hist")
 
-        if all(v is not None for v in [macd, macd_signal, macd_hist]) and indicators.get('macd_available', True):
+        if all(v is not None for v in [macd, macd_signal, macd_hist]) and indicators.get(
+            "macd_available", True
+        ):
             if is_long:
                 # 做多：MACD > 信号线，且柱状图为正
                 if macd > macd_signal and macd_hist > 0:
@@ -456,12 +443,17 @@ class DecisionValidator:
                 else:
                     macd_score = 0.3
 
-            scores.append(('macd', macd_score, 0.3))
-            details['macd'] = {'macd': macd, 'signal': macd_signal, 'hist': macd_hist, 'score': macd_score}
+            scores.append(("macd", macd_score, 0.3))
+            details["macd"] = {
+                "macd": macd,
+                "signal": macd_signal,
+                "hist": macd_hist,
+                "score": macd_score,
+            }
 
         # 布林带位置
-        bb_position = indicators.get('bb_position')
-        if bb_position is not None and indicators.get('bb_available', True):
+        bb_position = indicators.get("bb_position")
+        if bb_position is not None and indicators.get("bb_available", True):
             if is_long:
                 # 做多：接近下轨较好
                 if bb_position < 0.2:
@@ -483,12 +475,12 @@ class DecisionValidator:
                 else:
                     bb_score = 0.3
 
-            scores.append(('bb', bb_score, 0.2))
-            details['bb_position'] = {'value': bb_position, 'score': bb_score}
+            scores.append(("bb", bb_score, 0.2))
+            details["bb_position"] = {"value": bb_position, "score": bb_score}
 
         # 均线排列
-        ema_20 = indicators.get('ema_20')
-        current_price = indicators.get('current_price', 0)
+        ema_20 = indicators.get("ema_20")
+        current_price = indicators.get("current_price", 0)
 
         if ema_20 is not None and current_price > 0:
             if is_long:
@@ -504,13 +496,13 @@ class DecisionValidator:
                 else:
                     ma_score = 0.4
 
-            scores.append(('ma', ma_score, 0.2))
-            details['ma'] = {'ema_20': ema_20, 'price': current_price, 'score': ma_score}
+            scores.append(("ma", ma_score, 0.2))
+            details["ma"] = {"ema_20": ema_20, "price": current_price, "score": ma_score}
 
         # 使用外部信号评分（如果提供）
         if signal_score is not None:
-            scores.append(('external', signal_score, 0.3))
-            details['external_score'] = signal_score
+            scores.append(("external", signal_score, 0.3))
+            details["external_score"] = signal_score
 
         # 计算加权平均分
         if scores:
@@ -538,14 +530,11 @@ class DecisionValidator:
             result=result,
             score=weighted_score,
             message=message,
-            details=details
+            details=details,
         )
 
     def _check_risk_reward(
-        self,
-        take_profit_ratio: float,
-        stop_loss_ratio: float,
-        leverage: int
+        self, take_profit_ratio: float, stop_loss_ratio: float, leverage: int
     ) -> ValidationCheck:
         """
         检查风险回报比
@@ -593,15 +582,12 @@ class DecisionValidator:
                 "min_required": adjusted_min_rr,
                 "leverage": leverage,
                 "take_profit_ratio": take_profit_ratio,
-                "stop_loss_ratio": stop_loss_ratio
-            }
+                "stop_loss_ratio": stop_loss_ratio,
+            },
         )
 
     def _check_market_regime(
-        self,
-        indicators: dict[str, Any],
-        df: pd.DataFrame | None,
-        is_long: bool
+        self, indicators: dict[str, Any], df: pd.DataFrame | None, is_long: bool
     ) -> ValidationCheck:
         """
         检查市场环境
@@ -612,13 +598,13 @@ class DecisionValidator:
         warnings = []
 
         # 检查波动性
-        atr_14 = indicators.get('atr_14')
-        current_price = indicators.get('current_price', 0)
+        atr_14 = indicators.get("atr_14")
+        current_price = indicators.get("current_price", 0)
 
         volatility_score = 1.0
         if atr_14 is not None and current_price > 0:
             volatility_pct = atr_14 / current_price
-            details['volatility_pct'] = volatility_pct
+            details["volatility_pct"] = volatility_pct
 
             # 正常波动率约 1-2%，超过 3% 算高波动
             if volatility_pct > 0.03:
@@ -633,13 +619,13 @@ class DecisionValidator:
                 volatility_score = 1.0
 
         # 检查成交量
-        volume = indicators.get('volume')
-        volume_ma = indicators.get('volume_ma_20')
+        volume = indicators.get("volume")
+        volume_ma = indicators.get("volume_ma_20")
 
         volume_score = 1.0
         if volume is not None and volume_ma is not None and volume_ma > 0:
             volume_ratio = volume / volume_ma
-            details['volume_ratio'] = volume_ratio
+            details["volume_ratio"] = volume_ratio
 
             if volume_ratio < 0.5:
                 volume_score = 0.5
@@ -651,13 +637,13 @@ class DecisionValidator:
                 volume_score = 1.0
 
         # 检查价格相对位置
-        bb_upper = indicators.get('bb_upper')
-        bb_lower = indicators.get('bb_lower')
+        bb_upper = indicators.get("bb_upper")
+        bb_lower = indicators.get("bb_lower")
 
         price_position_score = 1.0
         if bb_upper is not None and bb_lower is not None and current_price > 0:
             bb_width = (bb_upper - bb_lower) / current_price
-            details['bb_width'] = bb_width
+            details["bb_width"] = bb_width
 
             # 布林带过窄可能预示突破
             if bb_width < 0.02:
@@ -668,18 +654,18 @@ class DecisionValidator:
         regime_score = 1.0
         if df is not None and len(df) >= 20:
             # 检查近期价格走势
-            recent_returns = df['close'].pct_change().tail(20)
+            recent_returns = df["close"].pct_change().tail(20)
 
             # 检查是否有大幅跳空或异常走势
             max_return = recent_returns.abs().max()
             if max_return > 0.05:
                 regime_score = 0.5
-                warnings.append(f"近期有{max_return*100:.1f}%的异常波动")
+                warnings.append(f"近期有{max_return * 100:.1f}%的异常波动")
 
             # 检查趋势强度
-            close_20 = df['close'].tail(20)
+            close_20 = df["close"].tail(20)
             trend_strength = (close_20.iloc[-1] - close_20.iloc[0]) / close_20.iloc[0]
-            details['trend_strength'] = trend_strength
+            details["trend_strength"] = trend_strength
 
             # 极端趋势可能面临回调风险
             if abs(trend_strength) > 0.1:
@@ -688,8 +674,12 @@ class DecisionValidator:
                     warnings.append("趋势过于延伸，回调风险高")
 
         # 综合得分
-        overall_score = (volatility_score * 0.3 + volume_score * 0.2 +
-                        price_position_score * 0.2 + regime_score * 0.3)
+        overall_score = (
+            volatility_score * 0.3
+            + volume_score * 0.2
+            + price_position_score * 0.2
+            + regime_score * 0.3
+        )
 
         # 判断结果
         if overall_score >= 0.7:
@@ -706,14 +696,14 @@ class DecisionValidator:
                 result = ValidationResult.WARN
                 message = f"市场环境风险: {', '.join(warnings[:2])}"
 
-        details['warnings'] = warnings
+        details["warnings"] = warnings
 
         return ValidationCheck(
             name="market_regime",
             result=result,
             score=overall_score,
             message=message,
-            details=details
+            details=details,
         )
 
     def _check_entry_timing(
@@ -721,7 +711,7 @@ class DecisionValidator:
         current_price: float,
         indicators: dict[str, Any],
         df: pd.DataFrame | None,
-        is_long: bool
+        is_long: bool,
     ) -> ValidationCheck:
         """
         检查入场时机
@@ -735,29 +725,29 @@ class DecisionValidator:
         entry_score = 1.0
 
         if df is not None and len(df) >= 10:
-            recent_high = df['high'].tail(10).max()
-            recent_low = df['low'].tail(10).min()
+            recent_high = df["high"].tail(10).max()
+            recent_low = df["low"].tail(10).min()
             recent_range = recent_high - recent_low
 
-            details['recent_high'] = recent_high
-            details['recent_low'] = recent_low
+            details["recent_high"] = recent_high
+            details["recent_low"] = recent_low
 
             if recent_range > 0:
                 price_position = (current_price - recent_low) / recent_range
-                details['price_position_in_range'] = price_position
+                details["price_position_in_range"] = price_position
 
                 if is_long:
                     # 做多：如果价格接近区间顶部，不是好的入场点
                     if price_position > 0.9:
                         entry_score = 0.3
                         should_wait = True
-                        details['issue'] = "价格接近区间顶部"
+                        details["issue"] = "价格接近区间顶部"
                     elif price_position > 0.7:
                         entry_score = 0.5
-                        details['issue'] = "价格偏高"
+                        details["issue"] = "价格偏高"
                     elif price_position < 0.3:
                         entry_score = 1.0
-                        details['advantage'] = "价格接近区间底部"
+                        details["advantage"] = "价格接近区间底部"
                     else:
                         entry_score = 0.7
                 else:
@@ -765,35 +755,40 @@ class DecisionValidator:
                     if price_position < 0.1:
                         entry_score = 0.3
                         should_wait = True
-                        details['issue'] = "价格接近区间底部"
+                        details["issue"] = "价格接近区间底部"
                     elif price_position < 0.3:
                         entry_score = 0.5
-                        details['issue'] = "价格偏低"
+                        details["issue"] = "价格偏低"
                     elif price_position > 0.7:
                         entry_score = 1.0
-                        details['advantage'] = "价格接近区间顶部"
+                        details["advantage"] = "价格接近区间顶部"
                     else:
                         entry_score = 0.7
 
         # 检查是否在追高/追低
-        ema_20 = indicators.get('ema_20')
+        ema_20 = indicators.get("ema_20")
         if ema_20 is not None and current_price > 0:
             deviation = (current_price - ema_20) / ema_20
-            details['deviation_from_ema'] = deviation
+            details["deviation_from_ema"] = deviation
 
-            if is_long and deviation > self.max_chase_percent or not is_long and deviation < -self.max_chase_percent:
+            if (
+                is_long
+                and deviation > self.max_chase_percent
+                or not is_long
+                and deviation < -self.max_chase_percent
+            ):
                 entry_score = min(entry_score, 0.4)
                 should_wait = True
-                details['chasing'] = True
+                details["chasing"] = True
 
         # RSI 极端值检查
-        rsi = indicators.get('rsi')
+        rsi = indicators.get("rsi")
         if rsi is not None and (is_long and rsi > 75 or not is_long and rsi < 25):
             entry_score = min(entry_score, 0.3)
             should_wait = True
-            details['rsi_extreme'] = True
+            details["rsi_extreme"] = True
 
-        details['should_wait'] = should_wait
+        details["should_wait"] = should_wait
 
         # 判断结果
         if entry_score >= 0.7:
@@ -811,17 +806,11 @@ class DecisionValidator:
                 message = "入场时机不佳"
 
         return ValidationCheck(
-            name="entry_timing",
-            result=result,
-            score=entry_score,
-            message=message,
-            details=details
+            name="entry_timing", result=result, score=entry_score, message=message, details=details
         )
 
     def _calculate_size_multiplier(
-        self,
-        checks: list[ValidationCheck],
-        overall_score: float
+        self, checks: list[ValidationCheck], overall_score: float
     ) -> float:
         """
         根据验证结果计算仓位调整系数
@@ -844,7 +833,7 @@ class DecisionValidator:
         current_price: float,
         indicators: dict[str, Any],
         df: pd.DataFrame | None,
-        is_long: bool
+        is_long: bool,
     ) -> float | None:
         """
         计算建议的入场价格
@@ -852,9 +841,9 @@ class DecisionValidator:
         如果当前价格不理想，给出更好的入场价格建议
         """
         # 使用 EMA 和支撑/阻力计算建议价格
-        ema_20 = indicators.get('ema_20')
-        bb_lower = indicators.get('bb_lower')
-        bb_upper = indicators.get('bb_upper')
+        ema_20 = indicators.get("ema_20")
+        bb_lower = indicators.get("bb_lower")
+        bb_upper = indicators.get("bb_upper")
 
         if is_long:
             # 做多：建议在 EMA 或布林带下轨附近入场
@@ -890,14 +879,16 @@ def create_validator_from_config(config: dict[str, Any]) -> DecisionValidator:
     Returns:
         DecisionValidator 实例
     """
-    enhanced_config = config.get('enhanced_analysis', {})
+    enhanced_config = config.get("enhanced_analysis", {})
 
     return DecisionValidator(
-        require_trend_alignment=enhanced_config.get('require_trend_alignment', True),
-        min_aligned_timeframes=enhanced_config.get('min_aligned_timeframes', 2),
-        min_signal_score=enhanced_config.get('min_confidence', 0.4),
-        min_risk_reward_ratio=config.get('account_protection', {}).get('min_risk_reward_ratio', 1.5),
-        avoid_high_volatility=enhanced_config.get('avoid_high_volatility', True),
-        prefer_pullback_entry=enhanced_config.get('prefer_pullback_entry', True),
-        max_chase_percent=enhanced_config.get('max_chase_percent', 0.02)
+        require_trend_alignment=enhanced_config.get("require_trend_alignment", True),
+        min_aligned_timeframes=enhanced_config.get("min_aligned_timeframes", 2),
+        min_signal_score=enhanced_config.get("min_confidence", 0.4),
+        min_risk_reward_ratio=config.get("account_protection", {}).get(
+            "min_risk_reward_ratio", 1.5
+        ),
+        avoid_high_volatility=enhanced_config.get("avoid_high_volatility", True),
+        prefer_pullback_entry=enhanced_config.get("prefer_pullback_entry", True),
+        max_chase_percent=enhanced_config.get("max_chase_percent", 0.02),
     )

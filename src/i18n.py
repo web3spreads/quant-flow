@@ -36,7 +36,6 @@ LANGUAGE_RESOURCES = {
         "risk_high": "较高",
         "risk_moderate": "适中",
         "watch_price_notice": "请关注价格走势，及时调整策略",
-
         # 账户余额相关
         "account_balance": "账户余额（实时）",
         "total_value": "账户总价值",
@@ -49,11 +48,9 @@ LANGUAGE_RESOURCES = {
         "large_loss_notice": "关注未实现盈亏，如果亏损较大应更谨慎",
         "balance_check_for_dca": "你必须根据可用余额决定是否定投",
         "insufficient_balance_dca": "如果可用余额不足，必须选择 do_nothing",
-
         # 历史决策相关
         "historical_summary": "历史决策汇总",
         "historical_hint": "以上是你过去的决策记录汇总，可以帮助你理解市场演变和之前的策略。但请基于当前市场数据做出独立判断。",
-
         # 趋势相关
         "multi_timeframe_trends": "多时间周期趋势",
         "daily": "日线",
@@ -61,58 +58,48 @@ LANGUAGE_RESOURCES = {
         "1h": "1小时",
         "15m": "15分钟",
         "1m": "1分钟",
-
         # 现货相关
         "has_spot": "已持有 ✅",
         "no_spot": "未持有 ❌",
-
         # Recommendation related
         "recommendation_reason_default": "未提供原因",
         "recommendation_timestamp_default": "未知时间",
-
         # Yes/No indicators
         "yes": "是 ✅",
         "no": "否 ❌",
-
         # Data enricher - Price trend analysis
         "trend_rising": "上升趋势",
         "trend_falling": "下降趋势",
         "trend_sideways": "横盘整理",
         "price_data_error_zero": "价格数据异常(起始价为0)",
-
         # Data enricher - MACD analysis
         "macd_golden_cross_above_zero": "金叉且位于零轴上方(强势多头)",
         "macd_golden_cross_below_zero": "金叉但位于零轴下方(多头转强)",
         "macd_death_cross_below_zero": "死叉且位于零轴下方(强势空头)",
         "macd_death_cross_above_zero": "死叉但位于零轴上方(空头转强)",
-
         # Data enricher - RSI analysis
         "rsi_overbought": "超买区",
         "rsi_oversold": "超卖区",
         "rsi_strong": "偏强",
         "rsi_weak": "偏弱",
         "rsi_neutral": "中性",
-
         # Data enricher - EMA analysis
         "price_above_ema20": "价格在EMA20上方",
         "price_below_ema20": "价格在EMA20下方",
         "price_near_ema20": "价格接近EMA20",
         "ema_data_error": "EMA数据异常(价格或EMA为0)",
-
         # Data enricher - Volume analysis
         "volume_surge": "明显放量",
         "volume_increase": "温和放量",
         "volume_decline": "明显缩量",
         "volume_normal": "成交量正常",
         "volume_data_error": "成交量数据异常(平均成交量为0)",
-
         # Data enricher - 4H trend analysis
         "h4_bullish_alignment": "4小时多头排列(强势)",
         "h4_bearish_alignment": "4小时空头排列(弱势)",
         "h4_bullish": "4小时偏多",
         "h4_bearish": "4小时偏空",
         "h4_ranging": "4小时震荡",
-
         # Data enricher - Composite signals
         "signal_macd_bullish": "MACD多头",
         "signal_macd_bearish": "MACD空头",
@@ -121,12 +108,10 @@ LANGUAGE_RESOURCES = {
         "signal_price_above_ema": "价格在EMA上方",
         "signal_price_below_ema": "价格在EMA下方",
         "signal_none": "无明显信号",
-
         # Common labels
         "hint_label": "提示",
         "unknown": "未知",
         "times_unit": "倍",
-
         # 最近操作记录相关
         "recent_trades_title": "最近 1 小时该币种的操作记录",
         "recent_trades_count": "成交笔数",
@@ -169,7 +154,6 @@ LANGUAGE_RESOURCES = {
         "risk_high": "high",
         "risk_moderate": "moderate",
         "watch_price_notice": "Monitor price movements and adjust strategy accordingly",
-
         # Account balance related
         "account_balance": "Account Balance (Real-time)",
         "total_value": "Total Account Value",
@@ -182,11 +166,9 @@ LANGUAGE_RESOURCES = {
         "large_loss_notice": "Monitor unrealized P&L; be more cautious if losses are significant",
         "balance_check_for_dca": "You must decide whether to invest based on available balance",
         "insufficient_balance_dca": "If available balance is insufficient, you must choose do_nothing",
-
         # Historical decisions related
         "historical_summary": "Historical Decision Summary",
         "historical_hint": "The above is a summary of your past decision records, which can help you understand market evolution and previous strategies. However, please make independent judgments based on current market data.",
-
         # Trend related
         "multi_timeframe_trends": "Multi-Timeframe Trends",
         "daily": "Daily",
@@ -194,58 +176,48 @@ LANGUAGE_RESOURCES = {
         "1h": "1-Hour",
         "15m": "15-Minute",
         "1m": "1-Minute",
-
         # Spot related
         "has_spot": "Held ✅",
         "no_spot": "Not Held ❌",
-
         # Recommendation related
         "recommendation_reason_default": "No reason provided",
         "recommendation_timestamp_default": "Unknown time",
-
         # Yes/No indicators
         "yes": "Yes ✅",
         "no": "No ❌",
-
         # Data enricher - Price trend analysis
         "trend_rising": "Rising trend",
         "trend_falling": "Falling trend",
         "trend_sideways": "Sideways",
         "price_data_error_zero": "Price data error (starting price is 0)",
-
         # Data enricher - MACD analysis
         "macd_golden_cross_above_zero": "Golden cross above zero (strong bullish)",
         "macd_golden_cross_below_zero": "Golden cross below zero (turning bullish)",
         "macd_death_cross_below_zero": "Death cross below zero (strong bearish)",
         "macd_death_cross_above_zero": "Death cross above zero (turning bearish)",
-
         # Data enricher - RSI analysis
         "rsi_overbought": "Overbought",
         "rsi_oversold": "Oversold",
         "rsi_strong": "Strong",
         "rsi_weak": "Weak",
         "rsi_neutral": "Neutral",
-
         # Data enricher - EMA analysis
         "price_above_ema20": "Price above EMA20",
         "price_below_ema20": "Price below EMA20",
         "price_near_ema20": "Price near EMA20",
         "ema_data_error": "EMA data error (price or EMA is 0)",
-
         # Data enricher - Volume analysis
         "volume_surge": "Significant surge",
         "volume_increase": "Moderate increase",
         "volume_decline": "Significant decline",
         "volume_normal": "Normal volume",
         "volume_data_error": "Volume data error (average volume is 0)",
-
         # Data enricher - 4H trend analysis
         "h4_bullish_alignment": "4H bullish alignment (strong)",
         "h4_bearish_alignment": "4H bearish alignment (weak)",
         "h4_bullish": "4H bullish",
         "h4_bearish": "4H bearish",
         "h4_ranging": "4H ranging",
-
         # Data enricher - Composite signals
         "signal_macd_bullish": "MACD bullish",
         "signal_macd_bearish": "MACD bearish",
@@ -254,12 +226,10 @@ LANGUAGE_RESOURCES = {
         "signal_price_above_ema": "Price above EMA",
         "signal_price_below_ema": "Price below EMA",
         "signal_none": "No clear signal",
-
         # Common labels
         "hint_label": "Hint",
         "unknown": "Unknown",
         "times_unit": "x",
-
         # Recent trades related
         "recent_trades_title": "Recent Trades for This Symbol (Last 1 Hour)",
         "recent_trades_count": "Number of Trades",
@@ -272,7 +242,7 @@ LANGUAGE_RESOURCES = {
         "recent_trades_open_short": "Open Short",
         "recent_trades_close_short": "Close Short",
         "recent_trades_pnl": "P&L",
-    }
+    },
 }
 
 

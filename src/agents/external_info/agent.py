@@ -54,7 +54,7 @@ class ExternalInfoAgent:
         # 验证 Exa API 密钥
         if not exa_api_key:
             raise ValueError(
-                "exa_api_key 参数不能为空。" "请在配置文件中设置 external_info_agent.exa_api_key"
+                "exa_api_key 参数不能为空。请在配置文件中设置 external_info_agent.exa_api_key"
             )
         self.exa_api_key = exa_api_key
 

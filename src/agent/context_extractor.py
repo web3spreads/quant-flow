@@ -98,9 +98,7 @@ class _DeprecatedContextExtractor:
         if atr:
             ratio = abs(float(atr)) / price
         elif market_data.get("bb_upper") and market_data.get("bb_lower"):
-            bb_range = float(market_data["bb_upper"]) - float(
-                market_data["bb_lower"]
-            )
+            bb_range = float(market_data["bb_upper"]) - float(market_data["bb_lower"])
             ratio = bb_range / price if price else 0.0
         else:
             ratio = self._volatility_from_history(decision_records, price)

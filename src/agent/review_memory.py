@@ -170,9 +170,7 @@ class ReviewMemoryStore:
                 "action": action[:80],
                 "conditions": (item.get("conditions") or [])[:4],
                 "confidence": round(confidence, 3),
-                "original_confidence": float(
-                    item.get("original_confidence", confidence)
-                ),
+                "original_confidence": float(item.get("original_confidence", confidence)),
                 "evidence": (item.get("evidence") or [])[:5],
                 "last_seen": item.get("last_seen", now_text),
                 "support_count": int(item.get("support_count", 1)),
@@ -190,9 +188,7 @@ class ReviewMemoryStore:
             if found:
                 # 合并已有规则
                 found["support_count"] = found.get("support_count", 1) + 1
-                found["confidence"] = round(
-                    (found.get("confidence", 0.5) + confidence) / 2, 3
-                )
+                found["confidence"] = round((found.get("confidence", 0.5) + confidence) / 2, 3)
                 found["original_confidence"] = round(
                     (
                         found.get("original_confidence", found["confidence"])
@@ -201,9 +197,7 @@ class ReviewMemoryStore:
                     / 2,
                     3,
                 )
-                found["conditions"] = normalized["conditions"] or found.get(
-                    "conditions", []
-                )
+                found["conditions"] = normalized["conditions"] or found.get("conditions", [])
                 found["evidence"] = normalized["evidence"] or found.get("evidence", [])
                 found["similarity_score"] = max(
                     normalized.get("similarity_score", 0),

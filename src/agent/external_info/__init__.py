@@ -18,6 +18,7 @@ def __getattr__(name):
         "ALL_TOOLS",
     ):
         from src.agents.external_info import tools
+
         return getattr(tools, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -28,5 +29,5 @@ __all__ = [
     "search_crypto_regulatory_news",
     "search_crypto_macro_news",
     "create_period_search_queries",
-    "ALL_TOOLS"
+    "ALL_TOOLS",
 ]

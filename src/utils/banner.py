@@ -13,7 +13,7 @@ def create_startup_banner(
     subtitle: str = "Multi-Agent AI Trading System",
     platform: str = "Hyperliquid",
     version: str | None = None,
-    console: Console | None = None
+    console: Console | None = None,
 ) -> Panel:
     """
     创建居中对齐的启动横幅
@@ -48,21 +48,12 @@ def create_startup_banner(
     content.append("\n")
 
     # 创建面板
-    panel = Panel(
-        content,
-        title=title_text,
-        border_style="bold cyan",
-        padding=(1, 2),
-        expand=False
-    )
+    panel = Panel(content, title=title_text, border_style="bold cyan", padding=(1, 2), expand=False)
 
     return panel
 
 
-def print_startup_banner(
-    config: any | None = None,
-    console: Console | None = None
-):
+def print_startup_banner(config: any | None = None, console: Console | None = None):
     """
     打印启动横幅和配置信息
 
@@ -79,7 +70,7 @@ def print_startup_banner(
         subtitle="Multi-Agent AI Trading System",
         platform="Hyperliquid",
         version="2.0.0",
-        console=console
+        console=console,
     )
 
     console.print("\n")
@@ -93,10 +84,7 @@ def print_startup_banner(
 
 
 def print_section_separator(
-    console: Console | None = None,
-    char: str = "═",
-    length: int = 80,
-    style: str = "dim cyan"
+    console: Console | None = None, char: str = "═", length: int = 80, style: str = "dim cyan"
 ):
     """
     打印章节分隔线
@@ -118,7 +106,7 @@ def print_box_message(
     title: str = "",
     console: Console | None = None,
     border_style: str = "cyan",
-    padding: tuple = (1, 2)
+    padding: tuple = (1, 2),
 ):
     """
     打印带边框的消息
@@ -133,11 +121,6 @@ def print_box_message(
     if console is None:
         console = Console()
 
-    panel = Panel(
-        message,
-        title=title,
-        border_style=border_style,
-        padding=padding
-    )
+    panel = Panel(message, title=title, border_style=border_style, padding=padding)
 
     console.print(panel)

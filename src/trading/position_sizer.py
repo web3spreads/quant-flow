@@ -17,6 +17,7 @@ from typing import Any
 
 class PositionSizeMethod(StrEnum):
     """仓位计算方法"""
+
     FIXED = "fixed"  # 固定金额
     KELLY = "kelly"  # 凯利公式
     VOLATILITY_ADJUSTED = "volatility_adjusted"  # 波动率调整
@@ -27,6 +28,7 @@ class PositionSizeMethod(StrEnum):
 @dataclass
 class PositionSizeResult:
     """仓位计算结果"""
+
     method: PositionSizeMethod
     base_size: float  # 基础仓位（美元）
     adjusted_size: float  # 调整后仓位（美元）
@@ -60,6 +62,7 @@ class PositionSizeResult:
 @dataclass
 class TradeHistory:
     """交易历史记录"""
+
     is_win: bool
     pnl_pct: float  # 盈亏百分比
     signal_score: float  # 当时的信号评分
@@ -82,7 +85,7 @@ class PositionSizer:
         max_position_ratio: float = 1.0,  # 最大仓位比例
         volatility_lookback: int = 20,  # 波动率回看周期
         drawdown_sensitivity: float = 2.0,  # 回撤敏感度
-        win_rate_lookback: int = 20  # 胜率计算回看周期
+        win_rate_lookback: int = 20,  # 胜率计算回看周期
     ):
         self.max_position_size = max_position_size
         self.max_account_risk = max_account_risk
@@ -109,7 +112,7 @@ class PositionSizer:
         current_volatility: float | None = None,
         average_volatility: float | None = None,
         current_exposure: float = 0.0,
-        method: PositionSizeMethod = PositionSizeMethod.SIGNAL_BASED
+        method: PositionSizeMethod = PositionSizeMethod.SIGNAL_BASED,
     ) -> PositionSizeResult:
         """
         计算仓位大小
@@ -127,9 +130,7 @@ class PositionSizer:
             PositionSizeResult
         """
         # 基础仓位：基于风险预算
-        base_size = self._calculate_risk_based_size(
-            account_balance, stop_loss_pct
-        )
+        base_size = self._calculate_risk_based_size(account_balance, stop_loss_pct)
 
         # 不超过最大仓位限制
         base_size = min(base_size, self.max_position_size)
@@ -145,20 +146,17 @@ class PositionSizer:
         # 1. 凯利因子
         if method in [PositionSizeMethod.KELLY, PositionSizeMethod.SIGNAL_BASED]:
             kelly_factor = self._calculate_kelly_factor(signal_score, stop_loss_pct)
-            details['kelly'] = {
-                'win_rate': self._get_win_rate(),
-                'avg_win': self._get_average_win(),
-                'avg_loss': self._get_average_loss(),
-                'kelly_pct': kelly_factor
+            details["kelly"] = {
+                "win_rate": self._get_win_rate(),
+                "avg_win": self._get_average_win(),
+                "avg_loss": self._get_average_loss(),
+                "kelly_pct": kelly_factor,
             }
 
         # 2. 信号因子
         if method in [PositionSizeMethod.SIGNAL_BASED]:
             signal_factor = self._calculate_signal_factor(signal_score)
-            details['signal'] = {
-                'score': signal_score,
-                'factor': signal_factor
-            }
+            details["signal"] = {"score": signal_score, "factor": signal_factor}
 
         # 3. 波动率因子
         if method in [PositionSizeMethod.VOLATILITY_ADJUSTED, PositionSizeMethod.SIGNAL_BASED]:
@@ -166,43 +164,35 @@ class PositionSizer:
                 volatility_factor = self._calculate_volatility_factor(
                     current_volatility, average_volatility
                 )
-                details['volatility'] = {
-                    'current': current_volatility,
-                    'average': average_volatility,
-                    'factor': volatility_factor
+                details["volatility"] = {
+                    "current": current_volatility,
+                    "average": average_volatility,
+                    "factor": volatility_factor,
                 }
 
         # 4. 回撤因子
         drawdown_factor = self._calculate_drawdown_factor()
         if drawdown_factor != 1.0:
-            details['drawdown'] = {
-                'current_dd': self._current_drawdown,
-                'factor': drawdown_factor
-            }
+            details["drawdown"] = {"current_dd": self._current_drawdown, "factor": drawdown_factor}
 
         # 5. 敞口限制因子
         exposure_factor = self._calculate_exposure_factor(
             account_balance, current_exposure, base_size
         )
-        details['exposure'] = {
-            'current': current_exposure,
-            'max': self.max_total_exposure,
-            'factor': exposure_factor
+        details["exposure"] = {
+            "current": current_exposure,
+            "max": self.max_total_exposure,
+            "factor": exposure_factor,
         }
 
         # 综合计算调整后仓位
         combined_factor = (
-            kelly_factor *
-            signal_factor *
-            volatility_factor *
-            drawdown_factor *
-            exposure_factor
+            kelly_factor * signal_factor * volatility_factor * drawdown_factor * exposure_factor
         )
 
         # 限制在允许范围内
         combined_factor = max(
-            self.min_position_ratio,
-            min(self.max_position_ratio, combined_factor)
+            self.min_position_ratio, min(self.max_position_ratio, combined_factor)
         )
 
         # 如果敞口因子为0，强制设为0
@@ -230,14 +220,10 @@ class PositionSizer:
             signal_factor=signal_factor,
             volatility_factor=volatility_factor,
             drawdown_factor=drawdown_factor,
-            details=details
+            details=details,
         )
 
-    def _calculate_risk_based_size(
-        self,
-        account_balance: float,
-        stop_loss_pct: float
-    ) -> float:
+    def _calculate_risk_based_size(self, account_balance: float, stop_loss_pct: float) -> float:
         """
         基于风险预算计算仓位
 
@@ -248,11 +234,7 @@ class PositionSizer:
 
         return account_balance * self.max_account_risk / stop_loss_pct
 
-    def _calculate_kelly_factor(
-        self,
-        signal_score: float,
-        stop_loss_pct: float
-    ) -> float:
+    def _calculate_kelly_factor(self, signal_score: float, stop_loss_pct: float) -> float:
         """
         计算凯利因子
 
@@ -310,9 +292,7 @@ class PositionSizer:
             return 0.2  # 最小仓位
 
     def _calculate_volatility_factor(
-        self,
-        current_volatility: float,
-        average_volatility: float
+        self, current_volatility: float, average_volatility: float
     ) -> float:
         """
         基于波动率计算仓位因子
@@ -358,10 +338,7 @@ class PositionSizer:
             return 0.2
 
     def _calculate_exposure_factor(
-        self,
-        account_balance: float,
-        current_exposure: float,
-        proposed_size: float
+        self, account_balance: float, current_exposure: float, proposed_size: float
     ) -> float:
         """
         基于当前敞口计算仓位因子
@@ -389,7 +366,7 @@ class PositionSizer:
         if not self._trade_history:
             return 0.5  # 默认50%
 
-        recent = self._trade_history[-self.win_rate_lookback:]
+        recent = self._trade_history[-self.win_rate_lookback :]
         wins = sum(1 for t in recent if t.is_win)
         return wins / len(recent) if recent else 0.5
 
@@ -416,11 +393,9 @@ class PositionSizer:
             pnl_pct: 盈亏百分比（正数=盈利，负数=亏损）
             signal_score: 开仓时的信号评分
         """
-        self._trade_history.append(TradeHistory(
-            is_win=is_win,
-            pnl_pct=pnl_pct,
-            signal_score=signal_score
-        ))
+        self._trade_history.append(
+            TradeHistory(is_win=is_win, pnl_pct=pnl_pct, signal_score=signal_score)
+        )
 
         # 限制历史记录长度
         max_history = self.win_rate_lookback * 2
@@ -452,14 +427,16 @@ class PositionSizer:
     def get_statistics(self) -> dict[str, Any]:
         """获取统计信息"""
         return {
-            'total_trades': len(self._trade_history),
-            'win_rate': self._get_win_rate(),
-            'avg_win': self._get_average_win(),
-            'avg_loss': self._get_average_loss(),
-            'profit_factor': self._get_average_win() / self._get_average_loss() if self._get_average_loss() > 0 else 0,
-            'current_drawdown': self._current_drawdown,
-            'peak_balance': self._peak_balance,
-            'consecutive_losses': self.get_consecutive_losses()
+            "total_trades": len(self._trade_history),
+            "win_rate": self._get_win_rate(),
+            "avg_win": self._get_average_win(),
+            "avg_loss": self._get_average_loss(),
+            "profit_factor": self._get_average_win() / self._get_average_loss()
+            if self._get_average_loss() > 0
+            else 0,
+            "current_drawdown": self._current_drawdown,
+            "peak_balance": self._peak_balance,
+            "consecutive_losses": self.get_consecutive_losses(),
         }
 
 
@@ -467,7 +444,7 @@ def calculate_optimal_leverage(
     signal_score: float,
     stop_loss_pct: float,
     max_leverage: int = 10,
-    max_risk_per_trade: float = 0.02
+    max_risk_per_trade: float = 0.02,
 ) -> int:
     """
     计算最优杠杆倍数
@@ -518,15 +495,15 @@ def create_position_sizer_from_config(config: dict[str, Any]) -> PositionSizer:
     Returns:
         PositionSizer 实例
     """
-    trading_config = config.get('trading', {})
-    enhanced_config = config.get('enhanced_analysis', {})
-    risk_config = enhanced_config.get('risk', {})
+    trading_config = config.get("trading", {})
+    enhanced_config = config.get("enhanced_analysis", {})
+    risk_config = enhanced_config.get("risk", {})
 
     return PositionSizer(
-        max_position_size=trading_config.get('max_trade_amount', 1000.0),
-        max_account_risk=risk_config.get('max_risk_per_trade', 0.02),
-        max_total_exposure=risk_config.get('max_total_exposure', 0.5),
-        kelly_fraction=risk_config.get('kelly_fraction', 0.25),
-        min_position_ratio=risk_config.get('min_position_ratio', 0.1),
-        max_position_ratio=risk_config.get('max_position_ratio', 1.0)
+        max_position_size=trading_config.get("max_trade_amount", 1000.0),
+        max_account_risk=risk_config.get("max_risk_per_trade", 0.02),
+        max_total_exposure=risk_config.get("max_total_exposure", 0.5),
+        kelly_fraction=risk_config.get("kelly_fraction", 0.25),
+        min_position_ratio=risk_config.get("min_position_ratio", 0.1),
+        max_position_ratio=risk_config.get("max_position_ratio", 1.0),
     )

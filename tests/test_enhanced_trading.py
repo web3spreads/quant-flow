@@ -57,14 +57,16 @@ def create_sample_df(periods: int = 100, trend: str = "up") -> pd.DataFrame:
     else:  # sideways
         prices = base_price + np.random.randn(periods) * 200
 
-    df = pd.DataFrame({
-        "timestamp": dates,
-        "open": prices - np.random.rand(periods) * 50,
-        "high": prices + np.random.rand(periods) * 100,
-        "low": prices - np.random.rand(periods) * 100,
-        "close": prices,
-        "volume": np.random.rand(periods) * 1000000 + 500000
-    })
+    df = pd.DataFrame(
+        {
+            "timestamp": dates,
+            "open": prices - np.random.rand(periods) * 50,
+            "high": prices + np.random.rand(periods) * 100,
+            "low": prices - np.random.rand(periods) * 100,
+            "close": prices,
+            "volume": np.random.rand(periods) * 1000000 + 500000,
+        }
+    )
 
     # 添加技术指标
     df["ma_7"] = df["close"].rolling(7).mean()
@@ -144,7 +146,7 @@ class TestMarketStateAnalyzer:
             MarketState.CONSOLIDATION,
             MarketState.BREAKOUT_DOWN,
             MarketState.REVERSAL_BEARISH,
-            MarketState.UNKNOWN
+            MarketState.UNKNOWN,
         ]
 
     def test_multi_timeframe_alignment(self):
@@ -153,11 +155,7 @@ class TestMarketStateAnalyzer:
         df = create_sample_df(100, trend="up")
         current_price = df["close"].iloc[-1]
 
-        mtf_trends = {
-            "15m": "上涨趋势",
-            "1h": "强势上涨",
-            "4h": "上涨"
-        }
+        mtf_trends = {"15m": "上涨趋势", "1h": "强势上涨", "4h": "上涨"}
 
         result = analyzer.analyze(df, current_price, mtf_trends)
 
@@ -190,9 +188,7 @@ class TestRiskManager:
     def test_custom_risk_parameters(self):
         """测试自定义风险参数"""
         params = RiskParameters(
-            max_risk_per_trade=0.03,
-            default_stop_loss_pct=0.025,
-            atr_stop_loss_multiplier=2.0
+            max_risk_per_trade=0.03, default_stop_loss_pct=0.025, atr_stop_loss_multiplier=2.0
         )
         rm = RiskManager(risk_params=params)
 
@@ -205,10 +201,7 @@ class TestRiskManager:
         rm = RiskManager()
 
         result = rm.calculate_dynamic_stop_loss(
-            entry_price=50000.0,
-            is_long=True,
-            current_atr=500.0,
-            volatility_state="normal"
+            entry_price=50000.0, is_long=True, current_atr=500.0, volatility_state="normal"
         )
 
         assert isinstance(result, StopLossResult)
@@ -220,10 +213,7 @@ class TestRiskManager:
         rm = RiskManager()
 
         result = rm.calculate_dynamic_stop_loss(
-            entry_price=50000.0,
-            is_long=False,
-            current_atr=500.0,
-            volatility_state="normal"
+            entry_price=50000.0, is_long=False, current_atr=500.0, volatility_state="normal"
         )
 
         assert isinstance(result, StopLossResult)
@@ -234,16 +224,14 @@ class TestRiskManager:
         rm = RiskManager()
 
         sl_result = rm.calculate_dynamic_stop_loss(
-            entry_price=50000.0,
-            is_long=True,
-            current_atr=500.0
+            entry_price=50000.0, is_long=True, current_atr=500.0
         )
 
         tp_result = rm.calculate_dynamic_take_profit(
             entry_price=50000.0,
             stop_loss_price=sl_result.stop_loss_price,
             is_long=True,
-            current_atr=500.0
+            current_atr=500.0,
         )
 
         assert isinstance(tp_result, TakeProfitResult)
@@ -259,7 +247,7 @@ class TestRiskManager:
             entry_price=50000.0,
             stop_loss_price=49000.0,
             leverage=3,
-            volatility_state="normal"
+            volatility_state="normal",
         )
 
         assert isinstance(result, PositionSizeResult)
@@ -271,14 +259,10 @@ class TestRiskManager:
         """测试风险评估"""
         rm = RiskManager()
 
-        positions = [
-            {"coin": "BTC", "szi": "0.1", "entryPx": "50000", "unrealizedPnl": "100"}
-        ]
+        positions = [{"coin": "BTC", "szi": "0.1", "entryPx": "50000", "unrealizedPnl": "100"}]
 
         result = rm.assess_risk(
-            account_balance=10000.0,
-            current_positions=positions,
-            market_volatility="normal"
+            account_balance=10000.0, current_positions=positions, market_volatility="normal"
         )
 
         assert isinstance(result, RiskAssessment)
@@ -292,10 +276,7 @@ class TestRiskManager:
 
         # 初始化追踪止损
         state = rm.initialize_trailing_stop(
-            symbol="BTC",
-            entry_price=50000.0,
-            is_long=True,
-            initial_stop=49000.0
+            symbol="BTC", entry_price=50000.0, is_long=True, initial_stop=49000.0
         )
 
         assert state is not None
@@ -313,9 +294,7 @@ class TestRiskManager:
         rm = RiskManager()
 
         result = rm.assess_risk(
-            account_balance=10000.0,
-            current_positions=[],
-            market_volatility="normal"
+            account_balance=10000.0, current_positions=[], market_volatility="normal"
         )
 
         formatted = format_risk_assessment_for_prompt(result)
@@ -336,17 +315,17 @@ class TestSignalScorer:
     def test_custom_weights(self):
         """测试自定义权重"""
         weights = {
-            'trend': 0.30,
-            'momentum': 0.25,
-            'volume': 0.15,
-            'volatility': 0.10,
-            'price_action': 0.10,
-            'multi_timeframe': 0.10
+            "trend": 0.30,
+            "momentum": 0.25,
+            "volume": 0.15,
+            "volatility": 0.10,
+            "price_action": 0.10,
+            "multi_timeframe": 0.10,
         }
         scorer = SignalScorer(weights=weights)
 
-        assert scorer.weights['trend'] == 0.30
-        assert scorer.weights['momentum'] == 0.25
+        assert scorer.weights["trend"] == 0.30
+        assert scorer.weights["momentum"] == 0.25
 
     def test_score_signal_bullish(self):
         """测试看涨信号评分"""
@@ -394,7 +373,7 @@ class TestSignalScorer:
             volume_analysis=MockVolume(),
             volatility_analysis=MockVolatility(),
             support_resistance=MockSR(),
-            multi_timeframe_trends={"15m": "上涨", "1h": "强势"}
+            multi_timeframe_trends={"15m": "上涨", "1h": "强势"},
         )
 
         assert isinstance(signal, TradingSignal)
@@ -408,10 +387,10 @@ class TestSignalScorer:
         scorer = SignalScorer()
 
         # 测试各质量级别的阈值
-        assert scorer.quality_thresholds['excellent'] == 80
-        assert scorer.quality_thresholds['good'] == 60
-        assert scorer.quality_thresholds['fair'] == 40
-        assert scorer.quality_thresholds['poor'] == 20
+        assert scorer.quality_thresholds["excellent"] == 80
+        assert scorer.quality_thresholds["good"] == 60
+        assert scorer.quality_thresholds["fair"] == 40
+        assert scorer.quality_thresholds["poor"] == 20
 
     def test_format_signal_for_prompt(self):
         """测试信号格式化"""
@@ -461,7 +440,7 @@ class TestSignalScorer:
             momentum_analysis=momentum,
             volume_analysis=volume,
             volatility_analysis=volatility,
-            support_resistance=sr
+            support_resistance=sr,
         )
 
         formatted = format_signal_for_prompt(signal)
@@ -488,7 +467,7 @@ class TestEnhancedTradingEngine:
             risk_params=params,
             min_signal_quality=SignalQuality.GOOD,
             min_confidence=0.5,
-            enable_risk_filter=False
+            enable_risk_filter=False,
         )
 
         assert engine.min_signal_quality == SignalQuality.GOOD
@@ -507,7 +486,7 @@ class TestEnhancedTradingEngine:
             current_price=current_price,
             account_balance=10000.0,
             current_positions=[],
-            leverage=3
+            leverage=3,
         )
 
         assert isinstance(decision, EnhancedDecision)
@@ -523,9 +502,7 @@ class TestEnhancedTradingEngine:
         df = create_sample_df(100, trend="down")
         current_price = df["close"].iloc[-1]
 
-        positions = [
-            {"coin": "BTC", "szi": "0.1", "entryPx": str(current_price + 500)}
-        ]
+        positions = [{"coin": "BTC", "szi": "0.1", "entryPx": str(current_price + 500)}]
 
         decision = engine.analyze_and_decide(
             symbol="BTC",
@@ -533,7 +510,7 @@ class TestEnhancedTradingEngine:
             current_price=current_price,
             account_balance=10000.0,
             current_positions=positions,
-            leverage=3
+            leverage=3,
         )
 
         assert isinstance(decision, EnhancedDecision)
@@ -551,7 +528,7 @@ class TestEnhancedTradingEngine:
             current_price=current_price,
             account_balance=10000.0,
             current_positions=[],
-            leverage=3
+            leverage=3,
         )
 
         summary = engine.get_analysis_summary(decision)
@@ -573,7 +550,7 @@ class TestEnhancedTradingEngine:
                 current_price=current_price,
                 account_balance=10000.0,
                 current_positions=[],
-                leverage=3
+                leverage=3,
             )
 
         history = engine.get_decision_history(symbol="BTC")
@@ -583,16 +560,16 @@ class TestEnhancedTradingEngine:
     def test_create_engine_from_config(self):
         """测试从配置创建引擎"""
         config = {
-            'risk': {
-                'max_risk_per_trade': 0.025,
-                'stop_loss_ratio': 0.02,
-                'take_profit_ratio': 0.06
+            "risk": {
+                "max_risk_per_trade": 0.025,
+                "stop_loss_ratio": 0.02,
+                "take_profit_ratio": 0.06,
             },
-            'filter': {
-                'min_signal_quality': 'good',
-                'min_confidence': 0.5,
-                'enable_risk_filter': True
-            }
+            "filter": {
+                "min_signal_quality": "good",
+                "min_confidence": 0.5,
+                "enable_risk_filter": True,
+            },
         }
 
         engine = create_enhanced_engine_from_config(config)
@@ -612,7 +589,7 @@ class TestEnhancedTradingEngine:
             current_price=current_price,
             account_balance=10000.0,
             current_positions=[],
-            leverage=3
+            leverage=3,
         )
 
         assert decision.prompt_injection is not None
@@ -631,17 +608,14 @@ class TestIntegration:
 
         # 2. 市场状态分析
         analyzer = MarketStateAnalyzer()
-        market_analysis = analyzer.analyze(
-            df, current_price,
-            {"15m": "上涨", "1h": "强势"}
-        )
+        market_analysis = analyzer.analyze(df, current_price, {"15m": "上涨", "1h": "强势"})
 
         # 3. 风险评估
         rm = RiskManager()
         risk_assessment = rm.assess_risk(
             account_balance=10000.0,
             current_positions=[],
-            market_volatility=market_analysis.volatility.volatility_state
+            market_volatility=market_analysis.volatility.volatility_state,
         )
 
         # 4. 使用增强引擎
@@ -653,7 +627,7 @@ class TestIntegration:
             account_balance=10000.0,
             current_positions=[],
             multi_timeframe_trends={"15m": "上涨", "1h": "强势"},
-            leverage=3
+            leverage=3,
         )
 
         # 验证所有组件协同工作
@@ -690,7 +664,7 @@ class TestIntegration:
             current_price=current_price,
             account_balance=10000.0,
             current_positions=[],
-            leverage=3
+            leverage=3,
         )
 
         # 高波动时应该有警告或建议

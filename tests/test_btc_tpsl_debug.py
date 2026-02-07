@@ -20,6 +20,7 @@ def find_project_root(marker="pyproject.toml"):
         current = current.parent
     raise FileNotFoundError(f"Could not find {marker} in any parent directory of {__file__}")
 
+
 project_root = find_project_root()
 sys.path.insert(0, str(project_root))
 
@@ -36,8 +37,7 @@ TESTNET = os.getenv("HYPERLIQUID_TESTNET", "false").lower() == "true"
 
 # 跳过条件：没有私钥时跳过需要真实 API 的测试
 requires_private_key = pytest.mark.skipif(
-    not PRIVATE_KEY,
-    reason="需要 HYPERLIQUID_PRIVATE_KEY 环境变量"
+    not PRIVATE_KEY, reason="需要 HYPERLIQUID_PRIVATE_KEY 环境变量"
 )
 
 
@@ -49,9 +49,7 @@ def test_asset_info_comparison():
     print("=" * 60)
 
     client = HyperliquidClient(
-        private_key=PRIVATE_KEY,
-        account_address=ACCOUNT_ADDRESS,
-        testnet=TESTNET
+        private_key=PRIVATE_KEY, account_address=ACCOUNT_ADDRESS, testnet=TESTNET
     )
 
     symbols = ["BTC", "ETH", "SOL", "DOGE"]
@@ -77,14 +75,12 @@ def test_price_formatting():
     print("=" * 60)
 
     client = HyperliquidClient(
-        private_key=PRIVATE_KEY,
-        account_address=ACCOUNT_ADDRESS,
-        testnet=TESTNET
+        private_key=PRIVATE_KEY, account_address=ACCOUNT_ADDRESS, testnet=TESTNET
     )
 
     symbols = ["BTC", "ETH", "SOL"]
     take_profit_ratio = 0.02  # 2%
-    stop_loss_ratio = 0.01    # 1%
+    stop_loss_ratio = 0.01  # 1%
 
     for symbol in symbols:
         price = client.get_current_price(symbol)
@@ -113,9 +109,7 @@ def test_size_calculation():
     from src.trading.order_manager import OrderManager
 
     client = HyperliquidClient(
-        private_key=PRIVATE_KEY,
-        account_address=ACCOUNT_ADDRESS,
-        testnet=TESTNET
+        private_key=PRIVATE_KEY, account_address=ACCOUNT_ADDRESS, testnet=TESTNET
     )
 
     order_manager = OrderManager(client)
@@ -127,7 +121,7 @@ def test_size_calculation():
     for symbol in symbols:
         size = order_manager.calculate_position_size(symbol, usdt_amount, leverage)
         asset_info = client.get_asset_info(symbol)
-        sz_decimals = asset_info.get('szDecimals') if asset_info else 'N/A'
+        sz_decimals = asset_info.get("szDecimals") if asset_info else "N/A"
 
         print(f"\n{symbol}:")
         print(f"  szDecimals: {sz_decimals}")
@@ -135,8 +129,8 @@ def test_size_calculation():
         print(f"  size 类型: {type(size)}")
 
         # 模拟格式化后的 size
-        if asset_info and 'szDecimals' in asset_info:
-            decimals = asset_info['szDecimals']
+        if asset_info and "szDecimals" in asset_info:
+            decimals = asset_info["szDecimals"]
             formatted_size = float(round(size, decimals)) if size else None
             print(f"  格式化后 size: {formatted_size}")
 
@@ -154,9 +148,7 @@ def test_btc_tpsl_dry_run():
     from src.trading.order_manager import OrderManager
 
     client = HyperliquidClient(
-        private_key=PRIVATE_KEY,
-        account_address=ACCOUNT_ADDRESS,
-        testnet=TESTNET
+        private_key=PRIVATE_KEY, account_address=ACCOUNT_ADDRESS, testnet=TESTNET
     )
 
     order_manager = OrderManager(client)
@@ -177,7 +169,7 @@ def test_btc_tpsl_dry_run():
 
     # 3. 获取 asset info
     asset_info = client.get_asset_info(symbol)
-    sz_decimals = asset_info.get('szDecimals') if asset_info else 3
+    sz_decimals = asset_info.get("szDecimals") if asset_info else 3
     print(f"szDecimals: {sz_decimals}")
 
     # 4. 格式化 size
@@ -268,27 +260,20 @@ def test_real_btc_order():
     print("=" * 60)
 
     confirm = input("\n⚠️ 这会真实下单 $10 的 BTC！确认继续? (yes/no): ")
-    if confirm.lower() != 'yes':
+    if confirm.lower() != "yes":
         print("已取消")
         return
 
     from src.trading.order_manager import OrderManager
 
     client = HyperliquidClient(
-        private_key=PRIVATE_KEY,
-        account_address=ACCOUNT_ADDRESS,
-        testnet=TESTNET
+        private_key=PRIVATE_KEY, account_address=ACCOUNT_ADDRESS, testnet=TESTNET
     )
 
     order_manager = OrderManager(client)
 
     # 使用小金额测试
-    result = order_manager.execute_long(
-        symbol="BTC",
-        usdt_amount=10,
-        leverage=3,
-        with_tpsl=True
-    )
+    result = order_manager.execute_long(symbol="BTC", usdt_amount=10, leverage=3, with_tpsl=True)
 
     print("\n下单结果:")
     print(f"  success: {result.get('success') if result else 'None'}")
@@ -317,7 +302,7 @@ if __name__ == "__main__":
         # 询问是否进行真实下单测试
         print("\n" + "=" * 60)
         run_real = input("是否进行真实下单测试? (yes/no): ")
-        if run_real.lower() == 'yes':
+        if run_real.lower() == "yes":
             test_real_btc_order()
 
         print("\n" + "=" * 60)
@@ -329,4 +314,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n\n❌ 测试失败: {e}")
         import traceback
+
         traceback.print_exc()

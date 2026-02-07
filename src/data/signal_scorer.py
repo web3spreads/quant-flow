@@ -18,47 +18,52 @@ from typing import Any
 
 class SignalType(Enum):
     """信号类型"""
-    LONG_ENTRY = "long_entry"       # 做多入场
-    LONG_EXIT = "long_exit"         # 做多出场
-    SHORT_ENTRY = "short_entry"     # 做空入场
-    SHORT_EXIT = "short_exit"       # 做空出场
-    NO_SIGNAL = "no_signal"         # 无信号
+
+    LONG_ENTRY = "long_entry"  # 做多入场
+    LONG_EXIT = "long_exit"  # 做多出场
+    SHORT_ENTRY = "short_entry"  # 做空入场
+    SHORT_EXIT = "short_exit"  # 做空出场
+    NO_SIGNAL = "no_signal"  # 无信号
 
 
 class SignalQuality(Enum):
     """信号质量"""
-    EXCELLENT = "excellent"   # 极佳 (80-100)
-    GOOD = "good"            # 良好 (60-79)
-    FAIR = "fair"            # 一般 (40-59)
-    POOR = "poor"            # 较差 (20-39)
-    INVALID = "invalid"      # 无效 (0-19)
+
+    EXCELLENT = "excellent"  # 极佳 (80-100)
+    GOOD = "good"  # 良好 (60-79)
+    FAIR = "fair"  # 一般 (40-59)
+    POOR = "poor"  # 较差 (20-39)
+    INVALID = "invalid"  # 无效 (0-19)
 
 
 @dataclass
 class SignalFactor:
     """单个信号因子"""
+
     name: str
-    value: float        # 因子原始值
-    score: float        # 标准化得分 (-1 到 1)
-    weight: float       # 权重
+    value: float  # 因子原始值
+    score: float  # 标准化得分 (-1 到 1)
+    weight: float  # 权重
     contribution: float  # 对总分的贡献
-    description: str    # 因子描述
+    description: str  # 因子描述
 
 
 @dataclass
 class SignalConfirmation:
     """信号确认信息"""
+
     confirmed: bool
-    confirmation_count: int     # 确认因子数量
+    confirmation_count: int  # 确认因子数量
     required_confirmations: int  # 需要的确认数量
-    confirmations: list[str]    # 确认因子列表
-    rejections: list[str]       # 拒绝因子列表
-    confidence_boost: float     # 确认带来的置信度提升
+    confirmations: list[str]  # 确认因子列表
+    rejections: list[str]  # 拒绝因子列表
+    confidence_boost: float  # 确认带来的置信度提升
 
 
 @dataclass
 class EntryTiming:
     """入场时机分析"""
+
     is_optimal: bool
     timing_score: float  # 0-1
     price_position: str  # "at_support", "at_resistance", "middle"
@@ -71,6 +76,7 @@ class EntryTiming:
 @dataclass
 class SignalValidation:
     """信号验证结果"""
+
     is_valid: bool
     validation_score: float  # 0-100
     passed_checks: list[str]
@@ -82,6 +88,7 @@ class SignalValidation:
 @dataclass
 class TradingSignal:
     """完整的交易信号"""
+
     signal_id: str
     timestamp: str
     symbol: str
@@ -89,13 +96,13 @@ class TradingSignal:
     quality: SignalQuality
 
     # 评分信息
-    raw_score: float        # 原始得分 (-100 到 100)
+    raw_score: float  # 原始得分 (-100 到 100)
     normalized_score: float  # 标准化得分 (0 到 100)
-    confidence: float       # 置信度 (0 到 1)
+    confidence: float  # 置信度 (0 到 1)
 
     # 因子分析
     factors: list[SignalFactor]
-    dominant_factor: str    # 主导因子
+    dominant_factor: str  # 主导因子
 
     # 确认和验证
     confirmation: SignalConfirmation
@@ -121,19 +128,19 @@ class SignalScorer:
 
     # 默认因子权重
     DEFAULT_WEIGHTS = {
-        'trend': 0.25,          # 趋势
-        'momentum': 0.20,       # 动量
-        'volume': 0.15,         # 成交量
-        'volatility': 0.10,     # 波动性
-        'price_action': 0.15,   # 价格行为
-        'multi_timeframe': 0.15 # 多周期一致性
+        "trend": 0.25,  # 趋势
+        "momentum": 0.20,  # 动量
+        "volume": 0.15,  # 成交量
+        "volatility": 0.10,  # 波动性
+        "price_action": 0.15,  # 价格行为
+        "multi_timeframe": 0.15,  # 多周期一致性
     }
 
     def __init__(
         self,
         weights: dict[str, float] | None = None,
         min_confirmation_count: int = 3,
-        quality_thresholds: dict[str, float] | None = None
+        quality_thresholds: dict[str, float] | None = None,
     ):
         """
         初始化信号评分器
@@ -146,10 +153,10 @@ class SignalScorer:
         self.weights = weights or self.DEFAULT_WEIGHTS
         self.min_confirmations = min_confirmation_count
         self.quality_thresholds = quality_thresholds or {
-            'excellent': 80,
-            'good': 60,
-            'fair': 40,
-            'poor': 20
+            "excellent": 80,
+            "good": 60,
+            "fair": 40,
+            "poor": 20,
         }
 
         self._signal_counter = 0
@@ -165,7 +172,7 @@ class SignalScorer:
         volatility_analysis: Any,
         support_resistance: Any,
         multi_timeframe_trends: dict[str, str] | None = None,
-        current_position: dict[str, Any] | None = None
+        current_position: dict[str, Any] | None = None,
     ) -> TradingSignal:
         """
         计算综合交易信号
@@ -184,78 +191,96 @@ class SignalScorer:
         Returns:
             TradingSignal: 完整的交易信号
         """
-        current_price = market_data.get('current_price', 0)
+        current_price = market_data.get("current_price", 0)
 
         # 计算各因子得分
         factors = []
 
         # 1. 趋势因子
         trend_score, trend_desc = self._score_trend(trend_analysis)
-        factors.append(SignalFactor(
-            name='trend',
-            value=trend_analysis.strength if hasattr(trend_analysis, 'strength') else 0,
-            score=trend_score,
-            weight=self.weights['trend'],
-            contribution=trend_score * self.weights['trend'],
-            description=trend_desc
-        ))
+        factors.append(
+            SignalFactor(
+                name="trend",
+                value=trend_analysis.strength if hasattr(trend_analysis, "strength") else 0,
+                score=trend_score,
+                weight=self.weights["trend"],
+                contribution=trend_score * self.weights["trend"],
+                description=trend_desc,
+            )
+        )
 
         # 2. 动量因子
         momentum_score, momentum_desc = self._score_momentum(momentum_analysis)
-        factors.append(SignalFactor(
-            name='momentum',
-            value=momentum_analysis.rsi_value if hasattr(momentum_analysis, 'rsi_value') else 50,
-            score=momentum_score,
-            weight=self.weights['momentum'],
-            contribution=momentum_score * self.weights['momentum'],
-            description=momentum_desc
-        ))
+        factors.append(
+            SignalFactor(
+                name="momentum",
+                value=momentum_analysis.rsi_value
+                if hasattr(momentum_analysis, "rsi_value")
+                else 50,
+                score=momentum_score,
+                weight=self.weights["momentum"],
+                contribution=momentum_score * self.weights["momentum"],
+                description=momentum_desc,
+            )
+        )
 
         # 3. 成交量因子
         volume_score, volume_desc = self._score_volume(volume_analysis, trend_analysis)
-        factors.append(SignalFactor(
-            name='volume',
-            value=volume_analysis.volume_ratio if hasattr(volume_analysis, 'volume_ratio') else 1,
-            score=volume_score,
-            weight=self.weights['volume'],
-            contribution=volume_score * self.weights['volume'],
-            description=volume_desc
-        ))
+        factors.append(
+            SignalFactor(
+                name="volume",
+                value=volume_analysis.volume_ratio
+                if hasattr(volume_analysis, "volume_ratio")
+                else 1,
+                score=volume_score,
+                weight=self.weights["volume"],
+                contribution=volume_score * self.weights["volume"],
+                description=volume_desc,
+            )
+        )
 
         # 4. 波动性因子
         vol_score, vol_desc = self._score_volatility(volatility_analysis)
-        factors.append(SignalFactor(
-            name='volatility',
-            value=volatility_analysis.atr_percentile if hasattr(volatility_analysis, 'atr_percentile') else 50,
-            score=vol_score,
-            weight=self.weights['volatility'],
-            contribution=vol_score * self.weights['volatility'],
-            description=vol_desc
-        ))
+        factors.append(
+            SignalFactor(
+                name="volatility",
+                value=volatility_analysis.atr_percentile
+                if hasattr(volatility_analysis, "atr_percentile")
+                else 50,
+                score=vol_score,
+                weight=self.weights["volatility"],
+                contribution=vol_score * self.weights["volatility"],
+                description=vol_desc,
+            )
+        )
 
         # 5. 价格行为因子
         pa_score, pa_desc = self._score_price_action(
             current_price, support_resistance, trend_analysis
         )
-        factors.append(SignalFactor(
-            name='price_action',
-            value=current_price,
-            score=pa_score,
-            weight=self.weights['price_action'],
-            contribution=pa_score * self.weights['price_action'],
-            description=pa_desc
-        ))
+        factors.append(
+            SignalFactor(
+                name="price_action",
+                value=current_price,
+                score=pa_score,
+                weight=self.weights["price_action"],
+                contribution=pa_score * self.weights["price_action"],
+                description=pa_desc,
+            )
+        )
 
         # 6. 多周期一致性因子
         mtf_score, mtf_desc = self._score_multi_timeframe(multi_timeframe_trends)
-        factors.append(SignalFactor(
-            name='multi_timeframe',
-            value=mtf_score,
-            score=mtf_score,
-            weight=self.weights['multi_timeframe'],
-            contribution=mtf_score * self.weights['multi_timeframe'],
-            description=mtf_desc
-        ))
+        factors.append(
+            SignalFactor(
+                name="multi_timeframe",
+                value=mtf_score,
+                score=mtf_score,
+                weight=self.weights["multi_timeframe"],
+                contribution=mtf_score * self.weights["multi_timeframe"],
+                description=mtf_desc,
+            )
+        )
 
         # 计算原始得分 (-100 到 100)
         raw_score = sum(f.contribution for f in factors) * 100
@@ -289,9 +314,7 @@ class SignalScorer:
         )
 
         # 计算置信度
-        confidence = self._calculate_confidence(
-            normalized_score, confirmation, validation, timing
-        )
+        confidence = self._calculate_confidence(normalized_score, confirmation, validation, timing)
 
         # 计算止损止盈
         stop_loss, take_profit = self._calculate_sl_tp(
@@ -299,7 +322,7 @@ class SignalScorer:
         )
 
         # 计算风险回报比
-        if direction == 'long':
+        if direction == "long":
             potential_profit = take_profit - current_price
             potential_loss = current_price - stop_loss
         else:
@@ -320,9 +343,7 @@ class SignalScorer:
         warnings = self._generate_warnings(validation, timing, volatility_analysis)
 
         # 确定建议操作
-        suggested_action = self._determine_action(
-            signal_type, validation, timing, confidence
-        )
+        suggested_action = self._determine_action(signal_type, validation, timing, confidence)
 
         # 找出主导因子
         dominant_factor = max(factors, key=lambda f: abs(f.contribution)).name
@@ -352,7 +373,7 @@ class SignalScorer:
             position_size_pct=position_size_pct,
             risk_reward_ratio=risk_reward,
             reasoning=reasoning,
-            warnings=warnings
+            warnings=warnings,
         )
 
         # 保存到历史
@@ -367,26 +388,26 @@ class SignalScorer:
         if not trend:
             return 0.0, "无趋势数据"
 
-        direction = getattr(trend, 'direction', 'neutral')
-        strength = getattr(trend, 'strength', 0)
-        ma_alignment = getattr(trend, 'ma_alignment', 'mixed')
+        direction = getattr(trend, "direction", "neutral")
+        strength = getattr(trend, "strength", 0)
+        ma_alignment = getattr(trend, "ma_alignment", "mixed")
 
         score = 0.0
         descriptions = []
 
-        if direction == 'bullish':
+        if direction == "bullish":
             score = strength
             descriptions.append("看涨趋势")
-        elif direction == 'bearish':
+        elif direction == "bearish":
             score = -strength
             descriptions.append("看跌趋势")
         else:
             descriptions.append("趋势中性")
 
-        if ma_alignment == 'aligned_up':
+        if ma_alignment == "aligned_up":
             score += 0.2
             descriptions.append("均线多头排列")
-        elif ma_alignment == 'aligned_down':
+        elif ma_alignment == "aligned_down":
             score -= 0.2
             descriptions.append("均线空头排列")
 
@@ -397,20 +418,20 @@ class SignalScorer:
         if not momentum:
             return 0.0, "无动量数据"
 
-        rsi = getattr(momentum, 'rsi_value', 50)
-        rsi_state = getattr(momentum, 'rsi_state', 'neutral')
-        macd_state = getattr(momentum, 'macd_state', 'neutral')
-        macd_crossover = getattr(momentum, 'macd_crossover', None)
-        rsi_divergence = getattr(momentum, 'rsi_divergence', None)
+        rsi = getattr(momentum, "rsi_value", 50)
+        rsi_state = getattr(momentum, "rsi_state", "neutral")
+        macd_state = getattr(momentum, "macd_state", "neutral")
+        macd_crossover = getattr(momentum, "macd_crossover", None)
+        rsi_divergence = getattr(momentum, "rsi_divergence", None)
 
         score = 0.0
         descriptions = []
 
         # RSI评分
-        if rsi_state == 'oversold':
+        if rsi_state == "oversold":
             score += 0.3
             descriptions.append(f"RSI超卖({rsi:.1f})")
-        elif rsi_state == 'overbought':
+        elif rsi_state == "overbought":
             score -= 0.3
             descriptions.append(f"RSI超买({rsi:.1f})")
         else:
@@ -421,26 +442,26 @@ class SignalScorer:
                 score -= (50 - rsi) / 100
 
         # MACD评分
-        if macd_state == 'bullish':
+        if macd_state == "bullish":
             score += 0.3
             descriptions.append("MACD多头")
-        elif macd_state == 'bearish':
+        elif macd_state == "bearish":
             score -= 0.3
             descriptions.append("MACD空头")
 
         # MACD交叉
-        if macd_crossover == 'golden_cross':
+        if macd_crossover == "golden_cross":
             score += 0.3
             descriptions.append("MACD金叉")
-        elif macd_crossover == 'death_cross':
+        elif macd_crossover == "death_cross":
             score -= 0.3
             descriptions.append("MACD死叉")
 
         # RSI背离
-        if rsi_divergence == 'bullish':
+        if rsi_divergence == "bullish":
             score += 0.2
             descriptions.append("RSI看涨背离")
-        elif rsi_divergence == 'bearish':
+        elif rsi_divergence == "bearish":
             score -= 0.2
             descriptions.append("RSI看跌背离")
 
@@ -451,42 +472,42 @@ class SignalScorer:
         if not volume:
             return 0.0, "无成交量数据"
 
-        volume_ratio = getattr(volume, 'volume_ratio', 1.0)
-        volume_trend = getattr(volume, 'volume_trend', 'stable')
-        volume_confirmation = getattr(volume, 'volume_confirmation', False)
-        unusual_volume = getattr(volume, 'unusual_volume', False)
+        volume_ratio = getattr(volume, "volume_ratio", 1.0)
+        volume_trend = getattr(volume, "volume_trend", "stable")
+        volume_confirmation = getattr(volume, "volume_confirmation", False)
+        unusual_volume = getattr(volume, "unusual_volume", False)
 
-        trend_direction = getattr(trend, 'direction', 'neutral') if trend else 'neutral'
+        trend_direction = getattr(trend, "direction", "neutral") if trend else "neutral"
 
         score = 0.0
         descriptions = []
 
         # 量价配合
         if volume_confirmation:
-            if trend_direction == 'bullish':
+            if trend_direction == "bullish":
                 score += 0.4
                 descriptions.append("放量上涨")
-            elif trend_direction == 'bearish':
+            elif trend_direction == "bearish":
                 score -= 0.4
                 descriptions.append("放量下跌")
 
         # 成交量趋势
-        if volume_trend == 'increasing':
-            if trend_direction == 'bullish':
+        if volume_trend == "increasing":
+            if trend_direction == "bullish":
                 score += 0.2
-            elif trend_direction == 'bearish':
+            elif trend_direction == "bearish":
                 score -= 0.2
             descriptions.append("成交量增加")
-        elif volume_trend == 'decreasing':
+        elif volume_trend == "decreasing":
             descriptions.append("成交量减少")
 
         # 异常成交量
         if unusual_volume:
             descriptions.append("异常成交量")
             # 异常成交量可能是信号，但方向需要结合趋势
-            if trend_direction == 'bullish':
+            if trend_direction == "bullish":
                 score += 0.1
-            elif trend_direction == 'bearish':
+            elif trend_direction == "bearish":
                 score -= 0.1
 
         # 量比评分
@@ -500,18 +521,18 @@ class SignalScorer:
         if not volatility:
             return 0.0, "无波动性数据"
 
-        vol_state = getattr(volatility, 'volatility_state', 'normal')
+        vol_state = getattr(volatility, "volatility_state", "normal")
 
         descriptions = []
 
         # 波动性不直接影响方向，但影响信号质量
-        if vol_state == 'low':
+        if vol_state == "low":
             score = 0.3  # 低波动有利于趋势交易
             descriptions.append("低波动性环境")
-        elif vol_state == 'normal':
+        elif vol_state == "normal":
             score = 0.0
             descriptions.append("正常波动性")
-        elif vol_state == 'high':
+        elif vol_state == "high":
             score = -0.2  # 高波动增加风险
             descriptions.append("高波动性")
         else:  # extreme
@@ -525,24 +546,24 @@ class SignalScorer:
         if not sr:
             return 0.0, "无支撑阻力数据"
 
-        price_to_support = getattr(sr, 'price_to_support_pct', 5)
-        price_to_resistance = getattr(sr, 'price_to_resistance_pct', 5)
+        price_to_support = getattr(sr, "price_to_support_pct", 5)
+        price_to_resistance = getattr(sr, "price_to_resistance_pct", 5)
 
-        trend_direction = getattr(trend, 'direction', 'neutral') if trend else 'neutral'
+        trend_direction = getattr(trend, "direction", "neutral") if trend else "neutral"
 
         score = 0.0
         descriptions = []
 
         # 价格位置评分
         if price_to_support < 1:  # 接近支撑位
-            if trend_direction != 'bearish':
+            if trend_direction != "bearish":
                 score += 0.3
                 descriptions.append("接近支撑位（潜在买入点）")
             else:
                 score -= 0.1
                 descriptions.append("接近支撑位但趋势向下")
         elif price_to_resistance < 1:  # 接近阻力位
-            if trend_direction != 'bullish':
+            if trend_direction != "bullish":
                 score -= 0.3
                 descriptions.append("接近阻力位（潜在卖出点）")
             else:
@@ -605,13 +626,13 @@ class SignalScorer:
         """确定信号类型"""
         # 阈值
         entry_threshold = 30  # 入场阈值
-        exit_threshold = 20   # 出场阈值
+        exit_threshold = 20  # 出场阈值
 
         has_long = False
         has_short = False
 
         if current_position:
-            size = float(current_position.get('szi', 0))
+            size = float(current_position.get("szi", 0))
             if size > 0:
                 has_long = True
             elif size < 0:
@@ -619,22 +640,22 @@ class SignalScorer:
 
         if raw_score > entry_threshold:
             if has_short:
-                return SignalType.SHORT_EXIT, 'long'
+                return SignalType.SHORT_EXIT, "long"
             else:
-                return SignalType.LONG_ENTRY, 'long'
+                return SignalType.LONG_ENTRY, "long"
         elif raw_score < -entry_threshold:
             if has_long:
-                return SignalType.LONG_EXIT, 'short'
+                return SignalType.LONG_EXIT, "short"
             else:
-                return SignalType.SHORT_ENTRY, 'short'
+                return SignalType.SHORT_ENTRY, "short"
         else:
             # 检查是否应该退出现有仓位
             if has_long and raw_score < -exit_threshold:
-                return SignalType.LONG_EXIT, 'short'
+                return SignalType.LONG_EXIT, "short"
             elif has_short and raw_score > exit_threshold:
-                return SignalType.SHORT_EXIT, 'long'
+                return SignalType.SHORT_EXIT, "long"
 
-            return SignalType.NO_SIGNAL, 'neutral'
+            return SignalType.NO_SIGNAL, "neutral"
 
     def _check_confirmations(
         self, factors: list[SignalFactor], direction: str
@@ -644,12 +665,12 @@ class SignalScorer:
         rejections = []
 
         for factor in factors:
-            if direction == 'long':
+            if direction == "long":
                 if factor.score > 0.2:
                     confirmations.append(f"{factor.name}: {factor.description}")
                 elif factor.score < -0.2:
                     rejections.append(f"{factor.name}: {factor.description}")
-            elif direction == 'short':
+            elif direction == "short":
                 if factor.score < -0.2:
                     confirmations.append(f"{factor.name}: {factor.description}")
                 elif factor.score > 0.2:
@@ -664,25 +685,24 @@ class SignalScorer:
             required_confirmations=self.min_confirmations,
             confirmations=confirmations,
             rejections=rejections,
-            confidence_boost=min(0.3, confidence_boost)  # 最多增加30%
+            confidence_boost=min(0.3, confidence_boost),  # 最多增加30%
         )
 
     def _determine_quality(self, normalized_score: float) -> SignalQuality:
         """确定信号质量"""
-        if normalized_score >= self.quality_thresholds['excellent']:
+        if normalized_score >= self.quality_thresholds["excellent"]:
             return SignalQuality.EXCELLENT
-        elif normalized_score >= self.quality_thresholds['good']:
+        elif normalized_score >= self.quality_thresholds["good"]:
             return SignalQuality.GOOD
-        elif normalized_score >= self.quality_thresholds['fair']:
+        elif normalized_score >= self.quality_thresholds["fair"]:
             return SignalQuality.FAIR
-        elif normalized_score >= self.quality_thresholds['poor']:
+        elif normalized_score >= self.quality_thresholds["poor"]:
             return SignalQuality.POOR
         else:
             return SignalQuality.INVALID
 
     def _validate_signal(
-        self, signal_type: SignalType, score: float,
-        factors: list[SignalFactor], volatility
+        self, signal_type: SignalType, score: float, factors: list[SignalFactor], volatility
     ) -> SignalValidation:
         """验证信号"""
         passed = []
@@ -710,17 +730,17 @@ class SignalScorer:
             failed.append(f"存在{conflicting}个矛盾因子")
 
         # 检查4: 波动性检查
-        vol_state = getattr(volatility, 'volatility_state', 'normal') if volatility else 'normal'
-        if vol_state == 'extreme':
+        vol_state = getattr(volatility, "volatility_state", "normal") if volatility else "normal"
+        if vol_state == "extreme":
             warnings.append("极端波动性环境")
-        elif vol_state == 'high':
+        elif vol_state == "high":
             warnings.append("高波动性环境")
         else:
             passed.append("波动性环境适合交易")
 
         is_valid = len(failed) == 0 and signal_type != SignalType.NO_SIGNAL
         validation_score = 100 - len(failed) * 25 - len(warnings) * 10
-        risk_adjusted = validation_score * (0.8 if vol_state in ['high', 'extreme'] else 1.0)
+        risk_adjusted = validation_score * (0.8 if vol_state in ["high", "extreme"] else 1.0)
 
         return SignalValidation(
             is_valid=is_valid,
@@ -728,12 +748,10 @@ class SignalScorer:
             passed_checks=passed,
             failed_checks=failed,
             warnings=warnings,
-            risk_adjusted_score=max(0, risk_adjusted)
+            risk_adjusted_score=max(0, risk_adjusted),
         )
 
-    def _analyze_entry_timing(
-        self, price: float, sr, trend, direction: str
-    ) -> EntryTiming:
+    def _analyze_entry_timing(self, price: float, sr, trend, direction: str) -> EntryTiming:
         """分析入场时机"""
         if not sr:
             return EntryTiming(
@@ -743,18 +761,18 @@ class SignalScorer:
                 pullback_quality="unknown",
                 suggested_action="enter_now",
                 wait_for_price=None,
-                reasoning="缺少支撑阻力数据"
+                reasoning="缺少支撑阻力数据",
             )
 
-        support = getattr(sr, 'nearest_support', price * 0.95)
-        resistance = getattr(sr, 'nearest_resistance', price * 1.05)
-        price_to_support = getattr(sr, 'price_to_support_pct', 5)
-        price_to_resistance = getattr(sr, 'price_to_resistance_pct', 5)
+        support = getattr(sr, "nearest_support", price * 0.95)
+        resistance = getattr(sr, "nearest_resistance", price * 1.05)
+        price_to_support = getattr(sr, "price_to_support_pct", 5)
+        price_to_resistance = getattr(sr, "price_to_resistance_pct", 5)
 
         timing_score = 0.5
         reasoning_parts = []
 
-        if direction == 'long':
+        if direction == "long":
             # 做多入场时机
             if price_to_support < 2:
                 timing_score = 0.9
@@ -778,7 +796,7 @@ class SignalScorer:
                 wait_for_price = None
                 reasoning_parts.append("价格位于中间区域")
 
-        elif direction == 'short':
+        elif direction == "short":
             # 做空入场时机
             if price_to_resistance < 2:
                 timing_score = 0.9
@@ -816,12 +834,15 @@ class SignalScorer:
             pullback_quality=pullback_quality,
             suggested_action=suggested_action,
             wait_for_price=wait_for_price,
-            reasoning=", ".join(reasoning_parts) if reasoning_parts else "时机分析完成"
+            reasoning=", ".join(reasoning_parts) if reasoning_parts else "时机分析完成",
         )
 
     def _calculate_confidence(
-        self, score: float, confirmation: SignalConfirmation,
-        validation: SignalValidation, timing: EntryTiming
+        self,
+        score: float,
+        confirmation: SignalConfirmation,
+        validation: SignalValidation,
+        timing: EntryTiming,
     ) -> float:
         """计算置信度"""
         # 基础置信度基于分数
@@ -835,19 +856,17 @@ class SignalScorer:
         base_confidence *= validation.risk_adjusted_score / 100
 
         # 时机调整
-        base_confidence *= (0.5 + timing.timing_score * 0.5)
+        base_confidence *= 0.5 + timing.timing_score * 0.5
 
         return max(0, min(1, base_confidence))
 
-    def _calculate_sl_tp(
-        self, price: float, direction: str, volatility, sr
-    ) -> tuple[float, float]:
+    def _calculate_sl_tp(self, price: float, direction: str, volatility, sr) -> tuple[float, float]:
         """计算止损止盈"""
-        atr = getattr(volatility, 'current_atr', price * 0.02) if volatility else price * 0.02
-        sl_mult = getattr(volatility, 'suggested_sl_multiplier', 1.5) if volatility else 1.5
-        tp_mult = getattr(volatility, 'suggested_tp_multiplier', 3.0) if volatility else 3.0
+        atr = getattr(volatility, "current_atr", price * 0.02) if volatility else price * 0.02
+        sl_mult = getattr(volatility, "suggested_sl_multiplier", 1.5) if volatility else 1.5
+        tp_mult = getattr(volatility, "suggested_tp_multiplier", 3.0) if volatility else 3.0
 
-        if direction == 'long':
+        if direction == "long":
             stop_loss = price - atr * sl_mult
             take_profit = price + atr * tp_mult
         else:
@@ -856,9 +875,7 @@ class SignalScorer:
 
         return stop_loss, take_profit
 
-    def _calculate_position_size(
-        self, confidence: float, volatility, risk_reward: float
-    ) -> float:
+    def _calculate_position_size(self, confidence: float, volatility, risk_reward: float) -> float:
         """计算建议仓位比例"""
         base_size = 0.1  # 基础10%
 
@@ -866,8 +883,8 @@ class SignalScorer:
         confidence_factor = confidence
 
         # 波动性调整
-        vol_state = getattr(volatility, 'volatility_state', 'normal') if volatility else 'normal'
-        vol_factors = {'low': 1.2, 'normal': 1.0, 'high': 0.7, 'extreme': 0.5}
+        vol_state = getattr(volatility, "volatility_state", "normal") if volatility else "normal"
+        vol_factors = {"low": 1.2, "normal": 1.0, "high": 0.7, "extreme": 0.5}
         vol_factor = vol_factors.get(vol_state, 1.0)
 
         # 风险回报比调整
@@ -876,8 +893,7 @@ class SignalScorer:
         return min(0.2, base_size * confidence_factor * vol_factor * rr_factor)
 
     def _generate_reasoning(
-        self, factors: list[SignalFactor], confirmation: SignalConfirmation,
-        timing: EntryTiming
+        self, factors: list[SignalFactor], confirmation: SignalConfirmation, timing: EntryTiming
     ) -> list[str]:
         """生成推理说明"""
         reasoning = []
@@ -905,15 +921,18 @@ class SignalScorer:
         if not timing.is_optimal:
             warnings.append(f"入场时机不理想 (评分: {timing.timing_score:.0%})")
 
-        vol_state = getattr(volatility, 'volatility_state', 'normal') if volatility else 'normal'
-        if vol_state == 'extreme':
+        vol_state = getattr(volatility, "volatility_state", "normal") if volatility else "normal"
+        if vol_state == "extreme":
             warnings.append("当前市场波动极大，建议减小仓位或观望")
 
         return warnings
 
     def _determine_action(
-        self, signal_type: SignalType, validation: SignalValidation,
-        timing: EntryTiming, confidence: float
+        self,
+        signal_type: SignalType,
+        validation: SignalValidation,
+        timing: EntryTiming,
+        confidence: float,
     ) -> str:
         """确定建议操作"""
         if not validation.is_valid:
@@ -968,13 +987,17 @@ def format_signal_for_prompt(signal: TradingSignal) -> str:
     lines.append("### 因子分析")
     for f in sorted(signal.factors, key=lambda x: abs(x.contribution), reverse=True):
         direction = "📈" if f.score > 0 else "📉" if f.score < 0 else "➖"
-        lines.append(f"- {direction} {f.name}: {f.description} (权重: {f.weight:.0%}, 贡献: {f.contribution:.2f})")
+        lines.append(
+            f"- {direction} {f.name}: {f.description} (权重: {f.weight:.0%}, 贡献: {f.contribution:.2f})"
+        )
     lines.append("")
 
     # 确认信息
     lines.append("### 信号确认")
     lines.append(f"- 确认状态: {'✅ 已确认' if signal.confirmation.confirmed else '❌ 未确认'}")
-    lines.append(f"- 确认因子: {signal.confirmation.confirmation_count}/{signal.confirmation.required_confirmations}")
+    lines.append(
+        f"- 确认因子: {signal.confirmation.confirmation_count}/{signal.confirmation.required_confirmations}"
+    )
     if signal.confirmation.confirmations:
         lines.append("- 确认项:")
         for c in signal.confirmation.confirmations:

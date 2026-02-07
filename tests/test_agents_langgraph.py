@@ -124,8 +124,17 @@ class TestTradingToolFactory:
         callbacks = create_mock_callbacks()
         assert len(callbacks) == 9  # 现在包含限价单回调
 
-        (buy_cb, sell_cb, sell_short_cb, buy_to_cover_cb, nothing_cb, spot_cb,
-         buy_limit_cb, sell_short_limit_cb, cancel_limit_cb) = callbacks
+        (
+            buy_cb,
+            sell_cb,
+            sell_short_cb,
+            buy_to_cover_cb,
+            nothing_cb,
+            spot_cb,
+            buy_limit_cb,
+            sell_short_limit_cb,
+            cancel_limit_cb,
+        ) = callbacks
 
         # 测试 buy 回调
         result = buy_cb("BTC", 100.0, 5)
@@ -287,9 +296,7 @@ class TestReviewAgentState:
         """测试创建初始状态"""
         from src.agents.review.state import create_initial_state
 
-        decision_records = [
-            {"decision": "BUY", "market_data": {"current_price": 50000}}
-        ]
+        decision_records = [{"decision": "BUY", "market_data": {"current_price": 50000}}]
 
         state = create_initial_state(
             symbol="BTC",
@@ -308,6 +315,7 @@ class TestImports:
     def test_import_trading_agent(self):
         """测试导入交易 Agent"""
         from src.agents.trading import get_trading_workflow
+
         # 测试延迟导入
         TradingAgentWorkflow = get_trading_workflow()
         assert TradingAgentWorkflow is not None
@@ -315,6 +323,7 @@ class TestImports:
     def test_import_execution_agent(self):
         """测试导入执行 Agent"""
         from src.agents.execution import get_execution_workflow
+
         # 测试延迟导入
         ExecutionAgentWorkflow = get_execution_workflow()
         assert ExecutionAgentWorkflow is not None
@@ -322,6 +331,7 @@ class TestImports:
     def test_import_review_agent(self):
         """测试导入复盘 Agent"""
         from src.agents.review import get_review_workflow
+
         # 测试延迟导入
         ReviewAgentWorkflow = get_review_workflow()
         assert ReviewAgentWorkflow is not None

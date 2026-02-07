@@ -288,7 +288,7 @@ class ReviewDailyLogger:
         # 验证 format_type
         if format_type not in self.SUPPORTED_FORMATS:
             raise ValueError(
-                f"不支持的导出格式: {format_type}，" f"支持的格式: {self.SUPPORTED_FORMATS}"
+                f"不支持的导出格式: {format_type}，支持的格式: {self.SUPPORTED_FORMATS}"
             )
 
         # 获取所有日志文件

@@ -28,78 +28,66 @@ class TestDecisionValidator:
             min_signal_score=0.4,
             min_risk_reward_ratio=1.5,
             avoid_high_volatility=True,
-            prefer_pullback_entry=True
+            prefer_pullback_entry=True,
         )
 
     @pytest.fixture
     def sample_indicators(self):
         """样本指标数据"""
         return {
-            'current_price': 50000.0,
-            'rsi': 45.0,
-            'rsi_available': True,
-            'macd': 100.0,
-            'macd_signal': 80.0,
-            'macd_hist': 20.0,
-            'macd_available': True,
-            'bb_position': 0.4,
-            'bb_upper': 52000.0,
-            'bb_lower': 48000.0,
-            'bb_available': True,
-            'ema_20': 49500.0,
-            'ema_50': 49000.0,
-            'atr_14': 500.0,
-            'volume': 1000000,
-            'volume_ma_20': 900000
+            "current_price": 50000.0,
+            "rsi": 45.0,
+            "rsi_available": True,
+            "macd": 100.0,
+            "macd_signal": 80.0,
+            "macd_hist": 20.0,
+            "macd_available": True,
+            "bb_position": 0.4,
+            "bb_upper": 52000.0,
+            "bb_lower": 48000.0,
+            "bb_available": True,
+            "ema_20": 49500.0,
+            "ema_50": 49000.0,
+            "atr_14": 500.0,
+            "volume": 1000000,
+            "volume_ma_20": 900000,
         }
 
     @pytest.fixture
     def bullish_trends(self):
         """看涨趋势"""
-        return {
-            '15分钟': '上涨',
-            '1小时': '强势上涨',
-            '4小时': '上涨',
-            '日线': '强势上涨'
-        }
+        return {"15分钟": "上涨", "1小时": "强势上涨", "4小时": "上涨", "日线": "强势上涨"}
 
     @pytest.fixture
     def bearish_trends(self):
         """看跌趋势"""
-        return {
-            '15分钟': '下跌',
-            '1小时': '强势下跌',
-            '4小时': '下跌',
-            '日线': '下跌'
-        }
+        return {"15分钟": "下跌", "1小时": "强势下跌", "4小时": "下跌", "日线": "下跌"}
 
     @pytest.fixture
     def mixed_trends(self):
         """混合趋势"""
-        return {
-            '15分钟': '上涨',
-            '1小时': '下跌',
-            '4小时': '震荡',
-            '日线': '上涨'
-        }
+        return {"15分钟": "上涨", "1小时": "下跌", "4小时": "震荡", "日线": "上涨"}
 
     @pytest.fixture
     def sample_df(self):
         """样本 OHLCV 数据"""
-        dates = pd.date_range(end=datetime.now(), periods=100, freq='15min')
+        dates = pd.date_range(end=datetime.now(), periods=100, freq="15min")
         np.random.seed(42)
 
         # 生成价格数据（轻微上涨趋势）
         base_price = 50000
         prices = base_price + np.cumsum(np.random.randn(100) * 50)
 
-        df = pd.DataFrame({
-            'open': prices - np.random.rand(100) * 100,
-            'high': prices + np.random.rand(100) * 200,
-            'low': prices - np.random.rand(100) * 200,
-            'close': prices,
-            'volume': np.random.randint(500000, 1500000, 100)
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "open": prices - np.random.rand(100) * 100,
+                "high": prices + np.random.rand(100) * 200,
+                "low": prices - np.random.rand(100) * 200,
+                "close": prices,
+                "volume": np.random.randint(500000, 1500000, 100),
+            },
+            index=dates,
+        )
 
         return df
 
@@ -111,11 +99,11 @@ class TestDecisionValidator:
             decision="BUY",
             symbol="BTC",
             current_price=50000.0,
-            indicators={'current_price': 50000.0, 'rsi': 50.0},
+            indicators={"current_price": 50000.0, "rsi": 50.0},
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         # 找到趋势共振检查
@@ -129,11 +117,11 @@ class TestDecisionValidator:
             decision="SELL_SHORT",
             symbol="BTC",
             current_price=50000.0,
-            indicators={'current_price': 50000.0, 'rsi': 50.0},
+            indicators={"current_price": 50000.0, "rsi": 50.0},
             multi_timeframe_trends=bearish_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         trend_check = next((c for c in validation.checks if c.name == "trend_alignment"), None)
@@ -146,11 +134,11 @@ class TestDecisionValidator:
             decision="BUY",
             symbol="BTC",
             current_price=50000.0,
-            indicators={'current_price': 50000.0, 'rsi': 50.0},
+            indicators={"current_price": 50000.0, "rsi": 50.0},
             multi_timeframe_trends=mixed_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         trend_check = next((c for c in validation.checks if c.name == "trend_alignment"), None)
@@ -164,11 +152,11 @@ class TestDecisionValidator:
             decision="BUY",  # 做多
             symbol="BTC",
             current_price=50000.0,
-            indicators={'current_price': 50000.0, 'rsi': 50.0},
+            indicators={"current_price": 50000.0, "rsi": 50.0},
             multi_timeframe_trends=bearish_trends,  # 但趋势看跌
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         trend_check = next((c for c in validation.checks if c.name == "trend_alignment"), None)
@@ -181,7 +169,7 @@ class TestDecisionValidator:
         """测试：强信号应该通过"""
         # RSI 超卖，MACD 金叉 - 强烈看涨信号
         indicators = sample_indicators.copy()
-        indicators['rsi'] = 25.0  # 超卖
+        indicators["rsi"] = 25.0  # 超卖
 
         validation = validator.validate_decision(
             decision="BUY",
@@ -191,7 +179,7 @@ class TestDecisionValidator:
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         signal_check = next((c for c in validation.checks if c.name == "signal_quality"), None)
@@ -202,10 +190,10 @@ class TestDecisionValidator:
         """测试：弱信号应该得低分"""
         # RSI 超买时做多 - 不是好时机
         indicators = sample_indicators.copy()
-        indicators['rsi'] = 75.0  # 超买
-        indicators['macd'] = -100.0  # MACD 在信号线下方
-        indicators['macd_signal'] = -80.0
-        indicators['macd_hist'] = -20.0
+        indicators["rsi"] = 75.0  # 超买
+        indicators["macd"] = -100.0  # MACD 在信号线下方
+        indicators["macd_signal"] = -80.0
+        indicators["macd_hist"] = -20.0
 
         validation = validator.validate_decision(
             decision="BUY",
@@ -215,7 +203,7 @@ class TestDecisionValidator:
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         signal_check = next((c for c in validation.checks if c.name == "signal_quality"), None)
@@ -233,8 +221,8 @@ class TestDecisionValidator:
             indicators=sample_indicators,
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.06,  # 6% 止盈
-            stop_loss_ratio=0.02,    # 2% 止损 -> 3:1
-            leverage=5
+            stop_loss_ratio=0.02,  # 2% 止损 -> 3:1
+            leverage=5,
         )
 
         rr_check = next((c for c in validation.checks if c.name == "risk_reward"), None)
@@ -250,8 +238,8 @@ class TestDecisionValidator:
             indicators=sample_indicators,
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.02,  # 2% 止盈
-            stop_loss_ratio=0.03,    # 3% 止损 -> 0.67:1 太差
-            leverage=5
+            stop_loss_ratio=0.03,  # 3% 止损 -> 0.67:1 太差
+            leverage=5,
         )
 
         rr_check = next((c for c in validation.checks if c.name == "risk_reward"), None)
@@ -269,7 +257,7 @@ class TestDecisionValidator:
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.03,
             stop_loss_ratio=0.02,  # 1.5:1
-            leverage=2
+            leverage=2,
         )
 
         validation_high_lev = validator.validate_decision(
@@ -280,7 +268,7 @@ class TestDecisionValidator:
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.03,
             stop_loss_ratio=0.02,  # 1.5:1
-            leverage=10
+            leverage=10,
         )
 
         rr_low = next((c for c in validation_low_lev.checks if c.name == "risk_reward"), None)
@@ -302,7 +290,7 @@ class TestDecisionValidator:
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
             leverage=5,
-            df=sample_df
+            df=sample_df,
         )
 
         market_check = next((c for c in validation.checks if c.name == "market_regime"), None)
@@ -313,7 +301,7 @@ class TestDecisionValidator:
     def test_market_regime_high_volatility(self, validator, bullish_trends, sample_indicators):
         """测试：高波动率环境应该警告或阻止"""
         indicators = sample_indicators.copy()
-        indicators['atr_14'] = 2000.0  # 高波动率 (4% of price)
+        indicators["atr_14"] = 2000.0  # 高波动率 (4% of price)
 
         validation = validator.validate_decision(
             decision="BUY",
@@ -323,13 +311,13 @@ class TestDecisionValidator:
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         market_check = next((c for c in validation.checks if c.name == "market_regime"), None)
         assert market_check is not None
         # 高波动率环境应该有警告
-        assert "波动率" in str(market_check.details.get('warnings', []))
+        assert "波动率" in str(market_check.details.get("warnings", []))
 
     # === 入场时机测试 ===
 
@@ -337,8 +325,8 @@ class TestDecisionValidator:
         """测试：好的入场时机"""
         # 价格接近区间底部
         indicators = sample_indicators.copy()
-        indicators['current_price'] = 48500.0  # 接近低点
-        indicators['ema_20'] = 49000.0  # 价格在均线下方
+        indicators["current_price"] = 48500.0  # 接近低点
+        indicators["ema_20"] = 49000.0  # 价格在均线下方
 
         validation = validator.validate_decision(
             decision="BUY",
@@ -349,7 +337,7 @@ class TestDecisionValidator:
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
             leverage=5,
-            df=sample_df
+            df=sample_df,
         )
 
         entry_check = next((c for c in validation.checks if c.name == "entry_timing"), None)
@@ -361,8 +349,8 @@ class TestDecisionValidator:
         """测试：追高入场应该警告"""
         # 价格远高于均线
         indicators = sample_indicators.copy()
-        indicators['current_price'] = 52000.0  # 价格过高
-        indicators['ema_20'] = 49000.0  # 价格远高于均线
+        indicators["current_price"] = 52000.0  # 价格过高
+        indicators["ema_20"] = 49000.0  # 价格远高于均线
 
         validation = validator.validate_decision(
             decision="BUY",
@@ -373,7 +361,7 @@ class TestDecisionValidator:
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
             leverage=5,
-            df=sample_df
+            df=sample_df,
         )
 
         entry_check = next((c for c in validation.checks if c.name == "entry_timing"), None)
@@ -393,7 +381,7 @@ class TestDecisionValidator:
             multi_timeframe_trends=mixed_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         assert validation.is_valid
@@ -404,11 +392,11 @@ class TestDecisionValidator:
         """测试：所有条件良好时应该通过"""
         # 设置良好的条件
         indicators = sample_indicators.copy()
-        indicators['rsi'] = 35.0  # 接近超卖
-        indicators['macd'] = 100.0
-        indicators['macd_signal'] = 50.0
-        indicators['macd_hist'] = 50.0
-        indicators['bb_position'] = 0.3  # 接近下轨
+        indicators["rsi"] = 35.0  # 接近超卖
+        indicators["macd"] = 100.0
+        indicators["macd_signal"] = 50.0
+        indicators["macd_hist"] = 50.0
+        indicators["bb_position"] = 0.3  # 接近下轨
 
         validation = validator.validate_decision(
             decision="BUY",
@@ -419,7 +407,7 @@ class TestDecisionValidator:
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
             leverage=5,
-            df=sample_df
+            df=sample_df,
         )
 
         # 应该通过验证
@@ -437,8 +425,8 @@ class TestDecisionValidator:
             indicators=sample_indicators,
             multi_timeframe_trends=bearish_trends,
             take_profit_ratio=0.02,  # 低止盈
-            stop_loss_ratio=0.03,    # 高止损
-            leverage=10
+            stop_loss_ratio=0.03,  # 高止损
+            leverage=10,
         )
 
         # 应该被阻止
@@ -450,7 +438,7 @@ class TestDecisionValidator:
         """测试：仓位调整系数计算"""
         # 好条件 -> 高系数
         indicators_good = sample_indicators.copy()
-        indicators_good['rsi'] = 30.0
+        indicators_good["rsi"] = 30.0
 
         validation_good = validator.validate_decision(
             decision="BUY",
@@ -460,19 +448,14 @@ class TestDecisionValidator:
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.06,
             stop_loss_ratio=0.02,
-            leverage=3
+            leverage=3,
         )
 
         # 一般条件 -> 低系数
         indicators_fair = sample_indicators.copy()
-        indicators_fair['rsi'] = 55.0
+        indicators_fair["rsi"] = 55.0
 
-        mixed_trends = {
-            '15分钟': '上涨',
-            '1小时': '震荡',
-            '4小时': '上涨',
-            '日线': '震荡'
-        }
+        mixed_trends = {"15分钟": "上涨", "1小时": "震荡", "4小时": "上涨", "日线": "震荡"}
 
         validation_fair = validator.validate_decision(
             decision="BUY",
@@ -482,11 +465,13 @@ class TestDecisionValidator:
             multi_timeframe_trends=mixed_trends,
             take_profit_ratio=0.04,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         # 好条件的仓位系数应该更高
-        assert validation_good.suggested_size_multiplier >= validation_fair.suggested_size_multiplier
+        assert (
+            validation_good.suggested_size_multiplier >= validation_fair.suggested_size_multiplier
+        )
 
     def test_validation_summary(self, validator, bullish_trends, sample_indicators):
         """测试：验证摘要生成"""
@@ -498,7 +483,7 @@ class TestDecisionValidator:
             multi_timeframe_trends=bullish_trends,
             take_profit_ratio=0.05,
             stop_loss_ratio=0.02,
-            leverage=5
+            leverage=5,
         )
 
         summary = validation.get_summary()
@@ -518,7 +503,7 @@ class TestValidationCheck:
             result=ValidationResult.PASS,
             score=0.8,
             message="测试通过",
-            details={"key": "value"}
+            details={"key": "value"},
         )
 
         assert check.name == "test_check"
@@ -540,7 +525,7 @@ class TestDecisionValidation:
             validated_decision="BUY",
             blockers=[],
             warnings=["警告1"],
-            suggestions=["建议1"]
+            suggestions=["建议1"],
         )
 
         assert validation.is_valid
@@ -551,10 +536,7 @@ class TestDecisionValidation:
     def test_get_summary_pass(self):
         """测试通过时的摘要"""
         validation = DecisionValidation(
-            is_valid=True,
-            overall_score=0.85,
-            decision="BUY",
-            validated_decision="BUY"
+            is_valid=True, overall_score=0.85, decision="BUY", validated_decision="BUY"
         )
 
         summary = validation.get_summary()
@@ -568,7 +550,7 @@ class TestDecisionValidation:
             overall_score=0.35,
             decision="BUY",
             validated_decision="DO_NOTHING",
-            blockers=["趋势不一致"]
+            blockers=["趋势不一致"],
         )
 
         summary = validation.get_summary()
