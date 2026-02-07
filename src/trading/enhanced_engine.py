@@ -11,28 +11,20 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+from typing import Any
+
 import pandas as pd
 
-from src.data.market_state import (
-    MarketStateAnalyzer,
-    MarketAnalysisResult,
-    MarketState
-)
-from src.data.signal_scorer import (
-    SignalScorer,
-    TradingSignal,
-    SignalType,
-    SignalQuality
-)
+from src.data.market_state import MarketAnalysisResult, MarketState, MarketStateAnalyzer
+from src.data.signal_scorer import SignalQuality, SignalScorer, SignalType, TradingSignal
 from src.trading.risk_manager import (
+    PositionSizeResult,
+    RiskAssessment,
     RiskManager,
     RiskParameters,
-    RiskAssessment,
-    PositionSizeResult,
     StopLossResult,
-    TakeProfitResult
+    TakeProfitResult,
 )
 
 
@@ -64,15 +56,15 @@ class EnhancedDecision:
     decision_quality: str
 
     # 推理和警告
-    reasoning: List[str]
-    warnings: List[str]
-    blockers: List[str]  # 阻止交易的原因
+    reasoning: list[str]
+    warnings: list[str]
+    blockers: list[str]  # 阻止交易的原因
 
     # Prompt注入文本
     prompt_injection: str
 
     # 元数据
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class EnhancedTradingEngine:
@@ -80,8 +72,8 @@ class EnhancedTradingEngine:
 
     def __init__(
         self,
-        risk_params: Optional[RiskParameters] = None,
-        signal_weights: Optional[Dict[str, float]] = None,
+        risk_params: RiskParameters | None = None,
+        signal_weights: dict[str, float] | None = None,
         min_signal_quality: SignalQuality = SignalQuality.FAIR,
         min_confidence: float = 0.4,
         enable_risk_filter: bool = True,
@@ -108,7 +100,7 @@ class EnhancedTradingEngine:
         self.enable_timing_filter = enable_timing_filter
 
         self._decision_counter = 0
-        self._decision_history: List[EnhancedDecision] = []
+        self._decision_history: list[EnhancedDecision] = []
 
     def analyze_and_decide(
         self,
@@ -116,8 +108,8 @@ class EnhancedTradingEngine:
         df: pd.DataFrame,
         current_price: float,
         account_balance: float,
-        current_positions: List[Dict[str, Any]],
-        multi_timeframe_trends: Optional[Dict[str, str]] = None,
+        current_positions: list[dict[str, Any]],
+        multi_timeframe_trends: dict[str, str] | None = None,
         leverage: int = 3
     ) -> EnhancedDecision:
         """
@@ -277,8 +269,8 @@ class EnhancedTradingEngine:
         return decision
 
     def _find_position(
-        self, symbol: str, positions: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+        self, symbol: str, positions: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         """查找指定符号的持仓"""
         for pos in positions:
             if pos.get('coin') == symbol:
@@ -290,8 +282,8 @@ class EnhancedTradingEngine:
         trading_signal: TradingSignal,
         risk_assessment: RiskAssessment,
         market_analysis: MarketAnalysisResult,
-        current_position: Optional[Dict[str, Any]]
-    ) -> Tuple[bool, str, List[str]]:
+        current_position: dict[str, Any] | None
+    ) -> tuple[bool, str, list[str]]:
         """
         应用过滤器决定是否交易
 
@@ -397,7 +389,7 @@ class EnhancedTradingEngine:
         self,
         trading_signal: TradingSignal,
         overall_confidence: float,
-        blockers: List[str]
+        blockers: list[str]
     ) -> str:
         """确定决策质量"""
         if blockers:
@@ -519,8 +511,8 @@ class EnhancedTradingEngine:
         )
 
     def get_decision_history(
-        self, symbol: Optional[str] = None, limit: int = 10
-    ) -> List[EnhancedDecision]:
+        self, symbol: str | None = None, limit: int = 10
+    ) -> list[EnhancedDecision]:
         """获取决策历史"""
         history = self._decision_history
         if symbol:
@@ -531,12 +523,12 @@ class EnhancedTradingEngine:
         """更新风险参数"""
         self.risk_manager = RiskManager(risk_params=params)
 
-    def update_signal_weights(self, weights: Dict[str, float]):
+    def update_signal_weights(self, weights: dict[str, float]):
         """更新信号权重"""
         self.signal_scorer = SignalScorer(weights=weights)
 
 
-def create_enhanced_engine_from_config(config: Dict[str, Any]) -> EnhancedTradingEngine:
+def create_enhanced_engine_from_config(config: dict[str, Any]) -> EnhancedTradingEngine:
     """
     从配置字典创建增强型交易引擎
 

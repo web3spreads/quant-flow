@@ -11,9 +11,9 @@
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+from enum import Enum
+from typing import Any
 
 
 class SignalType(Enum):
@@ -51,8 +51,8 @@ class SignalConfirmation:
     confirmed: bool
     confirmation_count: int     # 确认因子数量
     required_confirmations: int  # 需要的确认数量
-    confirmations: List[str]    # 确认因子列表
-    rejections: List[str]       # 拒绝因子列表
+    confirmations: list[str]    # 确认因子列表
+    rejections: list[str]       # 拒绝因子列表
     confidence_boost: float     # 确认带来的置信度提升
 
 
@@ -64,7 +64,7 @@ class EntryTiming:
     price_position: str  # "at_support", "at_resistance", "middle"
     pullback_quality: str  # "good_pullback", "extended", "no_pullback"
     suggested_action: str  # "enter_now", "wait_pullback", "wait_breakout"
-    wait_for_price: Optional[float]  # 建议等待的价格
+    wait_for_price: float | None  # 建议等待的价格
     reasoning: str
 
 
@@ -73,9 +73,9 @@ class SignalValidation:
     """信号验证结果"""
     is_valid: bool
     validation_score: float  # 0-100
-    passed_checks: List[str]
-    failed_checks: List[str]
-    warnings: List[str]
+    passed_checks: list[str]
+    failed_checks: list[str]
+    warnings: list[str]
     risk_adjusted_score: float
 
 
@@ -94,7 +94,7 @@ class TradingSignal:
     confidence: float       # 置信度 (0 到 1)
 
     # 因子分析
-    factors: List[SignalFactor]
+    factors: list[SignalFactor]
     dominant_factor: str    # 主导因子
 
     # 确认和验证
@@ -111,9 +111,9 @@ class TradingSignal:
     risk_reward_ratio: float
 
     # 附加信息
-    reasoning: List[str]
-    warnings: List[str]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    reasoning: list[str]
+    warnings: list[str]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class SignalScorer:
@@ -131,9 +131,9 @@ class SignalScorer:
 
     def __init__(
         self,
-        weights: Optional[Dict[str, float]] = None,
+        weights: dict[str, float] | None = None,
         min_confirmation_count: int = 3,
-        quality_thresholds: Optional[Dict[str, float]] = None
+        quality_thresholds: dict[str, float] | None = None
     ):
         """
         初始化信号评分器
@@ -153,19 +153,19 @@ class SignalScorer:
         }
 
         self._signal_counter = 0
-        self._signal_history: List[TradingSignal] = []
+        self._signal_history: list[TradingSignal] = []
 
     def score_signal(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
+        market_data: dict[str, Any],
         trend_analysis: Any,
         momentum_analysis: Any,
         volume_analysis: Any,
         volatility_analysis: Any,
         support_resistance: Any,
-        multi_timeframe_trends: Optional[Dict[str, str]] = None,
-        current_position: Optional[Dict[str, Any]] = None
+        multi_timeframe_trends: dict[str, str] | None = None,
+        current_position: dict[str, Any] | None = None
     ) -> TradingSignal:
         """
         计算综合交易信号
@@ -362,7 +362,7 @@ class SignalScorer:
 
         return signal
 
-    def _score_trend(self, trend) -> Tuple[float, str]:
+    def _score_trend(self, trend) -> tuple[float, str]:
         """评分趋势因子"""
         if not trend:
             return 0.0, "无趋势数据"
@@ -392,7 +392,7 @@ class SignalScorer:
 
         return max(-1, min(1, score)), ", ".join(descriptions)
 
-    def _score_momentum(self, momentum) -> Tuple[float, str]:
+    def _score_momentum(self, momentum) -> tuple[float, str]:
         """评分动量因子"""
         if not momentum:
             return 0.0, "无动量数据"
@@ -446,7 +446,7 @@ class SignalScorer:
 
         return max(-1, min(1, score)), ", ".join(descriptions) if descriptions else "动量中性"
 
-    def _score_volume(self, volume, trend) -> Tuple[float, str]:
+    def _score_volume(self, volume, trend) -> tuple[float, str]:
         """评分成交量因子"""
         if not volume:
             return 0.0, "无成交量数据"
@@ -495,7 +495,7 @@ class SignalScorer:
 
         return max(-1, min(1, score)), ", ".join(descriptions) if descriptions else "成交量正常"
 
-    def _score_volatility(self, volatility) -> Tuple[float, str]:
+    def _score_volatility(self, volatility) -> tuple[float, str]:
         """评分波动性因子"""
         if not volatility:
             return 0.0, "无波动性数据"
@@ -520,7 +520,7 @@ class SignalScorer:
 
         return score, ", ".join(descriptions)
 
-    def _score_price_action(self, price, sr, trend) -> Tuple[float, str]:
+    def _score_price_action(self, price, sr, trend) -> tuple[float, str]:
         """评分价格行为因子"""
         if not sr:
             return 0.0, "无支撑阻力数据"
@@ -562,7 +562,7 @@ class SignalScorer:
 
         return max(-1, min(1, score)), ", ".join(descriptions) if descriptions else "价格行为中性"
 
-    def _score_multi_timeframe(self, mtf_trends) -> Tuple[float, str]:
+    def _score_multi_timeframe(self, mtf_trends) -> tuple[float, str]:
         """评分多周期一致性因子"""
         if not mtf_trends:
             return 0.0, "无多周期数据"
@@ -574,7 +574,7 @@ class SignalScorer:
         bearish_count = 0
         total = 0
 
-        for tf, trend in mtf_trends.items():
+        for _tf, trend in mtf_trends.items():
             if any(kw in trend.lower() for kw in bullish_keywords):
                 bullish_count += 1
             elif any(kw in trend.lower() for kw in bearish_keywords):
@@ -600,8 +600,8 @@ class SignalScorer:
         return score, desc
 
     def _determine_signal_type(
-        self, raw_score: float, current_position: Optional[Dict], trend
-    ) -> Tuple[SignalType, str]:
+        self, raw_score: float, current_position: dict | None, trend
+    ) -> tuple[SignalType, str]:
         """确定信号类型"""
         # 阈值
         entry_threshold = 30  # 入场阈值
@@ -637,7 +637,7 @@ class SignalScorer:
             return SignalType.NO_SIGNAL, 'neutral'
 
     def _check_confirmations(
-        self, factors: List[SignalFactor], direction: str
+        self, factors: list[SignalFactor], direction: str
     ) -> SignalConfirmation:
         """检查信号确认"""
         confirmations = []
@@ -682,7 +682,7 @@ class SignalScorer:
 
     def _validate_signal(
         self, signal_type: SignalType, score: float,
-        factors: List[SignalFactor], volatility
+        factors: list[SignalFactor], volatility
     ) -> SignalValidation:
         """验证信号"""
         passed = []
@@ -841,7 +841,7 @@ class SignalScorer:
 
     def _calculate_sl_tp(
         self, price: float, direction: str, volatility, sr
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """计算止损止盈"""
         atr = getattr(volatility, 'current_atr', price * 0.02) if volatility else price * 0.02
         sl_mult = getattr(volatility, 'suggested_sl_multiplier', 1.5) if volatility else 1.5
@@ -876,9 +876,9 @@ class SignalScorer:
         return min(0.2, base_size * confidence_factor * vol_factor * rr_factor)
 
     def _generate_reasoning(
-        self, factors: List[SignalFactor], confirmation: SignalConfirmation,
+        self, factors: list[SignalFactor], confirmation: SignalConfirmation,
         timing: EntryTiming
-    ) -> List[str]:
+    ) -> list[str]:
         """生成推理说明"""
         reasoning = []
 
@@ -898,7 +898,7 @@ class SignalScorer:
 
     def _generate_warnings(
         self, validation: SignalValidation, timing: EntryTiming, volatility
-    ) -> List[str]:
+    ) -> list[str]:
         """生成警告"""
         warnings = list(validation.warnings)
 
@@ -937,7 +937,7 @@ class SignalScorer:
 
         return "hold"
 
-    def get_signal_history(self, symbol: Optional[str] = None, limit: int = 10) -> List[TradingSignal]:
+    def get_signal_history(self, symbol: str | None = None, limit: int = 10) -> list[TradingSignal]:
         """获取信号历史"""
         history = self._signal_history
         if symbol:

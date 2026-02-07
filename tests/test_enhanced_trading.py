@@ -3,42 +3,43 @@
 测试市场状态分析、风险管理、信号评分和增强引擎
 """
 
-import pytest
-import pandas as pd
-import numpy as np
 from datetime import datetime
 
+import numpy as np
+import pandas as pd
+import pytest
+
 from src.data.market_state import (
-    MarketStateAnalyzer,
     MarketState,
+    MarketStateAnalyzer,
+    MomentumAnalysis,
+    SupportResistance,
     TrendAnalysis,
     VolatilityAnalysis,
-    MomentumAnalysis,
     VolumeAnalysis,
-    SupportResistance,
-    format_analysis_for_prompt
-)
-from src.trading.risk_manager import (
-    RiskManager,
-    RiskParameters,
-    RiskLevel,
-    StopLossResult,
-    TakeProfitResult,
-    PositionSizeResult,
-    RiskAssessment,
-    format_risk_assessment_for_prompt
+    format_analysis_for_prompt,
 )
 from src.data.signal_scorer import (
+    SignalQuality,
     SignalScorer,
     SignalType,
-    SignalQuality,
     TradingSignal,
-    format_signal_for_prompt
+    format_signal_for_prompt,
 )
 from src.trading.enhanced_engine import (
-    EnhancedTradingEngine,
     EnhancedDecision,
-    create_enhanced_engine_from_config
+    EnhancedTradingEngine,
+    create_enhanced_engine_from_config,
+)
+from src.trading.risk_manager import (
+    PositionSizeResult,
+    RiskAssessment,
+    RiskLevel,
+    RiskManager,
+    RiskParameters,
+    StopLossResult,
+    TakeProfitResult,
+    format_risk_assessment_for_prompt,
 )
 
 
@@ -477,8 +478,8 @@ class TestEnhancedTradingEngine:
         engine = EnhancedTradingEngine()
 
         assert engine.min_confidence == 0.4
-        assert engine.enable_risk_filter == True
-        assert engine.enable_timing_filter == True
+        assert engine.enable_risk_filter
+        assert engine.enable_timing_filter
 
     def test_custom_engine_config(self):
         """测试自定义引擎配置"""
@@ -492,7 +493,7 @@ class TestEnhancedTradingEngine:
 
         assert engine.min_signal_quality == SignalQuality.GOOD
         assert engine.min_confidence == 0.5
-        assert engine.enable_risk_filter == False
+        assert not engine.enable_risk_filter
 
     def test_analyze_and_decide(self):
         """测试完整分析决策流程"""

@@ -2,18 +2,18 @@
 启动横幅生成器
 使用 Rich 库动态生成居中对齐的横幅
 """
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-from typing import Optional
 
 
 def create_startup_banner(
     title: str = "Quant Flow Trading Bot",
     subtitle: str = "Multi-Agent AI Trading System",
     platform: str = "Hyperliquid",
-    version: Optional[str] = None,
-    console: Optional[Console] = None
+    version: str | None = None,
+    console: Console | None = None
 ) -> Panel:
     """
     创建居中对齐的启动横幅
@@ -60,8 +60,8 @@ def create_startup_banner(
 
 
 def print_startup_banner(
-    config: Optional[any] = None,
-    console: Optional[Console] = None
+    config: any | None = None,
+    console: Console | None = None
 ):
     """
     打印启动横幅和配置信息
@@ -93,7 +93,7 @@ def print_startup_banner(
 
 
 def print_section_separator(
-    console: Optional[Console] = None,
+    console: Console | None = None,
     char: str = "═",
     length: int = 80,
     style: str = "dim cyan"
@@ -116,7 +116,7 @@ def print_section_separator(
 def print_box_message(
     message: str,
     title: str = "",
-    console: Optional[Console] = None,
+    console: Console | None = None,
     border_style: str = "cyan",
     padding: tuple = (1, 2)
 ):

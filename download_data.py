@@ -5,10 +5,11 @@ Hyperliquid历史数据下载工具
 """
 
 import argparse
-import sys
 import json
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 
 from src.backtest.data_loader import BacktestDataLoader
@@ -229,7 +230,7 @@ def main():
     loader = BacktestDataLoader(testnet=args.testnet)
 
     # 下载每个交易对
-    print(f"\n🚀 开始下载数据...")
+    print("\n🚀 开始下载数据...")
     print(f"   交易对: {', '.join(args.symbol)}")
     print(f"   时间周期: {args.timeframe}")
     print(f"   时间范围: {args.start_date} 至 {args.end_date}")
@@ -257,7 +258,7 @@ def main():
 
     # 显示总结
     print(f"\n{'='*60}")
-    print(f"📊 下载完成")
+    print("📊 下载完成")
     print(f"   成功: {success_count}/{len(args.symbol)}")
     if failed_symbols:
         print(f"   失败: {', '.join(failed_symbols)}")

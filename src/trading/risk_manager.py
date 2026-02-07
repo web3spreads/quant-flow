@@ -11,9 +11,9 @@
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+from enum import Enum
+from typing import Any
 
 
 class RiskLevel(Enum):
@@ -86,7 +86,7 @@ class TakeProfitResult:
     method: str
     atr_multiplier: float
     risk_reward_ratio: float
-    partial_targets: List[Tuple[float, float]] = field(default_factory=list)  # [(价格, 平仓比例)]
+    partial_targets: list[tuple[float, float]] = field(default_factory=list)  # [(价格, 平仓比例)]
 
 
 @dataclass
@@ -97,7 +97,7 @@ class PositionSizeResult:
     leverage: int         # 建议杠杆
     risk_amount: float    # 风险金额
     method: str           # 计算方法
-    adjustments: List[str] = field(default_factory=list)  # 调整说明
+    adjustments: list[str] = field(default_factory=list)  # 调整说明
 
 
 @dataclass
@@ -105,9 +105,9 @@ class RiskAssessment:
     """风险评估结果"""
     risk_level: RiskLevel
     risk_score: float  # 0-100
-    factors: Dict[str, float]  # 各因素的风险贡献
-    warnings: List[str]
-    recommendations: List[str]
+    factors: dict[str, float]  # 各因素的风险贡献
+    warnings: list[str]
+    recommendations: list[str]
     can_trade: bool
     max_suggested_position: float
 
@@ -128,7 +128,7 @@ class RiskManager:
 
     def __init__(
         self,
-        risk_params: Optional[RiskParameters] = None,
+        risk_params: RiskParameters | None = None,
         position_sizing_method: PositionSizingMethod = PositionSizingMethod.VOLATILITY_ADJUSTED
     ):
         """
@@ -140,7 +140,7 @@ class RiskManager:
         """
         self.params = risk_params or RiskParameters()
         self.sizing_method = position_sizing_method
-        self._trailing_stops: Dict[str, TrailingStopState] = {}
+        self._trailing_stops: dict[str, TrailingStopState] = {}
 
     def calculate_dynamic_stop_loss(
         self,
@@ -148,8 +148,8 @@ class RiskManager:
         is_long: bool,
         current_atr: float,
         volatility_state: str = "normal",
-        support_level: Optional[float] = None,
-        resistance_level: Optional[float] = None
+        support_level: float | None = None,
+        resistance_level: float | None = None
     ) -> StopLossResult:
         """
         计算动态止损价格
@@ -242,9 +242,9 @@ class RiskManager:
         stop_loss_price: float,
         is_long: bool,
         current_atr: float,
-        resistance_level: Optional[float] = None,
-        support_level: Optional[float] = None,
-        min_risk_reward: Optional[float] = None
+        resistance_level: float | None = None,
+        support_level: float | None = None,
+        min_risk_reward: float | None = None
     ) -> TakeProfitResult:
         """
         计算动态止盈价格
@@ -342,7 +342,7 @@ class RiskManager:
         entry_price: float,
         final_tp: float,
         is_long: bool
-    ) -> List[Tuple[float, float]]:
+    ) -> list[tuple[float, float]]:
         """
         生成分批止盈目标
 
@@ -384,10 +384,10 @@ class RiskManager:
         entry_price: float,
         stop_loss_price: float,
         leverage: int,
-        current_atr: Optional[float] = None,
+        current_atr: float | None = None,
         volatility_state: str = "normal",
-        win_rate: Optional[float] = None,
-        avg_win_loss_ratio: Optional[float] = None
+        win_rate: float | None = None,
+        avg_win_loss_ratio: float | None = None
     ) -> PositionSizeResult:
         """
         计算建议仓位大小
@@ -511,8 +511,8 @@ class RiskManager:
     def assess_risk(
         self,
         account_balance: float,
-        current_positions: List[Dict[str, Any]],
-        proposed_trade: Optional[Dict[str, Any]] = None,
+        current_positions: list[dict[str, Any]],
+        proposed_trade: dict[str, Any] | None = None,
         market_volatility: str = "normal"
     ) -> RiskAssessment:
         """
@@ -699,7 +699,7 @@ class RiskManager:
         symbol: str,
         current_price: float,
         is_long: bool
-    ) -> Optional[TrailingStopState]:
+    ) -> TrailingStopState | None:
         """
         更新追踪止损
 
@@ -759,7 +759,7 @@ class RiskManager:
         is_long: bool,
         entry_price: float,
         holding_periods: int
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         判断是否应该平仓
 
@@ -776,9 +776,7 @@ class RiskManager:
         # 检查追踪止损
         state = self._trailing_stops.get(symbol)
         if state and state.is_active:
-            if is_long and current_price <= state.current_stop_price:
-                return True, f"触发追踪止损 (止损价: {state.current_stop_price:.2f})"
-            elif not is_long and current_price >= state.current_stop_price:
+            if is_long and current_price <= state.current_stop_price or not is_long and current_price >= state.current_stop_price:
                 return True, f"触发追踪止损 (止损价: {state.current_stop_price:.2f})"
 
         # 检查最大持仓时间
@@ -787,7 +785,7 @@ class RiskManager:
 
         return False, ""
 
-    def get_trailing_stop_state(self, symbol: str) -> Optional[TrailingStopState]:
+    def get_trailing_stop_state(self, symbol: str) -> TrailingStopState | None:
         """获取追踪止损状态"""
         return self._trailing_stops.get(symbol)
 

@@ -5,19 +5,19 @@
 """
 
 import argparse
-import sys
-import re
 import json
+import re
 import shutil
-import yaml
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
+import yaml
+
+from src.backtest import BacktestDataLoader, BacktestEngine, BacktestReportGenerator
 from src.config import get_config
-from src.utils.logger import TradingLogger
 from src.prompt_manager import PromptManager
-from src.backtest import BacktestEngine, BacktestDataLoader, BacktestReportGenerator
+from src.utils.logger import TradingLogger
 
 
 def parse_args():
@@ -168,7 +168,7 @@ def _load_resume_info(resume_from_path: str) -> dict:
         raise FileNotFoundError(f"恢复文件不存在: {resume_from_path}")
 
     try:
-        with open(resume_path, 'r', encoding='utf-8') as f:
+        with open(resume_path, encoding='utf-8') as f:
             resume_data = json.load(f)
 
         # 提取关键信息
@@ -198,7 +198,7 @@ def _load_resume_info(resume_from_path: str) -> dict:
         raise ValueError(f"读取恢复文件失败: {e}")
 
 
-def _create_backtest_workspace(args, existing_workspace: Optional[Path] = None) -> Path:
+def _create_backtest_workspace(args, existing_workspace: Path | None = None) -> Path:
     """
     创建回测工作空间，生成独立的配置和环境文件
 
@@ -243,7 +243,7 @@ def _create_backtest_workspace(args, existing_workspace: Optional[Path] = None) 
         if not original_config_path.exists():
             raise FileNotFoundError(f"配置文件不存在: {original_config_path}")
 
-        with open(original_config_path, 'r', encoding='utf-8') as f:
+        with open(original_config_path, encoding='utf-8') as f:
             config_data = yaml.safe_load(f)
 
         # 修改配置以适应回测
@@ -295,7 +295,7 @@ def main():
             print("📂 从恢复文件加载信息...")
             try:
                 resume_info = _load_resume_info(args.resume_from)
-                print(f"✅ 恢复信息加载成功")
+                print("✅ 恢复信息加载成功")
                 print(f"   交易对: {resume_info['symbol']}")
                 print(f"   初始余额: ${resume_info['initial_balance']:.2f}")
                 print(f"   已处理决策点: {resume_info['progress'].get('processed_decisions', 0)}/{resume_info['progress'].get('total_decisions', 0)}")
@@ -321,7 +321,7 @@ def main():
                 if workspace_dir and workspace_dir.exists():
                     print(f"✅ 找到工作空间目录: {workspace_dir}")
                 else:
-                    print(f"⚠️ 无法从恢复文件推断工作空间，将创建新的工作空间")
+                    print("⚠️ 无法从恢复文件推断工作空间，将创建新的工作空间")
                     workspace_dir = None
 
                 # 使用恢复的信息覆盖参数
@@ -479,9 +479,9 @@ def main():
             config=config
         )
 
-        print(f"\n✅ 回测完成！")
+        print("\n✅ 回测完成！")
         print(f"   报告目录: {report_files.get('report_dir', 'N/A')}")
-        print(f"   报告文件:")
+        print("   报告文件:")
         print(f"   - JSON: {report_files['json_file']}")
         if report_files.get('csv_file'):
             print(f"   - CSV: {report_files['csv_file']}")

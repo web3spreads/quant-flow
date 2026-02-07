@@ -9,19 +9,19 @@ v2.1 增强版：
 - 与增强分析模块集成，利用市场状态分析结果
 """
 
-from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
-from enum import Enum
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-from langchain_core.messages.utils import trim_messages, count_tokens_approximately
-from langgraph.checkpoint.memory import InMemorySaver
+from enum import StrEnum
+from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from pydantic import BaseModel, Field
 
 from src.llm import LLMClientManager
 from src.utils.logger import TradingLogger
 
 
-class TrendStrength(str, Enum):
+class TrendStrength(StrEnum):
     """趋势强度枚举"""
     VERY_STRONG = "very_strong"
     STRONG = "strong"
@@ -30,7 +30,7 @@ class TrendStrength(str, Enum):
     NEUTRAL = "neutral"
 
 
-class VolatilityLevel(str, Enum):
+class VolatilityLevel(StrEnum):
     """波动性级别枚举"""
     EXTREME = "extreme"
     HIGH = "high"
@@ -45,9 +45,9 @@ class MarketTrendSummary(BaseModel):
     trend_strength: str = Field(default="moderate", description="趋势强度：very_strong/strong/moderate/weak/neutral")
     price_range: str = Field(description="价格区间：如 $60000-$62000")
     price_change_pct: float = Field(default=0.0, description="价格变化百分比")
-    key_levels: List[float] = Field(description="关键价位列表")
-    support_level: Optional[float] = Field(default=None, description="支撑位")
-    resistance_level: Optional[float] = Field(default=None, description="阻力位")
+    key_levels: list[float] = Field(description="关键价位列表")
+    support_level: float | None = Field(default=None, description="支撑位")
+    resistance_level: float | None = Field(default=None, description="阻力位")
     rsi_status: str = Field(description="RSI 状态：超买/超卖/中性")
     rsi_trend: str = Field(default="stable", description="RSI 趋势：rising/falling/stable")
     macd_status: str = Field(default="neutral", description="MACD 状态：bullish/bearish/neutral")
@@ -66,9 +66,9 @@ class DecisionSummary(BaseModel):
     do_nothing_count: int = Field(description="观望次数")
     short_count: int = Field(default=0, description="做空次数")
     close_count: int = Field(default=0, description="平仓次数")
-    key_reasons: List[str] = Field(description="主要决策理由")
+    key_reasons: list[str] = Field(description="主要决策理由")
     strategy_pattern: str = Field(description="策略模式描述")
-    risk_events: List[str] = Field(description="风险事件列表")
+    risk_events: list[str] = Field(description="风险事件列表")
     # 效果分析（新增）
     profitable_decisions: int = Field(default=0, description="盈利决策数")
     losing_decisions: int = Field(default=0, description="亏损决策数")
@@ -110,10 +110,10 @@ class SummaryAgentV2:
 
     def _calculate_trend_strength(
         self,
-        prices: List[float],
-        ma_short: Optional[List[float]] = None,
-        ma_long: Optional[List[float]] = None
-    ) -> Tuple[str, str]:
+        prices: list[float],
+        ma_short: list[float] | None = None,
+        ma_long: list[float] | None = None
+    ) -> tuple[str, str]:
         """
         计算趋势方向和强度
 
@@ -160,7 +160,7 @@ class SummaryAgentV2:
 
         return direction, strength
 
-    def _calculate_volatility_level(self, prices: List[float], atr_values: Optional[List[float]] = None) -> str:
+    def _calculate_volatility_level(self, prices: list[float], atr_values: list[float] | None = None) -> str:
         """
         计算波动性级别
 
@@ -196,8 +196,8 @@ class SummaryAgentV2:
 
     def _detect_market_phase(
         self,
-        prices: List[float],
-        volumes: List[float],
+        prices: list[float],
+        volumes: list[float],
         trend_direction: str
     ) -> str:
         """
@@ -215,7 +215,7 @@ class SummaryAgentV2:
             return "unknown"
 
         # 计算价格和成交量的变化趋势
-        price_change = (prices[-1] - prices[0]) / prices[0] if prices[0] != 0 else 0
+        (prices[-1] - prices[0]) / prices[0] if prices[0] != 0 else 0
 
         # 成交量趋势
         vol_first_half = sum(volumes[:len(volumes)//2]) if volumes else 0
@@ -240,7 +240,7 @@ class SummaryAgentV2:
             else:
                 return "distribution"
 
-    def _find_support_resistance(self, prices: List[float]) -> Tuple[Optional[float], Optional[float]]:
+    def _find_support_resistance(self, prices: list[float]) -> tuple[float | None, float | None]:
         """
         寻找支撑位和阻力位
 
@@ -277,8 +277,8 @@ class SummaryAgentV2:
 
     def _analyze_decision_effectiveness(
         self,
-        decision_records: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        decision_records: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """
         分析决策效果
 
@@ -355,7 +355,7 @@ class SummaryAgentV2:
     def compress_market_history(
         self,
         symbol: str,
-        market_records: List[Dict[str, Any]]
+        market_records: list[dict[str, Any]]
     ) -> MarketTrendSummary:
         """
         压缩市场历史数据为结构化汇总（增强版）
@@ -483,7 +483,7 @@ class SummaryAgentV2:
             if resistance_level and resistance_level != price_max:
                 key_levels.append(resistance_level)
             key_levels.append(price_max)
-            key_levels = sorted(list(set(key_levels)))
+            key_levels = sorted(set(key_levels))
 
             return MarketTrendSummary(
                 price_trend=price_trend,
@@ -516,7 +516,7 @@ class SummaryAgentV2:
     def compress_decision_history(
         self,
         symbol: str,
-        decision_records: List[Dict[str, Any]]
+        decision_records: list[dict[str, Any]]
     ) -> DecisionSummary:
         """
         压缩决策历史为结构化汇总（增强版）
@@ -689,8 +689,8 @@ class SummaryAgentV2:
     def create_compressed_summary(
         self,
         symbol: str,
-        recent_records: List[Dict[str, Any]],
-        older_records: Optional[List[Dict[str, Any]]] = None
+        recent_records: list[dict[str, Any]],
+        older_records: list[dict[str, Any]] | None = None
     ) -> str:
         """
         创建压缩的上下文汇总（增强版 - 包含更丰富的分析信息）
@@ -731,7 +731,7 @@ class SummaryAgentV2:
 
             # 技术指标状态
             summary_parts.extend([
-                f"\n### 📈 技术指标",
+                "\n### 📈 技术指标",
                 f"- RSI: {recent_market.rsi_status} (趋势: {self._translate_trend(recent_market.rsi_trend)})",
                 f"- MACD: {self._translate_macd(recent_market.macd_status)}",
                 f"- 成交量: {recent_market.volume_pattern}",
@@ -748,7 +748,7 @@ class SummaryAgentV2:
             # 决策效果（如果有数据）
             if recent_decisions.profitable_decisions + recent_decisions.losing_decisions > 0:
                 summary_parts.extend([
-                    f"\n### 💰 决策效果",
+                    "\n### 💰 决策效果",
                     f"- 胜率: {recent_decisions.win_rate:.1%} ({recent_decisions.profitable_decisions}盈/{recent_decisions.losing_decisions}亏)",
                     f"- 质量得分: {recent_decisions.decision_quality_score:.2f}/1.00",
                 ])
@@ -983,16 +983,16 @@ class DecisionHistory:
             max_history: 每个交易对保存的最大历史记录数
         """
         # 为每个交易对维护独立的历史记录 {symbol: [records]}
-        self.histories: Dict[str, List[Dict[str, Any]]] = {}
+        self.histories: dict[str, list[dict[str, Any]]] = {}
         self.max_history = max_history
 
     def add_decision(
         self,
         symbol: str,
         decision: str,
-        market_data: Dict[str, Any],
+        market_data: dict[str, Any],
         reason: str = "",
-        action_details: Optional[Dict[str, Any]] = None
+        action_details: dict[str, Any] | None = None
     ):
         """
         添加决策记录
@@ -1023,7 +1023,7 @@ class DecisionHistory:
         if len(self.histories[symbol]) > self.max_history:
             self.histories[symbol] = self.histories[symbol][-self.max_history:]
 
-    def get_recent_decisions(self, symbol: str, count: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_decisions(self, symbol: str, count: int = 10) -> list[dict[str, Any]]:
         """
         获取最近的N次决策
 
@@ -1044,7 +1044,7 @@ class DecisionHistory:
         symbol: str,
         start_index: int,
         end_index: int
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         获取指定范围的决策记录
 

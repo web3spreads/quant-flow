@@ -3,20 +3,20 @@
 提供结构化日志记录和美化的控制台输出
 """
 
-import json
 import csv
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-from rich.markdown import Markdown
-from rich import box
+from typing import Any
+
 import numpy as np
 import pandas as pd
+from rich import box
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -123,7 +123,6 @@ class TradingLogger:
 
     def print_header(self, text: str):
         """打印标题"""
-        from rich.align import Align
         self.console.print()  # 空行
         self.console.rule(text, style="bold cyan")
         self.console.print()  # 空行
@@ -135,7 +134,7 @@ class TradingLogger:
         if content:
             self.console.print(content)
 
-    def print_market_data(self, symbol: str, data: Dict[str, Any]):
+    def print_market_data(self, symbol: str, data: dict[str, Any]):
         """
         打印市场数据
 
@@ -231,7 +230,7 @@ class TradingLogger:
         ]
         return any(indicator in text for indicator in markdown_indicators)
 
-    def print_decision(self, decision: str, details: Dict[str, Any] = None):
+    def print_decision(self, decision: str, details: dict[str, Any] = None):
         """
         打印决策结果
 
@@ -317,11 +316,11 @@ class TradingLogger:
     def log_decision(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
+        market_data: dict[str, Any],
         prompt: str,
         ai_response: str,
         decision: str,
-        action_details: Dict[str, Any] = None,
+        action_details: dict[str, Any] = None,
         status: str = "SUCCESS",
         error_message: str = None
     ):
@@ -357,14 +356,14 @@ class TradingLogger:
         else:
             self._save_decision_csv(timestamp, log_entry)
 
-    def _save_decision_json(self, timestamp: datetime, log_entry: Dict[str, Any]):
+    def _save_decision_json(self, timestamp: datetime, log_entry: dict[str, Any]):
         """保存决策日志为 JSON 格式"""
         filename = self.decisions_dir / f"decisions_{timestamp.strftime('%Y%m%d')}.jsonl"
 
         with open(filename, "a", encoding="utf-8") as f:
             f.write(json.dumps(log_entry, ensure_ascii=False, cls=CustomJSONEncoder) + "\n")
 
-    def _save_decision_csv(self, timestamp: datetime, log_entry: Dict[str, Any]):
+    def _save_decision_csv(self, timestamp: datetime, log_entry: dict[str, Any]):
         """保存决策日志为 CSV 格式"""
         filename = self.decisions_dir / f"decisions_{timestamp.strftime('%Y%m%d')}.csv"
 
@@ -441,7 +440,7 @@ class TradingLogger:
 
 
 # 全局日志实例
-_logger: Optional[TradingLogger] = None
+_logger: TradingLogger | None = None
 
 
 def get_logger(

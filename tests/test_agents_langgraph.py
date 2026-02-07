@@ -6,21 +6,22 @@ LangGraph Agent 迁移测试
 
 import pytest
 
-# 导入通用模块
-from src.agents.common.utils.helpers import (
-    safe_float,
-    safe_leverage,
-    safe_int,
-    shorten_text,
-    extract_json_from_text,
-)
-from src.agents.common.utils.llm import LLMConfig
+from src.agents.common.state.base import add_messages
 from src.agents.common.tools.trading import (
-    TradingToolFactory,
     BuyInput,
+    TradingToolFactory,
     create_mock_callbacks,
 )
-from src.agents.common.state.base import add_messages
+
+# 导入通用模块
+from src.agents.common.utils.helpers import (
+    extract_json_from_text,
+    safe_float,
+    safe_int,
+    safe_leverage,
+    shorten_text,
+)
+from src.agents.common.utils.llm import LLMConfig
 
 
 class TestHelperFunctions:
@@ -215,7 +216,7 @@ class TestMessageReducer:
 
     def test_add_messages(self):
         """测试消息累积"""
-        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.messages import AIMessage, HumanMessage
 
         left = [HumanMessage(content="Hello")]
         right = [AIMessage(content="Hi")]
@@ -258,7 +259,7 @@ class TestExecutionAgentState:
 
     def test_create_initial_state(self):
         """测试创建初始状态"""
-        from src.agents.execution.state import create_initial_state, DecisionType
+        from src.agents.execution.state import create_initial_state
 
         state = create_initial_state(
             decision_text="买入开多 BTC",
@@ -306,29 +307,27 @@ class TestImports:
 
     def test_import_trading_agent(self):
         """测试导入交易 Agent"""
-        from src.agents.trading import TradingAgentState, get_trading_workflow
+        from src.agents.trading import get_trading_workflow
         # 测试延迟导入
         TradingAgentWorkflow = get_trading_workflow()
         assert TradingAgentWorkflow is not None
 
     def test_import_execution_agent(self):
         """测试导入执行 Agent"""
-        from src.agents.execution import ExecutionAgentState, get_execution_workflow
+        from src.agents.execution import get_execution_workflow
         # 测试延迟导入
         ExecutionAgentWorkflow = get_execution_workflow()
         assert ExecutionAgentWorkflow is not None
 
     def test_import_review_agent(self):
         """测试导入复盘 Agent"""
-        from src.agents.review import ReviewAgentState, get_review_workflow
+        from src.agents.review import get_review_workflow
         # 测试延迟导入
         ReviewAgentWorkflow = get_review_workflow()
         assert ReviewAgentWorkflow is not None
 
     def test_import_common_modules(self):
         """测试导入通用模块"""
-        from src.agents.common import BaseAgentState, safe_float, safe_leverage
-        from src.agents.common.tools import TradingToolFactory
 
 
 if __name__ == "__main__":

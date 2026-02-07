@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 
+
 # 添加项目根目录到路径
 def find_project_root(marker="pyproject.toml"):
     current = Path(__file__).resolve().parent
@@ -53,7 +54,7 @@ def test_langchain_workflow():
     saved_file = agent.collect_and_save()
 
     if saved_file:
-        print(f"\n✅ 成功生成报告:")
+        print("\n✅ 成功生成报告:")
         print(f"  文件: {saved_file}")
 
         # 获取摘要
@@ -76,14 +77,15 @@ def test_tools_directly():
     print("=" * 60)
 
     try:
-        from src.agent.external_info.tools import search_crypto_market_news
         from datetime import datetime, timedelta
+
+        from src.agent.external_info.tools import search_crypto_market_news
 
         # 计算日期范围
         end_date = datetime.now()
         start_date = end_date - timedelta(days=1)
 
-        print(f"\n搜索查询: Bitcoin market news")
+        print("\n搜索查询: Bitcoin market news")
         print(f"日期范围: {start_date.strftime('%Y-%m-%d')} 到 {end_date.strftime('%Y-%m-%d')}")
 
         # 调用工具

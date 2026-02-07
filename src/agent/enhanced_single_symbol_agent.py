@@ -12,19 +12,20 @@
 7. 动态仓位管理
 """
 
-from typing import Dict, Any, Tuple, Optional
+from typing import Any
+
 import pandas as pd
 
 from src.agent.single_symbol_agent import SingleSymbolAgent
-from src.trading.enhanced_engine import EnhancedTradingEngine, EnhancedDecision
-from src.trading.risk_manager import RiskParameters
-from src.trading.decision_validator import DecisionValidator, DecisionValidation
 from src.data.signal_scorer import SignalQuality
-from src.llm import LLMClientManager
-from src.trading.order_manager import OrderManager
-from src.utils.logger import TradingLogger
-from src.prompt_manager import PromptManager
 from src.fees import FeeRates
+from src.llm import LLMClientManager
+from src.prompt_manager import PromptManager
+from src.trading.decision_validator import DecisionValidation, DecisionValidator
+from src.trading.enhanced_engine import EnhancedDecision, EnhancedTradingEngine
+from src.trading.order_manager import OrderManager
+from src.trading.risk_manager import RiskParameters
+from src.utils.logger import TradingLogger
 
 
 class EnhancedSingleSymbolAgent(SingleSymbolAgent):
@@ -43,8 +44,8 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         take_profit_ratio: float = 0.05,
         stop_loss_ratio: float = 0.02,
         notifier=None,
-        prompt_manager: Optional[PromptManager] = None,
-        fee_rates: Optional[FeeRates] = None,
+        prompt_manager: PromptManager | None = None,
+        fee_rates: FeeRates | None = None,
         limit_order_enabled: bool = False,
         # 增强参数
         enable_enhanced_analysis: bool = True,
@@ -52,7 +53,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         min_confidence: float = 0.4,
         enable_risk_filter: bool = True,
         enable_timing_filter: bool = True,
-        risk_params: Optional[RiskParameters] = None
+        risk_params: RiskParameters | None = None
     ):
         """
         初始化增强型单币种交易 Agent
@@ -117,7 +118,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             self.enhanced_engine = None
 
         # 缓存最近的增强分析结果
-        self._last_enhanced_decision: Optional[EnhancedDecision] = None
+        self._last_enhanced_decision: EnhancedDecision | None = None
 
         # 初始化决策验证器
         self.decision_validator = DecisionValidator(
@@ -130,7 +131,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         )
 
         # 缓存最近的验证结果
-        self._last_validation: Optional[DecisionValidation] = None
+        self._last_validation: DecisionValidation | None = None
 
     def analyze_with_enhanced_engine(
         self,
@@ -138,8 +139,8 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         current_price: float,
         account_balance: float,
         current_positions: list,
-        multi_timeframe_trends: Optional[Dict[str, str]] = None
-    ) -> Optional[EnhancedDecision]:
+        multi_timeframe_trends: dict[str, str] | None = None
+    ) -> EnhancedDecision | None:
         """
         使用增强引擎进行分析
 
@@ -190,7 +191,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             return self._last_enhanced_decision.prompt_injection
         return ""
 
-    def should_override_decision(self, llm_decision: str) -> Tuple[bool, str, str]:
+    def should_override_decision(self, llm_decision: str) -> tuple[bool, str, str]:
         """
         检查是否应该覆盖LLM的决策
 
@@ -232,29 +233,29 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
 
         return False, llm_decision, ""
 
-    def get_dynamic_stop_loss(self) -> Optional[float]:
+    def get_dynamic_stop_loss(self) -> float | None:
         """获取动态止损价格"""
         if self._last_enhanced_decision:
             return self._last_enhanced_decision.stop_loss.stop_loss_price
         return None
 
-    def get_dynamic_take_profit(self) -> Optional[float]:
+    def get_dynamic_take_profit(self) -> float | None:
         """获取动态止盈价格"""
         if self._last_enhanced_decision:
             return self._last_enhanced_decision.take_profit.take_profit_price
         return None
 
-    def get_suggested_position_size(self) -> Optional[float]:
+    def get_suggested_position_size(self) -> float | None:
         """获取建议仓位大小"""
         if self._last_enhanced_decision:
             return self._last_enhanced_decision.position_size.position_size
         return None
 
-    def get_last_enhanced_decision(self) -> Optional[EnhancedDecision]:
+    def get_last_enhanced_decision(self) -> EnhancedDecision | None:
         """获取最近的增强分析决策"""
         return self._last_enhanced_decision
 
-    def get_last_validation(self) -> Optional[DecisionValidation]:
+    def get_last_validation(self) -> DecisionValidation | None:
         """获取最近的验证结果"""
         return self._last_validation
 
@@ -262,10 +263,10 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         self,
         decision: str,
         current_price: float,
-        indicators: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
-        df: Optional[pd.DataFrame] = None,
-        signal_score: Optional[float] = None
+        indicators: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
+        df: pd.DataFrame | None = None,
+        signal_score: float | None = None
     ) -> DecisionValidation:
         """
         验证交易决策
@@ -309,15 +310,15 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
 
     def make_decision_with_enhanced_analysis(
         self,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
         current_positions: list,
         max_positions: int,
-        historical_summary: Optional[str] = None,
-        enriched_data: Optional[Dict[str, Any]] = None,
-        df: Optional[pd.DataFrame] = None,
-        account_balance: Optional[float] = None
-    ) -> Tuple[str, Dict[str, Any]]:
+        historical_summary: str | None = None,
+        enriched_data: dict[str, Any] | None = None,
+        df: pd.DataFrame | None = None,
+        account_balance: float | None = None
+    ) -> tuple[str, dict[str, Any]]:
         """
         使用增强分析进行决策
 
@@ -449,7 +450,7 @@ def create_enhanced_agent(
     order_manager: OrderManager,
     logger: TradingLogger,
     llm_manager: LLMClientManager,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     notifier=None,
     prompt_manager=None,
     fee_rates=None

@@ -4,9 +4,10 @@
 """
 
 import os
-import yaml
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any
+
+import yaml
 from dotenv import load_dotenv
 
 from src.fees import default_perp_fee_rates
@@ -66,7 +67,7 @@ class Config:
         self._init_logging_config()
         self._init_notifications_config()
 
-    def _load_yaml_config(self) -> Dict[str, Any]:
+    def _load_yaml_config(self) -> dict[str, Any]:
         """加载 YAML 配置文件"""
         if not self.config_path.exists():
             raise FileNotFoundError(
@@ -74,7 +75,7 @@ class Config:
                 f"请将 config.yaml.example 复制为 config.yaml 并根据需要修改配置"
             )
 
-        with open(self.config_path, "r", encoding="utf-8") as f:
+        with open(self.config_path, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     def _init_llm_config(self):
@@ -145,7 +146,7 @@ class Config:
     def _init_trading_config(self):
         """初始化交易配置"""
         trading = self.config_data.get("trading", {})
-        self.symbols: List[str] = trading.get("symbols", ["BTC", "ETH"])
+        self.symbols: list[str] = trading.get("symbols", ["BTC", "ETH"])
 
         # 单笔交易金额上限（AI可自主决定实际金额，但不超过此上限）
         # 向后兼容：支持旧字段名 trade_amount
@@ -183,7 +184,7 @@ class Config:
     def _init_indicators_config(self):
         """初始化技术指标配置"""
         indicators = self.config_data.get("indicators", {})
-        self.ma_periods: List[int] = indicators.get("ma_periods", [7, 25, 99])
+        self.ma_periods: list[int] = indicators.get("ma_periods", [7, 25, 99])
         self.rsi_period: int = int(indicators.get("rsi_period", 14))
 
         macd_params = indicators.get("macd_params", {})
@@ -234,7 +235,7 @@ class Config:
         self.review_similarity_threshold: float = float(
             review.get("similarity_threshold", 0.5)
         )
-        self.review_similarity_weights: Dict[str, float] = review.get(
+        self.review_similarity_weights: dict[str, float] = review.get(
             "similarity_weights", {}
         )
         self.review_confidence_decay_factor: float = float(
@@ -263,7 +264,7 @@ class Config:
         self.external_info_max_summary_length: int = int(
             external_info.get("max_summary_length", 2000)
         )
-        self.external_info_periods: List[str] = external_info.get(
+        self.external_info_periods: list[str] = external_info.get(
             "periods", ["daily", "weekly", "biweekly", "monthly"]
         )
         self.external_info_cleanup_days: int = int(
@@ -316,7 +317,7 @@ class Config:
 
         # 信号权重配置
         signal_config = enhanced.get("signal_weights", {})
-        self.enhanced_signal_weights: Dict[str, float] = {
+        self.enhanced_signal_weights: dict[str, float] = {
             "trend": float(signal_config.get("trend", 0.25)),
             "momentum": float(signal_config.get("momentum", 0.20)),
             "volume": float(signal_config.get("volume", 0.15)),
@@ -382,7 +383,7 @@ class Config:
         Raises:
             ValueError: 如果 llm_client_type 配置无效
         """
-        from src.llm import LLMClientType, LLMClientConfig
+        from src.llm import LLMClientConfig, LLMClientType
 
         # 验证 llm_client_type 以提供清晰的错误信息
         try:

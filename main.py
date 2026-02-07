@@ -4,36 +4,38 @@ Quant Flow - AI-Powered Cryptocurrency Auto Trading Bot
 Multi-Agent Architecture: Maintains independent context for each trading pair, with aggregation agents and spot agents
 """
 
-import sys
-import signal
 import argparse
+import signal
+import sys
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from typing import Any
+
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from src.config import get_config, DEFAULT_PERP_FEE_RATES
-from src.utils.logger import get_logger
-from src.utils.banner import print_startup_banner
-from src.data.market_data import MarketDataFetcher
-from src.data.indicators import TechnicalIndicators
-from src.data.data_enricher import MarketDataEnricher
-from src.trading.client import HyperliquidClient
-from src.trading.order_manager import OrderManager
-from src.llm import LLMClientManager
-from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
-# RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
-from src.agent.spot_agent import SpotAgent
-from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
-from src.agent.review_agent import ReviewAgent
-from src.agent.review_memory import ReviewMemoryStore
-from src.agent.review_daily_logger import ReviewDailyLogger
 from src.agent.external_info_agent import ExternalInfoAgent, ExternalInfoScheduler
 from src.agent.market_info_store import MarketInfoStore
+from src.agent.review_agent import ReviewAgent
+from src.agent.review_daily_logger import ReviewDailyLogger
+from src.agent.review_memory import ReviewMemoryStore
+from src.agent.single_symbol_agent import SingleSymbolAgent
+
+# RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
+from src.agent.spot_agent import SpotAgent
+from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
+from src.config import DEFAULT_PERP_FEE_RATES, get_config
+from src.data.data_enricher import MarketDataEnricher
+from src.data.indicators import TechnicalIndicators
+from src.data.market_data import MarketDataFetcher
+from src.llm import LLMClientManager
 from src.notification import Notifier
 from src.prompt_manager import PromptManager
+from src.trading.client import HyperliquidClient
+from src.trading.order_manager import OrderManager
+from src.utils.banner import print_startup_banner
+from src.utils.logger import get_logger
 
 
 class QuantFlowBot:
@@ -190,7 +192,7 @@ class QuantFlowBot:
 
                 self.logger.print_info("初始化复盘 Agent...")
                 # 使用 review_model 如果存在，否则使用 openai_model
-                review_model = self.config.review_model if hasattr(self.config, 'review_model') and self.config.review_model else self.config.openai_model
+                self.config.review_model if hasattr(self.config, 'review_model') and self.config.review_model else self.config.openai_model
 
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
@@ -350,14 +352,14 @@ class QuantFlowBot:
             )
             self.market_info_store = MarketInfoStore(base_dir=store_dir)
 
-        self.logger.print_info(f"✅ 多 Agent 架构初始化完成！")
+        self.logger.print_info("✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
-        self.logger.print_info(f"  - 1 个汇总 Agent")
-        self.logger.print_info(f"  - 1 个现货定投 Agent")
+        self.logger.print_info("  - 1 个汇总 Agent")
+        self.logger.print_info("  - 1 个现货定投 Agent")
         if self.review_agent:
-            self.logger.print_info(f"  - 1 个复盘 Agent")
+            self.logger.print_info("  - 1 个复盘 Agent")
         if self.external_info_agent:
-            self.logger.print_info(f"  - 1 个外部信息收集 Agent")
+            self.logger.print_info("  - 1 个外部信息收集 Agent")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -925,7 +927,7 @@ class QuantFlowBot:
             saved_file = self.external_info_agent.collect_and_save()
 
             if saved_file:
-                self.logger.print_info(f"✅ 外部信息收集完成")
+                self.logger.print_info("✅ 外部信息收集完成")
                 self.logger.print_info(f"  报告文件: {saved_file}")
 
                 # 发送通知（包含报告内容）
@@ -1026,7 +1028,7 @@ class QuantFlowBot:
                 status="SUCCESS",
             )
 
-    def _get_recent_fills_for_symbol(self, symbol: str, hours: int = 1) -> List[Dict[str, Any]]:
+    def _get_recent_fills_for_symbol(self, symbol: str, hours: int = 1) -> list[dict[str, Any]]:
         """
         获取指定币种最近N小时的交易记录
 
@@ -1062,7 +1064,7 @@ class QuantFlowBot:
             self.logger.print_warning(f"获取 {symbol} 最近交易记录失败: {e}")
             return []
 
-    def _gather_statistics(self) -> Dict[str, Any]:
+    def _gather_statistics(self) -> dict[str, Any]:
         """收集交易统计信息"""
         try:
             # 获取用户的交易填充历史

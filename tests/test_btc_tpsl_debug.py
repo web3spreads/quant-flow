@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+
 # 添加项目根目录到路径
 def find_project_root(marker="pyproject.toml"):
     current = Path(__file__).resolve().parent
@@ -23,6 +24,7 @@ project_root = find_project_root()
 sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from src.trading.client import HyperliquidClient
@@ -214,26 +216,26 @@ def test_btc_tpsl_dry_run():
     print("最终下单参数:")
     print("-" * 40)
 
-    print(f"\n市价单参数:")
+    print("\n市价单参数:")
     print(f"  symbol: {symbol}")
-    print(f"  is_buy: True")
+    print("  is_buy: True")
     print(f"  size: {formatted_size}")
 
-    print(f"\n止盈单参数:")
+    print("\n止盈单参数:")
     print(f"  symbol: {symbol}")
-    print(f"  is_buy: False (平仓卖出)")
+    print("  is_buy: False (平仓卖出)")
     print(f"  size: {formatted_size}")
     print(f"  trigger_price: {tp_formatted}")
     print(f"  limit_price: {tp_limit_formatted}")
-    print(f"  reduce_only: True")
+    print("  reduce_only: True")
 
-    print(f"\n止损单参数:")
+    print("\n止损单参数:")
     print(f"  symbol: {symbol}")
-    print(f"  is_buy: False (平仓卖出)")
+    print("  is_buy: False (平仓卖出)")
     print(f"  size: {formatted_size}")
     print(f"  trigger_price: {sl_formatted}")
     print(f"  limit_price: {sl_limit_formatted}")
-    print(f"  reduce_only: True")
+    print("  reduce_only: True")
 
     # 9. 检查潜在问题
     print("\n" + "-" * 40)

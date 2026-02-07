@@ -8,8 +8,8 @@
 
 # 从新位置导入（兼容层）
 from src.agents.common.utils.similarity_scorer import (
-    SimilarityScorer,
     DEFAULT_WEIGHTS,
+    SimilarityScorer,
 )
 
 __all__ = ["SimilarityScorer", "DEFAULT_WEIGHTS"]

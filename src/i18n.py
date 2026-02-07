@@ -3,8 +3,7 @@
 提供中英文文本资源
 """
 
-from typing import Dict, Any
-
+import contextlib
 
 # 语言资源字典
 LANGUAGE_RESOURCES = {
@@ -297,11 +296,8 @@ def get_text(language: str, key: str, **kwargs) -> str:
 
     # 如果有格式化参数，进行格式化
     if kwargs:
-        try:
+        with contextlib.suppress(KeyError, ValueError):
             text = text.format(**kwargs)
-        except (KeyError, ValueError):
-            # 如果格式化参数有误，则返回未格式化的文本（这是预期的回退行为）
-            pass
 
     return text
 

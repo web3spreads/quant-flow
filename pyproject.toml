@@ -75,7 +75,13 @@ ignore = [
     "B008",   # function call in default argument
     "B905",   # zip without strict
     "SIM108", # ternary operator
+    "SIM102", # nested if (intentional for readability in complex conditions)
+    "SIM116", # dict lookup instead of if/elif (if/elif is clearer for few cases)
+    "B904",   # raise from (can cause traceback noise)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"] # Allow non-top imports in test files (needed for path setup)
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
