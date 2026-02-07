@@ -6,9 +6,9 @@
 """
 
 from src.agents.execution.state import (
+    DecisionType,
     ExecutionAgentState,
     ExecutionPlan,
-    DecisionType,
     create_initial_state,
 )
 
@@ -18,6 +18,7 @@ from src.agents.execution.state import (
 def get_execution_workflow():
     """获取 ExecutionAgentWorkflow 类（延迟导入）"""
     from src.agents.execution.workflow import ExecutionAgentWorkflow
+
     return ExecutionAgentWorkflow
 
 

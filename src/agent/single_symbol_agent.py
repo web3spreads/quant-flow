@@ -125,7 +125,7 @@ class SingleSymbolAgent:
         self.fee_rates = fee_rates or FeeRates(
             maker_rate=MAKER_FEE_RATE_PER_SIDE, taker_rate=FEE_RATE_PER_SIDE
         )
-        
+
         # 用于去重：记录本次决策周期中已执行的工具调用
         self._executed_callbacks = set()
 
@@ -618,10 +618,10 @@ class SingleSymbolAgent:
                 try:
                     if self.trade_amount <= 0:
                         return f"❌ 当前余额不足，无法开新仓。"
-                    
+
                     if price <= 0:
                         return f"❌ 限价价格必须大于0"
-                    
+
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
                         return fee_guard_msg
@@ -673,10 +673,10 @@ class SingleSymbolAgent:
                 try:
                     if self.trade_amount <= 0:
                         return f"❌ 当前余额不足，无法开新仓。"
-                    
+
                     if price <= 0:
                         return f"❌ 限价价格必须大于0"
-                    
+
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
                         return fee_guard_msg
@@ -791,13 +791,13 @@ class SingleSymbolAgent:
             'do_nothing': self._do_nothing_callback,
             'buy_spot': self._buy_spot_callback
         }
-        
+
         # 如果限价单功能启用，添加限价单回调
         if self.limit_order_enabled:
             callbacks['buy_limit'] = self._buy_limit_callback
             callbacks['sell_short_limit'] = self._sell_short_limit_callback
             callbacks['cancel_limit_order'] = self._cancel_limit_order_callback
-        
+
         return callbacks
 
     def _check_fee_guard(self) -> Optional[str]:
@@ -839,7 +839,7 @@ class SingleSymbolAgent:
         try:
             # 重置去重状态（每次新的决策周期开始时）
             self._executed_callbacks.clear()
-            
+
             # 更新当前价格
             self.current_price = market_data.get('current_price', 0)
 
@@ -900,7 +900,7 @@ class SingleSymbolAgent:
             # 使用 config 参数限制最大迭代次数
             # recursion_limit 控制图的最大递归深度，防止无限循环
             config = {"recursion_limit": self.max_iterations * 2}
-            
+
             for event in self.agent_executor.stream(
                 {"messages": messages},
                 stream_mode="values",
@@ -914,11 +914,11 @@ class SingleSymbolAgent:
                         # 更新agent_output为最新的完整内容
                         if content and content != prompt:
                             agent_output = content
-                        
+
                         # 只在内容长度增加时打印（支持流式输出，避免重复打印相同内容）
                         # 这样可以处理逐步生成的内容，同时避免重复打印相同的完整响应
-                        if (content and 
-                            content != prompt and 
+                        if (content and
+                            content != prompt and
                             len(content) > len(last_printed_content)):
                             # 使用新的 AI 响应渲染方法（支持 Markdown）
                             self.logger.print_ai_response(content, f"🎯 {self.symbol} Agent 分析中...")

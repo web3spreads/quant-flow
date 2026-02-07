@@ -9,10 +9,10 @@
 import json
 import os
 import platform
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import threading
+from typing import Any
 
 # 跨平台文件锁支持：Unix 使用 fcntl，Windows 仅使用线程锁
 _IS_WINDOWS = platform.system() == "Windows"
@@ -44,7 +44,7 @@ class ReviewDailyLogger:
         self,
         base_dir: str = "logs/review_daily",
         date_format: str = "%Y-%m-%d",
-        logger: Optional[Any] = None,
+        logger: Any | None = None,
     ):
         """
         初始化日志记录器
@@ -69,7 +69,7 @@ class ReviewDailyLogger:
         else:
             print(f"[ReviewDailyLogger] {message}")
 
-    def _get_daily_file_path(self, date: Optional[datetime] = None) -> Path:
+    def _get_daily_file_path(self, date: datetime | None = None) -> Path:
         """获取指定日期的日志文件路径"""
         if date is None:
             date = datetime.now()
@@ -81,14 +81,14 @@ class ReviewDailyLogger:
         symbol: str,
         prompt: str,
         raw_output: str,
-        lessons: List[Dict[str, Any]],
+        lessons: list[dict[str, Any]],
         summary: str,
-        context_features: Dict[str, Any],
-        decision_digest: List[Dict[str, Any]],
-        stats: Dict[str, Any],
-        fills_summary: Optional[Dict[str, Any]] = None,
-        existing_lessons: Optional[List[Dict[str, Any]]] = None,
-        spot_checks: Optional[List[Dict[str, Any]]] = None,
+        context_features: dict[str, Any],
+        decision_digest: list[dict[str, Any]],
+        stats: dict[str, Any],
+        fills_summary: dict[str, Any] | None = None,
+        existing_lessons: list[dict[str, Any]] | None = None,
+        spot_checks: list[dict[str, Any]] | None = None,
     ) -> bool:
         """
         记录一次完整的复盘经验
@@ -120,20 +120,16 @@ class ReviewDailyLogger:
             "input": prompt,
             # output: LLM 的原始输出
             "output": raw_output,
-
             # ===== 结构化数据（便于筛选和分析）=====
             "parsed_output": {
                 "lessons": lessons,
                 "summary": summary,
                 "spot_checks": spot_checks or [],
             },
-
             # ===== 决策历史（用于训练上下文理解）=====
             "decision_digest": decision_digest,
-
             # ===== 环境特征（便于按相似场景筛选训练数据）=====
             "context_features": context_features,
-
             # ===== 元数据 =====
             "metadata": {
                 "timestamp": timestamp.isoformat(),
@@ -167,7 +163,7 @@ class ReviewDailyLogger:
             f"请以 JSON 格式输出，包含 summary、lessons 和 spot_checks 字段。"
         )
 
-    def _write_record(self, record: Dict[str, Any], timestamp: datetime) -> bool:
+    def _write_record(self, record: dict[str, Any], timestamp: datetime) -> bool:
         """
         写入单条记录到日志文件
 
@@ -177,7 +173,7 @@ class ReviewDailyLogger:
         file_path = self._get_daily_file_path(timestamp)
 
         try:
-            with self._lock:
+            with self._lock:  # noqa: SIM117 - nested with needed for platform-specific file lock
                 # 使用追加模式写入
                 with open(file_path, "a", encoding="utf-8") as f:
                     # Unix 系统使用文件锁
@@ -199,9 +195,7 @@ class ReviewDailyLogger:
             self._log_warning(f"写入日志文件失败 {file_path}: {e}")
             return False
 
-    def read_daily_records(
-        self, date: Optional[datetime] = None
-    ) -> List[Dict[str, Any]]:
+    def read_daily_records(self, date: datetime | None = None) -> list[dict[str, Any]]:
         """
         读取指定日期的所有记录
 
@@ -218,16 +212,14 @@ class ReviewDailyLogger:
 
         records = []
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if line:
                         try:
                             records.append(json.loads(line))
                         except json.JSONDecodeError as e:
-                            self._log_warning(
-                                f"日志文件 {file_path} 第 {line_num} 行格式错误: {e}"
-                            )
+                            self._log_warning(f"日志文件 {file_path} 第 {line_num} 行格式错误: {e}")
                             continue
         except Exception as e:
             self._log_warning(f"读取日志文件失败 {file_path}: {e}")
@@ -237,8 +229,8 @@ class ReviewDailyLogger:
     def read_date_range(
         self,
         start_date: datetime,
-        end_date: Optional[datetime] = None,
-    ) -> List[Dict[str, Any]]:
+        end_date: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """
         读取日期范围内的所有记录
 
@@ -267,11 +259,11 @@ class ReviewDailyLogger:
     def export_for_training(
         self,
         output_path: str,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         format_type: str = "alpaca",
         min_lesson_count: int = 1,
-        symbols: Optional[List[str]] = None,
+        symbols: list[str] | None = None,
     ) -> int:
         """
         导出训练数据
@@ -296,8 +288,7 @@ class ReviewDailyLogger:
         # 验证 format_type
         if format_type not in self.SUPPORTED_FORMATS:
             raise ValueError(
-                f"不支持的导出格式: {format_type}，"
-                f"支持的格式: {self.SUPPORTED_FORMATS}"
+                f"不支持的导出格式: {format_type}，" f"支持的格式: {self.SUPPORTED_FORMATS}"
             )
 
         # 获取所有日志文件
@@ -335,28 +326,32 @@ class ReviewDailyLogger:
         training_data = []
         for record in filtered_records:
             if format_type == "alpaca":
-                training_data.append({
-                    "instruction": record.get("instruction", ""),
-                    "input": record.get("input", ""),
-                    "output": record.get("output", ""),
-                })
+                training_data.append(
+                    {
+                        "instruction": record.get("instruction", ""),
+                        "input": record.get("input", ""),
+                        "output": record.get("output", ""),
+                    }
+                )
             elif format_type == "sharegpt":
-                training_data.append({
-                    "conversations": [
-                        {
-                            "from": "system",
-                            "value": record.get("instruction", ""),
-                        },
-                        {
-                            "from": "human",
-                            "value": record.get("input", ""),
-                        },
-                        {
-                            "from": "gpt",
-                            "value": record.get("output", ""),
-                        },
-                    ],
-                })
+                training_data.append(
+                    {
+                        "conversations": [
+                            {
+                                "from": "system",
+                                "value": record.get("instruction", ""),
+                            },
+                            {
+                                "from": "human",
+                                "value": record.get("input", ""),
+                            },
+                            {
+                                "from": "gpt",
+                                "value": record.get("output", ""),
+                            },
+                        ],
+                    }
+                )
             else:  # raw
                 training_data.append(record)
 
@@ -369,7 +364,7 @@ class ReviewDailyLogger:
 
         return len(training_data)
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """
         获取日志统计信息
 

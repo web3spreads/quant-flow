@@ -191,7 +191,7 @@ class QuantFlowBot:
                 self.logger.print_info("初始化复盘 Agent...")
                 # 使用 review_model 如果存在，否则使用 openai_model
                 review_model = self.config.review_model if hasattr(self.config, 'review_model') and self.config.review_model else self.config.openai_model
-                
+
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
                     prompt_manager=self.prompt_manager,
@@ -927,7 +927,7 @@ class QuantFlowBot:
             if saved_file:
                 self.logger.print_info(f"✅ 外部信息收集完成")
                 self.logger.print_info(f"  报告文件: {saved_file}")
-                
+
                 # 发送通知（包含报告内容）
                 if self.notifier and self.notifier.enabled:
                     # 获取报告摘要
@@ -935,7 +935,7 @@ class QuantFlowBot:
                         symbols=self.config.symbols,
                         max_length=2000
                     )
-                    
+
                     if summary:
                         self.notifier.notify_external_info_summary(
                             summary=summary,

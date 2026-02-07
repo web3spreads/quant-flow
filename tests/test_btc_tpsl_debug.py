@@ -8,6 +8,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # 添加项目根目录到路径
 def find_project_root(marker="pyproject.toml"):
     current = Path(__file__).resolve().parent
@@ -30,7 +32,14 @@ PRIVATE_KEY = os.getenv("HYPERLIQUID_PRIVATE_KEY") or os.getenv("PRIVATE_KEY")
 ACCOUNT_ADDRESS = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS") or os.getenv("ACCOUNT_ADDRESS")
 TESTNET = os.getenv("HYPERLIQUID_TESTNET", "false").lower() == "true"
 
+# 跳过条件：没有私钥时跳过需要真实 API 的测试
+requires_private_key = pytest.mark.skipif(
+    not PRIVATE_KEY,
+    reason="需要 HYPERLIQUID_PRIVATE_KEY 环境变量"
+)
 
+
+@requires_private_key
 def test_asset_info_comparison():
     """对比 BTC 和其他币种的 asset info"""
     print("=" * 60)
@@ -58,6 +67,7 @@ def test_asset_info_comparison():
             print(f"\n{symbol}: 获取失败")
 
 
+@requires_private_key
 def test_price_formatting():
     """测试价格格式化"""
     print("\n" + "=" * 60)
@@ -91,6 +101,7 @@ def test_price_formatting():
             print(f"  止损价格 (格式化): ${sl_formatted}")
 
 
+@requires_private_key
 def test_size_calculation():
     """测试仓位大小计算"""
     print("\n" + "=" * 60)
@@ -128,6 +139,7 @@ def test_size_calculation():
             print(f"  格式化后 size: {formatted_size}")
 
 
+@requires_private_key
 def test_btc_tpsl_dry_run():
     """
     模拟 BTC 止盈止损下单流程（不实际下单）
@@ -242,6 +254,8 @@ def test_btc_tpsl_dry_run():
         print("✅ 止盈止损价格不同")
 
 
+@requires_private_key
+@pytest.mark.skip(reason="需要交互式输入，不适合自动化测试")
 def test_real_btc_order():
     """
     真实下单测试 - 使用最小金额

@@ -4,16 +4,18 @@
 定义 ExecutionAgent 在 LangGraph 工作流中使用的状态类型。
 """
 
-from typing import TypedDict, List, Dict, Any, Optional, Annotated
-from enum import Enum
-from pydantic import BaseModel, Field
+from enum import StrEnum
+from typing import Annotated, Any, TypedDict
+
 from langchain_core.messages import BaseMessage
+from pydantic import BaseModel, Field
 
 from src.agents.common.state.base import add_messages
 
 
-class DecisionType(str, Enum):
+class DecisionType(StrEnum):
     """决策类型枚举"""
+
     BUY = "BUY"
     SELL = "SELL"
     SELL_SHORT = "SELL_SHORT"
@@ -26,13 +28,13 @@ class DecisionType(str, Enum):
 
 
 # ExecutionPlan 字段名常量（避免硬编码字符串）
-FIELD_DECISION = 'decision'
-FIELD_SYMBOL = 'symbol'
-FIELD_REASON = 'reason'
-FIELD_AMOUNT = 'amount'
-FIELD_LEVERAGE = 'leverage'
-FIELD_PRICE = 'price'
-FIELD_ORDER_ID = 'order_id'
+FIELD_DECISION = "decision"
+FIELD_SYMBOL = "symbol"
+FIELD_REASON = "reason"
+FIELD_AMOUNT = "amount"
+FIELD_LEVERAGE = "leverage"
+FIELD_PRICE = "price"
+FIELD_ORDER_ID = "order_id"
 
 
 class ExecutionPlan(BaseModel):
@@ -41,12 +43,13 @@ class ExecutionPlan(BaseModel):
 
     使用 Pydantic 模型定义，支持 LangChain 的 structured output。
     """
+
     decision: DecisionType = Field(description="决策类型")
     symbol: str = Field(description="交易对符号")
-    amount: Optional[float] = Field(default=None, description="交易金额（仅开仓时需要）")
-    leverage: Optional[int] = Field(default=None, description="杠杆倍数（仅开仓时需要）")
-    price: Optional[float] = Field(default=None, description="限价单价格（仅限价单时需要）")
-    order_id: Optional[int] = Field(default=None, description="订单ID（仅取消限价单时需要）")
+    amount: float | None = Field(default=None, description="交易金额（仅开仓时需要）")
+    leverage: int | None = Field(default=None, description="杠杆倍数（仅开仓时需要）")
+    price: float | None = Field(default=None, description="限价单价格（仅限价单时需要）")
+    order_id: int | None = Field(default=None, description="订单ID（仅取消限价单时需要）")
     reason: str = Field(description="决策理由的简短摘要")
 
 
@@ -56,15 +59,16 @@ class ExecutionAgentState(TypedDict):
 
     包含决策解析和执行所需的所有数据。
     """
+
     # ===== 消息历史 =====
-    messages: Annotated[List[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], add_messages]
 
     # ===== 输入数据 =====
     decision_text: str  # 待解析的决策文本
     symbol: str  # 交易对符号
 
     # ===== 解析结果 =====
-    execution_plan: Optional[Dict[str, Any]]  # 解析后的执行计划
+    execution_plan: dict[str, Any] | None  # 解析后的执行计划
     parsed_decision: str  # 解析出的决策类型
 
     # ===== 执行结果 =====
@@ -73,7 +77,7 @@ class ExecutionAgentState(TypedDict):
 
     # ===== 工作流控制 =====
     current_step: str  # 当前步骤
-    errors: List[str]  # 错误信息列表
+    errors: list[str]  # 错误信息列表
 
 
 # 执行 Agent 系统 Prompt

@@ -317,13 +317,13 @@ class Notifier:
         """
         side_text = "做多 📈" if side.lower() == "long" else "做空 📉"
         title = f"🔔 开仓通知: {symbol} {side_text}"
-        
+
         # 计算持仓价值和保证金
         if position_value is None:
             position_value = quantity * price
         if margin is None and leverage > 0:
             margin = position_value / leverage
-        
+
         # 构建消息
         lines = [
             f"【交易对】{symbol}",
@@ -334,36 +334,36 @@ class Notifier:
             f"",  # 空行
             f"【持仓价值】${position_value:,.2f}",
         ]
-        
+
         if margin:
             lines.append(f"【保证金】${margin:,.2f}")
-        
+
         # 添加止盈止损信息
         if stop_loss or take_profit:
             lines.append("")  # 空行
-            
+
         if stop_loss:
             sl_diff_pct = abs((stop_loss - price) / price * 100)
-            lines.append(f"【止损价】${stop_loss:,.4f} ({sl_diff_pct:.2f}%)" if stop_loss < 1 
+            lines.append(f"【止损价】${stop_loss:,.4f} ({sl_diff_pct:.2f}%)" if stop_loss < 1
                         else f"【止损价】${stop_loss:,.2f} (-{sl_diff_pct:.2f}%)")
-            
+
         if take_profit:
             tp_diff_pct = abs((take_profit - price) / price * 100)
-            lines.append(f"【止盈价】${take_profit:,.4f} (+{tp_diff_pct:.2f}%)" if take_profit < 1 
+            lines.append(f"【止盈价】${take_profit:,.4f} (+{tp_diff_pct:.2f}%)" if take_profit < 1
                         else f"【止盈价】${take_profit:,.2f} (+{tp_diff_pct:.2f}%)")
-        
+
         # 添加风险收益比
         if stop_loss and take_profit:
             risk = abs(price - stop_loss)
             reward = abs(take_profit - price)
             rr_ratio = reward / risk if risk > 0 else 0
             lines.append(f"【风险收益比】1:{rr_ratio:.2f}")
-        
+
         # 添加开仓理由
         if reason:
             lines.append("")  # 空行
             lines.append(f"【开仓理由】{reason}")
-        
+
         # 添加订单哈希和浏览器链接
         if order_hash:
             lines.append("")  # 空行
@@ -637,21 +637,21 @@ class Notifier:
             config_info: 配置信息
         """
         from datetime import datetime
-        
+
         title = "🚀 交易系统启动成功"
-        
+
         lines = [
             f"【启动时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
-        
+
         if version:
             lines.append(f"【系统版本】{version}")
-        
+
         if symbols:
             lines.append("")
             lines.append(f"【监控币种】{', '.join(symbols)}")
             lines.append(f"【币种数量】{len(symbols)} 个")
-        
+
         if config_info:
             lines.append("")
             if 'trade_amount' in config_info:
@@ -662,10 +662,10 @@ class Notifier:
                 lines.append(f"【杠杆倍数】{config_info['leverage']}x")
             if 'check_interval' in config_info:
                 lines.append(f"【检查间隔】{config_info['check_interval']} 分钟")
-        
+
         lines.append("")
         lines.append("✅ 系统已就绪，开始监控市场")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.SYSTEM_STARTUP, title, message)
 
@@ -684,19 +684,19 @@ class Notifier:
             statistics: 运行统计
         """
         from datetime import datetime
-        
+
         title = "⏹️ 交易系统已关闭"
-        
+
         lines = [
             f"【关闭时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
-        
+
         if reason:
             lines.append(f"【关闭原因】{reason}")
-        
+
         if runtime:
             lines.append(f"【运行时长】{runtime}")
-        
+
         if statistics:
             lines.append("")
             lines.append("【运行统计】")
@@ -706,10 +706,10 @@ class Notifier:
                 lines.append(f"  盈利交易: {statistics['profitable_trades']}")
             if 'total_pnl' in statistics:
                 lines.append(f"  总盈亏: ${statistics['total_pnl']:+.2f}")
-        
+
         lines.append("")
         lines.append("👋 系统已安全退出")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.SYSTEM_SHUTDOWN, title, message)
 
@@ -728,37 +728,37 @@ class Notifier:
             summary: 复盘总结
         """
         from datetime import datetime
-        
+
         if not lessons:
             return
-        
+
         title = f"🧠 {symbol} 复盘获得新经验"
-        
+
         lines = [
             f"【时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"【币种】{symbol}",
             f"【新经验数量】{len(lessons)} 条",
         ]
-        
+
         if summary:
             lines.append("")
             lines.append(f"【复盘总结】{summary[:200]}")
-        
+
         lines.append("")
         lines.append("【新获得的经验】")
-        
+
         for i, lesson in enumerate(lessons[:3], 1):  # 最多显示3条
             rule = lesson.get("rule", "")
             action = lesson.get("action", "")
             confidence = lesson.get("confidence", 0)
-            
+
             lines.append(f"\n{i}. {rule[:100]}")
             lines.append(f"   → 建议行动: {action[:50]}")
             lines.append(f"   → 置信度: {confidence:.1%}")
-        
+
         if len(lessons) > 3:
             lines.append(f"\n... 还有 {len(lessons) - 3} 条经验")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.REVIEW_LESSON_LEARNED, title, message)
 
@@ -777,18 +777,18 @@ class Notifier:
         """
         from datetime import datetime
         from pathlib import Path
-        
+
         title = "📰 外部信息汇总完成"
-        
+
         lines = [
             f"【完成时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
-        
+
         if file_path:
             # 使用 pathlib 提取文件名（跨平台兼容）
             file_name = Path(file_path).name
             lines.append(f"【报告文件】{file_name}")
-        
+
         if summary:
             lines.append("")
             lines.append("【市场信息摘要】")
@@ -796,6 +796,6 @@ class Notifier:
         else:
             lines.append("")
             lines.append("✅ 市场信息已更新，可用于交易决策参考")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.EXTERNAL_INFO_SUMMARY, title, message)

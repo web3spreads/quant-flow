@@ -17,36 +17,36 @@ def create_startup_banner(
 ) -> Panel:
     """
     创建居中对齐的启动横幅
-    
+
     Args:
         title: 主标题
         subtitle: 副标题
         platform: 交易平台名称
         version: 版本号（可选）
         console: Rich Console 实例（可选）
-    
+
     Returns:
         Rich Panel 对象
     """
     if console is None:
         console = Console()
-    
+
     # 创建标题文本
     title_text = Text()
     title_text.append("🤖 ", style="bold yellow")
     title_text.append(title, style="bold cyan")
     title_text.append(" 🤖", style="bold yellow")
-    
+
     # 创建内容 - 使用 Text 对象并设置 justify
     content = Text(justify="center")
     content.append(f"\n{subtitle}\n", style="bold white")
     content.append(f"Platform: {platform}\n", style="cyan")
-    
+
     if version:
         content.append(f"Version: {version}\n", style="dim cyan")
-    
+
     content.append("\n")
-    
+
     # 创建面板
     panel = Panel(
         content,
@@ -55,7 +55,7 @@ def create_startup_banner(
         padding=(1, 2),
         expand=False
     )
-    
+
     return panel
 
 
@@ -65,14 +65,14 @@ def print_startup_banner(
 ):
     """
     打印启动横幅和配置信息
-    
+
     Args:
         config: 配置对象
         console: Rich Console 实例
     """
     if console is None:
         console = Console()
-    
+
     # 打印横幅
     banner = create_startup_banner(
         title="Quant Flow Trading Bot",
@@ -81,11 +81,11 @@ def print_startup_banner(
         version="2.0.0",
         console=console
     )
-    
+
     console.print("\n")
     console.print(banner, justify="center")
     console.print("\n")
-    
+
     # 打印配置信息（如果提供）
     if config:
         console.print(config, style="cyan")
@@ -100,7 +100,7 @@ def print_section_separator(
 ):
     """
     打印章节分隔线
-    
+
     Args:
         console: Rich Console 实例
         char: 分隔符字符
@@ -109,7 +109,7 @@ def print_section_separator(
     """
     if console is None:
         console = Console()
-    
+
     console.print(char * length, style=style)
 
 
@@ -122,7 +122,7 @@ def print_box_message(
 ):
     """
     打印带边框的消息
-    
+
     Args:
         message: 消息内容
         title: 标题
@@ -132,12 +132,12 @@ def print_box_message(
     """
     if console is None:
         console = Console()
-    
+
     panel = Panel(
         message,
         title=title,
         border_style=border_style,
         padding=padding
     )
-    
+
     console.print(panel)

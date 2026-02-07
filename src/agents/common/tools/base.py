@@ -4,14 +4,15 @@
 提供工具的基础类和通用数据结构。
 """
 
-from typing import Any, Optional, Dict
-from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from enum import Enum
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Any
 
 
-class ToolStatus(str, Enum):
+class ToolStatus(StrEnum):
     """工具执行状态"""
+
     SUCCESS = "success"
     ERROR = "error"
     SKIPPED = "skipped"
@@ -24,12 +25,13 @@ class ToolResult:
 
     统一的工具返回格式，便于状态管理和错误处理。
     """
+
     status: ToolStatus
     message: str
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    data: dict[str, Any] | None = None
+    error: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         result = {
             "status": self.status.value,
@@ -60,7 +62,7 @@ class ToolError(Exception):
     用于在工具执行过程中抛出的可恢复错误。
     """
 
-    def __init__(self, message: str, details: Optional[Dict] = None):
+    def __init__(self, message: str, details: dict | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -106,7 +108,7 @@ class BaseTool(ABC):
         """
         pass
 
-    def validate_params(self, **kwargs) -> Optional[str]:
+    def validate_params(self, **kwargs) -> str | None:
         """
         验证参数
 

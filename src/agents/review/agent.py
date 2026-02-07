@@ -5,10 +5,10 @@
 内部使用 LangGraph 工作流实现。
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Any
 
-from src.agents.review.workflow import ReviewAgentWorkflow
 from src.agents.common.utils.llm import LLMConfig
+from src.agents.review.workflow import ReviewAgentWorkflow
 from src.prompt_manager import PromptManager
 from src.utils.logger import TradingLogger
 
@@ -35,7 +35,7 @@ class ReviewAgent:
         memory_store=None,
         min_confidence: float = 0.35,
         similarity_threshold: float = 0.5,
-        similarity_weights: Optional[Dict[str, float]] = None,
+        similarity_weights: dict[str, float] | None = None,
         confidence_decay_factor: float = 0.6,
         similarity_method: str = "cosine",
         notifier=None,
@@ -85,8 +85,7 @@ class ReviewAgent:
 
         self.context_extractor = ContextExtractor()
         self.similarity_scorer = SimilarityScorer(
-            weights=similarity_weights,
-            method=similarity_method
+            weights=similarity_weights, method=similarity_method
         )
 
         # 创建工作流
@@ -108,10 +107,10 @@ class ReviewAgent:
     def review(
         self,
         symbol: str,
-        decision_records: List[Dict[str, Any]],
-        fills_summary: Optional[Dict[str, Any]] = None,
-        existing_lessons: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        decision_records: list[dict[str, Any]],
+        fills_summary: dict[str, Any] | None = None,
+        existing_lessons: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """
         执行复盘
 

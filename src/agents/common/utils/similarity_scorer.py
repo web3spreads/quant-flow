@@ -3,11 +3,10 @@
 支持欧氏距离与余弦相似度，并允许为不同特征设置权重
 """
 
-from typing import Any, Dict, Optional
 import math
+from typing import Any
 
-
-DEFAULT_WEIGHTS: Dict[str, float] = {
+DEFAULT_WEIGHTS: dict[str, float] = {
     "rsi": 1.2,
     "macd_signal": 1.0,
     "ema_trend": 1.0,
@@ -24,7 +23,7 @@ class SimilarityScorer:
 
     def __init__(
         self,
-        weights: Optional[Dict[str, float]] = None,
+        weights: dict[str, float] | None = None,
         method: str = "cosine",
     ):
         self.weights = {**DEFAULT_WEIGHTS, **(weights or {})}
@@ -32,9 +31,9 @@ class SimilarityScorer:
 
     def compute(
         self,
-        current: Dict[str, Any],
-        target: Dict[str, Any],
-        method: Optional[str] = None,
+        current: dict[str, Any],
+        target: dict[str, Any],
+        method: str | None = None,
     ) -> float:
         """计算两个特征向量的相似度（0-1）"""
         m = (method or self.method or "cosine").lower()
@@ -50,9 +49,9 @@ class SimilarityScorer:
         return self._cosine_similarity(features)
 
     def _align_features(
-        self, current: Dict[str, Any], target: Dict[str, Any]
-    ) -> Dict[str, Dict[str, float]]:
-        features: Dict[str, Dict[str, float]] = {}
+        self, current: dict[str, Any], target: dict[str, Any]
+    ) -> dict[str, dict[str, float]]:
+        features: dict[str, dict[str, float]] = {}
         for key in set(current.keys()).intersection(target.keys()):
             cur_val = self._normalize_feature(key, current.get(key))
             tgt_val = self._normalize_feature(key, target.get(key))
@@ -61,11 +60,11 @@ class SimilarityScorer:
             features[key] = {"current": cur_val, "target": tgt_val}
         return features
 
-    def _normalize_feature(self, key: str, value: Any) -> Optional[float]:
+    def _normalize_feature(self, key: str, value: Any) -> float | None:
         if value is None:
             return None
 
-        categorical_maps: Dict[str, Dict[str, float]] = {
+        categorical_maps: dict[str, dict[str, float]] = {
             "macd_signal": {"bullish": 1.0, "bearish": -1.0, "neutral": 0.0},
             "trend_direction": {"up": 1.0, "down": -1.0, "sideways": 0.0},
             "volatility_level": {"low": 0.0, "medium": 0.5, "high": 1.0},
@@ -101,7 +100,7 @@ class SimilarityScorer:
         # 默认将数值平滑压缩到 [-1, 1]，避免大尺度特征主导相似度
         return numeric / (1 + abs(numeric))
 
-    def _cosine_similarity(self, features: Dict[str, Dict[str, float]]) -> float:
+    def _cosine_similarity(self, features: dict[str, dict[str, float]]) -> float:
         dot = 0.0
         norm_a = 0.0
         norm_b = 0.0
@@ -118,7 +117,7 @@ class SimilarityScorer:
         # 将 [-1,1] 映射到 [0,1]
         return max(0.0, min((cosine + 1) / 2, 1.0))
 
-    def _euclidean_similarity(self, features: Dict[str, Dict[str, float]]) -> float:
+    def _euclidean_similarity(self, features: dict[str, dict[str, float]]) -> float:
         distance_sq = 0.0
         for key, pair in features.items():
             weight = self.weights.get(key, 1.0)

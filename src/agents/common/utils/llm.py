@@ -7,13 +7,13 @@ LLM 配置和工厂函数
 - Structured Output LLM
 """
 
-from typing import Optional, Type, TypeVar
 from dataclasses import dataclass
+from typing import TypeVar
+
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
-
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 @dataclass
@@ -23,12 +23,13 @@ class LLMConfig:
 
     统一管理 LLM 配置参数，便于在不同 Agent 间共享。
     """
+
     api_base: str
     api_key: str
     model: str = "deepseek-chat"
     temperature: float = 0.1
-    max_tokens: Optional[int] = None
-    timeout: Optional[float] = None
+    max_tokens: int | None = None
+    timeout: float | None = None
     max_retries: int = 2
 
     def to_dict(self) -> dict:
@@ -49,7 +50,7 @@ class LLMConfig:
 
 def create_llm(
     config: LLMConfig,
-    temperature: Optional[float] = None,
+    temperature: float | None = None,
 ) -> ChatOpenAI:
     """
     创建普通 LLM 实例
@@ -69,7 +70,7 @@ def create_llm(
 
 def create_json_llm(
     config: LLMConfig,
-    temperature: Optional[float] = None,
+    temperature: float | None = None,
 ) -> ChatOpenAI:
     """
     创建 JSON Mode LLM 实例
@@ -93,8 +94,8 @@ def create_json_llm(
 
 def create_structured_llm(
     config: LLMConfig,
-    output_schema: Type[T],
-    temperature: Optional[float] = None,
+    output_schema: type[T],
+    temperature: float | None = None,
 ) -> ChatOpenAI:
     """
     创建支持 Structured Output 的 LLM 实例
@@ -134,7 +135,7 @@ class LLMFactory:
     def get_llm(
         self,
         json_mode: bool = False,
-        temperature: Optional[float] = None,
+        temperature: float | None = None,
     ) -> ChatOpenAI:
         """
         获取 LLM 实例
@@ -156,8 +157,8 @@ class LLMFactory:
 
     def get_structured_llm(
         self,
-        output_schema: Type[T],
-        temperature: Optional[float] = None,
+        output_schema: type[T],
+        temperature: float | None = None,
     ) -> ChatOpenAI:
         """
         获取 Structured Output LLM 实例

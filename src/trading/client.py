@@ -19,7 +19,7 @@ from src.fees import FeeRates, calculate_fee_rates
 class HyperliquidClient:
     """
     Hyperliquid 永续合约交易客户端
-    
+
     提供统一的交易接口，使用 Hyperliquid 官方 Python SDK
     """
 
@@ -120,7 +120,7 @@ class HyperliquidClient:
     def get_balance(self) -> Optional[Dict[str, Any]]:
         """
         获取账户余额信息
-        
+
         Returns:
             {
                 'accountValue': float,  # 账户总价值（USD，包含未实现盈亏）
@@ -128,7 +128,7 @@ class HyperliquidClient:
                 'totalRawUsd': float,  # 原始 USD 余额（现金部分，不包含未实现盈亏）
                 'withdrawable': str,  # 可提取余额
             }
-            
+
         注意：可用余额应该计算为 accountValue - totalMarginUsed，而不是直接使用 totalRawUsd
         """
         try:
@@ -147,7 +147,7 @@ class HyperliquidClient:
     def get_positions(self) -> List[Dict[str, Any]]:
         """
         获取当前持仓
-        
+
         Returns:
             List of positions:
             [{
@@ -175,7 +175,7 @@ class HyperliquidClient:
     def get_open_orders(self) -> List[Dict[str, Any]]:
         """
         获取待处理的订单列表
-        
+
         Returns:
             List of open orders:
             [{
@@ -191,7 +191,7 @@ class HyperliquidClient:
         try:
             user_state = self.info.user_state(self.address)
             open_orders = user_state.get('openOrders', [])
-            
+
             # 过滤出限价单（非触发单、非市价单）
             limit_orders = []
             for order in open_orders:
@@ -203,7 +203,7 @@ class HyperliquidClient:
                     # 确保不是触发单
                     if 'trigger' not in order_type:
                         limit_orders.append(order)
-            
+
             return limit_orders
         except Exception as e:
             print(f"❌ 获取待处理订单失败: {e}")
@@ -817,11 +817,11 @@ class HyperliquidClient:
     def cancel_order(self, symbol: str, oid: int) -> Dict[str, Any]:
         """
         取消订单
-        
+
         Args:
             symbol: 交易对符号
             oid: 订单ID
-            
+
         Returns:
             取消结果
         """
@@ -865,15 +865,15 @@ class HyperliquidClient:
                             current_leverage = int(leverage_info.get('value', 1))
                         else:
                             current_leverage = int(leverage_info) if leverage_info else 1
-                        
+
                         # 如果目标杠杆低于当前杠杆，可能需要更多保证金
                         if leverage < current_leverage:
                             print(f"⚠️ 当前持仓杠杆: {current_leverage}x, 目标杠杆: {leverage}x")
                             print(f"⚠️ 降低杠杆可能需要增加保证金，如果失败将使用当前杠杆")
-                            
+
                             # 尝试设置杠杆
                             result = self.exchange.update_leverage(leverage, symbol, is_cross=is_cross)
-                            
+
                             # 如果失败，返回特殊状态，允许使用当前杠杆
                             if result.get('status') == 'err':
                                 error_msg = result.get('response', '未知错误')
@@ -888,7 +888,7 @@ class HyperliquidClient:
                                 else:
                                     print(f"❌ 杠杆设置失败: {error_msg}")
                                     return {'status': 'error', 'message': error_msg}
-                            
+
                             return result
                         # 如果目标杠杆高于或等于当前杠杆，直接设置
                         elif leverage > current_leverage:
@@ -920,13 +920,13 @@ class HyperliquidClient:
     ) -> Optional[List[Dict[str, Any]]]:
         """
         获取K线数据
-        
+
         Args:
             symbol: 交易对符号
             interval: 时间间隔（1m, 5m, 15m, 1h, 4h, 1d）
             start_time: 开始时间（毫秒时间戳）
             end_time: 结束时间（毫秒时间戳）
-            
+
         Returns:
             K线数据列表
         """

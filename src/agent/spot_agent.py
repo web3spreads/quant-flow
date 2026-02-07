@@ -434,7 +434,7 @@ class SpotAgent:
             # 使用 config 参数限制最大迭代次数为 3（每次迭代包含 2 个递归步骤，因此 recursion_limit 需设置为 3*2=6）
             # recursion_limit 控制图的最大递归深度，防止无限循环
             config = {"recursion_limit": 6}  # 递归深度为 3 次迭代 * 2 步
-            
+
             for event in self.agent_executor.stream(
                 {"messages": messages},
                 stream_mode="values",
@@ -448,10 +448,10 @@ class SpotAgent:
                         # 更新agent_output为最新的完整内容
                         if content and content != prompt:
                             agent_output = content
-                        
+
                         # 只在内容长度增加时打印（支持流式输出，避免重复打印相同内容）
-                        if (content and 
-                            content != prompt and 
+                        if (content and
+                            content != prompt and
                             len(content) > len(last_printed_content)):
                             # 使用新的 AI 响应渲染方法（支持 Markdown）
                             self.logger.print_ai_response(content, "💎 现货 Agent 分析中...")

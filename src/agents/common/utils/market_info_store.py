@@ -4,19 +4,20 @@
 """
 
 import json
-from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 
 class RiskSeverity(Enum):
     """风险等级枚举 (1-5)"""
-    VERY_LOW = 1    # 极低
-    LOW = 2         # 低
-    MEDIUM = 3      # 中
-    HIGH = 4        # 高
-    CRITICAL = 5    # 极高/严重
+
+    VERY_LOW = 1  # 极低
+    LOW = 2  # 低
+    MEDIUM = 3  # 中
+    HIGH = 4  # 高
+    CRITICAL = 5  # 极高/严重
 
 
 class MarketInfoStore:
@@ -53,12 +54,7 @@ class MarketInfoStore:
         filename = f"{date_str}_{start_hour}_to_{end_hour}.json"
         return self.base_dir / filename
 
-    def save_report(
-        self,
-        report: Dict[str, Any],
-        start_time: datetime,
-        end_time: datetime
-    ) -> str:
+    def save_report(self, report: dict[str, Any], start_time: datetime, end_time: datetime) -> str:
         """
         保存市场信息报告
 
@@ -79,9 +75,9 @@ class MarketInfoStore:
                 "start_time": start_time.isoformat(),
                 "end_time": end_time.isoformat(),
                 "interval_hours": (end_time - start_time).total_seconds() / 3600,
-                "version": "2.0"
+                "version": "2.0",
             },
-            "data": report
+            "data": report,
         }
 
         with open(file_path, "w", encoding="utf-8") as f:
@@ -89,7 +85,7 @@ class MarketInfoStore:
 
         return str(file_path)
 
-    def load_latest_report(self) -> Optional[Dict[str, Any]]:
+    def load_latest_report(self) -> dict[str, Any] | None:
         """
         加载最新的市场信息报告
 
@@ -105,18 +101,14 @@ class MarketInfoStore:
             # 按修改时间排序，获取最新的
             latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
 
-            with open(latest_file, "r", encoding="utf-8") as f:
+            with open(latest_file, encoding="utf-8") as f:
                 return json.load(f)
 
         except Exception as e:
             print(f"❌ 加载最新报告失败: {e}")
             return None
 
-    def get_combined_summary(
-        self,
-        symbols: Optional[List[str]] = None,
-        max_length: int = 2000
-    ) -> str:
+    def get_combined_summary(self, symbols: list[str] | None = None, max_length: int = 2000) -> str:
         """
         获取最新报告的市场信息摘要
 
@@ -141,7 +133,7 @@ class MarketInfoStore:
         start_time = metadata.get("start_time", "")
         end_time = metadata.get("end_time", "")
         if start_time and end_time:
-            summary_parts.append(f"### 📰 外部市场信息")
+            summary_parts.append("### 📰 外部市场信息")
             summary_parts.append(f"**时间范围**: {start_time} 至 {end_time}")
 
         # 市场概况
@@ -205,7 +197,7 @@ class MarketInfoStore:
 
         # 如果超过最大长度，进行截断
         if len(full_summary) > max_length:
-            full_summary = full_summary[:max_length - 3] + "..."
+            full_summary = full_summary[: max_length - 3] + "..."
 
         return full_summary
 
@@ -228,7 +220,7 @@ class MarketInfoStore:
                 print(f"⚠️ 清理文件失败 {file_path}: {e}")
                 continue
 
-    def get_report_status(self) -> Dict[str, Any]:
+    def get_report_status(self) -> dict[str, Any]:
         """
         获取报告状态信息
 
@@ -241,7 +233,7 @@ class MarketInfoStore:
         status = {
             "total_files": len(files),
             "latest_file": str(latest_file) if latest_file else None,
-            "latest_modified": None
+            "latest_modified": None,
         }
 
         if latest_file:

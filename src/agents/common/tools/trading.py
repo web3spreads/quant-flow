@@ -5,116 +5,96 @@
 这些工具可被多个 Agent 共享使用。
 """
 
-from typing import Callable, Optional, List
+from collections.abc import Callable
+
+from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field, field_validator
-from langchain_core.tools import Tool, StructuredTool
 
 
 class BuyInput(BaseModel):
     """买入工具的输入模式"""
-    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
-    amount: Optional[float] = Field(
-        default=None,
-        description="交易金额（USD），不填则使用配置上限"
-    )
-    leverage: Optional[int] = Field(
-        default=None,
-        description="杠杆倍数，不填则使用配置最大杠杆"
-    )
 
-    @field_validator('leverage', mode='before')
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    amount: float | None = Field(default=None, description="交易金额（USD），不填则使用配置上限")
+    leverage: int | None = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
+
+    @field_validator("leverage", mode="before")
     @classmethod
     def convert_leverage_to_int(cls, v):
         """将浮点数杠杆转换为整数"""
         if v is None:
             return v
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             return int(v)
         return v
 
 
 class SellShortInput(BaseModel):
     """卖空工具的输入模式"""
-    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
-    amount: Optional[float] = Field(
-        default=None,
-        description="交易金额（USD），不填则使用配置上限"
-    )
-    leverage: Optional[int] = Field(
-        default=None,
-        description="杠杆倍数，不填则使用配置最大杠杆"
-    )
 
-    @field_validator('leverage', mode='before')
+    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
+    amount: float | None = Field(default=None, description="交易金额（USD），不填则使用配置上限")
+    leverage: int | None = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
+
+    @field_validator("leverage", mode="before")
     @classmethod
     def convert_leverage_to_int(cls, v):
         """将浮点数杠杆转换为整数"""
         if v is None:
             return v
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             return int(v)
         return v
 
 
 class BuySpotInput(BaseModel):
     """现货买入工具的输入模式"""
+
     symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
-    amount: Optional[float] = Field(
-        default=None,
-        description="定投金额（USD），不填则使用配置上限"
-    )
+    amount: float | None = Field(default=None, description="定投金额（USD），不填则使用配置上限")
 
 
 class BuyLimitInput(BaseModel):
     """限价开多工具的输入模式"""
+
     symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
-    amount: Optional[float] = Field(
-        default=None,
-        description="交易金额（USD），不填则使用配置上限"
-    )
-    leverage: Optional[int] = Field(
-        default=None,
-        description="杠杆倍数，不填则使用配置最大杠杆"
-    )
+    amount: float | None = Field(default=None, description="交易金额（USD），不填则使用配置上限")
+    leverage: int | None = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
     price: float = Field(description="限价价格（USD），必须明确指定")
 
-    @field_validator('leverage', mode='before')
+    @field_validator("leverage", mode="before")
     @classmethod
     def convert_leverage_to_int(cls, v):
         """将浮点数杠杆转换为整数"""
         if v is None:
             return v
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             return int(v)
         return v
 
 
 class SellShortLimitInput(BaseModel):
     """限价开空工具的输入模式"""
+
     symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
-    amount: Optional[float] = Field(
-        default=None,
-        description="交易金额（USD），不填则使用配置上限"
-    )
-    leverage: Optional[int] = Field(
-        default=None,
-        description="杠杆倍数，不填则使用配置最大杠杆"
-    )
+    amount: float | None = Field(default=None, description="交易金额（USD），不填则使用配置上限")
+    leverage: int | None = Field(default=None, description="杠杆倍数，不填则使用配置最大杠杆")
     price: float = Field(description="限价价格（USD），必须明确指定")
 
-    @field_validator('leverage', mode='before')
+    @field_validator("leverage", mode="before")
     @classmethod
     def convert_leverage_to_int(cls, v):
         """将浮点数杠杆转换为整数"""
         if v is None:
             return v
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             return int(v)
         return v
 
 
 class CancelLimitOrderInput(BaseModel):
     """取消限价单工具的输入模式"""
+
     symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
     order_id: int = Field(description="订单ID，必须明确指定")
 
@@ -294,15 +274,16 @@ class TradingToolFactory:
 
     def __init__(
         self,
-        buy_callback: Callable[[str, Optional[float], Optional[int]], str],
+        buy_callback: Callable[[str, float | None, int | None], str],
         sell_callback: Callable[[str], str],
-        sell_short_callback: Callable[[str, Optional[float], Optional[int]], str],
+        sell_short_callback: Callable[[str, float | None, int | None], str],
         buy_to_cover_callback: Callable[[str], str],
         do_nothing_callback: Callable[[str], str],
-        buy_spot_callback: Optional[Callable[[str, Optional[float]], str]] = None,
-        buy_limit_callback: Optional[Callable[[str, Optional[float], Optional[int], float], str]] = None,
-        sell_short_limit_callback: Optional[Callable[[str, Optional[float], Optional[int], float], str]] = None,
-        cancel_limit_order_callback: Optional[Callable[[str, int], str]] = None
+        buy_spot_callback: Callable[[str, float | None], str] | None = None,
+        buy_limit_callback: Callable[[str, float | None, int | None, float], str] | None = None,
+        sell_short_limit_callback: Callable[[str, float | None, int | None, float], str]
+        | None = None,
+        cancel_limit_order_callback: Callable[[str, int], str] | None = None,
     ):
         """
         初始化工厂
@@ -330,35 +311,24 @@ class TradingToolFactory:
 
     def create_buy_tool(self) -> StructuredTool:
         """创建买入开多工具"""
-        def buy_func(
-            symbol: str,
-            amount: Optional[float] = None,
-            leverage: Optional[int] = None
-        ) -> str:
+
+        def buy_func(symbol: str, amount: float | None = None, leverage: int | None = None) -> str:
             """执行买入开多操作"""
             return self.buy_callback(symbol, amount, leverage)
 
         return StructuredTool.from_function(
-            func=buy_func,
-            name="buy",
-            description=BUY_TOOL_DESCRIPTION,
-            args_schema=BuyInput
+            func=buy_func, name="buy", description=BUY_TOOL_DESCRIPTION, args_schema=BuyInput
         )
 
     def create_sell_tool(self) -> Tool:
         """创建卖出平多工具"""
-        return Tool(
-            name="sell",
-            description=SELL_TOOL_DESCRIPTION,
-            func=self.sell_callback
-        )
+        return Tool(name="sell", description=SELL_TOOL_DESCRIPTION, func=self.sell_callback)
 
     def create_sell_short_tool(self) -> StructuredTool:
         """创建卖空开空工具"""
+
         def sell_short_func(
-            symbol: str,
-            amount: Optional[float] = None,
-            leverage: Optional[int] = None
+            symbol: str, amount: float | None = None, leverage: int | None = None
         ) -> str:
             """执行卖空开空操作"""
             return self.sell_short_callback(symbol, amount, leverage)
@@ -367,7 +337,7 @@ class TradingToolFactory:
             func=sell_short_func,
             name="sell_short",
             description=SELL_SHORT_TOOL_DESCRIPTION,
-            args_schema=SellShortInput
+            args_schema=SellShortInput,
         )
 
     def create_buy_to_cover_tool(self) -> Tool:
@@ -375,7 +345,7 @@ class TradingToolFactory:
         return Tool(
             name="buy_to_cover",
             description=BUY_TO_COVER_TOOL_DESCRIPTION,
-            func=self.buy_to_cover_callback
+            func=self.buy_to_cover_callback,
         )
 
     def create_do_nothing_tool(self) -> Tool:
@@ -383,23 +353,24 @@ class TradingToolFactory:
         return Tool(
             name="do_nothing",
             description=DO_NOTHING_TOOL_DESCRIPTION,
-            func=self.do_nothing_callback
+            func=self.do_nothing_callback,
         )
 
     def create_buy_spot_tool(self) -> StructuredTool:
         """创建现货买入工具"""
         if not self.buy_spot_callback:
-            def disabled_func(symbol: str, amount: Optional[float] = None) -> str:
+
+            def disabled_func(symbol: str, amount: float | None = None) -> str:
                 return "现货买入功能未启用"
 
             return StructuredTool.from_function(
                 func=disabled_func,
                 name="buy_spot",
                 description="现货买入功能未启用",
-                args_schema=BuySpotInput
+                args_schema=BuySpotInput,
             )
 
-        def buy_spot_func(symbol: str, amount: Optional[float] = None) -> str:
+        def buy_spot_func(symbol: str, amount: float | None = None) -> str:
             """执行现货买入操作"""
             return self.buy_spot_callback(symbol, amount)
 
@@ -407,17 +378,18 @@ class TradingToolFactory:
             func=buy_spot_func,
             name="buy_spot",
             description=BUY_SPOT_TOOL_DESCRIPTION,
-            args_schema=BuySpotInput
+            args_schema=BuySpotInput,
         )
 
     def create_buy_limit_tool(self) -> StructuredTool:
         """创建限价开多工具"""
         if not self.buy_limit_callback:
+
             def disabled_func(
                 symbol: str,
-                amount: Optional[float] = None,
-                leverage: Optional[int] = None,
-                price: float = 0.0
+                amount: float | None = None,
+                leverage: int | None = None,
+                price: float = 0.0,
             ) -> str:
                 return "限价单功能未启用"
 
@@ -425,14 +397,14 @@ class TradingToolFactory:
                 func=disabled_func,
                 name="buy_limit",
                 description="限价单功能未启用",
-                args_schema=BuyLimitInput
+                args_schema=BuyLimitInput,
             )
 
         def buy_limit_func(
             symbol: str,
-            amount: Optional[float] = None,
-            leverage: Optional[int] = None,
-            price: float = 0.0
+            amount: float | None = None,
+            leverage: int | None = None,
+            price: float = 0.0,
         ) -> str:
             """执行限价开多操作"""
             return self.buy_limit_callback(symbol, amount, leverage, price)
@@ -441,17 +413,18 @@ class TradingToolFactory:
             func=buy_limit_func,
             name="buy_limit",
             description=BUY_LIMIT_TOOL_DESCRIPTION,
-            args_schema=BuyLimitInput
+            args_schema=BuyLimitInput,
         )
 
     def create_sell_short_limit_tool(self) -> StructuredTool:
         """创建限价开空工具"""
         if not self.sell_short_limit_callback:
+
             def disabled_func(
                 symbol: str,
-                amount: Optional[float] = None,
-                leverage: Optional[int] = None,
-                price: float = 0.0
+                amount: float | None = None,
+                leverage: int | None = None,
+                price: float = 0.0,
             ) -> str:
                 return "限价单功能未启用"
 
@@ -459,14 +432,14 @@ class TradingToolFactory:
                 func=disabled_func,
                 name="sell_short_limit",
                 description="限价单功能未启用",
-                args_schema=SellShortLimitInput
+                args_schema=SellShortLimitInput,
             )
 
         def sell_short_limit_func(
             symbol: str,
-            amount: Optional[float] = None,
-            leverage: Optional[int] = None,
-            price: float = 0.0
+            amount: float | None = None,
+            leverage: int | None = None,
+            price: float = 0.0,
         ) -> str:
             """执行限价开空操作"""
             return self.sell_short_limit_callback(symbol, amount, leverage, price)
@@ -475,12 +448,13 @@ class TradingToolFactory:
             func=sell_short_limit_func,
             name="sell_short_limit",
             description=SELL_SHORT_LIMIT_TOOL_DESCRIPTION,
-            args_schema=SellShortLimitInput
+            args_schema=SellShortLimitInput,
         )
 
     def create_cancel_limit_order_tool(self) -> StructuredTool:
         """创建取消限价单工具"""
         if not self.cancel_limit_order_callback:
+
             def disabled_func(symbol: str, order_id: int = 0) -> str:
                 return "限价单功能未启用"
 
@@ -488,7 +462,7 @@ class TradingToolFactory:
                 func=disabled_func,
                 name="cancel_limit_order",
                 description="限价单功能未启用",
-                args_schema=CancelLimitOrderInput
+                args_schema=CancelLimitOrderInput,
             )
 
         def cancel_limit_order_func(symbol: str, order_id: int = 0) -> str:
@@ -499,10 +473,10 @@ class TradingToolFactory:
             func=cancel_limit_order_func,
             name="cancel_limit_order",
             description=CANCEL_LIMIT_ORDER_TOOL_DESCRIPTION,
-            args_schema=CancelLimitOrderInput
+            args_schema=CancelLimitOrderInput,
         )
 
-    def get_all_tools(self, include_spot: bool = True, include_limit: bool = True) -> List:
+    def get_all_tools(self, include_spot: bool = True, include_limit: bool = True) -> list:
         """
         获取所有工具
 
@@ -546,20 +520,20 @@ class TradingToolFactory:
             工具回调函数字典
         """
         callbacks = {
-            'buy': self.buy_callback,
-            'sell': self.sell_callback,
-            'sell_short': self.sell_short_callback,
-            'buy_to_cover': self.buy_to_cover_callback,
-            'do_nothing': self.do_nothing_callback,
+            "buy": self.buy_callback,
+            "sell": self.sell_callback,
+            "sell_short": self.sell_short_callback,
+            "buy_to_cover": self.buy_to_cover_callback,
+            "do_nothing": self.do_nothing_callback,
         }
         if self.buy_spot_callback:
-            callbacks['buy_spot'] = self.buy_spot_callback
+            callbacks["buy_spot"] = self.buy_spot_callback
         if self.buy_limit_callback:
-            callbacks['buy_limit'] = self.buy_limit_callback
+            callbacks["buy_limit"] = self.buy_limit_callback
         if self.sell_short_limit_callback:
-            callbacks['sell_short_limit'] = self.sell_short_limit_callback
+            callbacks["sell_short_limit"] = self.sell_short_limit_callback
         if self.cancel_limit_order_callback:
-            callbacks['cancel_limit_order'] = self.cancel_limit_order_callback
+            callbacks["cancel_limit_order"] = self.cancel_limit_order_callback
         return callbacks
 
 
@@ -572,11 +546,8 @@ def create_mock_callbacks():
          buy_to_cover_callback, do_nothing_callback, buy_spot_callback,
          buy_limit_callback, sell_short_limit_callback, cancel_limit_order_callback)
     """
-    def buy_callback(
-        symbol: str,
-        amount: Optional[float] = None,
-        leverage: Optional[int] = None
-    ) -> str:
+
+    def buy_callback(symbol: str, amount: float | None = None, leverage: int | None = None) -> str:
         amount_str = f"${amount}" if amount else "默认金额"
         leverage_str = f"{leverage}x" if leverage else "默认杠杆"
         return f"✅ [模拟] 已执行买入开多: {symbol} ({amount_str}, {leverage_str})"
@@ -585,9 +556,7 @@ def create_mock_callbacks():
         return f"✅ [模拟] 已执行卖出平多: {symbol}"
 
     def sell_short_callback(
-        symbol: str,
-        amount: Optional[float] = None,
-        leverage: Optional[int] = None
+        symbol: str, amount: float | None = None, leverage: int | None = None
     ) -> str:
         amount_str = f"${amount}" if amount else "默认金额"
         leverage_str = f"{leverage}x" if leverage else "默认杠杆"
@@ -599,25 +568,19 @@ def create_mock_callbacks():
     def do_nothing_callback(reason: str) -> str:
         return f"⏸️ [模拟] 不执行操作。原因: {reason}"
 
-    def buy_spot_callback(symbol: str, amount: Optional[float] = None) -> str:
+    def buy_spot_callback(symbol: str, amount: float | None = None) -> str:
         amount_str = f"${amount}" if amount else "默认金额"
         return f"✅ [模拟] 已执行现货买入: {symbol} ({amount_str})"
 
     def buy_limit_callback(
-        symbol: str,
-        amount: Optional[float] = None,
-        leverage: Optional[int] = None,
-        price: float = 0.0
+        symbol: str, amount: float | None = None, leverage: int | None = None, price: float = 0.0
     ) -> str:
         amount_str = f"${amount}" if amount else "默认金额"
         leverage_str = f"{leverage}x" if leverage else "默认杠杆"
         return f"✅ [模拟] 已挂限价开多单: {symbol} ({amount_str}, {leverage_str}) @ ${price}"
 
     def sell_short_limit_callback(
-        symbol: str,
-        amount: Optional[float] = None,
-        leverage: Optional[int] = None,
-        price: float = 0.0
+        symbol: str, amount: float | None = None, leverage: int | None = None, price: float = 0.0
     ) -> str:
         amount_str = f"${amount}" if amount else "默认金额"
         leverage_str = f"{leverage}x" if leverage else "默认杠杆"

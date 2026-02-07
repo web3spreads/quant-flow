@@ -5,13 +5,12 @@
 提供加密货币市场新闻、监管政策、宏观经济等信息的搜索功能。
 """
 
-from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
+from typing import Any
 
-from langchain_core.tools import tool
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
-
+from langchain_core.tools import tool
 from langchain_exa import ExaSearchRetriever
 
 
@@ -20,9 +19,9 @@ def search_crypto_market_news(
     query: str,
     exa_api_key: str,
     num_results: int = 5,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-) -> List[str]:
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[str]:
     """
     搜索加密货币市场新闻和信息
 
@@ -42,7 +41,7 @@ def search_crypto_market_news(
         "k": num_results,
         "highlights": True,
         "text_length_limit": 1000,
-        "exa_api_key": exa_api_key
+        "exa_api_key": exa_api_key,
     }
 
     # 添加日期过滤
@@ -70,7 +69,7 @@ def search_crypto_market_news(
                 "title": doc.metadata.get("title", "无标题"),
                 "url": doc.metadata.get("url", ""),
                 "published_date": doc.metadata.get("published_date", "未知"),
-                "highlights": doc.metadata.get("highlights", doc.page_content[:500] or "无内容")
+                "highlights": doc.metadata.get("highlights", doc.page_content[:500] or "无内容"),
             }
         )
         | document_prompt
@@ -82,7 +81,7 @@ def search_crypto_market_news(
     try:
         documents = retrieval_chain.invoke(query)
         return documents
-    except Exception as e:
+    except Exception:
         return []
 
 
@@ -91,9 +90,9 @@ def search_crypto_regulatory_news(
     query: str,
     exa_api_key: str,
     num_results: int = 5,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-) -> List[str]:
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[str]:
     """
     搜索加密货币监管政策相关新闻
 
@@ -109,13 +108,15 @@ def search_crypto_regulatory_news(
     """
     # 增强查询以聚焦监管内容
     enhanced_query = f"{query} regulation policy SEC compliance"
-    return search_crypto_market_news.invoke({
-        "query": enhanced_query,
-        "exa_api_key": exa_api_key,
-        "num_results": num_results,
-        "start_date": start_date,
-        "end_date": end_date
-    })
+    return search_crypto_market_news.invoke(
+        {
+            "query": enhanced_query,
+            "exa_api_key": exa_api_key,
+            "num_results": num_results,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+    )
 
 
 @tool
@@ -123,9 +124,9 @@ def search_crypto_macro_news(
     query: str,
     exa_api_key: str,
     num_results: int = 5,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-) -> List[str]:
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[str]:
     """
     搜索影响加密货币的宏观经济新闻
 
@@ -141,19 +142,20 @@ def search_crypto_macro_news(
     """
     # 增强查询以聚焦宏观经济内容
     enhanced_query = f"{query} Federal Reserve interest rate inflation economic impact"
-    return search_crypto_market_news.invoke({
-        "query": enhanced_query,
-        "exa_api_key": exa_api_key,
-        "num_results": num_results,
-        "start_date": start_date,
-        "end_date": end_date
-    })
+    return search_crypto_market_news.invoke(
+        {
+            "query": enhanced_query,
+            "exa_api_key": exa_api_key,
+            "num_results": num_results,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+    )
 
 
 def create_period_search_queries(
-    symbols: List[str],
-    period_hours: int
-) -> Dict[str, List[Dict[str, Any]]]:
+    symbols: list[str], period_hours: int
+) -> dict[str, list[dict[str, Any]]]:
     """
     为指定时间周期创建搜索查询
 
@@ -172,57 +174,57 @@ def create_period_search_queries(
     date_range = f"{start_date_str} to {end_date_str}"
 
     # 构建查询
-    queries = {
-        "market_news": [],
-        "regulatory": [],
-        "macro": [],
-        "industry": [],
-        "sentiment": []
-    }
+    queries = {"market_news": [], "regulatory": [], "macro": [], "industry": [], "sentiment": []}
 
     # 市场新闻查询 - 一次性查询所有币种
     if symbols:
         symbols_str = " ".join(symbols)
-        queries["market_news"].append({
-            "query": f"cryptocurrency {symbols_str} market news price analysis {date_range}",
-            "start_date": start_date_str,
-            "end_date": end_date_str
-        })
+        queries["market_news"].append(
+            {
+                "query": f"cryptocurrency {symbols_str} market news price analysis {date_range}",
+                "start_date": start_date_str,
+                "end_date": end_date_str,
+            }
+        )
 
     # 监管政策查询
-    queries["regulatory"].append({
-        "query": f"cryptocurrency regulation policy {date_range}",
-        "start_date": start_date_str,
-        "end_date": end_date_str
-    })
+    queries["regulatory"].append(
+        {
+            "query": f"cryptocurrency regulation policy {date_range}",
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+        }
+    )
 
     # 宏观经济查询
-    queries["macro"].append({
-        "query": f"Federal Reserve crypto impact {date_range}",
-        "start_date": start_date_str,
-        "end_date": end_date_str
-    })
+    queries["macro"].append(
+        {
+            "query": f"Federal Reserve crypto impact {date_range}",
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+        }
+    )
 
     # 行业动态查询
-    queries["industry"].append({
-        "query": f"blockchain technology crypto exchange news {date_range}",
-        "start_date": start_date_str,
-        "end_date": end_date_str
-    })
+    queries["industry"].append(
+        {
+            "query": f"blockchain technology crypto exchange news {date_range}",
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+        }
+    )
 
     # 市场情绪查询
-    queries["sentiment"].append({
-        "query": f"Bitcoin whale activity institutional investment {date_range}",
-        "start_date": start_date_str,
-        "end_date": end_date_str
-    })
+    queries["sentiment"].append(
+        {
+            "query": f"Bitcoin whale activity institutional investment {date_range}",
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+        }
+    )
 
     return queries
 
 
 # 导出所有工具
-ALL_TOOLS = [
-    search_crypto_market_news,
-    search_crypto_regulatory_news,
-    search_crypto_macro_news
-]
+ALL_TOOLS = [search_crypto_market_news, search_crypto_regulatory_news, search_crypto_macro_news]
