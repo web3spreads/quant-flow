@@ -53,7 +53,7 @@ def create_startup_banner(
     return panel
 
 
-def print_startup_banner(config: any | None = None, console: Console | None = None):
+def print_startup_banner(config: object | None = None, console: Console | None = None):
     """
     打印启动横幅和配置信息
 
