@@ -3,16 +3,17 @@
 使用纯 pandas/numpy 实现，无需额外依赖
 """
 
-import pandas as pd
+from typing import Any
+
 import numpy as np
-from typing import Dict, Any, List
+import pandas as pd
 
 
 class TechnicalIndicators:
     """技术指标计算器 - 纯 pandas/numpy 实现"""
 
     @staticmethod
-    def calculate_ma(df: pd.DataFrame, periods: List[int]) -> pd.DataFrame:
+    def calculate_ma(df: pd.DataFrame, periods: list[int]) -> pd.DataFrame:
         """
         计算简单移动平均线 (Simple Moving Average)
 
@@ -190,12 +191,12 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_all_indicators(
         df: pd.DataFrame,
-        ma_periods: List[int] = [7, 25, 99],
+        ma_periods: list[int] = None,
         rsi_period: int = 14,
-        macd_params: Dict[str, int] = None,
-        bollinger_params: Dict[str, Any] = None,
-        ema_periods: List[int] = [20, 50],
-        atr_periods: List[int] = [3, 14]
+        macd_params: dict[str, int] = None,
+        bollinger_params: dict[str, Any] = None,
+        ema_periods: list[int] = None,
+        atr_periods: list[int] = None
     ) -> pd.DataFrame:
         """
         计算所有技术指标
@@ -212,6 +213,12 @@ class TechnicalIndicators:
         Returns:
             添加了所有指标列的 DataFrame
         """
+        if atr_periods is None:
+            atr_periods = [3, 14]
+        if ema_periods is None:
+            ema_periods = [20, 50]
+        if ma_periods is None:
+            ma_periods = [7, 25, 99]
         if macd_params is None:
             macd_params = {'fast': 12, 'slow': 26, 'signal': 9}
 
@@ -256,7 +263,7 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
-    def get_latest_indicators(df: pd.DataFrame) -> Dict[str, Any]:
+    def get_latest_indicators(df: pd.DataFrame) -> dict[str, Any]:
         """
         获取最新的指标数据（最后一行）
 
@@ -441,7 +448,7 @@ class TechnicalIndicators:
         return indicators
 
     @staticmethod
-    def get_historical_series(df: pd.DataFrame, period: int = 10) -> Dict[str, List]:
+    def get_historical_series(df: pd.DataFrame, period: int = 10) -> dict[str, list]:
         """
         获取最近N个周期的历史序列数据
 
@@ -522,7 +529,7 @@ class TechnicalIndicators:
             return "震荡"
 
     @staticmethod
-    def get_multi_timeframe_trend(market_data_fetcher, symbol: str) -> Dict[str, str]:
+    def get_multi_timeframe_trend(market_data_fetcher, symbol: str) -> dict[str, str]:
         """
         获取多时间周期趋势
 
@@ -558,13 +565,13 @@ class TechnicalIndicators:
                 trend = TechnicalIndicators.analyze_trend(df)
                 trends[tf_name] = trend
 
-            except Exception as e:
+            except Exception:
                 trends[tf_name] = "获取失败"
 
         return trends
 
     @staticmethod
-    def generate_market_summary(indicators: Dict[str, Any]) -> str:
+    def generate_market_summary(indicators: dict[str, Any]) -> str:
         """
         生成市场数据的文字摘要
 

@@ -4,9 +4,9 @@
 """
 
 import json
-from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from pathlib import Path
+from typing import Any
 
 from src.agent.similarity_scorer import SimilarityScorer
 
@@ -17,7 +17,7 @@ class ReviewMemoryStore:
     def __init__(self, path: str, max_lessons: int = 30):
         self.path = Path(path)
         self.max_lessons = max_lessons
-        self.lessons: Dict[str, List[Dict[str, Any]]] = {}
+        self.lessons: dict[str, list[dict[str, Any]]] = {}
         self.load()
 
     def load(self):
@@ -30,14 +30,14 @@ class ReviewMemoryStore:
         """
         try:
             if self.path.exists():
-                with open(self.path, "r", encoding="utf-8") as f:
+                with open(self.path, encoding="utf-8") as f:
                     data = json.load(f)
 
                 if isinstance(data, dict) and isinstance(data.get("lessons"), dict):
                     self.lessons = data["lessons"]
                 elif isinstance(data, list):
                     # 兼容旧格式
-                    converted: Dict[str, List[Dict[str, Any]]] = {}
+                    converted: dict[str, list[dict[str, Any]]] = {}
                     for item in data:
                         symbol = item.get("symbol", "GLOBAL")
                         converted.setdefault(symbol, []).append(item)
@@ -52,7 +52,7 @@ class ReviewMemoryStore:
 
     def _ensure_context_defaults(self):
         """为旧记录补充 context_features 等新字段"""
-        for symbol, items in self.lessons.items():
+        for _symbol, items in self.lessons.items():
             for item in items:
                 item.setdefault("context_features", {})
                 item.setdefault("original_confidence", item.get("confidence", 0))
@@ -66,7 +66,7 @@ class ReviewMemoryStore:
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    def get_lessons(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_lessons(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """
         获取指定交易对的经验列表。
 
@@ -81,7 +81,7 @@ class ReviewMemoryStore:
             return sorted(lessons, key=lambda x: x.get("last_seen", ""), reverse=True)
 
         # 全量（用于 Prompt 展示）
-        aggregated: List[Dict[str, Any]] = []
+        aggregated: list[dict[str, Any]] = []
         for symbol_lessons in self.lessons.values():
             aggregated.extend(symbol_lessons)
         return sorted(aggregated, key=lambda x: x.get("last_seen", ""), reverse=True)
@@ -89,11 +89,11 @@ class ReviewMemoryStore:
     def get_similar_lessons(
         self,
         symbol: str,
-        context_features: Dict[str, Any],
+        context_features: dict[str, Any],
         scorer: SimilarityScorer,
         similarity_threshold: float = 0.5,
         limit: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         根据相似度筛选经验规则
 
@@ -105,7 +105,7 @@ class ReviewMemoryStore:
             limit: 返回数量上限
         """
         lessons = self.get_lessons(symbol)
-        scored: List[Dict[str, Any]] = []
+        scored: list[dict[str, Any]] = []
         for lesson in lessons:
             sim = scorer.compute(context_features, lesson.get("context_features", {}))
             if sim < similarity_threshold:
@@ -142,8 +142,8 @@ class ReviewMemoryStore:
         return "### ♻️ 复盘经验\n" + "\n".join(lines)
 
     def add_lessons(
-        self, symbol: str, lessons: List[Dict[str, Any]], min_confidence: float = 0.35
-    ) -> List[Dict[str, Any]]:
+        self, symbol: str, lessons: list[dict[str, Any]], min_confidence: float = 0.35
+    ) -> list[dict[str, Any]]:
         """
         添加新的经验规则，并自动合并/去重
 
@@ -153,7 +153,7 @@ class ReviewMemoryStore:
         if not lessons:
             return []
 
-        accepted: List[Dict[str, Any]] = []
+        accepted: list[dict[str, Any]] = []
         bucket = self.lessons.setdefault(symbol, [])
         now_text = datetime.utcnow().isoformat(timespec="seconds")
 

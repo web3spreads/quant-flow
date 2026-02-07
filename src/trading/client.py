@@ -3,9 +3,9 @@ Hyperliquid 永续合约客户端
 基于官方 hyperliquid-python-sdk
 """
 import traceback
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from math import floor, log10
-from typing import Optional, Dict, Any, List
+from typing import Any
 
 import eth_account
 from eth_account.signers.local import LocalAccount
@@ -26,7 +26,7 @@ class HyperliquidClient:
     def __init__(
         self,
         private_key: str,
-        account_address: Optional[str] = None,
+        account_address: str | None = None,
         testnet: bool = False
     ):
         """
@@ -62,11 +62,11 @@ class HyperliquidClient:
         # 显示连接信息
         print(f"🔗 连接 Hyperliquid {'测试网' if testnet else '主网'}")
         if self.is_api_wallet_mode:
-            print(f"🤖 模式: API 钱包代理")
+            print("🤖 模式: API 钱包代理")
             print(f"📍 主钱包地址: {self.address}")
             print(f"🔑 API 钱包地址: {self.account.address}")
         else:
-            print(f"👤 模式: 单钱包")
+            print("👤 模式: 单钱包")
             print(f"📍 钱包地址: {self.address}")
 
         # 初始化 Info API（市场数据查询）
@@ -117,7 +117,7 @@ class HyperliquidClient:
             growth_mode=growth_mode,
         )
 
-    def get_balance(self) -> Optional[Dict[str, Any]]:
+    def get_balance(self) -> dict[str, Any] | None:
         """
         获取账户余额信息
 
@@ -144,7 +144,7 @@ class HyperliquidClient:
             print(f"❌ 获取余额失败: {e}")
             return None
 
-    def get_positions(self) -> List[Dict[str, Any]]:
+    def get_positions(self) -> list[dict[str, Any]]:
         """
         获取当前持仓
 
@@ -172,7 +172,7 @@ class HyperliquidClient:
             print(f"❌ 获取持仓失败: {e}")
             return []
 
-    def get_open_orders(self) -> List[Dict[str, Any]]:
+    def get_open_orders(self) -> list[dict[str, Any]]:
         """
         获取待处理的订单列表
 
@@ -209,7 +209,7 @@ class HyperliquidClient:
             print(f"❌ 获取待处理订单失败: {e}")
             return []
 
-    def get_asset_info(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def get_asset_info(self, symbol: str) -> dict[str, Any] | None:
         """
         获取交易对的元数据信息
 
@@ -231,7 +231,7 @@ class HyperliquidClient:
             print(f"❌ 获取交易对信息失败: {e}")
             return None
 
-    def get_current_price(self, symbol: str) -> Optional[float]:
+    def get_current_price(self, symbol: str) -> float | None:
         """
         获取当前价格
 
@@ -319,7 +319,7 @@ class HyperliquidClient:
             return float(round(price))
 
     @staticmethod
-    def check_order_success(order_result: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+    def check_order_success(order_result: dict[str, Any]) -> tuple[bool, str | None]:
         """
         检查订单是否成功
 
@@ -387,7 +387,7 @@ class HyperliquidClient:
         return True, None
 
     @staticmethod
-    def get_order_fill_info(order_result: Dict[str, Any]) -> Dict[str, Any]:
+    def get_order_fill_info(order_result: dict[str, Any]) -> dict[str, Any]:
         """
         从订单结果中提取成交信息
 
@@ -444,7 +444,7 @@ class HyperliquidClient:
         size: float,
         reduce_only: bool = False,
         slippage: float = 0.01
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         下市价单
 
@@ -491,7 +491,7 @@ class HyperliquidClient:
         size: float,
         price: float,
         reduce_only: bool = False
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         下限价单
 
@@ -535,11 +535,11 @@ class HyperliquidClient:
         symbol: str,
         is_buy: bool,
         size: float,
-        take_profit_price: Optional[float] = None,
-        stop_loss_price: Optional[float] = None,
+        take_profit_price: float | None = None,
+        stop_loss_price: float | None = None,
         slippage: float = 0.01,
         require_stop_loss: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         下带止盈止损的市价单（使用官方 market_open 方法）
 
@@ -605,7 +605,7 @@ class HyperliquidClient:
 
                     # 【关键安全机制】止损单失败，立即平仓避免裸仓（带重试）
                     if require_stop_loss:
-                        print(f"⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
+                        print("⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
                         max_rollback_retries = 3
                         rollback_success = False
                         rollback_error = None
@@ -650,7 +650,7 @@ class HyperliquidClient:
                         error_msg += f"\n请求参数: {tp_result['request_params']}"
                     result['errors'].append(error_msg)
                     # 止盈单失败不平仓，但记录警告
-                    print(f"⚠️ 止盈单设置失败，仓位仍有止损保护")
+                    print("⚠️ 止盈单设置失败，仓位仍有止损保护")
 
             # 判断整体成功
             # 止损必须成功（如果需要），止盈失败可以接受
@@ -662,7 +662,7 @@ class HyperliquidClient:
             result['errors'].append(f"异常: {str(e)}")
             # 发生异常时也尝试平仓（带重试）
             if result['market_order'] and self.check_order_success(result['market_order'])[0]:
-                print(f"⚠️ 【安全机制】发生异常，尝试平仓")
+                print("⚠️ 【安全机制】发生异常，尝试平仓")
                 max_rollback_retries = 3
                 for attempt in range(1, max_rollback_retries + 1):
                     try:
@@ -689,7 +689,7 @@ class HyperliquidClient:
         size: float,
         is_tp: bool = True,
         sl_slippage: float = 0.10  # 止损滑点提高到10%确保成交
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         下止盈或止损单
 
@@ -814,7 +814,7 @@ class HyperliquidClient:
                 }
             }
 
-    def cancel_order(self, symbol: str, oid: int) -> Dict[str, Any]:
+    def cancel_order(self, symbol: str, oid: int) -> dict[str, Any]:
         """
         取消订单
 
@@ -832,7 +832,7 @@ class HyperliquidClient:
             print(f"❌ 取消订单失败: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def update_leverage(self, symbol: str, leverage: int, is_cross: bool = True) -> Dict[str, Any]:
+    def update_leverage(self, symbol: str, leverage: int, is_cross: bool = True) -> dict[str, Any]:
         """
         更新杠杆倍数
 
@@ -869,7 +869,7 @@ class HyperliquidClient:
                         # 如果目标杠杆低于当前杠杆，可能需要更多保证金
                         if leverage < current_leverage:
                             print(f"⚠️ 当前持仓杠杆: {current_leverage}x, 目标杠杆: {leverage}x")
-                            print(f"⚠️ 降低杠杆可能需要增加保证金，如果失败将使用当前杠杆")
+                            print("⚠️ 降低杠杆可能需要增加保证金，如果失败将使用当前杠杆")
 
                             # 尝试设置杠杆
                             result = self.exchange.update_leverage(leverage, symbol, is_cross=is_cross)
@@ -915,9 +915,9 @@ class HyperliquidClient:
         self,
         symbol: str,
         interval: str = "15m",
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None
-    ) -> Optional[List[Dict[str, Any]]]:
+        start_time: int | None = None,
+        end_time: int | None = None
+    ) -> list[dict[str, Any]] | None:
         """
         获取K线数据
 
@@ -942,7 +942,7 @@ class HyperliquidClient:
             print(f"❌ 获取K线数据失败: {e}")
             return None
 
-    def check_api_wallet_authorization(self) -> Dict[str, Any]:
+    def check_api_wallet_authorization(self) -> dict[str, Any]:
         """
         检查 API 钱包授权状态
 
@@ -974,7 +974,7 @@ class HyperliquidClient:
 
             # 检查是否有 authorized agents（不同版本的 API 可能返回不同的字段）
             # 通常授权信息可能在不同的地方，这里先打印完整信息以便调试
-            print(f"\n🔍 检查 API 钱包授权状态")
+            print("\n🔍 检查 API 钱包授权状态")
             print(f"   主钱包: {self.address}")
             print(f"   API 钱包: {self.account.address}")
 
@@ -992,15 +992,15 @@ class HyperliquidClient:
 
             # 如果没有明确的授权列表，尝试通过测试交易来判断
             # 但这里我们只做查询，不做实际交易
-            print(f"   ⚠️  无法直接查询授权状态")
-            print(f"   💡 建议: 在主钱包中授权 API 钱包，或进行测试交易验证")
+            print("   ⚠️  无法直接查询授权状态")
+            print("   💡 建议: 在主钱包中授权 API 钱包，或进行测试交易验证")
 
         except Exception as e:
             print(f"❌ 检查授权失败: {e}")
 
         return result
 
-    def close_position(self, symbol: str, size: Optional[float] = None) -> Dict[str, Any]:
+    def close_position(self, symbol: str, size: float | None = None) -> dict[str, Any]:
         """
         平仓（使用官方 market_close 或 market_open 方法）
 
@@ -1053,7 +1053,7 @@ class HyperliquidClient:
 
     # ==================== 现货交易方法 ====================
 
-    def get_spot_asset_index(self, symbol: str) -> Optional[int]:
+    def get_spot_asset_index(self, symbol: str) -> int | None:
         """
         获取现货资产索引（用于计算真正的现货资产 ID）
 
@@ -1092,7 +1092,7 @@ class HyperliquidClient:
         symbol: str,
         usdt_amount: float,
         slippage: float = 0.01
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         买入现货（真正的无杠杆现货持有）
 
@@ -1136,7 +1136,7 @@ class HyperliquidClient:
             print(f"   投入金额: ${usdt_amount:.2f}")
             print(f"   当前价格: ${current_price:.2f}")
             print(f"   购买数量: {buy_size} {symbol}")
-            print(f"   杠杆倍数: 1x（真现货，无杠杆）")
+            print("   杠杆倍数: 1x（真现货，无杠杆）")
 
             # 6. 计算限价（买入时设置稍高价格，确保快速成交）
             limit_price = current_price * (1 + slippage)
@@ -1159,7 +1159,7 @@ class HyperliquidClient:
             print(f"   订单结果: {result}")
 
             if result and result.get('status') == 'ok':
-                print(f"✅ 现货买入成功（无杠杆，真现货持有）")
+                print("✅ 现货买入成功（无杠杆，真现货持有）")
                 return {
                     'status': 'ok',
                     'message': f'买入 {buy_size} {symbol} 现货',
@@ -1187,9 +1187,9 @@ class HyperliquidClient:
     def sell_spot(
         self,
         symbol: str,
-        size: Optional[float] = None,
+        size: float | None = None,
         slippage: float = 0.01
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         卖出现货（真正的无杠杆现货）
 
@@ -1254,7 +1254,7 @@ class HyperliquidClient:
             print(f"   订单结果: {result}")
 
             if result and result.get('status') == 'ok':
-                print(f"✅ 现货卖出成功")
+                print("✅ 现货卖出成功")
                 return {
                     'status': 'ok',
                     'message': f'卖出 {size} {symbol} 现货',
@@ -1277,7 +1277,7 @@ class HyperliquidClient:
             traceback.print_exc()
             return {'status': 'error', 'message': str(e)}
 
-    def get_spot_balances(self) -> List[Dict[str, Any]]:
+    def get_spot_balances(self) -> list[dict[str, Any]]:
         """
         获取所有现货余额
 
@@ -1311,7 +1311,7 @@ class HyperliquidClient:
             print(f"❌ 获取现货余额失败: {e}")
             return []
 
-    def get_spot_balance(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def get_spot_balance(self, symbol: str) -> dict[str, Any] | None:
         """
         获取指定币种的现货余额
 

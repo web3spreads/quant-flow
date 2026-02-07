@@ -5,15 +5,14 @@
 使用 LangChain 的 structured output 机制来确保正确的工具调用
 """
 
-from typing import Dict, Any, Optional
+import json
+from enum import StrEnum
+from typing import Any
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
-from enum import Enum
-import json
-import re
 
 from src.llm import LLMClientManager
-
 
 # ExecutionPlan 字段名常量（避免硬编码字符串）
 FIELD_DECISION = 'decision'
@@ -25,7 +24,7 @@ FIELD_PRICE = 'price'
 FIELD_ORDER_ID = 'order_id'
 
 
-class DecisionType(str, Enum):
+class DecisionType(StrEnum):
     """决策类型枚举"""
     BUY = "BUY"
     SELL = "SELL"
@@ -42,10 +41,10 @@ class ExecutionPlan(BaseModel):
     """执行计划 - structured output 格式"""
     decision: DecisionType = Field(description="决策类型")
     symbol: str = Field(description="交易对符号")
-    amount: Optional[float] = Field(default=None, description="交易金额（仅开仓时需要）")
-    leverage: Optional[int] = Field(default=None, description="杠杆倍数（仅开仓时需要）")
-    price: Optional[float] = Field(default=None, description="限价单价格（仅限价单时需要）")
-    order_id: Optional[int] = Field(default=None, description="订单ID（仅取消限价单时需要）")
+    amount: float | None = Field(default=None, description="交易金额（仅开仓时需要）")
+    leverage: int | None = Field(default=None, description="杠杆倍数（仅开仓时需要）")
+    price: float | None = Field(default=None, description="限价单价格（仅限价单时需要）")
+    order_id: int | None = Field(default=None, description="订单ID（仅取消限价单时需要）")
     reason: str = Field(description="决策理由的简短摘要")
 
 
@@ -100,7 +99,7 @@ JSON 输出格式示例：
 """
 
 
-def _extract_json_from_text(text: str) -> Optional[dict]:
+def _extract_json_from_text(text: str) -> dict | None:
     """
     从文本中提取 JSON 对象（模块级辅助函数）
 
@@ -259,7 +258,7 @@ class ExecutionAgent:
 
                 # 尝试使用普通 LLM 调用作为后备方案
                 if logger:
-                    logger.print_info(f"[ExecutionAgent] 使用兼容模式解析决策")
+                    logger.print_info("[ExecutionAgent] 使用兼容模式解析决策")
 
                 try:
                     response = self.llm.invoke(messages)
@@ -293,7 +292,7 @@ class ExecutionAgent:
                         try:
                             execution_plan = ExecutionPlan(**parsed_data)
                             if logger:
-                                logger.print_info(f"[ExecutionAgent] 后备方案成功：手动解析 JSON")
+                                logger.print_info("[ExecutionAgent] 后备方案成功：手动解析 JSON")
                         except Exception as validation_error:
                             if logger:
                                 logger.print_warning(f"[ExecutionAgent] JSON 解析后字段验证失败，返回默认决策: {validation_error}")
@@ -305,7 +304,7 @@ class ExecutionAgent:
                     else:
                         # 无法提取 JSON，返回默认的 DO_NOTHING 决策
                         if logger:
-                            logger.print_warning(f"[ExecutionAgent] 无法从响应中提取有效的 JSON，返回默认决策")
+                            logger.print_warning("[ExecutionAgent] 无法从响应中提取有效的 JSON，返回默认决策")
                         execution_plan = ExecutionPlan(
                             decision=DecisionType.DO_NOTHING,
                             symbol=symbol,
@@ -352,7 +351,7 @@ class ExecutionAgent:
     def execute_plan(
         self,
         execution_plan: ExecutionPlan,
-        tools_callbacks: Dict[str, Any],
+        tools_callbacks: dict[str, Any],
         logger=None
     ) -> str:
         """
@@ -379,14 +378,14 @@ class ExecutionAgent:
                         leverage=execution_plan.leverage
                     )
                 else:
-                    return f"❌ 未找到 BUY 工具回调"
+                    return "❌ 未找到 BUY 工具回调"
 
             elif decision == DecisionType.SELL:
                 callback = tools_callbacks.get('sell')
                 if callback:
                     return callback(symbol=symbol)
                 else:
-                    return f"❌ 未找到 SELL 工具回调"
+                    return "❌ 未找到 SELL 工具回调"
 
             elif decision == DecisionType.SELL_SHORT:
                 callback = tools_callbacks.get('sell_short')
@@ -397,14 +396,14 @@ class ExecutionAgent:
                         leverage=execution_plan.leverage
                     )
                 else:
-                    return f"❌ 未找到 SELL_SHORT 工具回调"
+                    return "❌ 未找到 SELL_SHORT 工具回调"
 
             elif decision == DecisionType.BUY_TO_COVER:
                 callback = tools_callbacks.get('buy_to_cover')
                 if callback:
                     return callback(symbol=symbol)
                 else:
-                    return f"❌ 未找到 BUY_TO_COVER 工具回调"
+                    return "❌ 未找到 BUY_TO_COVER 工具回调"
 
             elif decision == DecisionType.BUY_SPOT:
                 callback = tools_callbacks.get('buy_spot')
@@ -414,14 +413,14 @@ class ExecutionAgent:
                         amount=execution_plan.amount
                     )
                 else:
-                    return f"❌ 未找到 BUY_SPOT 工具回调"
+                    return "❌ 未找到 BUY_SPOT 工具回调"
 
             elif decision == DecisionType.DO_NOTHING:
                 callback = tools_callbacks.get('do_nothing')
                 if callback:
                     return callback(reason=execution_plan.reason)
                 else:
-                    return f"❌ 未找到 DO_NOTHING 工具回调"
+                    return "❌ 未找到 DO_NOTHING 工具回调"
 
             elif decision == DecisionType.BUY_LIMIT:
                 callback = tools_callbacks.get('buy_limit')
@@ -433,7 +432,7 @@ class ExecutionAgent:
                         price=execution_plan.price
                     )
                 else:
-                    return f"❌ 未找到 BUY_LIMIT 工具回调"
+                    return "❌ 未找到 BUY_LIMIT 工具回调"
 
             elif decision == DecisionType.SELL_SHORT_LIMIT:
                 callback = tools_callbacks.get('sell_short_limit')
@@ -445,7 +444,7 @@ class ExecutionAgent:
                         price=execution_plan.price
                     )
                 else:
-                    return f"❌ 未找到 SELL_SHORT_LIMIT 工具回调"
+                    return "❌ 未找到 SELL_SHORT_LIMIT 工具回调"
 
             elif decision == DecisionType.CANCEL_LIMIT_ORDER:
                 callback = tools_callbacks.get('cancel_limit_order')
@@ -455,7 +454,7 @@ class ExecutionAgent:
                         order_id=execution_plan.order_id
                     )
                 else:
-                    return f"❌ 未找到 CANCEL_LIMIT_ORDER 工具回调"
+                    return "❌ 未找到 CANCEL_LIMIT_ORDER 工具回调"
 
             return f"❌ 未识别的决策类型: {decision}"
 

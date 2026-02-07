@@ -3,10 +3,9 @@ Hyperliquid 市场数据获取模块
 使用 Hyperliquid Info API 获取K线和市场数据
 """
 
-import pandas as pd
-from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
 
+import pandas as pd
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 
@@ -37,7 +36,7 @@ class MarketDataFetcher:
         symbol: str,
         timeframe: str = "15m",
         limit: int = 100
-    ) -> Optional[pd.DataFrame]:
+    ) -> pd.DataFrame | None:
         """
         获取 OHLCV K线数据
 
@@ -93,7 +92,7 @@ class MarketDataFetcher:
             }
 
             # 只选择存在的列
-            df = df[[col for col in column_mapping.keys() if col in df.columns]]
+            df = df[[col for col in column_mapping if col in df.columns]]
             df = df.rename(columns=column_mapping)
 
             # 确保有必需的列
@@ -145,7 +144,7 @@ class MarketDataFetcher:
         else:
             return 15  # 默认 15 分钟
 
-    def get_ticker(self, symbol: str) -> Optional[dict]:
+    def get_ticker(self, symbol: str) -> dict | None:
         """
         获取 Ticker 信息（当前价格等）
 
@@ -197,7 +196,7 @@ class MarketDataFetcher:
             print(f"❌ 获取Ticker失败: {e}")
             return None
 
-    def get_available_symbols(self) -> List[str]:
+    def get_available_symbols(self) -> list[str]:
         """
         获取所有可用的交易对
 
@@ -230,7 +229,7 @@ class MarketDataFetcher:
             print(f"❌ 验证交易对失败: {e}")
             return False
 
-    def get_funding_rate(self, symbol: str) -> Optional[float]:
+    def get_funding_rate(self, symbol: str) -> float | None:
         """
         获取资金费率
 
@@ -256,7 +255,7 @@ class MarketDataFetcher:
     def fetch_ohlcv_multi_timeframe(
         self,
         symbol: str,
-        timeframes: List[str] = None
+        timeframes: list[str] = None
     ) -> dict:
         """
         获取多个时间周期的K线数据

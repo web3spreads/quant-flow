@@ -3,16 +3,16 @@
 专门负责长期现货投资决策，关注长期持有价值和定投时机
 """
 
-from typing import Dict, Any, Tuple
+from typing import Any
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
-from src.llm import LLMClientManager
-from src.agent.tools import TradingTools
 from src.agent.execution_agent import ExecutionAgent
+from src.agent.tools import TradingTools
+from src.llm import LLMClientManager
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
-
 
 # 现货定投 Agent 系统提示词
 SPOT_AGENT_SYSTEM_PROMPT = """你是一位专业的加密货币价值投资顾问，专注于长期现货定投策略。
@@ -36,9 +36,9 @@ SPOT_AGENT_SYSTEM_PROMPT = """你是一位专业的加密货币价值投资顾�
 
 def create_spot_agent_prompt(
     symbol: str,
-    market_data: Dict[str, Any],
-    multi_timeframe_trends: Dict[str, str],
-    recommendation: Dict[str, Any],
+    market_data: dict[str, Any],
+    multi_timeframe_trends: dict[str, str],
+    recommendation: dict[str, Any],
     current_spot_holdings: list
 ) -> str:
     """
@@ -94,7 +94,7 @@ def create_spot_agent_prompt(
         trend = multi_timeframe_trends.get(timeframe, '未知')
         prompt += f"- {timeframe}: {trend}\n"
 
-    prompt += f"""
+    prompt += """
 
 ## 🎯 你的任务
 
@@ -275,7 +275,7 @@ class SpotAgent:
             try:
                 # 检查是否允许定投（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
-                    return f"❌ 当前余额不足，无法进行现货定投。"
+                    return "❌ 当前余额不足，无法进行现货定投。"
 
                 # 确定实际定投金额
                 actual_amount = amount if amount is not None else self.trade_amount
@@ -285,7 +285,7 @@ class SpotAgent:
                     return f"❌ 定投金额 ${actual_amount:.2f} 超过上限 ${self.trade_amount:.2f}"
 
                 if actual_amount <= 0:
-                    return f"❌ 定投金额必须大于 0"
+                    return "❌ 定投金额必须大于 0"
 
                 self.logger.print_info(f"[现货Agent] 执行现货定投: {symbol}, 金额: ${actual_amount:.2f}")
 
@@ -353,7 +353,7 @@ class SpotAgent:
             trading_tools.create_do_nothing_tool()
         ]
 
-    def _get_tool_callbacks(self) -> Dict[str, Any]:
+    def _get_tool_callbacks(self) -> dict[str, Any]:
         """获取工具回调函数字典"""
         return {
             'buy_spot': self._buy_spot_callback,
@@ -363,11 +363,11 @@ class SpotAgent:
     def evaluate_spot_recommendation(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
-        recommendation: Dict[str, Any],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
+        recommendation: dict[str, Any],
         current_spot_holdings: list
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """
         评估现货定投推荐
 
@@ -525,7 +525,7 @@ class SpotAgent:
                     break
 
             if decision_text:
-                self.logger.print_info(f"[现货Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本")
+                self.logger.print_info("[现货Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本")
 
                 execution_plan = self.execution_agent.parse_decision(
                     decision_text=decision_text,

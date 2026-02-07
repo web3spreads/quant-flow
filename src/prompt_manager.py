@@ -4,17 +4,17 @@ Prompt 管理模块
 支持 Jinja2 模板引擎，可根据不同币种自定义 Prompt
 """
 
-import os
 import json
-import yaml
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any
+
+import yaml
 from jinja2 import Environment, FileSystemLoader, Template
 
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
-from src.i18n import get_text
 from src.fees import FeeRates
+from src.i18n import get_text
 
 
 class PromptManager:
@@ -22,7 +22,7 @@ class PromptManager:
 
     def format_position_details(
         self, symbol: str, current_positions: list, current_price: float
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         格式化当前币种的持仓详情
 
@@ -146,7 +146,8 @@ class PromptManager:
         )
 
         # 获取本地化文本
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
 
         position_side_text = t("long") if position_side == "long" else t("short")
 
@@ -209,7 +210,7 @@ class PromptManager:
     def format_recent_trades_text(
         self,
         symbol: str,
-        recent_trades: List[Dict[str, Any]],
+        recent_trades: list[dict[str, Any]],
     ) -> str:
         """
         格式化最近1小时操作记录文本
@@ -232,7 +233,8 @@ class PromptManager:
             return ""
 
         # 获取国际化文本的快捷方法
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
 
         # 计算统计信息
         total_pnl = sum(float(trade.get("closedPnl", 0)) for trade in recent_trades)
@@ -364,7 +366,7 @@ class PromptManager:
             f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}"
         )
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self) -> dict[str, Any]:
         """加载 Prompt 配置文件"""
         if not self.config_file.exists():
             raise FileNotFoundError(
@@ -372,10 +374,10 @@ class PromptManager:
                 f"请确保 prompts/prompts.yaml 文件存在"
             )
 
-        with open(self.config_file, "r", encoding="utf-8") as f:
+        with open(self.config_file, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
-    def _get_prompt_set(self, set_name: str) -> Dict[str, Any]:
+    def _get_prompt_set(self, set_name: str) -> dict[str, Any]:
         """获取指定的 Prompt 集合配置"""
         prompt_sets = self.config.get("prompt_sets", {})
 
@@ -406,7 +408,7 @@ class PromptManager:
                 f"请确保文件存在或检查 prompts.yaml 配置"
             )
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             return f.read()
 
     def _load_prompt_template(self, relative_path: str) -> Template:
@@ -427,12 +429,12 @@ class PromptManager:
                 f"请确保文件存在或检查 prompts.yaml 配置"
             )
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             template_content = f.read()
             return self.jinja_env.from_string(template_content)
 
     def _load_optional_prompt_file(
-        self, relative_path: Optional[str], default: str
+        self, relative_path: str | None, default: str
     ) -> str:
         """加载可选 Prompt 文件，不存在时使用默认内容"""
         if not relative_path:
@@ -443,7 +445,7 @@ class PromptManager:
             return default
 
     def _load_optional_prompt_template(
-        self, relative_path: Optional[str], default_template: str
+        self, relative_path: str | None, default_template: str
     ) -> Template:
         """加载可选 Prompt 模板，不存在时使用默认模板"""
         if not relative_path:
@@ -491,19 +493,19 @@ class PromptManager:
     def format_trading_prompt(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
         current_positions: list,
         max_positions: int,
         max_trade_amount: float,
         max_leverage: int,
         take_profit_ratio: float,
         stop_loss_ratio: float,
-        historical_summary: Optional[str] = None,
-        balance_info: Optional[Dict[str, float]] = None,
-        enriched_data: Optional[Dict[str, Any]] = None,
+        historical_summary: str | None = None,
+        balance_info: dict[str, float] | None = None,
+        enriched_data: dict[str, Any] | None = None,
         limit_order_enabled: bool = False,
-        open_limit_orders: Optional[List[Dict[str, Any]]] = None,
+        open_limit_orders: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         格式化交易决策 Prompt
@@ -556,7 +558,8 @@ class PromptManager:
         position_count = len(current_positions)
 
         # 格式化多周期趋势
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
         timeframes = [
             ("daily", "日线"),
             ("4h", "4小时"),
@@ -717,8 +720,8 @@ class PromptManager:
             "stop_loss_ratio": f"{stop_loss_ratio:.1%}",
             "stop_loss_ratio_raw": stop_loss_ratio,
             # 费用计算
-            "position_value": f"{position_value:.2f}",
-            "position_value_raw": position_value,
+            "fee_position_value": f"{position_value:.2f}",
+            "fee_position_value_raw": position_value,
             "fee_rate_per_side": f"{fee_rate_per_side * 100:.3f}%",
             "fee_rate_per_side_raw": fee_rate_per_side,
             "total_fee_rate": f"{total_fee_rate * 100:.3f}%",
@@ -842,11 +845,11 @@ class PromptManager:
     def format_review_prompt(
         self,
         symbol: str,
-        decision_digest: List[Dict[str, Any]],
-        stats: Dict[str, Any],
-        existing_lessons: List[Dict[str, Any]],
-        fills_summary: Optional[Dict[str, Any]] = None,
-        context_features: Optional[Dict[str, Any]] = None,
+        decision_digest: list[dict[str, Any]],
+        stats: dict[str, Any],
+        existing_lessons: list[dict[str, Any]],
+        fills_summary: dict[str, Any] | None = None,
+        context_features: dict[str, Any] | None = None,
     ) -> str:
         """格式化复盘 Prompt"""
         fills_context = fills_summary or {"total_fills": 0, "total_pnl": 0.0}
@@ -866,12 +869,12 @@ class PromptManager:
     def format_spot_prompt(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
-        recommendation: Dict[str, Any],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
+        recommendation: dict[str, Any],
         current_spot_holdings: list,
         max_trade_amount: float,
-        balance_info: Optional[Dict[str, float]] = None,
+        balance_info: dict[str, float] | None = None,
     ) -> str:
         """
         格式化现货定投决策 Prompt
@@ -902,7 +905,8 @@ class PromptManager:
         has_spot = any(h.get("symbol") == symbol for h in current_spot_holdings)
 
         # 格式化多周期趋势
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
         timeframes = [
             ("daily", "日线"),
             ("4h", "4小时"),
@@ -987,7 +991,7 @@ class PromptManager:
 
         return prompt
 
-    def get_prompt_set_info(self) -> Dict[str, str]:
+    def get_prompt_set_info(self) -> dict[str, str]:
         """获取当前 Prompt 集合的信息"""
         return {
             "name": self.prompt_set["name"],

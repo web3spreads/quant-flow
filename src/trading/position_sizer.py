@@ -11,11 +11,11 @@
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, Any, List, Optional
+from enum import StrEnum
+from typing import Any
 
 
-class PositionSizeMethod(str, Enum):
+class PositionSizeMethod(StrEnum):
     """仓位计算方法"""
     FIXED = "fixed"  # 固定金额
     KELLY = "kelly"  # 凯利公式
@@ -39,7 +39,7 @@ class PositionSizeResult:
     drawdown_factor: float = 1.0
 
     # 计算细节
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
     def get_summary(self) -> str:
         """获取摘要"""
@@ -95,7 +95,7 @@ class PositionSizer:
         self.win_rate_lookback = win_rate_lookback
 
         # 交易历史
-        self._trade_history: List[TradeHistory] = []
+        self._trade_history: list[TradeHistory] = []
 
         # 当前回撤
         self._current_drawdown: float = 0.0
@@ -106,8 +106,8 @@ class PositionSizer:
         account_balance: float,
         signal_score: float,
         stop_loss_pct: float,
-        current_volatility: Optional[float] = None,
-        average_volatility: Optional[float] = None,
+        current_volatility: float | None = None,
+        average_volatility: float | None = None,
         current_exposure: float = 0.0,
         method: PositionSizeMethod = PositionSizeMethod.SIGNAL_BASED
     ) -> PositionSizeResult:
@@ -449,7 +449,7 @@ class PositionSizer:
             count += 1
         return count
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """获取统计信息"""
         return {
             'total_trades': len(self._trade_history),
@@ -508,7 +508,7 @@ def calculate_optimal_leverage(
     return optimal_leverage
 
 
-def create_position_sizer_from_config(config: Dict[str, Any]) -> PositionSizer:
+def create_position_sizer_from_config(config: dict[str, Any]) -> PositionSizer:
     """
     从配置创建仓位管理器
 

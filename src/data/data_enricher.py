@@ -4,16 +4,18 @@
 包括历史序列、4小时数据、持仓量、资金费率等
 """
 
-import pandas as pd
-from typing import Dict, Any, Optional
 from datetime import datetime
+from typing import Any
+
+import pandas as pd
 
 from src.i18n import get_text
+
 
 class MarketDataEnricher:
     """市场数据增强器 - 提供额外的数据字段供prompt使用"""
 
-    def __init__(self, market_fetcher, start_time: Optional[datetime] = None, language: str = "zh"):
+    def __init__(self, market_fetcher, start_time: datetime | None = None, language: str = "zh"):
         """
         初始化数据增强器
 
@@ -34,10 +36,10 @@ class MarketDataEnricher:
     def enrich_market_data(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
-        df_15m: Optional[pd.DataFrame] = None,
-        df_4h: Optional[pd.DataFrame] = None
-    ) -> Dict[str, Any]:
+        market_data: dict[str, Any],
+        df_15m: pd.DataFrame | None = None,
+        df_4h: pd.DataFrame | None = None
+    ) -> dict[str, Any]:
         """
         增强市场数据,添加nof1 prompts需要的额外字段
 
@@ -89,7 +91,7 @@ class MarketDataEnricher:
 
         return enriched
 
-    def _get_historical_series(self, df: pd.DataFrame, period: int = 10) -> Dict[str, Any]:
+    def _get_historical_series(self, df: pd.DataFrame, period: int = 10) -> dict[str, Any]:
         """获取历史序列数据"""
         if len(df) < period:
             period = len(df)
@@ -126,7 +128,7 @@ class MarketDataEnricher:
 
         return series
 
-    def _get_empty_series(self) -> Dict[str, Any]:
+    def _get_empty_series(self) -> dict[str, Any]:
         """返回空序列的默认值"""
         empty_list = []
         return {
@@ -142,7 +144,7 @@ class MarketDataEnricher:
             'rsi_14_indicators_raw': empty_list,
         }
 
-    def _get_4h_data(self, df_4h: pd.DataFrame) -> Dict[str, Any]:
+    def _get_4h_data(self, df_4h: pd.DataFrame) -> dict[str, Any]:
         """获取4小时时间框架数据"""
         if df_4h.empty:
             return self._get_empty_4h_data()
@@ -174,7 +176,7 @@ class MarketDataEnricher:
 
         return h4_data
 
-    def _get_empty_4h_data(self) -> Dict[str, Any]:
+    def _get_empty_4h_data(self) -> dict[str, Any]:
         """返回4小时数据的默认值"""
         return {
             'ema_20_4h': 0,
@@ -187,7 +189,7 @@ class MarketDataEnricher:
             'rsi_14_4h_indicators': [50] * 10,
         }
 
-    def _get_oi_and_funding(self, symbol: str) -> Dict[str, Any]:
+    def _get_oi_and_funding(self, symbol: str) -> dict[str, Any]:
         """获取持仓量和资金费率"""
         try:
             # 获取资金费率
@@ -200,7 +202,7 @@ class MarketDataEnricher:
                 'oi_average': 0,  # 需要API支持
                 'funding_rate': funding_rate if funding_rate else 0,
             }
-        except Exception as e:
+        except Exception:
             return {
                 'oi_latest': 0,
                 'oi_average': 0,
@@ -209,10 +211,10 @@ class MarketDataEnricher:
 
     def _analyze_indicators(
         self,
-        enriched: Dict[str, Any],
+        enriched: dict[str, Any],
         df_15m: pd.DataFrame,
-        df_4h: Optional[pd.DataFrame] = None
-    ) -> Dict[str, str]:
+        df_4h: pd.DataFrame | None = None
+    ) -> dict[str, str]:
         """
         分析指标数据,生成文本性结论
 
@@ -225,7 +227,8 @@ class MarketDataEnricher:
             包含分析结论的字典
         """
         analysis = {}
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
 
         # 1. 分析价格趋势（防止除零错误）
         if 'mid_prices_raw' in enriched and len(enriched['mid_prices_raw']) >= 5:
@@ -361,7 +364,7 @@ class MarketDataEnricher:
 
         return analysis
 
-    def _format_for_template(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_for_template(self, data: dict[str, Any]) -> dict[str, Any]:
         """格式化数据为模板友好的字符串格式"""
         formatted = data.copy()
 
@@ -396,9 +399,9 @@ class MarketDataEnricher:
 
     def enrich_account_data(
         self,
-        balance_info: Optional[Dict[str, float]],
+        balance_info: dict[str, float] | None,
         initial_balance: float = 10000.0
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         增强账户数据
 

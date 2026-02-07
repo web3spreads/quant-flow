@@ -11,19 +11,20 @@
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Dict, Any, List, Optional
+from enum import StrEnum
+from typing import Any
+
 import pandas as pd
 
 
-class ValidationResult(str, Enum):
+class ValidationResult(StrEnum):
     """验证结果"""
     PASS = "pass"  # 通过验证
     WARN = "warn"  # 警告但允许
     BLOCK = "block"  # 阻止交易
 
 
-class TrendDirection(str, Enum):
+class TrendDirection(StrEnum):
     """趋势方向"""
     STRONG_UP = "strong_up"
     UP = "up"
@@ -33,7 +34,7 @@ class TrendDirection(str, Enum):
     UNKNOWN = "unknown"
 
 
-class MarketRegime(str, Enum):
+class MarketRegime(StrEnum):
     """市场状态"""
     TRENDING_UP = "trending_up"
     TRENDING_DOWN = "trending_down"
@@ -59,7 +60,7 @@ class ValidationCheck:
     result: ValidationResult
     score: float  # 0-1
     message: str
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -69,14 +70,14 @@ class DecisionValidation:
     overall_score: float  # 0-1 综合评分
     decision: str  # 原始决策
     validated_decision: str  # 验证后的决策
-    checks: List[ValidationCheck] = field(default_factory=list)
-    blockers: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    suggestions: List[str] = field(default_factory=list)
+    checks: list[ValidationCheck] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
 
     # 优化后的参数
     suggested_size_multiplier: float = 1.0  # 建议仓位调整系数
-    suggested_entry_price: Optional[float] = None  # 建议入场价格
+    suggested_entry_price: float | None = None  # 建议入场价格
     wait_for_pullback: bool = False  # 是否等待回调
 
     def get_summary(self) -> str:
@@ -154,13 +155,13 @@ class DecisionValidator:
         decision: str,
         symbol: str,
         current_price: float,
-        indicators: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
+        indicators: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
         take_profit_ratio: float,
         stop_loss_ratio: float,
         leverage: int = 1,
-        df: Optional[pd.DataFrame] = None,
-        signal_score: Optional[float] = None
+        df: pd.DataFrame | None = None,
+        signal_score: float | None = None
     ) -> DecisionValidation:
         """
         验证交易决策
@@ -296,7 +297,7 @@ class DecisionValidator:
 
     def _check_trend_alignment(
         self,
-        multi_timeframe_trends: Dict[str, str],
+        multi_timeframe_trends: dict[str, str],
         is_long: bool
     ) -> ValidationCheck:
         """
@@ -389,8 +390,8 @@ class DecisionValidator:
 
     def _check_signal_quality(
         self,
-        indicators: Dict[str, Any],
-        signal_score: Optional[float],
+        indicators: dict[str, Any],
+        signal_score: float | None,
         is_long: bool
     ) -> ValidationCheck:
         """
@@ -598,8 +599,8 @@ class DecisionValidator:
 
     def _check_market_regime(
         self,
-        indicators: Dict[str, Any],
-        df: Optional[pd.DataFrame],
+        indicators: dict[str, Any],
+        df: pd.DataFrame | None,
         is_long: bool
     ) -> ValidationCheck:
         """
@@ -718,8 +719,8 @@ class DecisionValidator:
     def _check_entry_timing(
         self,
         current_price: float,
-        indicators: Dict[str, Any],
-        df: Optional[pd.DataFrame],
+        indicators: dict[str, Any],
+        df: pd.DataFrame | None,
         is_long: bool
     ) -> ValidationCheck:
         """
@@ -780,43 +781,34 @@ class DecisionValidator:
             deviation = (current_price - ema_20) / ema_20
             details['deviation_from_ema'] = deviation
 
-            if is_long and deviation > self.max_chase_percent:
-                entry_score = min(entry_score, 0.4)
-                should_wait = True
-                details['chasing'] = True
-            elif not is_long and deviation < -self.max_chase_percent:
+            if is_long and deviation > self.max_chase_percent or not is_long and deviation < -self.max_chase_percent:
                 entry_score = min(entry_score, 0.4)
                 should_wait = True
                 details['chasing'] = True
 
         # RSI 极端值检查
         rsi = indicators.get('rsi')
-        if rsi is not None:
-            if is_long and rsi > 75:
-                entry_score = min(entry_score, 0.3)
-                should_wait = True
-                details['rsi_extreme'] = True
-            elif not is_long and rsi < 25:
-                entry_score = min(entry_score, 0.3)
-                should_wait = True
-                details['rsi_extreme'] = True
+        if rsi is not None and (is_long and rsi > 75 or not is_long and rsi < 25):
+            entry_score = min(entry_score, 0.3)
+            should_wait = True
+            details['rsi_extreme'] = True
 
         details['should_wait'] = should_wait
 
         # 判断结果
         if entry_score >= 0.7:
             result = ValidationResult.PASS
-            message = f"入场时机良好"
+            message = "入场时机良好"
         elif entry_score >= 0.5:
             result = ValidationResult.WARN
-            message = f"入场时机一般，可考虑等待回调"
+            message = "入场时机一般，可考虑等待回调"
         else:
             if self.prefer_pullback_entry:
                 result = ValidationResult.WARN
-                message = f"建议等待回调再入场"
+                message = "建议等待回调再入场"
             else:
                 result = ValidationResult.WARN
-                message = f"入场时机不佳"
+                message = "入场时机不佳"
 
         return ValidationCheck(
             name="entry_timing",
@@ -828,7 +820,7 @@ class DecisionValidator:
 
     def _calculate_size_multiplier(
         self,
-        checks: List[ValidationCheck],
+        checks: list[ValidationCheck],
         overall_score: float
     ) -> float:
         """
@@ -850,10 +842,10 @@ class DecisionValidator:
     def _calculate_suggested_entry(
         self,
         current_price: float,
-        indicators: Dict[str, Any],
-        df: Optional[pd.DataFrame],
+        indicators: dict[str, Any],
+        df: pd.DataFrame | None,
         is_long: bool
-    ) -> Optional[float]:
+    ) -> float | None:
         """
         计算建议的入场价格
 
@@ -888,7 +880,7 @@ class DecisionValidator:
         return None
 
 
-def create_validator_from_config(config: Dict[str, Any]) -> DecisionValidator:
+def create_validator_from_config(config: dict[str, Any]) -> DecisionValidator:
     """
     从配置创建决策验证器
 

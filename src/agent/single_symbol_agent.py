@@ -3,20 +3,20 @@
 为每个交易对维护独立的上下文窗口和决策历史
 """
 
-from typing import Dict, Any, Tuple, Optional
+from typing import Any
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
-from src.llm import LLMClientManager
-
-from src.agent.tools import TradingTools
-from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.execution_agent import ExecutionAgent
-from src.trading.order_manager import OrderManager
-from src.utils.logger import TradingLogger
-from src.prompt_manager import PromptManager
+from src.agent.prompts import SYSTEM_PROMPT
+from src.agent.tools import TradingTools
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
+from src.llm import LLMClientManager
+from src.prompt_manager import PromptManager
+from src.trading.order_manager import OrderManager
+from src.utils.logger import TradingLogger
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -88,8 +88,8 @@ class SingleSymbolAgent:
         take_profit_ratio: float = 0.05,
         stop_loss_ratio: float = 0.02,
         notifier=None,
-        prompt_manager: Optional[PromptManager] = None,
-        fee_rates: Optional[FeeRates] = None,
+        prompt_manager: PromptManager | None = None,
+        fee_rates: FeeRates | None = None,
         limit_order_enabled: bool = False,
     ):
         """
@@ -159,12 +159,12 @@ class SingleSymbolAgent:
     def _create_tools(self) -> list:
         """创建工具集"""
 
-        def buy_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
+        def buy_callback(symbol: str, amount: float | None = None, leverage: int | None = None) -> str:
             """买入开多回调"""
             try:
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
-                    return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+                    return "❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
 
                 fee_guard_msg = self._check_fee_guard()
                 if fee_guard_msg:
@@ -196,7 +196,7 @@ class SingleSymbolAgent:
 
                 if result and result.get('success'):
                     # 获取市场订单信息
-                    market_order = result.get('market_order', {})
+                    result.get('market_order', {})
                     entry_price = self.current_price
                     # 使用配置的止盈止损比例（与实际交易一致）
                     tp_price = entry_price * (1 + self.take_profit_ratio)
@@ -320,10 +320,10 @@ class SingleSymbolAgent:
                             order_hash=result.get('hash', '')
                         )
 
-                    return f"✅ 卖出平多成功！"
+                    return "✅ 卖出平多成功！"
 
                 # 平仓失败 - 记录详细信息并发送通知
-                error_msg = f"❌ 卖出平多失败"
+                error_msg = "❌ 卖出平多失败"
                 error_details = f"API 返回: {result}"
                 self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                 self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
@@ -373,12 +373,12 @@ class SingleSymbolAgent:
 
                 return error_msg
 
-        def sell_short_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
+        def sell_short_callback(symbol: str, amount: float | None = None, leverage: int | None = None) -> str:
             """卖空开空回调"""
             try:
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
-                    return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+                    return "❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
 
                 fee_guard_msg = self._check_fee_guard()
                 if fee_guard_msg:
@@ -533,10 +533,10 @@ class SingleSymbolAgent:
                             order_hash=result.get('hash', '')
                         )
 
-                    return f"✅ 买入平空成功！"
+                    return "✅ 买入平空成功！"
 
                 # 平仓失败 - 记录详细信息并发送通知
-                error_msg = f"❌ 买入平空失败"
+                error_msg = "❌ 买入平空失败"
                 error_details = f"API 返回: {result}"
                 self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                 self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
@@ -595,11 +595,11 @@ class SingleSymbolAgent:
                 self._executed_callbacks.add(callback_key)
             return f"⏸️  确认：不执行操作。原因：{reason}"
 
-        def buy_spot_callback(symbol: str, amount: Optional[float] = None) -> str:
+        def buy_spot_callback(symbol: str, amount: float | None = None) -> str:
             """现货定投推荐回调（仅推荐，不直接执行）"""
             # 检查是否允许开新仓
             if self.trade_amount <= 0:
-                return f"❌ 当前余额不足，无法进行现货定投。"
+                return "❌ 当前余额不足，无法进行现货定投。"
 
             actual_amount = amount if amount is not None else self.trade_amount
             if actual_amount > self.trade_amount:
@@ -613,14 +613,14 @@ class SingleSymbolAgent:
         cancel_limit_order_callback = None
 
         if self.limit_order_enabled:
-            def buy_limit_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None, price: float = 0.0) -> str:
+            def buy_limit_callback(symbol: str, amount: float | None = None, leverage: int | None = None, price: float = 0.0) -> str:
                 """限价开多回调"""
                 try:
                     if self.trade_amount <= 0:
-                        return f"❌ 当前余额不足，无法开新仓。"
+                        return "❌ 当前余额不足，无法开新仓。"
 
                     if price <= 0:
-                        return f"❌ 限价价格必须大于0"
+                        return "❌ 限价价格必须大于0"
 
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
@@ -668,14 +668,14 @@ class SingleSymbolAgent:
                     self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                     return f"❌ {error_msg}"
 
-            def sell_short_limit_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None, price: float = 0.0) -> str:
+            def sell_short_limit_callback(symbol: str, amount: float | None = None, leverage: int | None = None, price: float = 0.0) -> str:
                 """限价开空回调"""
                 try:
                     if self.trade_amount <= 0:
-                        return f"❌ 当前余额不足，无法开新仓。"
+                        return "❌ 当前余额不足，无法开新仓。"
 
                     if price <= 0:
-                        return f"❌ 限价价格必须大于0"
+                        return "❌ 限价价格必须大于0"
 
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
@@ -776,7 +776,7 @@ class SingleSymbolAgent:
 
         return trading_tools.get_all_tools()
 
-    def _get_tool_callbacks(self) -> Dict[str, Any]:
+    def _get_tool_callbacks(self) -> dict[str, Any]:
         """
         获取工具回调函数字典
 
@@ -800,7 +800,7 @@ class SingleSymbolAgent:
 
         return callbacks
 
-    def _check_fee_guard(self) -> Optional[str]:
+    def _check_fee_guard(self) -> str | None:
         """
         确保当前止盈目标足以覆盖手续费，避免因为手续费导致的小额亏损
         """
@@ -816,13 +816,13 @@ class SingleSymbolAgent:
 
     def make_decision(
         self,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
         current_positions: list,
         max_positions: int,
-        historical_summary: Optional[str] = None,
-        enriched_data: Optional[Dict[str, Any]] = None
-    ) -> Tuple[str, Dict[str, Any]]:
+        historical_summary: str | None = None,
+        enriched_data: dict[str, Any] | None = None
+    ) -> tuple[str, dict[str, Any]]:
         """
         做出交易决策
 

@@ -5,14 +5,15 @@
 
 import json
 import threading
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
-from dataclasses import dataclass, asdict
-from enum import Enum
+from typing import Any
 
 
-class ProtectionAction(str, Enum):
+class ProtectionAction(StrEnum):
     """保护动作类型"""
     NONE = "none"
     WARN = "warn"
@@ -37,14 +38,14 @@ class PositionRecord:
         """持仓时长（小时）"""
         return (datetime.now() - self.entry_time).total_seconds() / 3600
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
         data['entry_time'] = self.entry_time.isoformat()
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PositionRecord':
+    def from_dict(cls, data: dict[str, Any]) -> 'PositionRecord':
         """从字典创建"""
         data['entry_time'] = datetime.fromisoformat(data['entry_time'])
         return cls(**data)
@@ -59,13 +60,13 @@ class AccountSnapshot:
     unrealized_pnl: float
     margin_used: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data['timestamp'] = self.timestamp.isoformat()
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AccountSnapshot':
+    def from_dict(cls, data: dict[str, Any]) -> 'AccountSnapshot':
         data['timestamp'] = datetime.fromisoformat(data['timestamp'])
         return cls(**data)
 
@@ -88,8 +89,8 @@ class AccountProtector:
         max_position_hours: float = 48.0,  # 最大持仓时间 48 小时
         max_consecutive_losses: int = 5,  # 最大连续亏损次数
         pause_hours_after_protection: float = 4.0,  # 触发保护后暂停时间
-        data_dir: Optional[str] = None,
-        on_protection_triggered: Optional[Callable] = None
+        data_dir: str | None = None,
+        on_protection_triggered: Callable | None = None
     ):
         """
         初始化账户保护管理器
@@ -113,18 +114,18 @@ class AccountProtector:
         # 状态跟踪
         self._peak_equity: float = 0.0  # 历史最高净值
         self._daily_start_equity: float = 0.0  # 当日开始净值
-        self._daily_start_date: Optional[datetime] = None
+        self._daily_start_date: datetime | None = None
         self._consecutive_losses: int = 0
-        self._last_protection_time: Optional[datetime] = None
+        self._last_protection_time: datetime | None = None
         self._is_trading_paused: bool = False
         self._pause_reason: str = ""
 
         # 持仓记录
-        self._position_records: Dict[str, PositionRecord] = {}
+        self._position_records: dict[str, PositionRecord] = {}
         self._lock = threading.Lock()
 
         # 账户快照历史
-        self._snapshots: List[AccountSnapshot] = []
+        self._snapshots: list[AccountSnapshot] = []
         self._max_snapshots = 1000  # 最多保留1000条快照
 
         # 数据持久化
@@ -132,7 +133,7 @@ class AccountProtector:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._load_state()
 
-        print(f"🛡️ 账户保护管理器初始化完成")
+        print("🛡️ 账户保护管理器初始化完成")
         print(f"   最大回撤: {max_drawdown_pct*100}%")
         print(f"   单日最大亏损: {max_daily_loss_pct*100}%")
         print(f"   最大持仓时间: {max_position_hours} 小时")
@@ -144,7 +145,7 @@ class AccountProtector:
         equity: float,
         unrealized_pnl: float,
         margin_used: float
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         更新账户状态，检查是否需要触发保护
 
@@ -284,14 +285,14 @@ class AccountProtector:
             )
             self._save_state()
 
-    def record_position_close(self, symbol: str) -> Optional[PositionRecord]:
+    def record_position_close(self, symbol: str) -> PositionRecord | None:
         """记录平仓，返回持仓记录"""
         with self._lock:
             record = self._position_records.pop(symbol, None)
             self._save_state()
             return record
 
-    def check_position_timeout(self, symbol: str) -> Dict[str, Any]:
+    def check_position_timeout(self, symbol: str) -> dict[str, Any]:
         """
         检查持仓是否超时
 
@@ -325,7 +326,7 @@ class AccountProtector:
                 'entry_price': record.entry_price
             }
 
-    def get_timeout_positions(self) -> List[str]:
+    def get_timeout_positions(self) -> list[str]:
         """获取所有超时的持仓符号"""
         timeout_symbols = []
         with self._lock:
@@ -334,7 +335,7 @@ class AccountProtector:
                     timeout_symbols.append(symbol)
         return timeout_symbols
 
-    def is_trading_allowed(self) -> Dict[str, Any]:
+    def is_trading_allowed(self) -> dict[str, Any]:
         """
         检查是否允许开新仓
 
@@ -374,7 +375,7 @@ class AccountProtector:
             self._save_state()
             print("✅ 交易已手动恢复")
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """获取当前保护状态"""
         with self._lock:
             return {
@@ -426,7 +427,7 @@ class AccountProtector:
         try:
             state_file = self.data_dir / "protection_state.json"
             if state_file.exists():
-                with open(state_file, 'r') as f:
+                with open(state_file) as f:
                     state = json.load(f)
 
                 self._peak_equity = state.get('peak_equity', 0.0)

@@ -8,16 +8,18 @@ ReviewDailyLogger 单元测试
 """
 
 import copy
-import json
-import os
-import tempfile
-import shutil
-from datetime import datetime, timedelta
-from pathlib import Path
-import pytest
 
 # 动态导入模块，避免 agent/__init__.py 的依赖问题
 import importlib.util
+import json
+import os
+import shutil
+import tempfile
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+
 spec = importlib.util.spec_from_file_location(
     "review_daily_logger",
     Path(__file__).parent.parent / "src" / "agent" / "review_daily_logger.py"
@@ -205,7 +207,7 @@ class TestReviewDailyLogger:
         assert count == 1
         assert os.path.exists(output_path)
 
-        with open(output_path, "r", encoding="utf-8") as f:
+        with open(output_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert len(data) == 1
@@ -225,7 +227,7 @@ class TestReviewDailyLogger:
 
         assert count == 1
 
-        with open(output_path, "r", encoding="utf-8") as f:
+        with open(output_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert len(data) == 1
@@ -248,7 +250,7 @@ class TestReviewDailyLogger:
 
         assert count == 1
 
-        with open(output_path, "r", encoding="utf-8") as f:
+        with open(output_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert len(data) == 1

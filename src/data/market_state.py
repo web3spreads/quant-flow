@@ -11,7 +11,8 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import Any
+
 import pandas as pd
 
 
@@ -68,10 +69,10 @@ class MomentumAnalysis:
     """动量分析结果"""
     rsi_state: str  # "oversold", "neutral", "overbought"
     rsi_value: float
-    rsi_divergence: Optional[str]  # "bullish", "bearish", None
+    rsi_divergence: str | None  # "bullish", "bearish", None
     macd_state: str  # "bullish", "bearish", "neutral"
     macd_histogram_trend: str  # "increasing", "decreasing", "stable"
-    macd_crossover: Optional[str]  # "golden_cross", "death_cross", None
+    macd_crossover: str | None  # "golden_cross", "death_cross", None
 
 
 @dataclass
@@ -100,13 +101,13 @@ class TradeSignal:
     action: str  # "buy", "sell", "sell_short", "buy_to_cover", "hold"
     confidence: float  # 0-1 置信度
     strength: SignalStrength
-    reasons: List[str]
+    reasons: list[str]
     risk_reward_ratio: float
     suggested_entry: float
     suggested_stop_loss: float
     suggested_take_profit: float
     suggested_position_size_pct: float  # 建议仓位比例 0-1
-    warnings: List[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -122,7 +123,7 @@ class MarketAnalysisResult:
     multi_timeframe_alignment: float  # 多周期一致性 0-1
     overall_score: float  # 综合评分 -1 到 1
     analysis_timestamp: str
-    raw_data: Dict[str, Any] = field(default_factory=dict)
+    raw_data: dict[str, Any] = field(default_factory=dict)
 
 
 class MarketStateAnalyzer:
@@ -132,7 +133,7 @@ class MarketStateAnalyzer:
         self,
         atr_period: int = 14,
         rsi_period: int = 14,
-        ma_periods: List[int] = None,
+        ma_periods: list[int] = None,
         volatility_lookback: int = 100,
         support_resistance_lookback: int = 50
     ):
@@ -156,7 +157,7 @@ class MarketStateAnalyzer:
         self,
         df: pd.DataFrame,
         current_price: float,
-        multi_timeframe_trends: Optional[Dict[str, str]] = None
+        multi_timeframe_trends: dict[str, str] | None = None
     ) -> MarketAnalysisResult:
         """
         执行完整的市场分析
@@ -563,7 +564,7 @@ class MarketStateAnalyzer:
 
         # 使用简单的方法找支撑阻力位
         # 支撑位：低于当前价格的局部低点
-        potential_supports = [l for l in lows if l < current_price]
+        potential_supports = [low_val for low_val in lows if low_val < current_price]
         # 阻力位：高于当前价格的局部高点
         potential_resistances = [h for h in highs if h > current_price]
 
@@ -571,7 +572,7 @@ class MarketStateAnalyzer:
             # 找最近的支撑位（最高的低于当前价格的点）
             nearest_support = max(potential_supports)
             # 计算该价位被触及的次数作为强度
-            touches = sum(1 for l in lows if abs(l - nearest_support) / nearest_support < 0.01)
+            touches = sum(1 for low_val in lows if abs(low_val - nearest_support) / nearest_support < 0.01)
             support_strength = min(1.0, touches / 5)
         else:
             nearest_support = current_price * 0.95
@@ -636,7 +637,7 @@ class MarketStateAnalyzer:
             return MarketState.CONSOLIDATION
 
     def _calculate_mtf_alignment(
-        self, multi_timeframe_trends: Optional[Dict[str, str]]
+        self, multi_timeframe_trends: dict[str, str] | None
     ) -> float:
         """计算多周期一致性"""
         if not multi_timeframe_trends:
@@ -649,7 +650,7 @@ class MarketStateAnalyzer:
         bullish_keywords = ["上涨", "强势", "bullish", "up"]
         bearish_keywords = ["下跌", "弱势", "bearish", "down"]
 
-        for tf, trend in multi_timeframe_trends.items():
+        for _tf, trend in multi_timeframe_trends.items():
             if any(kw in trend.lower() for kw in bullish_keywords):
                 bullish_count += 1
             elif any(kw in trend.lower() for kw in bearish_keywords):

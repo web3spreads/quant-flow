@@ -4,8 +4,10 @@ Hyperliquid 订单管理器
 """
 
 import threading
+from collections.abc import Callable
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Callable
+from typing import Any
+
 from src.trading.client import HyperliquidClient
 
 
@@ -37,9 +39,9 @@ class LimitOrderMonitor:
 
         # 待监控的限价单列表
         # {order_id: {symbol, is_buy, size, tp_price, sl_price, created_at, ...}}
-        self._pending_orders: Dict[int, Dict[str, Any]] = {}
+        self._pending_orders: dict[int, dict[str, Any]] = {}
         self._lock = threading.Lock()
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
     def add_order(
@@ -51,7 +53,7 @@ class LimitOrderMonitor:
         entry_price: float,
         take_profit_price: float,
         stop_loss_price: float,
-        on_tpsl_set: Optional[Callable] = None
+        on_tpsl_set: Callable | None = None
     ) -> None:
         """
         添加限价单到监控列表
@@ -178,7 +180,7 @@ class LimitOrderMonitor:
     def _set_tpsl_for_order(
         self,
         order_id: int,
-        order_info: Dict[str, Any],
+        order_info: dict[str, Any],
         actual_size: float
     ) -> None:
         """为成交的限价单设置止盈止损"""
@@ -207,7 +209,7 @@ class LimitOrderMonitor:
 
                     # 重试或紧急平仓
                     if order_info['tpsl_attempts'] >= max_attempts:
-                        print(f"⚠️ 【安全机制】止损设置多次失败，紧急平仓")
+                        print("⚠️ 【安全机制】止损设置多次失败，紧急平仓")
                         self.client.close_position(symbol)
                         self.remove_order(order_id)
                         return
@@ -248,7 +250,7 @@ class LimitOrderMonitor:
         except Exception as e:
             print(f"❌ 设置止盈止损异常: {e}")
             if order_info['tpsl_attempts'] >= max_attempts:
-                print(f"⚠️ 【安全机制】异常次数过多，紧急平仓")
+                print("⚠️ 【安全机制】异常次数过多，紧急平仓")
                 try:
                     self.client.close_position(symbol)
                 except Exception as close_err:
@@ -286,11 +288,11 @@ class OrderManager:
         self.min_risk_reward_ratio = min_risk_reward_ratio
 
         # 初始化限价单监控器
-        self.limit_order_monitor: Optional[LimitOrderMonitor] = None
+        self.limit_order_monitor: LimitOrderMonitor | None = None
         if enable_limit_order_monitor:
             self.limit_order_monitor = LimitOrderMonitor(client)
 
-        print(f"✅ 订单管理器初始化完成")
+        print("✅ 订单管理器初始化完成")
         print(f"   止盈比例: {take_profit_ratio*100}%")
         print(f"   止损比例: {stop_loss_ratio*100}%")
         print(f"   默认杠杆: {default_leverage}x")
@@ -303,7 +305,7 @@ class OrderManager:
         stop_loss_ratio: float,
         leverage: int,
         fee_rate: float = 0.0005
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         验证风险回报比是否合理（考虑杠杆）
 
@@ -365,7 +367,7 @@ class OrderManager:
         leverage: int,
         fee_rate: float = 0.0005,
         target_risk_reward: float = 2.0
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         根据杠杆计算安全的止盈止损比例
 
@@ -444,7 +446,7 @@ class OrderManager:
             print(f"❌ 检查余额失败: {e}")
             return False
 
-    def get_available_balance_info(self) -> Dict[str, Any]:
+    def get_available_balance_info(self) -> dict[str, Any]:
         """
         获取详细的余额信息
 
@@ -500,7 +502,7 @@ class OrderManager:
                 'unrealized_pnl': 0
             }
 
-    def get_current_positions(self) -> List[Dict[str, Any]]:
+    def get_current_positions(self) -> list[dict[str, Any]]:
         """
         获取当前持仓列表
 
@@ -509,7 +511,7 @@ class OrderManager:
         """
         return self.client.get_positions()
 
-    def _get_latest_fill_hash(self) -> Optional[str]:
+    def _get_latest_fill_hash(self) -> str | None:
         """
         获取最近一笔成交的交易哈希
 
@@ -537,8 +539,8 @@ class OrderManager:
         self,
         symbol: str,
         usdt_amount: float,
-        leverage: Optional[int] = None
-    ) -> Optional[float]:
+        leverage: int | None = None
+    ) -> float | None:
         """
         根据 USDT 金额计算合约数量
 
@@ -582,9 +584,9 @@ class OrderManager:
         self,
         symbol: str,
         usdt_amount: float,
-        leverage: Optional[int] = None,
+        leverage: int | None = None,
         with_tpsl: bool = True
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         执行做多操作（带止盈止损保护）
 
@@ -626,7 +628,7 @@ class OrderManager:
                 # 检查杠杆设置结果
                 if leverage_result.get('status') == 'error':
                     print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                    print(f"❌ 无法继续下单")
+                    print("❌ 无法继续下单")
                     return None
                 elif leverage_result.get('status') == 'warning':
                     # 无法降低杠杆，但可以使用当前杠杆继续
@@ -689,9 +691,9 @@ class OrderManager:
         self,
         symbol: str,
         usdt_amount: float,
-        leverage: Optional[int] = None,
+        leverage: int | None = None,
         with_tpsl: bool = True
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         执行做空操作（带止盈止损保护）
 
@@ -733,7 +735,7 @@ class OrderManager:
                 # 检查杠杆设置结果
                 if leverage_result.get('status') == 'error':
                     print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                    print(f"❌ 无法继续下单")
+                    print("❌ 无法继续下单")
                     return None
                 elif leverage_result.get('status') == 'warning':
                     # 无法降低杠杆，但可以使用当前杠杆继续
@@ -793,7 +795,7 @@ class OrderManager:
             print(f"❌ 执行做空失败: {e}")
             return None
 
-    def close_position(self, symbol: str, size: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    def close_position(self, symbol: str, size: float | None = None) -> dict[str, Any] | None:
         """
         平仓操作
 
@@ -821,8 +823,8 @@ class OrderManager:
         self,
         desired_amount: float,
         min_trade_amount: float = 10.0,
-        balance_info: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        balance_info: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         计算建议的交易金额
 
@@ -880,7 +882,7 @@ class OrderManager:
                     return {
                         'can_trade': False,
                         'suggested_amount': 0,
-                        'reason': f'可用余额不足，无法交易'
+                        'reason': '可用余额不足，无法交易'
                     }
 
         except Exception as e:
@@ -896,7 +898,7 @@ class OrderManager:
         self,
         symbol: str,
         usdt_amount: float
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         现货定投买入（用于长期持有策略）
 
@@ -925,7 +927,7 @@ class OrderManager:
             )
 
             if result.get('status') == 'ok':
-                print(f"✅ 现货定投成功")
+                print("✅ 现货定投成功")
                 return {
                     'success': True,
                     'spot_order': result,
@@ -944,8 +946,8 @@ class OrderManager:
     def sell_spot(
         self,
         symbol: str,
-        size: Optional[float] = None
-    ) -> Optional[Dict[str, Any]]:
+        size: float | None = None
+    ) -> dict[str, Any] | None:
         """
         卖出现货
 
@@ -971,7 +973,7 @@ class OrderManager:
             print(f"❌ 现货卖出异常: {e}")
             return None
 
-    def get_spot_holdings(self) -> List[Dict[str, Any]]:
+    def get_spot_holdings(self) -> list[dict[str, Any]]:
         """
         获取现货持仓列表
 
@@ -989,8 +991,8 @@ class OrderManager:
         symbol: str,
         usdt_amount: float,
         limit_price: float,
-        leverage: Optional[int] = None
-    ) -> Optional[Dict[str, Any]]:
+        leverage: int | None = None
+    ) -> dict[str, Any] | None:
         """
         执行限价开多操作（带止盈止损计算）
 
@@ -1072,8 +1074,8 @@ class OrderManager:
         symbol: str,
         usdt_amount: float,
         limit_price: float,
-        leverage: Optional[int] = None
-    ) -> Optional[Dict[str, Any]]:
+        leverage: int | None = None
+    ) -> dict[str, Any] | None:
         """
         执行限价开空操作（带止盈止损计算）
 
@@ -1151,7 +1153,7 @@ class OrderManager:
             print(f"❌ 执行限价开空失败: {e}")
             return None
 
-    def get_open_limit_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_open_limit_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """
         获取待处理的限价单列表
 
@@ -1220,7 +1222,7 @@ class OrderManager:
             print(f"❌ 获取限价单列表失败: {e}")
             return []
 
-    def cancel_limit_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
+    def cancel_limit_order(self, symbol: str, order_id: int) -> dict[str, Any]:
         """
         取消限价单
 

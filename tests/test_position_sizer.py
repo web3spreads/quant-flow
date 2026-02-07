@@ -3,13 +3,14 @@
 """
 
 import pytest
+
 from src.trading.position_sizer import (
+    PositionSizeMethod,
     PositionSizer,
     PositionSizeResult,
-    PositionSizeMethod,
     TradeHistory,
     calculate_optimal_leverage,
-    create_position_sizer_from_config
+    create_position_sizer_from_config,
 )
 
 

@@ -3,14 +3,15 @@
 支持钉钉、飞书、邮件等多种通知方式
 """
 
-from enum import Enum
-from typing import Dict, List, Optional, Any
 import logging
+from enum import StrEnum
+from typing import Any
 from urllib.parse import quote
+
 from apprise import Apprise
 
 
-class NotificationEvent(str, Enum):
+class NotificationEvent(StrEnum):
     """通知事件类型"""
     SYSTEM_STARTUP = "system_startup"       # 系统启动
     TRADE_OPENED = "trade_opened"           # 开仓
@@ -36,7 +37,7 @@ class Notifier:
     - 作为配置项，用户配置则启用
     """
 
-    def __init__(self, config: Dict[str, Any], is_testnet: bool = True):
+    def __init__(self, config: dict[str, Any], is_testnet: bool = True):
         """
         初始化通知管理器
 
@@ -95,7 +96,7 @@ class Notifier:
             except Exception as e:
                 self.logger.error(f"❌ 初始化通知渠道失败: {e}", exc_info=True)
 
-    def _add_dingtalk_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_dingtalk_channel(self, channel: dict[str, Any]) -> None:
         """添加钉钉通知渠道"""
         api_key = channel.get("api_key")
         secret = channel.get("secret", "")
@@ -133,7 +134,7 @@ class Notifier:
             # 不记录敏感信息（token/secret）到日志
             self.logger.error("❌ 钉钉通知渠道配置错误")
 
-    def _add_feishu_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_feishu_channel(self, channel: dict[str, Any]) -> None:
         """添加飞书通知渠道"""
         token = channel.get("token")
 
@@ -159,7 +160,7 @@ class Notifier:
             # 不记录敏感信息（token）到日志
             self.logger.error("❌ 飞书通知渠道配置错误")
 
-    def _add_lark_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_lark_channel(self, channel: dict[str, Any]) -> None:
         """添加lark通知渠道"""
         token = channel.get("token")
 
@@ -185,7 +186,7 @@ class Notifier:
             # 不记录敏感信息（token）到日志
             self.logger.error("❌ lark通知渠道配置错误")
 
-    def _add_email_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_email_channel(self, channel: dict[str, Any]) -> None:
         """添加邮件通知渠道"""
         smtp_user = channel.get("smtp_user")
         smtp_password = channel.get("smtp_password")
@@ -292,12 +293,12 @@ class Notifier:
         quantity: float,
         price: float,
         leverage: int = 1,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-        position_value: Optional[float] = None,
-        margin: Optional[float] = None,
-        reason: Optional[str] = None,
-        order_hash: Optional[str] = None
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        position_value: float | None = None,
+        margin: float | None = None,
+        reason: str | None = None,
+        order_hash: str | None = None
     ):
         """
         发送开仓通知
@@ -331,7 +332,7 @@ class Notifier:
             f"【开仓价】${price:,.4f}" if price < 1 else f"【开仓价】${price:,.2f}",
             f"【数量】{quantity:,.4f}",
             f"【杠杆】{leverage}x",
-            f"",  # 空行
+            "",  # 空行
             f"【持仓价值】${position_value:,.2f}",
         ]
 
@@ -390,10 +391,10 @@ class Notifier:
         exit_price: float,
         pnl: float,
         pnl_percent: float,
-        leverage: Optional[int] = None,
-        holding_time: Optional[str] = None,
-        close_reason: Optional[str] = None,
-        order_hash: Optional[str] = None
+        leverage: int | None = None,
+        holding_time: str | None = None,
+        close_reason: str | None = None,
+        order_hash: str | None = None
     ):
         """
         发送平仓通知
@@ -542,7 +543,7 @@ class Notifier:
         quantity: float,
         price: float,
         amount: float,
-        order_hash: Optional[str] = None
+        order_hash: str | None = None
     ):
         """
         发送现货定投通知
@@ -584,7 +585,7 @@ class Notifier:
         self,
         title: str,
         error_message: str,
-        context: Optional[str] = None
+        context: str | None = None
     ):
         """
         发送错误通知
@@ -624,9 +625,9 @@ class Notifier:
 
     def notify_system_startup(
         self,
-        version: Optional[str] = None,
-        symbols: Optional[list] = None,
-        config_info: Optional[Dict[str, Any]] = None
+        version: str | None = None,
+        symbols: list | None = None,
+        config_info: dict[str, Any] | None = None
     ):
         """
         发送系统启动通知
@@ -671,9 +672,9 @@ class Notifier:
 
     def notify_system_shutdown(
         self,
-        reason: Optional[str] = None,
-        runtime: Optional[str] = None,
-        statistics: Optional[Dict[str, Any]] = None
+        reason: str | None = None,
+        runtime: str | None = None,
+        statistics: dict[str, Any] | None = None
     ):
         """
         发送系统关闭通知
@@ -716,8 +717,8 @@ class Notifier:
     def notify_review_lesson(
         self,
         symbol: str,
-        lessons: List[Dict[str, Any]],
-        summary: Optional[str] = None
+        lessons: list[dict[str, Any]],
+        summary: str | None = None
     ):
         """
         发送复盘经验通知
