@@ -4,6 +4,7 @@ Hyperliquid fee calculation utilities.
 Implements the official fee formula from:
 https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
 """
+
 from dataclasses import dataclass
 from typing import Literal
 
@@ -67,9 +68,7 @@ def calculate_fee_rates(
             deployer_share = 0.5
         growth_mode_scale = 0.1 if growth_mode else 1.0
 
-    maker_percentage = (
-        base_fees.maker_rate * 100 * scale_if_stable_pair * growth_mode_scale
-    )
+    maker_percentage = base_fees.maker_rate * 100 * scale_if_stable_pair * growth_mode_scale
     if maker_percentage > 0:
         maker_percentage *= scale_if_hip3 * (1 - active_referral_discount)
     else:

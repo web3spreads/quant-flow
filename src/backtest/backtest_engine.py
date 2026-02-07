@@ -585,7 +585,7 @@ class BacktestEngine:
                 )
 
             except Exception as e:
-                print(f"⚠️ 决策点 {i+1}/{len(decision_timestamps)} 处理失败: {e}")
+                print(f"⚠️ 决策点 {i + 1}/{len(decision_timestamps)} 处理失败: {e}")
                 import traceback
 
                 traceback.print_exc()
@@ -601,7 +601,7 @@ class BacktestEngine:
         print("\n✅ 回测完成")
         print(f"   总交易数: {len(self.closed_trades)}")
         print(f"   最终余额: ${result['final_balance']:.2f}")
-        print(f"   总收益率: {result['total_return']*100:.2f}%")
+        print(f"   总收益率: {result['total_return'] * 100:.2f}%")
 
         self._maybe_write_live_report(
             processed_decisions=self._total_decision_points,
@@ -1502,11 +1502,11 @@ class BacktestEngine:
         if current_ema20 != 0 and current_price > 0:
             if current_price > current_ema20 * 1.01:
                 ema_status = (
-                    f"{t('price_above_ema20')}({((current_price/current_ema20 - 1) * 100):.2f}%)"
+                    f"{t('price_above_ema20')}({((current_price / current_ema20 - 1) * 100):.2f}%)"
                 )
             elif current_price < current_ema20 * 0.99:
                 ema_status = (
-                    f"{t('price_below_ema20')}({((current_price/current_ema20 - 1) * 100):.2f}%)"
+                    f"{t('price_below_ema20')}({((current_price / current_ema20 - 1) * 100):.2f}%)"
                 )
             else:
                 ema_status = t("price_near_ema20")
@@ -1524,19 +1524,19 @@ class BacktestEngine:
                 times_unit = t("times_unit")
                 if current_volume > avg_volume * 1.5:
                     volume_status = (
-                        f"{t('volume_surge')}({(current_volume/avg_volume):.1f}{times_unit})"
+                        f"{t('volume_surge')}({(current_volume / avg_volume):.1f}{times_unit})"
                     )
                 elif current_volume > avg_volume * 1.2:
                     volume_status = (
-                        f"{t('volume_increase')}({(current_volume/avg_volume):.1f}{times_unit})"
+                        f"{t('volume_increase')}({(current_volume / avg_volume):.1f}{times_unit})"
                     )
                 elif current_volume < avg_volume * 0.5:
                     volume_status = (
-                        f"{t('volume_decline')}({(current_volume/avg_volume):.1f}{times_unit})"
+                        f"{t('volume_decline')}({(current_volume / avg_volume):.1f}{times_unit})"
                     )
                 else:
                     volume_status = (
-                        f"{t('volume_normal')}({(current_volume/avg_volume):.1f}{times_unit})"
+                        f"{t('volume_normal')}({(current_volume / avg_volume):.1f}{times_unit})"
                     )
             else:
                 volume_status = t("volume_data_error")

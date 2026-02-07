@@ -41,7 +41,7 @@ class Config:
             self._env_file = env_file
         else:
             # 优先检查环境变量 DOTENV_PATH，否则使用默认 .env
-            env_path = os.getenv('DOTENV_PATH', '.env')
+            env_path = os.getenv("DOTENV_PATH", ".env")
             load_dotenv(dotenv_path=env_path)
             self._env_file = env_path
 
@@ -83,7 +83,9 @@ class Config:
         llm_config = self.config_data.get("llm", {})
 
         # 客户端类型：优先从 YAML 配置读取，如果没有则从环境变量读取
-        self.llm_client_type = llm_config.get("client_type") or os.getenv("LLM_CLIENT_TYPE", "langchain_openai")
+        self.llm_client_type = llm_config.get("client_type") or os.getenv(
+            "LLM_CLIENT_TYPE", "langchain_openai"
+        )
 
         # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取
         self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", "deepseek-chat")
@@ -116,31 +118,23 @@ class Config:
 
     def _init_openai_config(self):
         """初始化 OpenAI API 配置"""
-        self.openai_api_base = os.getenv(
-            "OPENAI_API_BASE", "https://api.deepseek.com/v1"
-        )
+        self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
 
         if not self.openai_api_key and self.require_api_credentials:
-            raise ValueError(
-                "未设置 OPENAI_API_KEY 环境变量！\n"
-                "请在 .env 文件中设置或使用环境变量"
-            )
+            raise ValueError("未设置 OPENAI_API_KEY 环境变量！\n请在 .env 文件中设置或使用环境变量")
 
     def _init_hyperliquid_config(self):
         """初始化 Hyperliquid 配置"""
         self.hyperliquid_private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY")
         self.hyperliquid_account_address = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", "")
-        self.hyperliquid_testnet = (
-            os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
-        )
+        self.hyperliquid_testnet = os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
 
         # 检查私钥配置
         if not self.hyperliquid_private_key and self.require_api_credentials:
             raise ValueError(
-                "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n"
-                "请在 .env 文件中设置钱包私钥"
+                "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n请在 .env 文件中设置钱包私钥"
             )
 
     def _init_trading_config(self):
@@ -223,61 +217,41 @@ class Config:
         self.review_temperature: float = float(review.get("temperature", 0.05))
         # 如果配置文件中指定了 model，使用它；否则使用默认的 openai_model
         self.review_model: str = review.get("model", None)
-        self.review_memory_file: str = review.get(
-            "memory_file", "logs/review_memory.json"
-        )
+        self.review_memory_file: str = review.get("memory_file", "logs/review_memory.json")
         # 每日日志目录（用于 LoRA 训练数据收集）
-        self.review_daily_log_dir: str = review.get(
-            "daily_log_dir", "logs/review_daily"
-        )
+        self.review_daily_log_dir: str = review.get("daily_log_dir", "logs/review_daily")
         self.review_max_lessons: int = int(review.get("max_lessons", 30))
         self.review_min_confidence: float = float(review.get("min_confidence", 0.35))
-        self.review_similarity_threshold: float = float(
-            review.get("similarity_threshold", 0.5)
-        )
-        self.review_similarity_weights: dict[str, float] = review.get(
-            "similarity_weights", {}
-        )
+        self.review_similarity_threshold: float = float(review.get("similarity_threshold", 0.5))
+        self.review_similarity_weights: dict[str, float] = review.get("similarity_weights", {})
         self.review_confidence_decay_factor: float = float(
             review.get("confidence_decay_factor", 0.6)
         )
-        self.review_similarity_method: str = review.get(
-            "similarity_method", "cosine"
-        )
+        self.review_similarity_method: str = review.get("similarity_method", "cosine")
 
     def _init_external_info_agent_config(self):
         """初始化外部信息收集 Agent 配置"""
         external_info = self.config_data.get("external_info_agent", {})
         self.external_info_enabled: bool = external_info.get("enabled", False)
-        self.external_info_interval_hours: float = float(
-            external_info.get("interval_hours", 3.0)
-        )
-        self.external_info_store_dir: str = external_info.get(
-            "store_dir", "data/market_info"
-        )
+        self.external_info_interval_hours: float = float(external_info.get("interval_hours", 3.0))
+        self.external_info_store_dir: str = external_info.get("store_dir", "data/market_info")
         # 从环境变量读取 Exa API 密钥
         self.external_info_exa_api_key: str = os.getenv("EXA_API_KEY")
 
-        self.external_info_temperature: float = float(
-            external_info.get("temperature", 0.1)
-        )
+        self.external_info_temperature: float = float(external_info.get("temperature", 0.1))
         self.external_info_max_summary_length: int = int(
             external_info.get("max_summary_length", 2000)
         )
         self.external_info_periods: list[str] = external_info.get(
             "periods", ["daily", "weekly", "biweekly", "monthly"]
         )
-        self.external_info_cleanup_days: int = int(
-            external_info.get("cleanup_days", 30)
-        )
+        self.external_info_cleanup_days: int = int(external_info.get("cleanup_days", 30))
 
     def _init_risk_config(self):
         """初始化风控配置"""
         risk = self.config_data.get("risk_management", {})
         self.circuit_breaker_enabled: bool = risk.get("circuit_breaker_enabled", True)
-        self.circuit_breaker_threshold: float = float(
-            risk.get("circuit_breaker_threshold", 0.1)
-        )
+        self.circuit_breaker_threshold: float = float(risk.get("circuit_breaker_threshold", 0.1))
         self.circuit_breaker_window: int = int(risk.get("circuit_breaker_window", 5))
         self.circuit_breaker_pause: int = int(risk.get("circuit_breaker_pause", 30))
 
@@ -296,24 +270,12 @@ class Config:
 
         # 风险管理配置
         risk_config = enhanced.get("risk", {})
-        self.enhanced_max_risk_per_trade: float = float(
-            risk_config.get("max_risk_per_trade", 0.02)
-        )
-        self.enhanced_max_total_exposure: float = float(
-            risk_config.get("max_total_exposure", 0.5)
-        )
-        self.enhanced_atr_sl_multiplier: float = float(
-            risk_config.get("atr_sl_multiplier", 1.5)
-        )
-        self.enhanced_atr_tp_multiplier: float = float(
-            risk_config.get("atr_tp_multiplier", 3.0)
-        )
-        self.enhanced_trailing_stop_enabled: bool = risk_config.get(
-            "trailing_stop_enabled", True
-        )
-        self.enhanced_volatility_adjustment: bool = risk_config.get(
-            "volatility_adjustment", True
-        )
+        self.enhanced_max_risk_per_trade: float = float(risk_config.get("max_risk_per_trade", 0.02))
+        self.enhanced_max_total_exposure: float = float(risk_config.get("max_total_exposure", 0.5))
+        self.enhanced_atr_sl_multiplier: float = float(risk_config.get("atr_sl_multiplier", 1.5))
+        self.enhanced_atr_tp_multiplier: float = float(risk_config.get("atr_tp_multiplier", 3.0))
+        self.enhanced_trailing_stop_enabled: bool = risk_config.get("trailing_stop_enabled", True)
+        self.enhanced_volatility_adjustment: bool = risk_config.get("volatility_adjustment", True)
 
         # 信号权重配置
         signal_config = enhanced.get("signal_weights", {})
@@ -331,12 +293,8 @@ class Config:
         logging_config = self.config_data.get("logging", {})
         self.console_color: bool = logging_config.get("console_color", True)
         self.show_full_prompt: bool = logging_config.get("show_full_prompt", True)
-        self.show_chain_of_thought: bool = logging_config.get(
-            "show_chain_of_thought", True
-        )
-        self.decision_log_format: str = logging_config.get(
-            "decision_log_format", "json"
-        )
+        self.show_chain_of_thought: bool = logging_config.get("show_chain_of_thought", True)
+        self.decision_log_format: str = logging_config.get("decision_log_format", "json")
 
         # 日志级别
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
@@ -369,9 +327,7 @@ class Config:
             errors.append(f"timeframe 必须是以下之一: {valid_timeframes}")
 
         if errors:
-            raise ValueError(
-                "配置验证失败:\n" + "\n".join(f"- {err}" for err in errors)
-            )
+            raise ValueError("配置验证失败:\n" + "\n".join(f"- {err}" for err in errors))
 
     def get_llm_client_config(self):
         """
@@ -415,11 +371,7 @@ class Config:
     def __str__(self) -> str:
         """返回配置摘要（不包含敏感信息）"""
         # 确定运行模式
-        mode = (
-            "Hyperliquid 测试网 🧪"
-            if self.hyperliquid_testnet
-            else "Hyperliquid 主网 ⚠️"
-        )
+        mode = "Hyperliquid 测试网 🧪" if self.hyperliquid_testnet else "Hyperliquid 主网 ⚠️"
 
         return f"""
         === Quant Flow 配置摘要 ===
@@ -427,7 +379,7 @@ class Config:
         模型: {self.llm_model}
         交易平台: Hyperliquid（永续合约）
         运行模式: {mode}
-        交易对: {', '.join(self.symbols)}
+        交易对: {", ".join(self.symbols)}
         单笔交易金额上限: {self.max_trade_amount} USD
         最大杠杆倍数: {self.max_leverage}x
         止盈比例: {self.take_profit_ratio * 100}%
@@ -461,7 +413,7 @@ def get_config(
     """
     global _config
     requested_path = Path(config_path)
-    requested_env_file = env_file or os.getenv('DOTENV_PATH', '.env')
+    requested_env_file = env_file or os.getenv("DOTENV_PATH", ".env")
     if (
         _config is None
         or force_reload

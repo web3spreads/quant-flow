@@ -23,7 +23,7 @@ class LimitOrderMonitor:
         self,
         client: HyperliquidClient,
         check_interval: float = 5.0,
-        max_check_duration: float = 3600.0  # 最长监控1小时
+        max_check_duration: float = 3600.0,  # 最长监控1小时
     ):
         """
         初始化限价单监控器
@@ -53,7 +53,7 @@ class LimitOrderMonitor:
         entry_price: float,
         take_profit_price: float,
         stop_loss_price: float,
-        on_tpsl_set: Callable | None = None
+        on_tpsl_set: Callable | None = None,
     ) -> None:
         """
         添加限价单到监控列表
@@ -70,15 +70,15 @@ class LimitOrderMonitor:
         """
         with self._lock:
             self._pending_orders[order_id] = {
-                'symbol': symbol,
-                'is_buy': is_buy,
-                'size': size,
-                'entry_price': entry_price,
-                'take_profit_price': take_profit_price,
-                'stop_loss_price': stop_loss_price,
-                'created_at': datetime.now(),
-                'on_tpsl_set': on_tpsl_set,
-                'tpsl_attempts': 0
+                "symbol": symbol,
+                "is_buy": is_buy,
+                "size": size,
+                "entry_price": entry_price,
+                "take_profit_price": take_profit_price,
+                "stop_loss_price": stop_loss_price,
+                "created_at": datetime.now(),
+                "on_tpsl_set": on_tpsl_set,
+                "tpsl_attempts": 0,
             }
             print(f"📋 限价单 {order_id} 已加入监控队列")
 
@@ -97,9 +97,7 @@ class LimitOrderMonitor:
         if self._monitor_thread is None or not self._monitor_thread.is_alive():
             self._stop_event.clear()
             self._monitor_thread = threading.Thread(
-                target=self._monitor_loop,
-                daemon=True,
-                name="LimitOrderMonitor"
+                target=self._monitor_loop, daemon=True, name="LimitOrderMonitor"
             )
             self._monitor_thread.start()
             print("🔄 限价单监控线程已启动")
@@ -135,15 +133,15 @@ class LimitOrderMonitor:
 
         # 获取当前持仓
         positions = self.client.get_positions()
-        position_map = {p['coin']: p for p in positions}
+        position_map = {p["coin"]: p for p in positions}
 
         # 获取当前挂单
         open_orders = self.client.get_open_orders()
-        open_order_ids = {o.get('oid') for o in open_orders}
+        open_order_ids = {o.get("oid") for o in open_orders}
 
         for order_id, order_info in orders_to_check:
-            symbol = order_info['symbol']
-            created_at = order_info['created_at']
+            symbol = order_info["symbol"]
+            created_at = order_info["created_at"]
 
             # 检查是否超时
             elapsed = (datetime.now() - created_at).total_seconds()
@@ -160,8 +158,8 @@ class LimitOrderMonitor:
             # 订单不在挂单中，检查是否有对应持仓
             position = position_map.get(symbol)
             if position:
-                position_size = float(position.get('szi', 0))
-                is_buy = order_info['is_buy']
+                position_size = float(position.get("szi", 0))
+                is_buy = order_info["is_buy"]
 
                 # 检查持仓方向是否匹配
                 if (is_buy and position_size > 0) or (not is_buy and position_size < 0):
@@ -178,18 +176,15 @@ class LimitOrderMonitor:
                 self.remove_order(order_id)
 
     def _set_tpsl_for_order(
-        self,
-        order_id: int,
-        order_info: dict[str, Any],
-        actual_size: float
+        self, order_id: int, order_info: dict[str, Any], actual_size: float
     ) -> None:
         """为成交的限价单设置止盈止损"""
-        symbol = order_info['symbol']
-        is_buy = order_info['is_buy']
-        tp_price = order_info['take_profit_price']
-        sl_price = order_info['stop_loss_price']
+        symbol = order_info["symbol"]
+        is_buy = order_info["is_buy"]
+        tp_price = order_info["take_profit_price"]
+        sl_price = order_info["stop_loss_price"]
 
-        order_info['tpsl_attempts'] += 1
+        order_info["tpsl_attempts"] += 1
         max_attempts = 3
 
         try:
@@ -201,14 +196,14 @@ class LimitOrderMonitor:
                     trigger_price=sl_price,
                     is_buy=not is_buy,
                     size=actual_size,
-                    is_tp=False
+                    is_tp=False,
                 )
                 sl_success, sl_error = self.client.check_order_success(sl_result)
                 if not sl_success:
                     print(f"❌ 限价单 {order_id} 止损设置失败: {sl_error}")
 
                     # 重试或紧急平仓
-                    if order_info['tpsl_attempts'] >= max_attempts:
+                    if order_info["tpsl_attempts"] >= max_attempts:
                         print("⚠️ 【安全机制】止损设置多次失败，紧急平仓")
                         self.client.close_position(symbol)
                         self.remove_order(order_id)
@@ -227,7 +222,7 @@ class LimitOrderMonitor:
                     trigger_price=tp_price,
                     is_buy=not is_buy,
                     size=actual_size,
-                    is_tp=True
+                    is_tp=True,
                 )
                 tp_success, tp_error = self.client.check_order_success(tp_result)
                 if not tp_success:
@@ -237,7 +232,7 @@ class LimitOrderMonitor:
 
             # 调用回调
             if sl_success:
-                callback = order_info.get('on_tpsl_set')
+                callback = order_info.get("on_tpsl_set")
                 if callback:
                     try:
                         callback(order_id, sl_success and tp_success)
@@ -249,7 +244,7 @@ class LimitOrderMonitor:
 
         except Exception as e:
             print(f"❌ 设置止盈止损异常: {e}")
-            if order_info['tpsl_attempts'] >= max_attempts:
+            if order_info["tpsl_attempts"] >= max_attempts:
                 print("⚠️ 【安全机制】异常次数过多，紧急平仓")
                 try:
                     self.client.close_position(symbol)
@@ -268,7 +263,7 @@ class OrderManager:
         stop_loss_ratio: float = 0.02,
         default_leverage: int = 10,
         min_risk_reward_ratio: float = 1.5,  # 最小风险回报比
-        enable_limit_order_monitor: bool = True
+        enable_limit_order_monitor: bool = True,
     ):
         """
         初始化订单管理器
@@ -293,8 +288,8 @@ class OrderManager:
             self.limit_order_monitor = LimitOrderMonitor(client)
 
         print("✅ 订单管理器初始化完成")
-        print(f"   止盈比例: {take_profit_ratio*100}%")
-        print(f"   止损比例: {stop_loss_ratio*100}%")
+        print(f"   止盈比例: {take_profit_ratio * 100}%")
+        print(f"   止损比例: {stop_loss_ratio * 100}%")
         print(f"   默认杠杆: {default_leverage}x")
         print(f"   最小风险回报比: {min_risk_reward_ratio}")
         print(f"   限价单监控: {'启用' if enable_limit_order_monitor else '禁用'}")
@@ -304,7 +299,7 @@ class OrderManager:
         take_profit_ratio: float,
         stop_loss_ratio: float,
         leverage: int,
-        fee_rate: float = 0.0005
+        fee_rate: float = 0.0005,
     ) -> dict[str, Any]:
         """
         验证风险回报比是否合理（考虑杠杆）
@@ -341,32 +336,29 @@ class OrderManager:
         if loss_with_leverage > 0:
             risk_reward_ratio = profit_after_fees / loss_with_leverage
         else:
-            risk_reward_ratio = float('inf')
+            risk_reward_ratio = float("inf")
 
         # 判断是否合理
         is_valid = risk_reward_ratio >= self.min_risk_reward_ratio and profit_after_fees > 0
 
         if not is_valid:
             if profit_after_fees <= 0:
-                message = f"止盈不足以覆盖手续费！利润率: {profit_after_fees*100:.2f}%"
+                message = f"止盈不足以覆盖手续费！利润率: {profit_after_fees * 100:.2f}%"
             else:
                 message = f"风险回报比过低: {risk_reward_ratio:.2f} < {self.min_risk_reward_ratio}"
         else:
-            message = f"风险回报比: {risk_reward_ratio:.2f}, 实际利润: {profit_after_fees*100:.2f}%, 实际损失: {loss_with_leverage*100:.2f}%"
+            message = f"风险回报比: {risk_reward_ratio:.2f}, 实际利润: {profit_after_fees * 100:.2f}%, 实际损失: {loss_with_leverage * 100:.2f}%"
 
         return {
-            'is_valid': is_valid,
-            'risk_reward_ratio': risk_reward_ratio,
-            'profit_after_fees': profit_after_fees,
-            'loss_with_leverage': loss_with_leverage,
-            'message': message
+            "is_valid": is_valid,
+            "risk_reward_ratio": risk_reward_ratio,
+            "profit_after_fees": profit_after_fees,
+            "loss_with_leverage": loss_with_leverage,
+            "message": message,
         }
 
     def calculate_safe_tpsl(
-        self,
-        leverage: int,
-        fee_rate: float = 0.0005,
-        target_risk_reward: float = 2.0
+        self, leverage: int, fee_rate: float = 0.0005, target_risk_reward: float = 2.0
     ) -> dict[str, float]:
         """
         根据杠杆计算安全的止盈止损比例
@@ -404,10 +396,7 @@ class OrderManager:
         # 确保止损在合理范围内
         suggested_sl = max(0.005, min(suggested_sl, 0.05))  # 0.5% - 5%
 
-        return {
-            'take_profit_ratio': suggested_tp,
-            'stop_loss_ratio': suggested_sl
-        }
+        return {"take_profit_ratio": suggested_tp, "stop_loss_ratio": suggested_sl}
 
     def shutdown(self) -> None:
         """关闭订单管理器，停止所有后台任务"""
@@ -423,8 +412,8 @@ class OrderManager:
         """
         balance = self.client.get_balance()
         if balance:
-            total = balance['accountValue']
-            occupied = balance['totalMarginUsed']
+            total = balance["accountValue"]
+            occupied = balance["totalMarginUsed"]
             # 可用余额 = 账户总价值 - 已占用保证金
             return total - occupied
         return 0.0
@@ -464,16 +453,16 @@ class OrderManager:
             balance = self.client.get_balance()
             if not balance:
                 return {
-                    'status': 'error',
-                    'message': '无法获取余额信息',
-                    'total': 0,
-                    'occupied': 0,
-                    'available': 0,
-                    'unrealized_pnl': 0
+                    "status": "error",
+                    "message": "无法获取余额信息",
+                    "total": 0,
+                    "occupied": 0,
+                    "available": 0,
+                    "unrealized_pnl": 0,
                 }
 
-            total = balance['accountValue']
-            occupied = balance['totalMarginUsed']
+            total = balance["accountValue"]
+            occupied = balance["totalMarginUsed"]
             # 可用余额 = 账户总价值 - 已占用保证金
             available = total - occupied
 
@@ -481,25 +470,25 @@ class OrderManager:
             unrealized_pnl = 0
             positions = self.client.get_positions()
             for position in positions:
-                unrealized_pnl += float(position.get('unrealizedPnl', 0))
+                unrealized_pnl += float(position.get("unrealizedPnl", 0))
 
             return {
-                'status': 'ok',
-                'total': total,
-                'occupied': occupied,
-                'available': available,
-                'unrealized_pnl': unrealized_pnl,
-                'message': f'总价值: ${total:.2f}, 可用: ${available:.2f}, 未实现盈亏: ${unrealized_pnl:+.2f}'
+                "status": "ok",
+                "total": total,
+                "occupied": occupied,
+                "available": available,
+                "unrealized_pnl": unrealized_pnl,
+                "message": f"总价值: ${total:.2f}, 可用: ${available:.2f}, 未实现盈亏: ${unrealized_pnl:+.2f}",
             }
 
         except Exception as e:
             return {
-                'status': 'error',
-                'message': f'获取余额失败: {e}',
-                'total': 0,
-                'occupied': 0,
-                'available': 0,
-                'unrealized_pnl': 0
+                "status": "error",
+                "message": f"获取余额失败: {e}",
+                "total": 0,
+                "occupied": 0,
+                "available": 0,
+                "unrealized_pnl": 0,
             }
 
     def get_current_positions(self) -> list[dict[str, Any]]:
@@ -520,6 +509,7 @@ class OrderManager:
         """
         try:
             import time
+
             # 等待一小段时间确保订单已成交
             time.sleep(0.5)
 
@@ -529,17 +519,14 @@ class OrderManager:
 
             if fills:
                 # 返回最新的fill的hash
-                return fills[0].get('hash')
+                return fills[0].get("hash")
             return None
         except Exception as e:
             print(f"⚠️ 获取交易哈希失败: {e}")
             return None
 
     def calculate_position_size(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        leverage: int | None = None
+        self, symbol: str, usdt_amount: float, leverage: int | None = None
     ) -> float | None:
         """
         根据 USDT 金额计算合约数量
@@ -564,9 +551,9 @@ class OrderManager:
 
             # 获取交易对的精度信息
             asset_info = self.client.get_asset_info(symbol)
-            if asset_info and 'szDecimals' in asset_info:
+            if asset_info and "szDecimals" in asset_info:
                 # 根据交易对的精度要求格式化数量
-                decimals = asset_info['szDecimals']
+                decimals = asset_info["szDecimals"]
                 size = round(size, decimals)
                 print(f"   数量精度: {decimals} 位小数 -> {size}")
             else:
@@ -581,11 +568,7 @@ class OrderManager:
             return None
 
     def execute_long(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        leverage: int | None = None,
-        with_tpsl: bool = True
+        self, symbol: str, usdt_amount: float, leverage: int | None = None, with_tpsl: bool = True
     ) -> dict[str, Any] | None:
         """
         执行做多操作（带止盈止损保护）
@@ -617,7 +600,7 @@ class OrderManager:
 
             # 检查是否已有该币种的持仓
             current_positions = self.get_current_positions()
-            has_position = any(pos.get('coin') == symbol for pos in current_positions)
+            has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
             if has_position:
                 print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
@@ -626,13 +609,13 @@ class OrderManager:
                 leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
                 # 检查杠杆设置结果
-                if leverage_result.get('status') == 'error':
+                if leverage_result.get("status") == "error":
                     print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
                     print("❌ 无法继续下单")
                     return None
-                elif leverage_result.get('status') == 'warning':
+                elif leverage_result.get("status") == "warning":
                     # 无法降低杠杆，但可以使用当前杠杆继续
-                    current_lev = leverage_result.get('current_leverage', lev)
+                    current_lev = leverage_result.get("current_leverage", lev)
                     print(f"⚠️ {leverage_result.get('message')}")
                     print(f"   使用当前杠杆 {current_lev}x 继续下单")
                     lev = current_lev
@@ -646,8 +629,8 @@ class OrderManager:
                 tp_price = self.client.format_price(symbol, tp_price)
                 sl_price = self.client.format_price(symbol, sl_price)
 
-                print(f"   止盈价: ${tp_price:.2f} (+{self.take_profit_ratio*100}%)")
-                print(f"   止损价: ${sl_price:.2f} (-{self.stop_loss_ratio*100}%)")
+                print(f"   止盈价: ${tp_price:.2f} (+{self.take_profit_ratio * 100}%)")
+                print(f"   止损价: ${sl_price:.2f} (-{self.stop_loss_ratio * 100}%)")
 
                 # 下带 TP/SL 的订单
                 result = self.client.place_order_with_tpsl(
@@ -655,31 +638,27 @@ class OrderManager:
                     is_buy=True,
                     size=size,
                     take_profit_price=tp_price,
-                    stop_loss_price=sl_price
+                    stop_loss_price=sl_price,
                 )
             else:
                 # 只下市价单
-                market_order = self.client.place_market_order(
-                    symbol=symbol,
-                    is_buy=True,
-                    size=size
-                )
+                market_order = self.client.place_market_order(symbol=symbol, is_buy=True, size=size)
                 result = {
-                    'success': market_order.get('status') == 'ok',
-                    'market_order': market_order,
-                    'take_profit_order': None,
-                    'stop_loss_order': None,
-                    'errors': [] if market_order.get('status') == 'ok' else [market_order]
+                    "success": market_order.get("status") == "ok",
+                    "market_order": market_order,
+                    "take_profit_order": None,
+                    "stop_loss_order": None,
+                    "errors": [] if market_order.get("status") == "ok" else [market_order],
                 }
 
             # 添加交易信息到返回结果
             if result:
-                result['quantity'] = size
-                result['price'] = current_price
-                result['leverage'] = lev
+                result["quantity"] = size
+                result["price"] = current_price
+                result["leverage"] = lev
                 # 获取交易哈希：下单后查询最近的fills
                 order_hash = self._get_latest_fill_hash()
-                result['hash'] = order_hash if order_hash else ''
+                result["hash"] = order_hash if order_hash else ""
 
             return result
 
@@ -688,11 +667,7 @@ class OrderManager:
             return None
 
     def execute_short(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        leverage: int | None = None,
-        with_tpsl: bool = True
+        self, symbol: str, usdt_amount: float, leverage: int | None = None, with_tpsl: bool = True
     ) -> dict[str, Any] | None:
         """
         执行做空操作（带止盈止损保护）
@@ -724,7 +699,7 @@ class OrderManager:
 
             # 检查是否已有该币种的持仓
             current_positions = self.get_current_positions()
-            has_position = any(pos.get('coin') == symbol for pos in current_positions)
+            has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
             if has_position:
                 print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
@@ -733,13 +708,13 @@ class OrderManager:
                 leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
                 # 检查杠杆设置结果
-                if leverage_result.get('status') == 'error':
+                if leverage_result.get("status") == "error":
                     print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
                     print("❌ 无法继续下单")
                     return None
-                elif leverage_result.get('status') == 'warning':
+                elif leverage_result.get("status") == "warning":
                     # 无法降低杠杆，但可以使用当前杠杆继续
-                    current_lev = leverage_result.get('current_leverage', lev)
+                    current_lev = leverage_result.get("current_leverage", lev)
                     print(f"⚠️ {leverage_result.get('message')}")
                     print(f"   使用当前杠杆 {current_lev}x 继续下单")
                     lev = current_lev
@@ -748,14 +723,14 @@ class OrderManager:
             if with_tpsl:
                 # Use abs() to ensure price is always positive, even if ratio is misconfigured
                 tp_price = current_price * abs(1 - self.take_profit_ratio)  # 下跌时止盈
-                sl_price = current_price * (1 + self.stop_loss_ratio)    # 上涨时止损
+                sl_price = current_price * (1 + self.stop_loss_ratio)  # 上涨时止损
 
                 # 格式化价格，避免精度问题
                 tp_price = self.client.format_price(symbol, tp_price)
                 sl_price = self.client.format_price(symbol, sl_price)
 
-                print(f"   止盈价: ${tp_price:.2f} (-{self.take_profit_ratio*100}%)")
-                print(f"   止损价: ${sl_price:.2f} (+{self.stop_loss_ratio*100}%)")
+                print(f"   止盈价: ${tp_price:.2f} (-{self.take_profit_ratio * 100}%)")
+                print(f"   止损价: ${sl_price:.2f} (+{self.stop_loss_ratio * 100}%)")
 
                 # 下带 TP/SL 的订单
                 result = self.client.place_order_with_tpsl(
@@ -763,31 +738,29 @@ class OrderManager:
                     is_buy=False,
                     size=size,
                     take_profit_price=tp_price,
-                    stop_loss_price=sl_price
+                    stop_loss_price=sl_price,
                 )
             else:
                 # 只下市价单
                 market_order = self.client.place_market_order(
-                    symbol=symbol,
-                    is_buy=False,
-                    size=size
+                    symbol=symbol, is_buy=False, size=size
                 )
                 result = {
-                    'success': market_order.get('status') == 'ok',
-                    'market_order': market_order,
-                    'take_profit_order': None,
-                    'stop_loss_order': None,
-                    'errors': [] if market_order.get('status') == 'ok' else [market_order]
+                    "success": market_order.get("status") == "ok",
+                    "market_order": market_order,
+                    "take_profit_order": None,
+                    "stop_loss_order": None,
+                    "errors": [] if market_order.get("status") == "ok" else [market_order],
                 }
 
             # 添加交易信息到返回结果
             if result:
-                result['quantity'] = size
-                result['price'] = current_price
-                result['leverage'] = lev
+                result["quantity"] = size
+                result["price"] = current_price
+                result["leverage"] = lev
                 # 获取交易哈希：下单后查询最近的fills
                 order_hash = self._get_latest_fill_hash()
-                result['hash'] = order_hash if order_hash else ''
+                result["hash"] = order_hash if order_hash else ""
 
             return result
 
@@ -810,9 +783,9 @@ class OrderManager:
             result = self.client.close_position(symbol, size)
 
             # 如果平仓成功，获取交易哈希
-            if result and result.get('status') == 'ok':
+            if result and result.get("status") == "ok":
                 order_hash = self._get_latest_fill_hash()
-                result['hash'] = order_hash if order_hash else ''
+                result["hash"] = order_hash if order_hash else ""
 
             return result
         except Exception as e:
@@ -823,7 +796,7 @@ class OrderManager:
         self,
         desired_amount: float,
         min_trade_amount: float = 10.0,
-        balance_info: dict[str, Any] | None = None
+        balance_info: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         计算建议的交易金额
@@ -845,60 +818,52 @@ class OrderManager:
             if not balance_info:
                 balance_info = self.get_available_balance_info()
 
-            if balance_info['status'] != 'ok':
+            if balance_info["status"] != "ok":
                 return {
-                    'can_trade': False,
-                    'suggested_amount': 0,
-                    'reason': balance_info['message']
+                    "can_trade": False,
+                    "suggested_amount": 0,
+                    "reason": balance_info["message"],
                 }
 
-            available = balance_info['available']
+            available = balance_info["available"]
 
             # 检查是否有足够余额
             if available < min_trade_amount:
                 return {
-                    'can_trade': False,
-                    'suggested_amount': 0,
-                    'reason': f'可用余额 ${available:.2f} 低于最小交易金额 ${min_trade_amount:.2f}'
+                    "can_trade": False,
+                    "suggested_amount": 0,
+                    "reason": f"可用余额 ${available:.2f} 低于最小交易金额 ${min_trade_amount:.2f}",
                 }
 
             # 如果期望金额小于等于可用余额，直接使用
             if desired_amount <= available:
                 return {
-                    'can_trade': True,
-                    'suggested_amount': desired_amount,
-                    'reason': f'使用配置的交易金额 ${desired_amount:.2f}'
+                    "can_trade": True,
+                    "suggested_amount": desired_amount,
+                    "reason": f"使用配置的交易金额 ${desired_amount:.2f}",
                 }
             else:
                 # 使用可用余额的一部分（留一些余量）
                 suggested = available * 0.8  # 使用 80% 的可用余额
                 if suggested >= min_trade_amount:
                     return {
-                        'can_trade': True,
-                        'suggested_amount': suggested,
-                        'reason': f'可用余额不足，调整为 ${suggested:.2f} (可用余额的 80%)'
+                        "can_trade": True,
+                        "suggested_amount": suggested,
+                        "reason": f"可用余额不足，调整为 ${suggested:.2f} (可用余额的 80%)",
                     }
                 else:
                     return {
-                        'can_trade': False,
-                        'suggested_amount': 0,
-                        'reason': '可用余额不足，无法交易'
+                        "can_trade": False,
+                        "suggested_amount": 0,
+                        "reason": "可用余额不足，无法交易",
                     }
 
         except Exception as e:
-            return {
-                'can_trade': False,
-                'suggested_amount': 0,
-                'reason': f'计算建议金额失败: {e}'
-            }
+            return {"can_trade": False, "suggested_amount": 0, "reason": f"计算建议金额失败: {e}"}
 
     # ==================== 现货交易方法 ====================
 
-    def buy_spot_for_dca(
-        self,
-        symbol: str,
-        usdt_amount: float
-    ) -> dict[str, Any] | None:
+    def buy_spot_for_dca(self, symbol: str, usdt_amount: float) -> dict[str, Any] | None:
         """
         现货定投买入（用于长期持有策略）
 
@@ -921,19 +886,16 @@ class OrderManager:
             print(f"   当前价格: ${current_price:.2f}")
 
             # 调用客户端的现货买入方法
-            result = self.client.buy_spot(
-                symbol=symbol,
-                usdt_amount=usdt_amount
-            )
+            result = self.client.buy_spot(symbol=symbol, usdt_amount=usdt_amount)
 
-            if result.get('status') == 'ok':
+            if result.get("status") == "ok":
                 print("✅ 现货定投成功")
                 return {
-                    'success': True,
-                    'spot_order': result,
-                    'symbol': symbol,
-                    'usdt_amount': usdt_amount,
-                    'price': current_price
+                    "success": True,
+                    "spot_order": result,
+                    "symbol": symbol,
+                    "usdt_amount": usdt_amount,
+                    "price": current_price,
                 }
             else:
                 print(f"❌ 现货定投失败: {result.get('message')}")
@@ -943,11 +905,7 @@ class OrderManager:
             print(f"❌ 现货定投异常: {e}")
             return None
 
-    def sell_spot(
-        self,
-        symbol: str,
-        size: float | None = None
-    ) -> dict[str, Any] | None:
+    def sell_spot(self, symbol: str, size: float | None = None) -> dict[str, Any] | None:
         """
         卖出现货
 
@@ -961,11 +919,8 @@ class OrderManager:
         try:
             result = self.client.sell_spot(symbol=symbol, size=size)
 
-            if result.get('status') == 'ok':
-                return {
-                    'success': True,
-                    'spot_order': result
-                }
+            if result.get("status") == "ok":
+                return {"success": True, "spot_order": result}
             else:
                 return None
 
@@ -987,11 +942,7 @@ class OrderManager:
             return []
 
     def execute_long_limit(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        limit_price: float,
-        leverage: int | None = None
+        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None
     ) -> dict[str, Any] | None:
         """
         执行限价开多操作（带止盈止损计算）
@@ -1014,8 +965,8 @@ class OrderManager:
 
             # 获取交易对的精度信息
             asset_info = self.client.get_asset_info(symbol)
-            if asset_info and 'szDecimals' in asset_info:
-                decimals = asset_info['szDecimals']
+            if asset_info and "szDecimals" in asset_info:
+                decimals = asset_info["szDecimals"]
                 size = round(size, decimals)
             else:
                 size = round(size, 3)
@@ -1026,7 +977,7 @@ class OrderManager:
             print(f"   设置杠杆: {lev}x (逐仓模式)")
             leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-            if leverage_result.get('status') == 'error':
+            if leverage_result.get("status") == "error":
                 print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
                 return None
 
@@ -1038,27 +989,24 @@ class OrderManager:
             tp_price = self.client.format_price(symbol, tp_price)
             sl_price = self.client.format_price(symbol, sl_price)
 
-            print(f"   止盈价: ${tp_price:.2f} (+{self.take_profit_ratio*100}%)")
-            print(f"   止损价: ${sl_price:.2f} (-{self.stop_loss_ratio*100}%)")
+            print(f"   止盈价: ${tp_price:.2f} (+{self.take_profit_ratio * 100}%)")
+            print(f"   止损价: ${sl_price:.2f} (-{self.stop_loss_ratio * 100}%)")
 
             # 4. 下限价单
             limit_order = self.client.place_limit_order(
-                symbol=symbol,
-                is_buy=True,
-                size=size,
-                price=limit_price
+                symbol=symbol, is_buy=True, size=size, price=limit_price
             )
 
-            if limit_order.get('status') == 'ok':
+            if limit_order.get("status") == "ok":
                 result = {
-                    'success': True,
-                    'limit_order': limit_order,
-                    'quantity': size,
-                    'price': limit_price,
-                    'leverage': lev,
-                    'take_profit_price': tp_price,
-                    'stop_loss_price': sl_price,
-                    'message': '限价单已提交，成交后将自动设置止盈止损'
+                    "success": True,
+                    "limit_order": limit_order,
+                    "quantity": size,
+                    "price": limit_price,
+                    "leverage": lev,
+                    "take_profit_price": tp_price,
+                    "stop_loss_price": sl_price,
+                    "message": "限价单已提交，成交后将自动设置止盈止损",
                 }
                 return result
             else:
@@ -1070,11 +1018,7 @@ class OrderManager:
             return None
 
     def execute_short_limit(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        limit_price: float,
-        leverage: int | None = None
+        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None
     ) -> dict[str, Any] | None:
         """
         执行限价开空操作（带止盈止损计算）
@@ -1097,8 +1041,8 @@ class OrderManager:
 
             # 获取交易对的精度信息
             asset_info = self.client.get_asset_info(symbol)
-            if asset_info and 'szDecimals' in asset_info:
-                decimals = asset_info['szDecimals']
+            if asset_info and "szDecimals" in asset_info:
+                decimals = asset_info["szDecimals"]
                 size = round(size, decimals)
             else:
                 size = round(size, 3)
@@ -1109,7 +1053,7 @@ class OrderManager:
             print(f"   设置杠杆: {lev}x (逐仓模式)")
             leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
 
-            if leverage_result.get('status') == 'error':
+            if leverage_result.get("status") == "error":
                 print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
                 return None
 
@@ -1122,27 +1066,24 @@ class OrderManager:
             tp_price = self.client.format_price(symbol, tp_price)
             sl_price = self.client.format_price(symbol, sl_price)
 
-            print(f"   止盈价: ${tp_price:.2f} (-{self.take_profit_ratio*100}%)")
-            print(f"   止损价: ${sl_price:.2f} (+{self.stop_loss_ratio*100}%)")
+            print(f"   止盈价: ${tp_price:.2f} (-{self.take_profit_ratio * 100}%)")
+            print(f"   止损价: ${sl_price:.2f} (+{self.stop_loss_ratio * 100}%)")
 
             # 4. 下限价单
             limit_order = self.client.place_limit_order(
-                symbol=symbol,
-                is_buy=False,
-                size=size,
-                price=limit_price
+                symbol=symbol, is_buy=False, size=size, price=limit_price
             )
 
-            if limit_order.get('status') == 'ok':
+            if limit_order.get("status") == "ok":
                 result = {
-                    'success': True,
-                    'limit_order': limit_order,
-                    'quantity': size,
-                    'price': limit_price,
-                    'leverage': lev,
-                    'take_profit_price': tp_price,
-                    'stop_loss_price': sl_price,
-                    'message': '限价单已提交，成交后将自动设置止盈止损'
+                    "success": True,
+                    "limit_order": limit_order,
+                    "quantity": size,
+                    "price": limit_price,
+                    "leverage": lev,
+                    "take_profit_price": tp_price,
+                    "stop_loss_price": sl_price,
+                    "message": "限价单已提交，成交后将自动设置止盈止损",
                 }
                 return result
             else:
@@ -1179,7 +1120,7 @@ class OrderManager:
             # 格式化限价单
             formatted_orders = []
             for order in open_orders:
-                order_symbol = order.get('coin', '')
+                order_symbol = order.get("coin", "")
 
                 # 如果指定了symbol，只返回该交易对的订单
                 if symbol and order_symbol != symbol:
@@ -1193,28 +1134,30 @@ class OrderManager:
                     current_price = current_price_map[order_symbol]
 
                 # 解析订单信息
-                order_id = order.get('oid')
-                limit_price = float(order.get('limitPx', 0))
-                size = float(order.get('sz', 0))
-                side = 'buy' if order.get('side') == 'B' else 'sell'
+                order_id = order.get("oid")
+                limit_price = float(order.get("limitPx", 0))
+                size = float(order.get("sz", 0))
+                side = "buy" if order.get("side") == "B" else "sell"
 
                 # 计算与当前价格的差距
                 price_diff_percent = 0.0
                 if current_price:
-                    if side == 'buy':
+                    if side == "buy":
                         price_diff_percent = ((limit_price - current_price) / current_price) * 100
                     else:
                         price_diff_percent = ((current_price - limit_price) / current_price) * 100
 
-                formatted_orders.append({
-                    'order_id': order_id,
-                    'symbol': order_symbol,
-                    'side': side,
-                    'limit_price': limit_price,
-                    'size': size,
-                    'current_price': current_price,
-                    'price_diff_percent': price_diff_percent
-                })
+                formatted_orders.append(
+                    {
+                        "order_id": order_id,
+                        "symbol": order_symbol,
+                        "side": side,
+                        "limit_price": limit_price,
+                        "size": size,
+                        "current_price": current_price,
+                        "price_diff_percent": price_diff_percent,
+                    }
+                )
 
             return formatted_orders
 
@@ -1235,29 +1178,24 @@ class OrderManager:
         """
         try:
             result = self.client.cancel_order(symbol, order_id)
-            if result.get('status') == 'ok':
+            if result.get("status") == "ok":
                 print(f"✅ 限价单 {order_id} 已取消")
                 return {
-                    'success': True,
-                    'message': f'限价单 {order_id} 已成功取消',
-                    'order_id': order_id,
-                    'symbol': symbol
+                    "success": True,
+                    "message": f"限价单 {order_id} 已成功取消",
+                    "order_id": order_id,
+                    "symbol": symbol,
                 }
             else:
-                error_msg = result.get('message', '未知错误')
+                error_msg = result.get("message", "未知错误")
                 print(f"❌ 取消限价单失败: {error_msg}")
                 return {
-                    'success': False,
-                    'message': f'取消限价单失败: {error_msg}',
-                    'order_id': order_id,
-                    'symbol': symbol
+                    "success": False,
+                    "message": f"取消限价单失败: {error_msg}",
+                    "order_id": order_id,
+                    "symbol": symbol,
                 }
         except Exception as e:
             error_msg = f"取消限价单异常: {str(e)}"
             print(f"❌ {error_msg}")
-            return {
-                'success': False,
-                'message': error_msg,
-                'order_id': order_id,
-                'symbol': symbol
-            }
+            return {"success": False, "message": error_msg, "order_id": order_id, "symbol": symbol}

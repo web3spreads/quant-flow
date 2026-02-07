@@ -26,7 +26,7 @@ class TestPositionSizer:
             max_total_exposure=0.5,
             kelly_fraction=0.25,
             min_position_ratio=0.1,
-            max_position_ratio=1.0
+            max_position_ratio=1.0,
         )
 
     # === 基础仓位计算测试 ===
@@ -37,7 +37,7 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.7,
             stop_loss_pct=0.02,
-            method=PositionSizeMethod.FIXED
+            method=PositionSizeMethod.FIXED,
         )
 
         assert isinstance(result, PositionSizeResult)
@@ -48,9 +48,7 @@ class TestPositionSizer:
     def test_calculate_position_size_zero_balance(self, sizer):
         """测试零余额时的仓位计算"""
         result = sizer.calculate_position_size(
-            account_balance=0.0,
-            signal_score=0.7,
-            stop_loss_pct=0.02
+            account_balance=0.0, signal_score=0.7, stop_loss_pct=0.02
         )
 
         assert result.adjusted_size == 0
@@ -58,9 +56,7 @@ class TestPositionSizer:
     def test_calculate_position_size_zero_stop_loss(self, sizer):
         """测试零止损时的仓位计算"""
         result = sizer.calculate_position_size(
-            account_balance=10000.0,
-            signal_score=0.7,
-            stop_loss_pct=0.0
+            account_balance=10000.0, signal_score=0.7, stop_loss_pct=0.0
         )
 
         assert result.base_size == 0
@@ -73,7 +69,7 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.9,
             stop_loss_pct=0.02,
-            method=PositionSizeMethod.SIGNAL_BASED
+            method=PositionSizeMethod.SIGNAL_BASED,
         )
 
         # 高信号评分应该有较大的仓位
@@ -85,7 +81,7 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.3,
             stop_loss_pct=0.02,
-            method=PositionSizeMethod.SIGNAL_BASED
+            method=PositionSizeMethod.SIGNAL_BASED,
         )
 
         # 低信号评分应该有较小的仓位
@@ -97,14 +93,14 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.8,
             stop_loss_pct=0.02,
-            method=PositionSizeMethod.SIGNAL_BASED
+            method=PositionSizeMethod.SIGNAL_BASED,
         )
 
         result_low = sizer.calculate_position_size(
             account_balance=10000.0,
             signal_score=0.4,
             stop_loss_pct=0.02,
-            method=PositionSizeMethod.SIGNAL_BASED
+            method=PositionSizeMethod.SIGNAL_BASED,
         )
 
         # 高信号评分应该产生更高的信号因子
@@ -120,7 +116,7 @@ class TestPositionSizer:
             stop_loss_pct=0.02,
             current_volatility=0.015,
             average_volatility=0.015,
-            method=PositionSizeMethod.VOLATILITY_ADJUSTED
+            method=PositionSizeMethod.VOLATILITY_ADJUSTED,
         )
 
         # 正常波动率因子应该接近1
@@ -134,7 +130,7 @@ class TestPositionSizer:
             stop_loss_pct=0.02,
             current_volatility=0.03,
             average_volatility=0.015,
-            method=PositionSizeMethod.VOLATILITY_ADJUSTED
+            method=PositionSizeMethod.VOLATILITY_ADJUSTED,
         )
 
         # 高波动率应该减少仓位
@@ -148,7 +144,7 @@ class TestPositionSizer:
             stop_loss_pct=0.02,
             current_volatility=0.005,
             average_volatility=0.015,
-            method=PositionSizeMethod.VOLATILITY_ADJUSTED
+            method=PositionSizeMethod.VOLATILITY_ADJUSTED,
         )
 
         # 低波动率可以增加仓位
@@ -162,9 +158,7 @@ class TestPositionSizer:
         sizer.update_balance(10500.0)  # 新高
 
         result = sizer.calculate_position_size(
-            account_balance=10500.0,
-            signal_score=0.7,
-            stop_loss_pct=0.02
+            account_balance=10500.0, signal_score=0.7, stop_loss_pct=0.02
         )
 
         # 无回撤时因子应该为1
@@ -176,9 +170,7 @@ class TestPositionSizer:
         sizer.update_balance(9000.0)  # 10% 回撤
 
         result = sizer.calculate_position_size(
-            account_balance=9000.0,
-            signal_score=0.7,
-            stop_loss_pct=0.02
+            account_balance=9000.0, signal_score=0.7, stop_loss_pct=0.02
         )
 
         # 有回撤时应该减少仓位
@@ -190,9 +182,7 @@ class TestPositionSizer:
         sizer.update_balance(8000.0)  # 20% 回撤
 
         result = sizer.calculate_position_size(
-            account_balance=8000.0,
-            signal_score=0.7,
-            stop_loss_pct=0.02
+            account_balance=8000.0, signal_score=0.7, stop_loss_pct=0.02
         )
 
         # 严重回撤时应该大幅减少仓位
@@ -203,10 +193,7 @@ class TestPositionSizer:
     def test_exposure_limit_no_exposure(self, sizer):
         """测试无现有敞口时"""
         result = sizer.calculate_position_size(
-            account_balance=10000.0,
-            signal_score=0.7,
-            stop_loss_pct=0.02,
-            current_exposure=0.0
+            account_balance=10000.0, signal_score=0.7, stop_loss_pct=0.02, current_exposure=0.0
         )
 
         # 无敞口时不受限制
@@ -218,7 +205,7 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.7,
             stop_loss_pct=0.02,
-            current_exposure=4000.0  # 40% 敞口
+            current_exposure=4000.0,  # 40% 敞口
         )
 
         # 还有10%的空间
@@ -230,7 +217,7 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.7,
             stop_loss_pct=0.02,
-            current_exposure=5000.0  # 50% 敞口 = 最大
+            current_exposure=5000.0,  # 50% 敞口 = 最大
         )
 
         # 满敞口时应该返回0
@@ -243,16 +230,16 @@ class TestPositionSizer:
         sizer.record_trade(is_win=True, pnl_pct=0.05, signal_score=0.7)
 
         stats = sizer.get_statistics()
-        assert stats['total_trades'] == 1
-        assert stats['win_rate'] == 1.0
+        assert stats["total_trades"] == 1
+        assert stats["win_rate"] == 1.0
 
     def test_record_trade_loss(self, sizer):
         """测试记录亏损交易"""
         sizer.record_trade(is_win=False, pnl_pct=-0.02, signal_score=0.6)
 
         stats = sizer.get_statistics()
-        assert stats['total_trades'] == 1
-        assert stats['win_rate'] == 0.0
+        assert stats["total_trades"] == 1
+        assert stats["win_rate"] == 0.0
 
     def test_record_multiple_trades(self, sizer):
         """测试记录多次交易"""
@@ -262,8 +249,8 @@ class TestPositionSizer:
         sizer.record_trade(is_win=True, pnl_pct=0.04, signal_score=0.8)
 
         stats = sizer.get_statistics()
-        assert stats['total_trades'] == 4
-        assert stats['win_rate'] == 0.75  # 3/4
+        assert stats["total_trades"] == 4
+        assert stats["win_rate"] == 0.75  # 3/4
 
     def test_consecutive_losses(self, sizer):
         """测试连续亏损计数"""
@@ -296,7 +283,7 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.7,
             stop_loss_pct=0.02,
-            method=PositionSizeMethod.KELLY
+            method=PositionSizeMethod.KELLY,
         )
 
         # 凯利因子应该在合理范围内
@@ -308,7 +295,7 @@ class TestPositionSizer:
             account_balance=10000.0,
             signal_score=0.7,
             stop_loss_pct=0.02,
-            method=PositionSizeMethod.KELLY
+            method=PositionSizeMethod.KELLY,
         )
 
         # 无历史时使用信号评分估计
@@ -324,7 +311,7 @@ class TestPositionSizer:
             stop_loss_pct=0.02,
             current_volatility=0.02,
             average_volatility=0.015,
-            method=PositionSizeMethod.SIGNAL_BASED
+            method=PositionSizeMethod.SIGNAL_BASED,
         )
 
         summary = result.get_summary()
@@ -340,12 +327,12 @@ class TestPositionSizer:
 
         stats = sizer.get_statistics()
 
-        assert 'total_trades' in stats
-        assert 'win_rate' in stats
-        assert 'avg_win' in stats
-        assert 'avg_loss' in stats
-        assert 'profit_factor' in stats
-        assert 'current_drawdown' in stats
+        assert "total_trades" in stats
+        assert "win_rate" in stats
+        assert "avg_win" in stats
+        assert "avg_loss" in stats
+        assert "profit_factor" in stats
+        assert "current_drawdown" in stats
 
 
 class TestCalculateOptimalLeverage:
@@ -353,21 +340,13 @@ class TestCalculateOptimalLeverage:
 
     def test_optimal_leverage_high_signal(self):
         """测试高信号时的杠杆"""
-        leverage = calculate_optimal_leverage(
-            signal_score=0.8,
-            stop_loss_pct=0.02,
-            max_leverage=10
-        )
+        leverage = calculate_optimal_leverage(signal_score=0.8, stop_loss_pct=0.02, max_leverage=10)
 
         assert 1 <= leverage <= 10
 
     def test_optimal_leverage_low_signal(self):
         """测试低信号时的杠杆"""
-        leverage = calculate_optimal_leverage(
-            signal_score=0.3,
-            stop_loss_pct=0.02,
-            max_leverage=10
-        )
+        leverage = calculate_optimal_leverage(signal_score=0.3, stop_loss_pct=0.02, max_leverage=10)
 
         # 低信号应该使用低杠杆
         assert leverage <= 5
@@ -375,15 +354,11 @@ class TestCalculateOptimalLeverage:
     def test_optimal_leverage_comparison(self):
         """测试杠杆对比"""
         leverage_high = calculate_optimal_leverage(
-            signal_score=0.9,
-            stop_loss_pct=0.02,
-            max_leverage=10
+            signal_score=0.9, stop_loss_pct=0.02, max_leverage=10
         )
 
         leverage_low = calculate_optimal_leverage(
-            signal_score=0.4,
-            stop_loss_pct=0.02,
-            max_leverage=10
+            signal_score=0.4, stop_loss_pct=0.02, max_leverage=10
         )
 
         # 高信号应该允许更高杠杆
@@ -391,11 +366,7 @@ class TestCalculateOptimalLeverage:
 
     def test_optimal_leverage_zero_stop_loss(self):
         """测试零止损时的杠杆"""
-        leverage = calculate_optimal_leverage(
-            signal_score=0.7,
-            stop_loss_pct=0.0,
-            max_leverage=10
-        )
+        leverage = calculate_optimal_leverage(signal_score=0.7, stop_loss_pct=0.0, max_leverage=10)
 
         assert leverage == 1
 
@@ -404,7 +375,7 @@ class TestCalculateOptimalLeverage:
         leverage = calculate_optimal_leverage(
             signal_score=1.0,
             stop_loss_pct=0.001,  # 很小的止损
-            max_leverage=5
+            max_leverage=5,
         )
 
         assert leverage <= 5
@@ -424,16 +395,14 @@ class TestCreatePositionSizerFromConfig:
     def test_create_from_config_custom(self):
         """测试自定义配置"""
         config = {
-            'trading': {
-                'max_trade_amount': 500.0
-            },
-            'enhanced_analysis': {
-                'risk': {
-                    'max_risk_per_trade': 0.01,
-                    'max_total_exposure': 0.3,
-                    'kelly_fraction': 0.5
+            "trading": {"max_trade_amount": 500.0},
+            "enhanced_analysis": {
+                "risk": {
+                    "max_risk_per_trade": 0.01,
+                    "max_total_exposure": 0.3,
+                    "kelly_fraction": 0.5,
                 }
-            }
+            },
         }
 
         sizer = create_position_sizer_from_config(config)
@@ -449,11 +418,7 @@ class TestTradeHistory:
 
     def test_trade_history_creation(self):
         """测试创建交易历史"""
-        history = TradeHistory(
-            is_win=True,
-            pnl_pct=0.05,
-            signal_score=0.7
-        )
+        history = TradeHistory(is_win=True, pnl_pct=0.05, signal_score=0.7)
 
         assert history.is_win
         assert history.pnl_pct == 0.05

@@ -17,6 +17,7 @@ def find_project_root(marker="pyproject.toml"):
         current = current.parent
     raise FileNotFoundError(f"Could not find {marker} in any parent directory of {__file__}")
 
+
 project_root = find_project_root()
 sys.path.insert(0, str(project_root))
 
@@ -46,7 +47,7 @@ def test_langchain_workflow():
         openai_model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
         exa_api_key=exa_api_key,  # 必须显式传入
         symbols=["BTC", "ETH"],
-        interval_hours=3.0  # 使用 3 小时间隔
+        interval_hours=3.0,  # 使用 3 小时间隔
     )
 
     # 测试收集
@@ -89,13 +90,15 @@ def test_tools_directly():
         print(f"日期范围: {start_date.strftime('%Y-%m-%d')} 到 {end_date.strftime('%Y-%m-%d')}")
 
         # 调用工具
-        results = search_crypto_market_news.invoke({
-            "query": "Bitcoin market news price analysis",
-            "num_results": 3,
-            "start_date": start_date.strftime("%Y-%m-%d"),
-            "end_date": end_date.strftime("%Y-%m-%d"),
-            "exa_api_key": os.getenv("EXA_API_KEY")
-        })
+        results = search_crypto_market_news.invoke(
+            {
+                "query": "Bitcoin market news price analysis",
+                "num_results": 3,
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "end_date": end_date.strftime("%Y-%m-%d"),
+                "exa_api_key": os.getenv("EXA_API_KEY"),
+            }
+        )
 
         print(f"\n✅ 搜索成功，返回 {len(results)} 条结果")
         for i, result in enumerate(results, 1):
@@ -105,6 +108,7 @@ def test_tools_directly():
     except Exception as e:
         print(f"\n❌ 工具测试失败: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -135,4 +139,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n\n❌ 测试失败: {e}")
         import traceback
+
         traceback.print_exc()

@@ -13,15 +13,16 @@ from apprise import Apprise
 
 class NotificationEvent(StrEnum):
     """通知事件类型"""
-    SYSTEM_STARTUP = "system_startup"       # 系统启动
-    TRADE_OPENED = "trade_opened"           # 开仓
-    TRADE_CLOSED = "trade_closed"           # 平仓
-    STOP_LOSS = "stop_loss"                 # 止损
-    TAKE_PROFIT = "take_profit"             # 止盈
-    SPOT_INVESTMENT = "spot_investment"     # 现货定投
-    ERROR = "error"                         # 错误
-    CIRCUIT_BREAKER = "circuit_breaker"     # 熔断
-    SYSTEM_SHUTDOWN = "system_shutdown"     # 系统关闭
+
+    SYSTEM_STARTUP = "system_startup"  # 系统启动
+    TRADE_OPENED = "trade_opened"  # 开仓
+    TRADE_CLOSED = "trade_closed"  # 平仓
+    STOP_LOSS = "stop_loss"  # 止损
+    TAKE_PROFIT = "take_profit"  # 止盈
+    SPOT_INVESTMENT = "spot_investment"  # 现货定投
+    ERROR = "error"  # 错误
+    CIRCUIT_BREAKER = "circuit_breaker"  # 熔断
+    SYSTEM_SHUTDOWN = "system_shutdown"  # 系统关闭
     EXTERNAL_INFO_SUMMARY = "external_info_summary"  # 外部信息汇总完成
     REVIEW_LESSON_LEARNED = "review_lesson_learned"  # 复盘获得新经验
 
@@ -110,17 +111,17 @@ class Notifier:
             # 构建钉钉 URL - 对参数进行 URL 编码
             # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
             # API key 可能包含特殊字符，为安全起见应完全编码
-            api_key_encoded = quote(api_key, safe='')
+            api_key_encoded = quote(api_key, safe="")
             if secret:
                 # Secret 可能包含特殊字符，需要完全编码
-                secret_encoded = quote(secret, safe='')
+                secret_encoded = quote(secret, safe="")
                 url = f"dingtalk://{secret_encoded}@{api_key_encoded}"
             else:
                 url = f"dingtalk://{api_key_encoded}"
 
             # 添加电话号码（电话号码通常不含特殊字符，但为安全起见也编码）
             if phone_numbers:
-                encoded_phones = [quote(str(phone), safe='') for phone in phone_numbers]
+                encoded_phones = [quote(str(phone), safe="") for phone in phone_numbers]
                 url += "/" + "/".join(encoded_phones)
 
             # 验证是否成功添加
@@ -146,7 +147,7 @@ class Notifier:
             # 构建飞书 URL - 对 token 进行 URL 编码
             # 格式: feishu://{token}
             # Token 通常包含字母数字、连字符和下划线，保留这些字符以提高可读性
-            token_encoded = quote(token, safe='')
+            token_encoded = quote(token, safe="")
             url = f"feishu://{token_encoded}"
 
             # 验证是否成功添加
@@ -172,7 +173,7 @@ class Notifier:
             # 构建lark URL - 对 token 进行 URL 编码
             # 格式: lark://{token}
             # Token 通常包含字母数字、连字符和下划线，保留这些字符以提高可读性
-            token_encoded = quote(token, safe='')
+            token_encoded = quote(token, safe="")
             url = f"lark://{token_encoded}"
 
             # 验证是否成功添加
@@ -207,10 +208,10 @@ class Notifier:
             # 构建邮件 URL - 对所有参数进行 URL 编码以处理特殊字符
             # 格式: mailtos://{user}:{password}@{server}:{port}?from={from}&to={to1},{to2}
             # URL 编码可防止密码或邮箱中的特殊字符（@, :, /, ?, # 等）破坏 URL 格式
-            smtp_user_encoded = quote(smtp_user, safe='')
-            smtp_password_encoded = quote(smtp_password, safe='')
-            from_email_encoded = quote(from_email, safe='')
-            to_emails_str = ",".join(quote(email, safe='') for email in to_emails)
+            smtp_user_encoded = quote(smtp_user, safe="")
+            smtp_password_encoded = quote(smtp_password, safe="")
+            from_email_encoded = quote(from_email, safe="")
+            to_emails_str = ",".join(quote(email, safe="") for email in to_emails)
 
             url = (
                 f"mailtos://{smtp_user_encoded}:{smtp_password_encoded}@{smtp_server}:{smtp_port}"
@@ -244,13 +245,7 @@ class Notifier:
         # 检查该事件是否启用通知
         return self.events_config.get(event.value, True)
 
-    def notify(
-        self,
-        event: NotificationEvent,
-        title: str,
-        message: str,
-        **kwargs
-    ) -> bool:
+    def notify(self, event: NotificationEvent, title: str, message: str, **kwargs) -> bool:
         """
         发送通知
 
@@ -270,10 +265,7 @@ class Notifier:
 
         try:
             # 使用 Apprise 发送通知
-            result = self.apprise.notify(
-                title=title,
-                body=message
-            )
+            result = self.apprise.notify(title=title, body=message)
 
             if result:
                 self.logger.info(f"📤 通知发送成功: {title}")
@@ -298,7 +290,7 @@ class Notifier:
         position_value: float | None = None,
         margin: float | None = None,
         reason: str | None = None,
-        order_hash: str | None = None
+        order_hash: str | None = None,
     ):
         """
         发送开仓通知
@@ -345,13 +337,19 @@ class Notifier:
 
         if stop_loss:
             sl_diff_pct = abs((stop_loss - price) / price * 100)
-            lines.append(f"【止损价】${stop_loss:,.4f} ({sl_diff_pct:.2f}%)" if stop_loss < 1
-                        else f"【止损价】${stop_loss:,.2f} (-{sl_diff_pct:.2f}%)")
+            lines.append(
+                f"【止损价】${stop_loss:,.4f} ({sl_diff_pct:.2f}%)"
+                if stop_loss < 1
+                else f"【止损价】${stop_loss:,.2f} (-{sl_diff_pct:.2f}%)"
+            )
 
         if take_profit:
             tp_diff_pct = abs((take_profit - price) / price * 100)
-            lines.append(f"【止盈价】${take_profit:,.4f} (+{tp_diff_pct:.2f}%)" if take_profit < 1
-                        else f"【止盈价】${take_profit:,.2f} (+{tp_diff_pct:.2f}%)")
+            lines.append(
+                f"【止盈价】${take_profit:,.4f} (+{tp_diff_pct:.2f}%)"
+                if take_profit < 1
+                else f"【止盈价】${take_profit:,.2f} (+{tp_diff_pct:.2f}%)"
+            )
 
         # 添加风险收益比
         if stop_loss and take_profit:
@@ -394,7 +392,7 @@ class Notifier:
         leverage: int | None = None,
         holding_time: str | None = None,
         close_reason: str | None = None,
-        order_hash: str | None = None
+        order_hash: str | None = None,
     ):
         """
         发送平仓通知
@@ -437,15 +435,21 @@ class Notifier:
         if leverage:
             lines.append(f"【杠杆】{leverage}x")
 
-        lines.extend([
-            "",  # 空行
-            f"【开仓价】${entry_price:,.4f}" if entry_price < 1 else f"【开仓价】${entry_price:,.2f}",
-            f"【平仓价】${exit_price:,.4f}" if exit_price < 1 else f"【平仓价】${exit_price:,.2f}",
-            f"【价格变动】{pnl_percent:+.2f}%",
-            "",  # 空行
-            f"【盈亏金额】${pnl:+,.2f} USD",
-            f"【收益率】{pnl_percent:+.2f}%"
-        ])
+        lines.extend(
+            [
+                "",  # 空行
+                f"【开仓价】${entry_price:,.4f}"
+                if entry_price < 1
+                else f"【开仓价】${entry_price:,.2f}",
+                f"【平仓价】${exit_price:,.4f}"
+                if exit_price < 1
+                else f"【平仓价】${exit_price:,.2f}",
+                f"【价格变动】{pnl_percent:+.2f}%",
+                "",  # 空行
+                f"【盈亏金额】${pnl:+,.2f} USD",
+                f"【收益率】{pnl_percent:+.2f}%",
+            ]
+        )
 
         # 添加持仓时间
         if holding_time:
@@ -482,12 +486,7 @@ class Notifier:
         self.notify(NotificationEvent.TRADE_CLOSED, title, message)
 
     def notify_stop_loss(
-        self,
-        symbol: str,
-        side: str,
-        price: float,
-        loss: float,
-        loss_percent: float
+        self, symbol: str, side: str, price: float, loss: float, loss_percent: float
     ):
         """
         发送止损通知
@@ -510,12 +509,7 @@ class Notifier:
         self.notify(NotificationEvent.STOP_LOSS, title, message)
 
     def notify_take_profit(
-        self,
-        symbol: str,
-        side: str,
-        price: float,
-        profit: float,
-        profit_percent: float
+        self, symbol: str, side: str, price: float, profit: float, profit_percent: float
     ):
         """
         发送止盈通知
@@ -543,7 +537,7 @@ class Notifier:
         quantity: float,
         price: float,
         amount: float,
-        order_hash: str | None = None
+        order_hash: str | None = None,
     ):
         """
         发送现货定投通知
@@ -561,7 +555,7 @@ class Notifier:
             f"【交易对】{symbol}",
             f"【数量】{quantity:,.4f}",
             f"【价格】${price:,.4f}" if price < 1 else f"【价格】${price:,.2f}",
-            f"【金额】${amount:,.2f}"
+            f"【金额】${amount:,.2f}",
         ]
 
         # 添加订单哈希和浏览器链接
@@ -581,12 +575,7 @@ class Notifier:
         message = "\n".join(lines)
         self.notify(NotificationEvent.SPOT_INVESTMENT, title, message)
 
-    def notify_error(
-        self,
-        title: str,
-        error_message: str,
-        context: str | None = None
-    ):
+    def notify_error(self, title: str, error_message: str, context: str | None = None):
         """
         发送错误通知
 
@@ -603,11 +592,7 @@ class Notifier:
 
         self.notify(NotificationEvent.ERROR, full_title, message)
 
-    def notify_circuit_breaker(
-        self,
-        reason: str,
-        pause_minutes: int
-    ):
+    def notify_circuit_breaker(self, reason: str, pause_minutes: int):
         """
         发送熔断通知
 
@@ -616,18 +601,14 @@ class Notifier:
             pause_minutes: 暂停时间（分钟）
         """
         title = "🚨 熔断机制触发"
-        message = (
-            f"原因: {reason}\n"
-            f"暂停时间: {pause_minutes} 分钟\n"
-            f"交易已暂停，请注意风险"
-        )
+        message = f"原因: {reason}\n暂停时间: {pause_minutes} 分钟\n交易已暂停，请注意风险"
         self.notify(NotificationEvent.CIRCUIT_BREAKER, title, message)
 
     def notify_system_startup(
         self,
         version: str | None = None,
         symbols: list | None = None,
-        config_info: dict[str, Any] | None = None
+        config_info: dict[str, Any] | None = None,
     ):
         """
         发送系统启动通知
@@ -655,13 +636,13 @@ class Notifier:
 
         if config_info:
             lines.append("")
-            if 'trade_amount' in config_info:
+            if "trade_amount" in config_info:
                 lines.append(f"【单笔金额】${config_info['trade_amount']:.2f}")
-            if 'max_positions' in config_info:
+            if "max_positions" in config_info:
                 lines.append(f"【最大持仓】{config_info['max_positions']} 个")
-            if 'leverage' in config_info:
+            if "leverage" in config_info:
                 lines.append(f"【杠杆倍数】{config_info['leverage']}x")
-            if 'check_interval' in config_info:
+            if "check_interval" in config_info:
                 lines.append(f"【检查间隔】{config_info['check_interval']} 分钟")
 
         lines.append("")
@@ -674,7 +655,7 @@ class Notifier:
         self,
         reason: str | None = None,
         runtime: str | None = None,
-        statistics: dict[str, Any] | None = None
+        statistics: dict[str, Any] | None = None,
     ):
         """
         发送系统关闭通知
@@ -701,11 +682,11 @@ class Notifier:
         if statistics:
             lines.append("")
             lines.append("【运行统计】")
-            if 'total_trades' in statistics:
+            if "total_trades" in statistics:
                 lines.append(f"  总交易次数: {statistics['total_trades']}")
-            if 'profitable_trades' in statistics:
+            if "profitable_trades" in statistics:
                 lines.append(f"  盈利交易: {statistics['profitable_trades']}")
-            if 'total_pnl' in statistics:
+            if "total_pnl" in statistics:
                 lines.append(f"  总盈亏: ${statistics['total_pnl']:+.2f}")
 
         lines.append("")
@@ -715,10 +696,7 @@ class Notifier:
         self.notify(NotificationEvent.SYSTEM_SHUTDOWN, title, message)
 
     def notify_review_lesson(
-        self,
-        symbol: str,
-        lessons: list[dict[str, Any]],
-        summary: str | None = None
+        self, symbol: str, lessons: list[dict[str, Any]], summary: str | None = None
     ):
         """
         发送复盘经验通知
@@ -763,12 +741,7 @@ class Notifier:
         message = "\n".join(lines)
         self.notify(NotificationEvent.REVIEW_LESSON_LEARNED, title, message)
 
-
-    def notify_external_info_summary(
-        self,
-        summary: str = "",
-        file_path: str = ""
-    ):
+    def notify_external_info_summary(self, summary: str = "", file_path: str = ""):
         """
         发送外部信息汇总完成通知
 

@@ -15,6 +15,7 @@ from typing import Any
 
 class ProtectionAction(StrEnum):
     """保护动作类型"""
+
     NONE = "none"
     WARN = "warn"
     PAUSE_NEW_TRADES = "pause_new_trades"
@@ -25,6 +26,7 @@ class ProtectionAction(StrEnum):
 @dataclass
 class PositionRecord:
     """持仓记录"""
+
     symbol: str
     entry_time: datetime
     entry_price: float
@@ -41,19 +43,20 @@ class PositionRecord:
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
-        data['entry_time'] = self.entry_time.isoformat()
+        data["entry_time"] = self.entry_time.isoformat()
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> 'PositionRecord':
+    def from_dict(cls, data: dict[str, Any]) -> "PositionRecord":
         """从字典创建"""
-        data['entry_time'] = datetime.fromisoformat(data['entry_time'])
+        data["entry_time"] = datetime.fromisoformat(data["entry_time"])
         return cls(**data)
 
 
 @dataclass
 class AccountSnapshot:
     """账户快照"""
+
     timestamp: datetime
     balance: float
     equity: float  # 包含未实现盈亏的净值
@@ -62,12 +65,12 @@ class AccountSnapshot:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
-        data['timestamp'] = self.timestamp.isoformat()
+        data["timestamp"] = self.timestamp.isoformat()
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> 'AccountSnapshot':
-        data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+    def from_dict(cls, data: dict[str, Any]) -> "AccountSnapshot":
+        data["timestamp"] = datetime.fromisoformat(data["timestamp"])
         return cls(**data)
 
 
@@ -90,7 +93,7 @@ class AccountProtector:
         max_consecutive_losses: int = 5,  # 最大连续亏损次数
         pause_hours_after_protection: float = 4.0,  # 触发保护后暂停时间
         data_dir: str | None = None,
-        on_protection_triggered: Callable | None = None
+        on_protection_triggered: Callable | None = None,
     ):
         """
         初始化账户保护管理器
@@ -134,17 +137,13 @@ class AccountProtector:
         self._load_state()
 
         print("🛡️ 账户保护管理器初始化完成")
-        print(f"   最大回撤: {max_drawdown_pct*100}%")
-        print(f"   单日最大亏损: {max_daily_loss_pct*100}%")
+        print(f"   最大回撤: {max_drawdown_pct * 100}%")
+        print(f"   单日最大亏损: {max_daily_loss_pct * 100}%")
         print(f"   最大持仓时间: {max_position_hours} 小时")
         print(f"   最大连续亏损: {max_consecutive_losses} 次")
 
     def update_account_status(
-        self,
-        balance: float,
-        equity: float,
-        unrealized_pnl: float,
-        margin_used: float
+        self, balance: float, equity: float, unrealized_pnl: float, margin_used: float
     ) -> dict[str, Any]:
         """
         更新账户状态，检查是否需要触发保护
@@ -174,11 +173,11 @@ class AccountProtector:
                 balance=balance,
                 equity=equity,
                 unrealized_pnl=unrealized_pnl,
-                margin_used=margin_used
+                margin_used=margin_used,
             )
             self._snapshots.append(snapshot)
             if len(self._snapshots) > self._max_snapshots:
-                self._snapshots = self._snapshots[-self._max_snapshots:]
+                self._snapshots = self._snapshots[-self._max_snapshots :]
 
             # 更新峰值净值
             if equity > self._peak_equity:
@@ -206,10 +205,14 @@ class AccountProtector:
 
             # 检查是否仍在暂停期
             if self._is_trading_paused and self._last_protection_time:
-                pause_end = self._last_protection_time + timedelta(hours=self.pause_hours_after_protection)
+                pause_end = self._last_protection_time + timedelta(
+                    hours=self.pause_hours_after_protection
+                )
                 if now < pause_end:
                     remaining = (pause_end - now).total_seconds() / 60
-                    messages.append(f"交易暂停中，剩余 {remaining:.0f} 分钟 (原因: {self._pause_reason})")
+                    messages.append(
+                        f"交易暂停中，剩余 {remaining:.0f} 分钟 (原因: {self._pause_reason})"
+                    )
                     should_pause = True
                 else:
                     self._is_trading_paused = False
@@ -220,34 +223,40 @@ class AccountProtector:
             if drawdown_pct >= self.max_drawdown_pct:
                 action = ProtectionAction.CLOSE_ALL_POSITIONS
                 should_pause = True
-                self._trigger_protection(f"最大回撤触发: {drawdown_pct*100:.1f}%")
-                messages.append(f"⚠️ 【最大回撤保护】回撤 {drawdown_pct*100:.1f}% >= {self.max_drawdown_pct*100}%")
+                self._trigger_protection(f"最大回撤触发: {drawdown_pct * 100:.1f}%")
+                messages.append(
+                    f"⚠️ 【最大回撤保护】回撤 {drawdown_pct * 100:.1f}% >= {self.max_drawdown_pct * 100}%"
+                )
 
             # 检查单日最大亏损
             elif daily_loss_pct >= self.max_daily_loss_pct:
                 action = ProtectionAction.PAUSE_NEW_TRADES
                 should_pause = True
-                self._trigger_protection(f"单日亏损触发: {daily_loss_pct*100:.1f}%")
-                messages.append(f"⚠️ 【单日亏损保护】当日亏损 {daily_loss_pct*100:.1f}% >= {self.max_daily_loss_pct*100}%")
+                self._trigger_protection(f"单日亏损触发: {daily_loss_pct * 100:.1f}%")
+                messages.append(
+                    f"⚠️ 【单日亏损保护】当日亏损 {daily_loss_pct * 100:.1f}% >= {self.max_daily_loss_pct * 100}%"
+                )
 
             # 检查连续亏损
             elif self._consecutive_losses >= self.max_consecutive_losses:
                 action = ProtectionAction.PAUSE_NEW_TRADES
                 should_pause = True
                 self._trigger_protection(f"连续亏损触发: {self._consecutive_losses} 次")
-                messages.append(f"⚠️ 【连续亏损保护】连续亏损 {self._consecutive_losses} 次 >= {self.max_consecutive_losses}")
+                messages.append(
+                    f"⚠️ 【连续亏损保护】连续亏损 {self._consecutive_losses} 次 >= {self.max_consecutive_losses}"
+                )
 
             # 保存状态
             self._save_state()
 
         return {
-            'action': action,
-            'should_pause': should_pause,
-            'drawdown_pct': drawdown_pct,
-            'daily_loss_pct': daily_loss_pct,
-            'peak_equity': self._peak_equity,
-            'consecutive_losses': self._consecutive_losses,
-            'messages': messages
+            "action": action,
+            "should_pause": should_pause,
+            "drawdown_pct": drawdown_pct,
+            "daily_loss_pct": daily_loss_pct,
+            "peak_equity": self._peak_equity,
+            "consecutive_losses": self._consecutive_losses,
+            "messages": messages,
         }
 
     def record_trade_result(self, is_profitable: bool, pnl: float = 0.0) -> None:
@@ -266,12 +275,7 @@ class AccountProtector:
             self._save_state()
 
     def record_position_open(
-        self,
-        symbol: str,
-        entry_price: float,
-        size: float,
-        is_long: bool,
-        leverage: int = 1
+        self, symbol: str, entry_price: float, size: float, is_long: bool, leverage: int = 1
     ) -> None:
         """记录开仓"""
         with self._lock:
@@ -281,7 +285,7 @@ class AccountProtector:
                 entry_price=entry_price,
                 size=size,
                 is_long=is_long,
-                leverage=leverage
+                leverage=leverage,
             )
             self._save_state()
 
@@ -308,22 +312,22 @@ class AccountProtector:
             record = self._position_records.get(symbol)
             if not record:
                 return {
-                    'is_timeout': False,
-                    'holding_hours': 0,
-                    'max_hours': self.max_position_hours,
-                    'should_close': False
+                    "is_timeout": False,
+                    "holding_hours": 0,
+                    "max_hours": self.max_position_hours,
+                    "should_close": False,
                 }
 
             holding_hours = record.holding_hours()
             is_timeout = holding_hours >= self.max_position_hours
 
             return {
-                'is_timeout': is_timeout,
-                'holding_hours': holding_hours,
-                'max_hours': self.max_position_hours,
-                'should_close': is_timeout,
-                'entry_time': record.entry_time.isoformat(),
-                'entry_price': record.entry_price
+                "is_timeout": is_timeout,
+                "holding_hours": holding_hours,
+                "max_hours": self.max_position_hours,
+                "should_close": is_timeout,
+                "entry_time": record.entry_time.isoformat(),
+                "entry_price": record.entry_price,
             }
 
     def get_timeout_positions(self) -> list[str]:
@@ -347,14 +351,8 @@ class AccountProtector:
         """
         with self._lock:
             if self._is_trading_paused:
-                return {
-                    'allowed': False,
-                    'reason': self._pause_reason
-                }
-            return {
-                'allowed': True,
-                'reason': ''
-            }
+                return {"allowed": False, "reason": self._pause_reason}
+            return {"allowed": True, "reason": ""}
 
     def reset_daily_stats(self) -> None:
         """重置每日统计（通常在每日开盘时调用）"""
@@ -379,13 +377,13 @@ class AccountProtector:
         """获取当前保护状态"""
         with self._lock:
             return {
-                'is_paused': self._is_trading_paused,
-                'pause_reason': self._pause_reason,
-                'peak_equity': self._peak_equity,
-                'daily_start_equity': self._daily_start_equity,
-                'consecutive_losses': self._consecutive_losses,
-                'active_positions': len(self._position_records),
-                'position_symbols': list(self._position_records.keys())
+                "is_paused": self._is_trading_paused,
+                "pause_reason": self._pause_reason,
+                "peak_equity": self._peak_equity,
+                "daily_start_equity": self._daily_start_equity,
+                "consecutive_losses": self._consecutive_losses,
+                "active_positions": len(self._position_records),
+                "position_symbols": list(self._position_records.keys()),
             }
 
     def _trigger_protection(self, reason: str) -> None:
@@ -406,18 +404,22 @@ class AccountProtector:
         """保存状态到文件"""
         try:
             state = {
-                'peak_equity': self._peak_equity,
-                'daily_start_equity': self._daily_start_equity,
-                'daily_start_date': self._daily_start_date.isoformat() if self._daily_start_date else None,
-                'consecutive_losses': self._consecutive_losses,
-                'is_trading_paused': self._is_trading_paused,
-                'pause_reason': self._pause_reason,
-                'last_protection_time': self._last_protection_time.isoformat() if self._last_protection_time else None,
-                'position_records': {k: v.to_dict() for k, v in self._position_records.items()},
-                'updated_at': datetime.now().isoformat()
+                "peak_equity": self._peak_equity,
+                "daily_start_equity": self._daily_start_equity,
+                "daily_start_date": self._daily_start_date.isoformat()
+                if self._daily_start_date
+                else None,
+                "consecutive_losses": self._consecutive_losses,
+                "is_trading_paused": self._is_trading_paused,
+                "pause_reason": self._pause_reason,
+                "last_protection_time": self._last_protection_time.isoformat()
+                if self._last_protection_time
+                else None,
+                "position_records": {k: v.to_dict() for k, v in self._position_records.items()},
+                "updated_at": datetime.now().isoformat(),
             }
             state_file = self.data_dir / "protection_state.json"
-            with open(state_file, 'w') as f:
+            with open(state_file, "w") as f:
                 json.dump(state, f, indent=2)
         except Exception as e:
             print(f"⚠️ 保存保护状态失败: {e}")
@@ -430,23 +432,27 @@ class AccountProtector:
                 with open(state_file) as f:
                     state = json.load(f)
 
-                self._peak_equity = state.get('peak_equity', 0.0)
-                self._daily_start_equity = state.get('daily_start_equity', 0.0)
+                self._peak_equity = state.get("peak_equity", 0.0)
+                self._daily_start_equity = state.get("daily_start_equity", 0.0)
 
-                if state.get('daily_start_date'):
-                    self._daily_start_date = datetime.fromisoformat(state['daily_start_date'])
+                if state.get("daily_start_date"):
+                    self._daily_start_date = datetime.fromisoformat(state["daily_start_date"])
 
-                self._consecutive_losses = state.get('consecutive_losses', 0)
-                self._is_trading_paused = state.get('is_trading_paused', False)
-                self._pause_reason = state.get('pause_reason', '')
+                self._consecutive_losses = state.get("consecutive_losses", 0)
+                self._is_trading_paused = state.get("is_trading_paused", False)
+                self._pause_reason = state.get("pause_reason", "")
 
-                if state.get('last_protection_time'):
-                    self._last_protection_time = datetime.fromisoformat(state['last_protection_time'])
+                if state.get("last_protection_time"):
+                    self._last_protection_time = datetime.fromisoformat(
+                        state["last_protection_time"]
+                    )
 
                 # 加载持仓记录
-                for symbol, record_dict in state.get('position_records', {}).items():
+                for symbol, record_dict in state.get("position_records", {}).items():
                     self._position_records[symbol] = PositionRecord.from_dict(record_dict)
 
-                print(f"📂 已加载保护状态: 峰值净值=${self._peak_equity:.2f}, 连续亏损={self._consecutive_losses}")
+                print(
+                    f"📂 已加载保护状态: 峰值净值=${self._peak_equity:.2f}, 连续亏损={self._consecutive_losses}"
+                )
         except Exception as e:
             print(f"⚠️ 加载保护状态失败: {e}")

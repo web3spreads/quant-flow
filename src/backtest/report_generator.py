@@ -35,14 +35,14 @@ class BacktestReportGenerator:
         print(f"   初始余额: ${self.result['initial_balance']:.2f}")
         print(f"   最终余额: ${self.result['final_balance']:.2f}")
         print(f"   总盈亏: ${self.result['total_pnl']:+.2f}")
-        print(f"   总收益率: {self.result['total_return']*100:+.2f}%")
+        print(f"   总收益率: {self.result['total_return'] * 100:+.2f}%")
         print(f"   总手续费: ${self.result['total_fee']:.2f}")
 
         print("\n📈 交易统计:")
         print(f"   总交易数: {self.result['total_trades']}")
         print(f"   盈利交易: {self.result['profitable_trades']}")
         print(f"   亏损交易: {self.result['losing_trades']}")
-        print(f"   胜率: {self.result['win_rate']*100:.2f}%")
+        print(f"   胜率: {self.result['win_rate'] * 100:.2f}%")
 
         if self.result["total_trades"] > 0:
             print("\n💵 盈亏分析:")
@@ -51,7 +51,7 @@ class BacktestReportGenerator:
             print(f"   盈亏比: {self.result['profit_factor']:.2f}")
 
         print("\n📉 风险指标:")
-        print(f"   最大回撤: {self.result['max_drawdown']*100:.2f}%")
+        print(f"   最大回撤: {self.result['max_drawdown'] * 100:.2f}%")
 
         print("\n" + "=" * 60)
 
@@ -362,13 +362,13 @@ class BacktestReportGenerator:
 
 ## 报告信息
 
-- **生成时间**: {metadata.get('backtest_timestamp', '')}
-- **交易对**: {self.result.get('symbol', 'N/A')}
-- **初始余额**: ${self.result.get('initial_balance', 0):.2f}
-- **最终余额**: ${self.result.get('final_balance', 0):.2f}
-- **总盈亏**: ${self.result.get('total_pnl', 0):+.2f}
-- **总收益率**: {self.result.get('total_return', 0)*100:+.2f}%
-- **胜率**: {self.result.get('win_rate', 0)*100:.2f}%
+- **生成时间**: {metadata.get("backtest_timestamp", "")}
+- **交易对**: {self.result.get("symbol", "N/A")}
+- **初始余额**: ${self.result.get("initial_balance", 0):.2f}
+- **最终余额**: ${self.result.get("final_balance", 0):.2f}
+- **总盈亏**: ${self.result.get("total_pnl", 0):+.2f}
+- **总收益率**: {self.result.get("total_return", 0) * 100:+.2f}%
+- **胜率**: {self.result.get("win_rate", 0) * 100:.2f}%
 
 ## 文件说明
 
@@ -399,7 +399,7 @@ class BacktestReportGenerator:
         readme_content += f"- **平均盈利**: ${self.result.get('avg_profit', 0):.2f}\n"
         readme_content += f"- **平均亏损**: ${self.result.get('avg_loss', 0):.2f}\n"
         readme_content += f"- **盈亏比**: {self.result.get('profit_factor', 0):.2f}\n"
-        readme_content += f"- **最大回撤**: {self.result.get('max_drawdown', 0)*100:.2f}%\n"
+        readme_content += f"- **最大回撤**: {self.result.get('max_drawdown', 0) * 100:.2f}%\n"
 
         readme_file = report_dir / "README.md"
         with open(readme_file, "w", encoding="utf-8") as f:

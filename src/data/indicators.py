@@ -25,7 +25,7 @@ class TechnicalIndicators:
             添加了 MA 列的 DataFrame
         """
         for period in periods:
-            df[f'ma_{period}'] = df['close'].rolling(window=period).mean()
+            df[f"ma_{period}"] = df["close"].rolling(window=period).mean()
         return df
 
     @staticmethod
@@ -44,7 +44,7 @@ class TechnicalIndicators:
             添加了 RSI 列的 DataFrame
         """
         # 计算价格变化
-        delta = df['close'].diff()
+        delta = df["close"].diff()
 
         # 分离涨跌
         gain = delta.where(delta > 0, 0)
@@ -56,16 +56,13 @@ class TechnicalIndicators:
 
         # 计算 RS 和 RSI
         rs = avg_gain / avg_loss
-        df['rsi'] = 100 - (100 / (1 + rs))
+        df["rsi"] = 100 - (100 / (1 + rs))
 
         return df
 
     @staticmethod
     def calculate_macd(
-        df: pd.DataFrame,
-        fast: int = 12,
-        slow: int = 26,
-        signal: int = 9
+        df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9
     ) -> pd.DataFrame:
         """
         计算 MACD (Moving Average Convergence Divergence)
@@ -84,25 +81,23 @@ class TechnicalIndicators:
             添加了 MACD, MACD信号线, MACD柱状图 列的 DataFrame
         """
         # 计算 EMA
-        ema_fast = df['close'].ewm(span=fast, adjust=False).mean()
-        ema_slow = df['close'].ewm(span=slow, adjust=False).mean()
+        ema_fast = df["close"].ewm(span=fast, adjust=False).mean()
+        ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
 
         # 计算 MACD
-        df['macd'] = ema_fast - ema_slow
+        df["macd"] = ema_fast - ema_slow
 
         # 计算信号线
-        df['macd_signal'] = df['macd'].ewm(span=signal, adjust=False).mean()
+        df["macd_signal"] = df["macd"].ewm(span=signal, adjust=False).mean()
 
         # 计算柱状图
-        df['macd_hist'] = df['macd'] - df['macd_signal']
+        df["macd_hist"] = df["macd"] - df["macd_signal"]
 
         return df
 
     @staticmethod
     def calculate_bollinger_bands(
-        df: pd.DataFrame,
-        period: int = 20,
-        std_dev: float = 2.0
+        df: pd.DataFrame, period: int = 20, std_dev: float = 2.0
     ) -> pd.DataFrame:
         """
         计算布林带 (Bollinger Bands)
@@ -120,14 +115,14 @@ class TechnicalIndicators:
             添加了布林带上轨、中轨、下轨列的 DataFrame
         """
         # 中轨（简单移动平均）
-        df['bb_middle'] = df['close'].rolling(window=period).mean()
+        df["bb_middle"] = df["close"].rolling(window=period).mean()
 
         # 标准差
-        std = df['close'].rolling(window=period).std()
+        std = df["close"].rolling(window=period).std()
 
         # 上轨和下轨
-        df['bb_upper'] = df['bb_middle'] + (std_dev * std)
-        df['bb_lower'] = df['bb_middle'] - (std_dev * std)
+        df["bb_upper"] = df["bb_middle"] + (std_dev * std)
+        df["bb_lower"] = df["bb_middle"] - (std_dev * std)
 
         return df
 
@@ -144,14 +139,14 @@ class TechnicalIndicators:
             添加了 ATR 列的 DataFrame
         """
         # 计算真实波幅 (True Range)
-        high_low = df['high'] - df['low']
-        high_close = abs(df['high'] - df['close'].shift())
-        low_close = abs(df['low'] - df['close'].shift())
+        high_low = df["high"] - df["low"]
+        high_close = abs(df["high"] - df["close"].shift())
+        low_close = abs(df["low"] - df["close"].shift())
 
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
 
         # 计算 ATR (使用 EMA)
-        df[f'atr_{period}'] = tr.ewm(span=period, adjust=False).mean()
+        df[f"atr_{period}"] = tr.ewm(span=period, adjust=False).mean()
 
         return df
 
@@ -167,10 +162,10 @@ class TechnicalIndicators:
             添加了成交量指标列的 DataFrame
         """
         # 成交量移动平均
-        df['volume_ma_20'] = df['volume'].rolling(window=20).mean()
+        df["volume_ma_20"] = df["volume"].rolling(window=20).mean()
 
         # 成交量变化率（百分比）
-        df['volume_change'] = df['volume'].pct_change() * 100
+        df["volume_change"] = df["volume"].pct_change() * 100
 
         return df
 
@@ -196,7 +191,7 @@ class TechnicalIndicators:
         macd_params: dict[str, int] = None,
         bollinger_params: dict[str, Any] = None,
         ema_periods: list[int] = None,
-        atr_periods: list[int] = None
+        atr_periods: list[int] = None,
     ) -> pd.DataFrame:
         """
         计算所有技术指标
@@ -220,10 +215,10 @@ class TechnicalIndicators:
         if ma_periods is None:
             ma_periods = [7, 25, 99]
         if macd_params is None:
-            macd_params = {'fast': 12, 'slow': 26, 'signal': 9}
+            macd_params = {"fast": 12, "slow": 26, "signal": 9}
 
         if bollinger_params is None:
-            bollinger_params = {'period': 20, 'std_dev': 2.0}
+            bollinger_params = {"period": 20, "std_dev": 2.0}
 
         # 创建副本以避免修改原始数据
         df = df.copy()
@@ -233,24 +228,19 @@ class TechnicalIndicators:
 
         # 计算 EMA
         for period in ema_periods:
-            df[f'ema_{period}'] = TechnicalIndicators.calculate_ema(df['close'], period)
+            df[f"ema_{period}"] = TechnicalIndicators.calculate_ema(df["close"], period)
 
         # 计算 RSI
         df = TechnicalIndicators.calculate_rsi(df, rsi_period)
 
         # 计算 MACD
         df = TechnicalIndicators.calculate_macd(
-            df,
-            macd_params['fast'],
-            macd_params['slow'],
-            macd_params['signal']
+            df, macd_params["fast"], macd_params["slow"], macd_params["signal"]
         )
 
         # 计算布林带
         df = TechnicalIndicators.calculate_bollinger_bands(
-            df,
-            bollinger_params['period'],
-            bollinger_params['std_dev']
+            df, bollinger_params["period"], bollinger_params["std_dev"]
         )
 
         # 计算 ATR
@@ -279,20 +269,20 @@ class TechnicalIndicators:
             包含最新指标的字典，包括 data_quality 评估
         """
         if df.empty:
-            return {'data_quality': 'no_data', 'missing_indicators': ['all']}
+            return {"data_quality": "no_data", "missing_indicators": ["all"]}
 
         latest = df.iloc[-1]
         data_len = len(df)
 
         # 基础数据
         indicators = {
-            'timestamp': latest.name,
-            'current_price': latest['close'],
-            'open': latest['open'],
-            'high': latest['high'],
-            'low': latest['low'],
-            'volume': latest['volume'],
-            'data_points': data_len,
+            "timestamp": latest.name,
+            "current_price": latest["close"],
+            "open": latest["open"],
+            "high": latest["high"],
+            "low": latest["low"],
+            "volume": latest["volume"],
+            "data_points": data_len,
         }
 
         # 跟踪缺失和可用的指标
@@ -301,126 +291,130 @@ class TechnicalIndicators:
 
         # 添加 MA - 明确标记可用性
         for col in df.columns:
-            if col.startswith('ma_'):
+            if col.startswith("ma_"):
                 value = latest[col]
                 if pd.isna(value) or np.isnan(value):
                     # 数据不足时不用替代值，标记为 None
                     indicators[col] = None
-                    indicators[f'{col}_available'] = False
+                    indicators[f"{col}_available"] = False
                     missing_indicators.append(col)
                 else:
                     indicators[col] = value
-                    indicators[f'{col}_available'] = True
+                    indicators[f"{col}_available"] = True
                     available_indicators.append(col)
 
         # 添加 EMA
         for col in df.columns:
-            if col.startswith('ema_'):
+            if col.startswith("ema_"):
                 value = latest[col]
                 if pd.isna(value) or np.isnan(value):
                     indicators[col] = None
-                    indicators[f'{col}_available'] = False
+                    indicators[f"{col}_available"] = False
                     missing_indicators.append(col)
                 else:
                     indicators[col] = value
-                    indicators[f'{col}_available'] = True
+                    indicators[f"{col}_available"] = True
                     available_indicators.append(col)
 
         # 添加 RSI - 不再用 50 替代
-        if 'rsi' in df.columns:
-            rsi_value = latest['rsi']
+        if "rsi" in df.columns:
+            rsi_value = latest["rsi"]
             if pd.isna(rsi_value) or np.isnan(rsi_value):
-                indicators['rsi'] = None
-                indicators['rsi_available'] = False
-                missing_indicators.append('rsi')
+                indicators["rsi"] = None
+                indicators["rsi_available"] = False
+                missing_indicators.append("rsi")
             else:
-                indicators['rsi'] = rsi_value
-                indicators['rsi_available'] = True
-                available_indicators.append('rsi')
+                indicators["rsi"] = rsi_value
+                indicators["rsi_available"] = True
+                available_indicators.append("rsi")
 
         # 添加 MACD - 不再用 0 替代
-        if 'macd' in df.columns:
-            macd_value = latest['macd']
-            macd_signal_value = latest['macd_signal']
-            macd_hist_value = latest['macd_hist']
+        if "macd" in df.columns:
+            macd_value = latest["macd"]
+            macd_signal_value = latest["macd_signal"]
+            macd_hist_value = latest["macd_hist"]
 
             macd_valid = not (pd.isna(macd_value) or np.isnan(macd_value))
             signal_valid = not (pd.isna(macd_signal_value) or np.isnan(macd_signal_value))
             hist_valid = not (pd.isna(macd_hist_value) or np.isnan(macd_hist_value))
 
             if macd_valid and signal_valid and hist_valid:
-                indicators['macd'] = macd_value
-                indicators['macd_signal'] = macd_signal_value
-                indicators['macd_hist'] = macd_hist_value
-                indicators['macd_available'] = True
-                available_indicators.append('macd')
+                indicators["macd"] = macd_value
+                indicators["macd_signal"] = macd_signal_value
+                indicators["macd_hist"] = macd_hist_value
+                indicators["macd_available"] = True
+                available_indicators.append("macd")
             else:
-                indicators['macd'] = None
-                indicators['macd_signal'] = None
-                indicators['macd_hist'] = None
-                indicators['macd_available'] = False
-                missing_indicators.append('macd')
+                indicators["macd"] = None
+                indicators["macd_signal"] = None
+                indicators["macd_hist"] = None
+                indicators["macd_available"] = False
+                missing_indicators.append("macd")
 
         # 添加布林带
-        if 'bb_upper' in df.columns:
-            bb_upper_value = latest['bb_upper']
-            bb_middle_value = latest['bb_middle']
-            bb_lower_value = latest['bb_lower']
-            current_price = latest['close']
+        if "bb_upper" in df.columns:
+            bb_upper_value = latest["bb_upper"]
+            bb_middle_value = latest["bb_middle"]
+            bb_lower_value = latest["bb_lower"]
+            current_price = latest["close"]
 
             bb_valid = not (pd.isna(bb_middle_value) or np.isnan(bb_middle_value))
 
             if bb_valid:
-                indicators['bb_upper'] = bb_upper_value
-                indicators['bb_middle'] = bb_middle_value
-                indicators['bb_lower'] = bb_lower_value
-                indicators['bb_available'] = True
-                available_indicators.append('bollinger')
+                indicators["bb_upper"] = bb_upper_value
+                indicators["bb_middle"] = bb_middle_value
+                indicators["bb_lower"] = bb_lower_value
+                indicators["bb_available"] = True
+                available_indicators.append("bollinger")
 
                 # 计算价格在布林带中的位置（0-1）
                 bb_range = bb_upper_value - bb_lower_value
                 if bb_range > 0 and not np.isnan(bb_range):
-                    indicators['bb_position'] = (current_price - bb_lower_value) / bb_range
+                    indicators["bb_position"] = (current_price - bb_lower_value) / bb_range
                 else:
-                    indicators['bb_position'] = 0.5
+                    indicators["bb_position"] = 0.5
             else:
-                indicators['bb_upper'] = None
-                indicators['bb_middle'] = None
-                indicators['bb_lower'] = None
-                indicators['bb_position'] = None
-                indicators['bb_available'] = False
-                missing_indicators.append('bollinger')
+                indicators["bb_upper"] = None
+                indicators["bb_middle"] = None
+                indicators["bb_lower"] = None
+                indicators["bb_position"] = None
+                indicators["bb_available"] = False
+                missing_indicators.append("bollinger")
 
         # 添加 ATR
         for col in df.columns:
-            if col.startswith('atr_'):
+            if col.startswith("atr_"):
                 value = latest[col]
                 if pd.isna(value) or np.isnan(value):
                     indicators[col] = None
-                    indicators[f'{col}_available'] = False
+                    indicators[f"{col}_available"] = False
                     missing_indicators.append(col)
                 else:
                     indicators[col] = value
-                    indicators[f'{col}_available'] = True
+                    indicators[f"{col}_available"] = True
                     available_indicators.append(col)
 
         # 添加成交量指标
-        if 'volume_ma_20' in df.columns:
-            volume_ma_value = latest['volume_ma_20']
-            volume_change_value = latest['volume_change']
+        if "volume_ma_20" in df.columns:
+            volume_ma_value = latest["volume_ma_20"]
+            volume_change_value = latest["volume_change"]
 
             if pd.isna(volume_ma_value) or np.isnan(volume_ma_value):
-                indicators['volume_ma_20'] = None
-                indicators['volume_ma_available'] = False
+                indicators["volume_ma_20"] = None
+                indicators["volume_ma_available"] = False
             else:
-                indicators['volume_ma_20'] = volume_ma_value
-                indicators['volume_ma_available'] = True
-                available_indicators.append('volume_ma')
+                indicators["volume_ma_20"] = volume_ma_value
+                indicators["volume_ma_available"] = True
+                available_indicators.append("volume_ma")
 
-            if pd.isna(volume_change_value) or np.isnan(volume_change_value) or np.isinf(volume_change_value):
-                indicators['volume_change'] = None
+            if (
+                pd.isna(volume_change_value)
+                or np.isnan(volume_change_value)
+                or np.isinf(volume_change_value)
+            ):
+                indicators["volume_change"] = None
             else:
-                indicators['volume_change'] = volume_change_value
+                indicators["volume_change"] = volume_change_value
 
         # 计算数据质量评分
         total_expected = len(missing_indicators) + len(available_indicators)
@@ -430,20 +424,20 @@ class TechnicalIndicators:
             quality_score = 0.0
 
         if quality_score >= 0.9:
-            data_quality = 'excellent'
+            data_quality = "excellent"
         elif quality_score >= 0.7:
-            data_quality = 'good'
+            data_quality = "good"
         elif quality_score >= 0.5:
-            data_quality = 'fair'
+            data_quality = "fair"
         elif quality_score >= 0.3:
-            data_quality = 'poor'
+            data_quality = "poor"
         else:
-            data_quality = 'insufficient'
+            data_quality = "insufficient"
 
-        indicators['data_quality'] = data_quality
-        indicators['data_quality_score'] = quality_score
-        indicators['missing_indicators'] = missing_indicators
-        indicators['available_indicators'] = available_indicators
+        indicators["data_quality"] = data_quality
+        indicators["data_quality_score"] = quality_score
+        indicators["missing_indicators"] = missing_indicators
+        indicators["available_indicators"] = available_indicators
 
         return indicators
 
@@ -469,24 +463,26 @@ class TechnicalIndicators:
         recent_df = df.tail(period)
 
         series = {
-            'mid_prices': recent_df['close'].tolist(),
-            'volumes': recent_df['volume'].tolist(),
-            'timestamps': recent_df.index.tolist() if isinstance(recent_df.index, pd.DatetimeIndex) else []
+            "mid_prices": recent_df["close"].tolist(),
+            "volumes": recent_df["volume"].tolist(),
+            "timestamps": recent_df.index.tolist()
+            if isinstance(recent_df.index, pd.DatetimeIndex)
+            else [],
         }
 
         # 添加EMA序列
-        if 'ema_20' in recent_df.columns:
-            series['ema_20'] = recent_df['ema_20'].fillna(recent_df['close']).tolist()
+        if "ema_20" in recent_df.columns:
+            series["ema_20"] = recent_df["ema_20"].fillna(recent_df["close"]).tolist()
 
         # 添加MACD序列
-        if 'macd' in recent_df.columns:
-            series['macd'] = recent_df['macd'].fillna(0).tolist()
-            series['macd_signal'] = recent_df['macd_signal'].fillna(0).tolist()
-            series['macd_hist'] = recent_df['macd_hist'].fillna(0).tolist()
+        if "macd" in recent_df.columns:
+            series["macd"] = recent_df["macd"].fillna(0).tolist()
+            series["macd_signal"] = recent_df["macd_signal"].fillna(0).tolist()
+            series["macd_hist"] = recent_df["macd_hist"].fillna(0).tolist()
 
         # 添加RSI序列
-        if 'rsi' in recent_df.columns:
-            series['rsi'] = recent_df['rsi'].fillna(50).tolist()
+        if "rsi" in recent_df.columns:
+            series["rsi"] = recent_df["rsi"].fillna(50).tolist()
 
         return series
 
@@ -509,9 +505,9 @@ class TechnicalIndicators:
         latest = df.iloc[-1]
 
         # 获取均线值
-        ma_s = latest.get(f'ma_{ma_short}', None)
-        ma_l = latest.get(f'ma_{ma_long}', None)
-        current_price = latest['close']
+        ma_s = latest.get(f"ma_{ma_short}", None)
+        ma_l = latest.get(f"ma_{ma_long}", None)
+        current_price = latest["close"]
 
         if ma_s is None or ma_l is None or np.isnan(ma_s) or np.isnan(ma_l):
             return "数据不足"
@@ -540,13 +536,7 @@ class TechnicalIndicators:
         Returns:
             包含各时间周期趋势的字典
         """
-        timeframes = {
-            '1d': '日线',
-            '4h': '4小时',
-            '1h': '1小时',
-            '15m': '15分钟',
-            '1m': '1分钟'
-        }
+        timeframes = {"1d": "日线", "4h": "4小时", "1h": "1小时", "15m": "15分钟", "1m": "1分钟"}
 
         trends = {}
 
@@ -584,11 +574,11 @@ class TechnicalIndicators:
         summary_parts = []
 
         # 价格信息
-        price = indicators.get('current_price', 0)
+        price = indicators.get("current_price", 0)
         summary_parts.append(f"当前价格: {price:.2f}")
 
         # RSI 分析
-        rsi = indicators.get('rsi')
+        rsi = indicators.get("rsi")
         if rsi is not None and not np.isnan(rsi):
             if rsi > 70:
                 rsi_status = "超买"
@@ -599,8 +589,8 @@ class TechnicalIndicators:
             summary_parts.append(f"RSI: {rsi:.2f} ({rsi_status})")
 
         # MACD 分析
-        macd = indicators.get('macd')
-        macd_signal = indicators.get('macd_signal')
+        macd = indicators.get("macd")
+        macd_signal = indicators.get("macd_signal")
         if macd is not None and macd_signal is not None:
             if not np.isnan(macd) and not np.isnan(macd_signal):
                 if macd > macd_signal:
@@ -610,8 +600,8 @@ class TechnicalIndicators:
                 summary_parts.append(f"MACD: {macd_status}")
 
         # MA 趋势
-        ma_7 = indicators.get('ma_7')
-        ma_25 = indicators.get('ma_25')
+        ma_7 = indicators.get("ma_7")
+        ma_25 = indicators.get("ma_25")
         if ma_7 is not None and ma_25 is not None:
             if not np.isnan(ma_7) and not np.isnan(ma_25):
                 if ma_7 > ma_25:
@@ -621,7 +611,7 @@ class TechnicalIndicators:
                 summary_parts.append(f"趋势: {trend}")
 
         # 布林带位置
-        bb_position = indicators.get('bb_position')
+        bb_position = indicators.get("bb_position")
         if bb_position is not None and not np.isnan(bb_position):
             if bb_position > 0.8:
                 bb_status = "接近上轨"
@@ -642,7 +632,7 @@ def test_indicators():
     from src.data.market_data import MarketDataFetcher
 
     fetcher = MarketDataFetcher(demo_trading=False)
-    df = fetcher.fetch_ohlcv('BTC/USDT', '15m', limit=100)
+    df = fetcher.fetch_ohlcv("BTC/USDT", "15m", limit=100)
 
     if df is None:
         print("无法获取数据")

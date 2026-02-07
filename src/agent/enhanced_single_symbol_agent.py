@@ -53,7 +53,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         min_confidence: float = 0.4,
         enable_risk_filter: bool = True,
         enable_timing_filter: bool = True,
-        risk_params: RiskParameters | None = None
+        risk_params: RiskParameters | None = None,
     ):
         """
         初始化增强型单币种交易 Agent
@@ -81,7 +81,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             notifier=notifier,
             prompt_manager=prompt_manager,
             fee_rates=fee_rates,
-            limit_order_enabled=limit_order_enabled
+            limit_order_enabled=limit_order_enabled,
         )
 
         # 增强分析配置
@@ -93,15 +93,15 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
                 default_stop_loss_pct=stop_loss_ratio,
                 default_take_profit_pct=take_profit_ratio,
                 atr_stop_loss_multiplier=1.5,
-                atr_take_profit_multiplier=3.0
+                atr_take_profit_multiplier=3.0,
             )
 
         # 解析信号质量
         quality_map = {
-            'excellent': SignalQuality.EXCELLENT,
-            'good': SignalQuality.GOOD,
-            'fair': SignalQuality.FAIR,
-            'poor': SignalQuality.POOR
+            "excellent": SignalQuality.EXCELLENT,
+            "good": SignalQuality.GOOD,
+            "fair": SignalQuality.FAIR,
+            "poor": SignalQuality.POOR,
         }
         min_quality = quality_map.get(min_signal_quality.lower(), SignalQuality.FAIR)
 
@@ -112,7 +112,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
                 min_signal_quality=min_quality,
                 min_confidence=min_confidence,
                 enable_risk_filter=enable_risk_filter,
-                enable_timing_filter=enable_timing_filter
+                enable_timing_filter=enable_timing_filter,
             )
         else:
             self.enhanced_engine = None
@@ -127,7 +127,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             min_signal_score=min_confidence,
             min_risk_reward_ratio=1.5,  # 将从配置读取
             avoid_high_volatility=True,
-            prefer_pullback_entry=True
+            prefer_pullback_entry=True,
         )
 
         # 缓存最近的验证结果
@@ -139,7 +139,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         current_price: float,
         account_balance: float,
         current_positions: list,
-        multi_timeframe_trends: dict[str, str] | None = None
+        multi_timeframe_trends: dict[str, str] | None = None,
     ) -> EnhancedDecision | None:
         """
         使用增强引擎进行分析
@@ -165,7 +165,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
                 account_balance=account_balance,
                 current_positions=current_positions,
                 multi_timeframe_trends=multi_timeframe_trends,
-                leverage=self.max_leverage
+                leverage=self.max_leverage,
             )
 
             self._last_enhanced_decision = decision
@@ -266,7 +266,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         indicators: dict[str, Any],
         multi_timeframe_trends: dict[str, str],
         df: pd.DataFrame | None = None,
-        signal_score: float | None = None
+        signal_score: float | None = None,
     ) -> DecisionValidation:
         """
         验证交易决策
@@ -298,7 +298,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             stop_loss_ratio=self.stop_loss_ratio,
             leverage=self.max_leverage,
             df=df,
-            signal_score=signal_score
+            signal_score=signal_score,
         )
 
         self._last_validation = validation
@@ -317,7 +317,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         historical_summary: str | None = None,
         enriched_data: dict[str, Any] | None = None,
         df: pd.DataFrame | None = None,
-        account_balance: float | None = None
+        account_balance: float | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """
         使用增强分析进行决策
@@ -339,21 +339,21 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         """
         # 如果提供了必要数据，先执行增强分析
         if df is not None and account_balance is not None and self.enable_enhanced_analysis:
-            current_price = market_data.get('current_price', 0)
+            current_price = market_data.get("current_price", 0)
 
             enhanced_decision = self.analyze_with_enhanced_engine(
                 df=df,
                 current_price=current_price,
                 account_balance=account_balance,
                 current_positions=current_positions,
-                multi_timeframe_trends=multi_timeframe_trends
+                multi_timeframe_trends=multi_timeframe_trends,
             )
 
             if enhanced_decision:
                 # 将增强分析结果注入到 enriched_data
                 if enriched_data is None:
                     enriched_data = {}
-                enriched_data['enhanced_analysis'] = enhanced_decision.prompt_injection
+                enriched_data["enhanced_analysis"] = enhanced_decision.prompt_injection
 
                 # 如果增强分析建议不交易，可以直接返回
                 if not enhanced_decision.should_trade and enhanced_decision.blockers:
@@ -369,39 +369,42 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             current_positions=current_positions,
             max_positions=max_positions,
             historical_summary=historical_summary,
-            enriched_data=enriched_data
+            enriched_data=enriched_data,
         )
 
         # 检查是否需要覆盖决策
         should_override, new_decision, reason = self.should_override_decision(decision)
         if should_override:
-            self.logger.print_warning(f"[{self.symbol}] 决策被覆盖: {decision} -> {new_decision}, 原因: {reason}")
+            self.logger.print_warning(
+                f"[{self.symbol}] 决策被覆盖: {decision} -> {new_decision}, 原因: {reason}"
+            )
             decision = new_decision
-            details['override_reason'] = reason
-            details['original_decision'] = decision
+            details["override_reason"] = reason
+            details["original_decision"] = decision
 
         # 执行决策验证（针对开仓决策）
         if decision in ["BUY", "SELL_SHORT"] and df is not None:
             from src.data.indicators import TechnicalIndicators
+
             indicators = TechnicalIndicators.get_latest_indicators(df)
-            current_price = market_data.get('current_price', 0)
+            current_price = market_data.get("current_price", 0)
 
             validation = self.validate_decision(
                 decision=decision,
                 current_price=current_price,
                 indicators=indicators,
                 multi_timeframe_trends=multi_timeframe_trends,
-                df=df
+                df=df,
             )
 
-            details['validation'] = {
-                'is_valid': validation.is_valid,
-                'score': validation.overall_score,
-                'blockers': validation.blockers,
-                'warnings': validation.warnings,
-                'suggestions': validation.suggestions,
-                'size_multiplier': validation.suggested_size_multiplier,
-                'wait_for_pullback': validation.wait_for_pullback
+            details["validation"] = {
+                "is_valid": validation.is_valid,
+                "score": validation.overall_score,
+                "blockers": validation.blockers,
+                "warnings": validation.warnings,
+                "suggestions": validation.suggestions,
+                "size_multiplier": validation.suggested_size_multiplier,
+                "wait_for_pullback": validation.wait_for_pullback,
             }
 
             # 如果验证不通过，覆盖决策
@@ -409,9 +412,11 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
                 self.logger.print_warning(
                     f"[{self.symbol}] 决策验证未通过: {decision} -> DO_NOTHING"
                 )
-                self.logger.print_warning(f"[{self.symbol}] 阻止原因: {', '.join(validation.blockers)}")
-                details['validation_override'] = True
-                details['original_decision_before_validation'] = decision
+                self.logger.print_warning(
+                    f"[{self.symbol}] 阻止原因: {', '.join(validation.blockers)}"
+                )
+                details["validation_override"] = True
+                details["original_decision_before_validation"] = decision
                 decision = "DO_NOTHING"
             else:
                 # 验证通过，但可能需要调整仓位
@@ -419,27 +424,27 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
                     self.logger.print_info(
                         f"[{self.symbol}] 建议仓位调整: {validation.suggested_size_multiplier:.0%}"
                     )
-                    details['adjusted_size_multiplier'] = validation.suggested_size_multiplier
+                    details["adjusted_size_multiplier"] = validation.suggested_size_multiplier
 
                 # 如果建议等待回调
                 if validation.wait_for_pullback and validation.suggested_entry_price:
                     self.logger.print_info(
                         f"[{self.symbol}] 建议等待回调至 ${validation.suggested_entry_price:.2f}"
                     )
-                    details['suggested_entry_price'] = validation.suggested_entry_price
+                    details["suggested_entry_price"] = validation.suggested_entry_price
 
         # 添加增强分析信息到详情
         if self._last_enhanced_decision:
-            details['enhanced_decision'] = {
-                'action': self._last_enhanced_decision.action,
-                'should_trade': self._last_enhanced_decision.should_trade,
-                'confidence': self._last_enhanced_decision.overall_confidence,
-                'quality': self._last_enhanced_decision.decision_quality,
-                'signal_type': self._last_enhanced_decision.trading_signal.signal_type.value,
-                'market_state': self._last_enhanced_decision.market_analysis.state.value,
-                'risk_level': self._last_enhanced_decision.risk_assessment.risk_level.name,
-                'blockers': self._last_enhanced_decision.blockers,
-                'warnings': self._last_enhanced_decision.warnings
+            details["enhanced_decision"] = {
+                "action": self._last_enhanced_decision.action,
+                "should_trade": self._last_enhanced_decision.should_trade,
+                "confidence": self._last_enhanced_decision.overall_confidence,
+                "quality": self._last_enhanced_decision.decision_quality,
+                "signal_type": self._last_enhanced_decision.trading_signal.signal_type.value,
+                "market_state": self._last_enhanced_decision.market_analysis.state.value,
+                "risk_level": self._last_enhanced_decision.risk_assessment.risk_level.name,
+                "blockers": self._last_enhanced_decision.blockers,
+                "warnings": self._last_enhanced_decision.warnings,
             }
 
         return decision, details
@@ -453,7 +458,7 @@ def create_enhanced_agent(
     config: dict[str, Any],
     notifier=None,
     prompt_manager=None,
-    fee_rates=None
+    fee_rates=None,
 ) -> EnhancedSingleSymbolAgent:
     """
     从配置创建增强型 Agent
@@ -472,33 +477,33 @@ def create_enhanced_agent(
         EnhancedSingleSymbolAgent 实例
     """
     # 基础配置
-    temperature = config.get('agent_temperature', 0.1)
-    max_iterations = config.get('agent_max_iterations', 5)
-    trade_amount = config.get('max_trade_amount', 100.0)
-    max_leverage = config.get('max_leverage', 10)
-    take_profit_ratio = config.get('take_profit_ratio', 0.05)
-    stop_loss_ratio = config.get('stop_loss_ratio', 0.02)
-    limit_order_enabled = config.get('limit_order_enabled', False)
+    temperature = config.get("agent_temperature", 0.1)
+    max_iterations = config.get("agent_max_iterations", 5)
+    trade_amount = config.get("max_trade_amount", 100.0)
+    max_leverage = config.get("max_leverage", 10)
+    take_profit_ratio = config.get("take_profit_ratio", 0.05)
+    stop_loss_ratio = config.get("stop_loss_ratio", 0.02)
+    limit_order_enabled = config.get("limit_order_enabled", False)
 
     # 增强配置
-    enhanced_config = config.get('enhanced_analysis', {})
-    enable_enhanced = enhanced_config.get('enabled', True)
-    min_signal_quality = enhanced_config.get('min_signal_quality', 'fair')
-    min_confidence = enhanced_config.get('min_confidence', 0.4)
-    enable_risk_filter = enhanced_config.get('enable_risk_filter', True)
-    enable_timing_filter = enhanced_config.get('enable_timing_filter', True)
+    enhanced_config = config.get("enhanced_analysis", {})
+    enable_enhanced = enhanced_config.get("enabled", True)
+    min_signal_quality = enhanced_config.get("min_signal_quality", "fair")
+    min_confidence = enhanced_config.get("min_confidence", 0.4)
+    enable_risk_filter = enhanced_config.get("enable_risk_filter", True)
+    enable_timing_filter = enhanced_config.get("enable_timing_filter", True)
 
     # 风险配置
-    risk_config = enhanced_config.get('risk', {})
+    risk_config = enhanced_config.get("risk", {})
     risk_params = RiskParameters(
-        max_risk_per_trade=risk_config.get('max_risk_per_trade', 0.02),
-        max_total_exposure=risk_config.get('max_total_exposure', 0.5),
+        max_risk_per_trade=risk_config.get("max_risk_per_trade", 0.02),
+        max_total_exposure=risk_config.get("max_total_exposure", 0.5),
         default_stop_loss_pct=stop_loss_ratio,
         default_take_profit_pct=take_profit_ratio,
-        atr_stop_loss_multiplier=risk_config.get('atr_sl_multiplier', 1.5),
-        atr_take_profit_multiplier=risk_config.get('atr_tp_multiplier', 3.0),
-        trailing_stop_enabled=risk_config.get('trailing_stop_enabled', True),
-        volatility_adjustment_enabled=risk_config.get('volatility_adjustment', True)
+        atr_stop_loss_multiplier=risk_config.get("atr_sl_multiplier", 1.5),
+        atr_take_profit_multiplier=risk_config.get("atr_tp_multiplier", 3.0),
+        trailing_stop_enabled=risk_config.get("trailing_stop_enabled", True),
+        volatility_adjustment_enabled=risk_config.get("volatility_adjustment", True),
     )
 
     return EnhancedSingleSymbolAgent(
@@ -521,5 +526,5 @@ def create_enhanced_agent(
         min_confidence=min_confidence,
         enable_risk_filter=enable_risk_filter,
         enable_timing_filter=enable_timing_filter,
-        risk_params=risk_params
+        risk_params=risk_params,
     )

@@ -18,6 +18,7 @@ from typing import Any
 
 class RiskLevel(Enum):
     """风险级别"""
+
     VERY_LOW = 1
     LOW = 2
     MEDIUM = 3
@@ -28,29 +29,31 @@ class RiskLevel(Enum):
 
 class PositionSizingMethod(Enum):
     """仓位计算方法"""
-    FIXED_AMOUNT = "fixed_amount"           # 固定金额
-    FIXED_PERCENTAGE = "fixed_percentage"   # 固定账户比例
-    KELLY_CRITERION = "kelly_criterion"     # 凯利公式
-    ATR_BASED = "atr_based"                 # 基于ATR
+
+    FIXED_AMOUNT = "fixed_amount"  # 固定金额
+    FIXED_PERCENTAGE = "fixed_percentage"  # 固定账户比例
+    KELLY_CRITERION = "kelly_criterion"  # 凯利公式
+    ATR_BASED = "atr_based"  # 基于ATR
     VOLATILITY_ADJUSTED = "volatility_adjusted"  # 波动性调整
 
 
 @dataclass
 class RiskParameters:
     """风险参数配置"""
+
     # 基础风险参数
     max_risk_per_trade: float = 0.02  # 单笔最大风险（账户百分比）
-    max_total_exposure: float = 0.5   # 最大总敞口（账户百分比）
+    max_total_exposure: float = 0.5  # 最大总敞口（账户百分比）
     max_single_position: float = 0.2  # 单个仓位最大占比
     max_correlated_exposure: float = 0.3  # 相关资产最大敞口
 
     # 止损止盈参数
-    default_stop_loss_pct: float = 0.02   # 默认止损百分比
+    default_stop_loss_pct: float = 0.02  # 默认止损百分比
     default_take_profit_pct: float = 0.05  # 默认止盈百分比
-    min_risk_reward_ratio: float = 1.5    # 最小风险回报比
+    min_risk_reward_ratio: float = 1.5  # 最小风险回报比
 
     # ATR相关参数
-    atr_stop_loss_multiplier: float = 1.5   # ATR止损倍数
+    atr_stop_loss_multiplier: float = 1.5  # ATR止损倍数
     atr_take_profit_multiplier: float = 3.0  # ATR止盈倍数
 
     # 追踪止损参数
@@ -60,8 +63,8 @@ class RiskParameters:
 
     # 波动性调整参数
     volatility_adjustment_enabled: bool = True
-    low_volatility_multiplier: float = 0.7    # 低波动时止损收紧
-    high_volatility_multiplier: float = 1.5   # 高波动时止损放宽
+    low_volatility_multiplier: float = 0.7  # 低波动时止损收紧
+    high_volatility_multiplier: float = 1.5  # 高波动时止损放宽
 
     # 时间相关参数
     max_holding_periods: int = 100  # 最大持仓周期数
@@ -70,6 +73,7 @@ class RiskParameters:
 @dataclass
 class StopLossResult:
     """止损计算结果"""
+
     stop_loss_price: float
     stop_loss_pct: float
     method: str  # 计算方法描述
@@ -81,6 +85,7 @@ class StopLossResult:
 @dataclass
 class TakeProfitResult:
     """止盈计算结果"""
+
     take_profit_price: float
     take_profit_pct: float
     method: str
@@ -92,17 +97,19 @@ class TakeProfitResult:
 @dataclass
 class PositionSizeResult:
     """仓位大小计算结果"""
+
     position_size: float  # 建议仓位大小（USDT）
-    position_pct: float   # 占账户比例
-    leverage: int         # 建议杠杆
-    risk_amount: float    # 风险金额
-    method: str           # 计算方法
+    position_pct: float  # 占账户比例
+    leverage: int  # 建议杠杆
+    risk_amount: float  # 风险金额
+    method: str  # 计算方法
     adjustments: list[str] = field(default_factory=list)  # 调整说明
 
 
 @dataclass
 class RiskAssessment:
     """风险评估结果"""
+
     risk_level: RiskLevel
     risk_score: float  # 0-100
     factors: dict[str, float]  # 各因素的风险贡献
@@ -115,11 +122,12 @@ class RiskAssessment:
 @dataclass
 class TrailingStopState:
     """追踪止损状态"""
+
     is_active: bool
     activation_price: float
     current_stop_price: float
     highest_price: float  # 多头用
-    lowest_price: float   # 空头用
+    lowest_price: float  # 空头用
     last_update_time: str
 
 
@@ -129,7 +137,7 @@ class RiskManager:
     def __init__(
         self,
         risk_params: RiskParameters | None = None,
-        position_sizing_method: PositionSizingMethod = PositionSizingMethod.VOLATILITY_ADJUSTED
+        position_sizing_method: PositionSizingMethod = PositionSizingMethod.VOLATILITY_ADJUSTED,
     ):
         """
         初始化风险管理器
@@ -149,7 +157,7 @@ class RiskManager:
         current_atr: float,
         volatility_state: str = "normal",
         support_level: float | None = None,
-        resistance_level: float | None = None
+        resistance_level: float | None = None,
     ) -> StopLossResult:
         """
         计算动态止损价格
@@ -209,7 +217,7 @@ class RiskManager:
 
         # 确保止损不会太近或太远
         min_stop_distance = entry_price * 0.005  # 最小0.5%
-        max_stop_distance = entry_price * 0.15   # 最大15%
+        max_stop_distance = entry_price * 0.15  # 最大15%
 
         actual_distance = abs(entry_price - stop_price)
         if actual_distance < min_stop_distance:
@@ -233,7 +241,7 @@ class RiskManager:
             method=method,
             atr_multiplier=atr_multiplier,
             volatility_adjusted=volatility_adjusted,
-            distance_from_entry=abs(entry_price - stop_price)
+            distance_from_entry=abs(entry_price - stop_price),
         )
 
     def calculate_dynamic_take_profit(
@@ -244,7 +252,7 @@ class RiskManager:
         current_atr: float,
         resistance_level: float | None = None,
         support_level: float | None = None,
-        min_risk_reward: float | None = None
+        min_risk_reward: float | None = None,
     ) -> TakeProfitResult:
         """
         计算动态止盈价格
@@ -324,9 +332,7 @@ class RiskManager:
         take_profit_pct = abs(tp_price - entry_price) / entry_price
 
         # 生成分批止盈目标
-        partial_targets = self._generate_partial_targets(
-            entry_price, tp_price, is_long
-        )
+        partial_targets = self._generate_partial_targets(entry_price, tp_price, is_long)
 
         return TakeProfitResult(
             take_profit_price=tp_price,
@@ -334,14 +340,11 @@ class RiskManager:
             method=method,
             atr_multiplier=atr_multiplier,
             risk_reward_ratio=risk_reward_ratio,
-            partial_targets=partial_targets
+            partial_targets=partial_targets,
         )
 
     def _generate_partial_targets(
-        self,
-        entry_price: float,
-        final_tp: float,
-        is_long: bool
+        self, entry_price: float, final_tp: float, is_long: bool
     ) -> list[tuple[float, float]]:
         """
         生成分批止盈目标
@@ -387,7 +390,7 @@ class RiskManager:
         current_atr: float | None = None,
         volatility_state: str = "normal",
         win_rate: float | None = None,
-        avg_win_loss_ratio: float | None = None
+        avg_win_loss_ratio: float | None = None,
     ) -> PositionSizeResult:
         """
         计算建议仓位大小
@@ -505,7 +508,7 @@ class RiskManager:
             leverage=suggested_leverage,
             risk_amount=actual_risk,
             method=method,
-            adjustments=adjustments
+            adjustments=adjustments,
         )
 
     def assess_risk(
@@ -513,7 +516,7 @@ class RiskManager:
         account_balance: float,
         current_positions: list[dict[str, Any]],
         proposed_trade: dict[str, Any] | None = None,
-        market_volatility: str = "normal"
+        market_volatility: str = "normal",
     ) -> RiskAssessment:
         """
         评估当前风险状态
@@ -534,20 +537,22 @@ class RiskManager:
         # 1. 计算当前总敞口
         total_exposure = 0
         for pos in current_positions:
-            pos_value = abs(float(pos.get('szi', 0)) * float(pos.get('entryPx', 0)))
+            pos_value = abs(float(pos.get("szi", 0)) * float(pos.get("entryPx", 0)))
             total_exposure += pos_value
 
         exposure_ratio = total_exposure / account_balance if account_balance > 0 else 0
-        factors['exposure_ratio'] = min(100, exposure_ratio * 100)
+        factors["exposure_ratio"] = min(100, exposure_ratio * 100)
 
         if exposure_ratio > self.params.max_total_exposure:
-            warnings.append(f"总敞口 {exposure_ratio:.1%} 超过上限 {self.params.max_total_exposure:.1%}")
+            warnings.append(
+                f"总敞口 {exposure_ratio:.1%} 超过上限 {self.params.max_total_exposure:.1%}"
+            )
 
         # 2. 计算单一资产集中度
         position_concentration = {}
         for pos in current_positions:
-            symbol = pos.get('coin', 'UNKNOWN')
-            pos_value = abs(float(pos.get('szi', 0)) * float(pos.get('entryPx', 0)))
+            symbol = pos.get("coin", "UNKNOWN")
+            pos_value = abs(float(pos.get("szi", 0)) * float(pos.get("entryPx", 0)))
             concentration = pos_value / account_balance if account_balance > 0 else 0
             position_concentration[symbol] = concentration
 
@@ -555,24 +560,24 @@ class RiskManager:
                 warnings.append(f"{symbol} 集中度 {concentration:.1%} 超过上限")
 
         max_concentration = max(position_concentration.values()) if position_concentration else 0
-        factors['concentration'] = min(100, max_concentration * 100)
+        factors["concentration"] = min(100, max_concentration * 100)
 
         # 3. 未实现盈亏风险
         total_unrealized_pnl = 0
         for pos in current_positions:
-            pnl = float(pos.get('unrealizedPnl', 0))
+            pnl = float(pos.get("unrealizedPnl", 0))
             total_unrealized_pnl += pnl
 
         pnl_ratio = total_unrealized_pnl / account_balance if account_balance > 0 else 0
         if pnl_ratio < -0.1:  # 浮亏超过10%
-            factors['unrealized_loss'] = min(100, abs(pnl_ratio) * 200)
+            factors["unrealized_loss"] = min(100, abs(pnl_ratio) * 200)
             warnings.append(f"总未实现亏损 {pnl_ratio:.1%}")
         else:
-            factors['unrealized_loss'] = 0
+            factors["unrealized_loss"] = 0
 
         # 4. 波动性风险
         vol_risk = {"low": 10, "normal": 30, "high": 60, "extreme": 90}
-        factors['volatility'] = vol_risk.get(market_volatility, 30)
+        factors["volatility"] = vol_risk.get(market_volatility, 30)
 
         if market_volatility == "extreme":
             warnings.append("市场波动极大，建议减少交易")
@@ -582,31 +587,31 @@ class RiskManager:
         # 5. 持仓数量风险
         num_positions = len(current_positions)
         if num_positions > 5:
-            factors['position_count'] = min(100, num_positions * 10)
+            factors["position_count"] = min(100, num_positions * 10)
             warnings.append(f"持仓数量较多 ({num_positions})，管理难度增加")
         else:
-            factors['position_count'] = num_positions * 5
+            factors["position_count"] = num_positions * 5
 
         # 6. 如果有拟议交易，评估新增风险
         if proposed_trade:
-            new_exposure = proposed_trade.get('size', 0) * proposed_trade.get('entry_price', 0)
+            new_exposure = proposed_trade.get("size", 0) * proposed_trade.get("entry_price", 0)
             new_total = total_exposure + new_exposure
             new_exposure_ratio = new_total / account_balance if account_balance > 0 else 0
 
             if new_exposure_ratio > self.params.max_total_exposure:
                 warnings.append(f"新交易将使总敞口达到 {new_exposure_ratio:.1%}，超过上限")
-                factors['proposed_trade'] = 80
+                factors["proposed_trade"] = 80
             else:
-                factors['proposed_trade'] = new_exposure_ratio * 50
+                factors["proposed_trade"] = new_exposure_ratio * 50
 
         # 计算综合风险分数 (0-100)
         weights = {
-            'exposure_ratio': 0.25,
-            'concentration': 0.20,
-            'unrealized_loss': 0.20,
-            'volatility': 0.20,
-            'position_count': 0.10,
-            'proposed_trade': 0.05
+            "exposure_ratio": 0.25,
+            "concentration": 0.20,
+            "unrealized_loss": 0.20,
+            "volatility": 0.20,
+            "position_count": 0.10,
+            "proposed_trade": 0.05,
         }
 
         risk_score = sum(factors.get(k, 0) * w for k, w in weights.items())
@@ -638,8 +643,8 @@ class RiskManager:
 
         # 是否可以交易
         can_trade = (
-            risk_level.value <= RiskLevel.HIGH.value and
-            exposure_ratio < self.params.max_total_exposure * 1.1
+            risk_level.value <= RiskLevel.HIGH.value
+            and exposure_ratio < self.params.max_total_exposure * 1.1
         )
 
         # 计算最大建议仓位
@@ -653,15 +658,11 @@ class RiskManager:
             warnings=warnings,
             recommendations=recommendations,
             can_trade=can_trade,
-            max_suggested_position=max_suggested_position
+            max_suggested_position=max_suggested_position,
         )
 
     def initialize_trailing_stop(
-        self,
-        symbol: str,
-        entry_price: float,
-        is_long: bool,
-        initial_stop: float
+        self, symbol: str, entry_price: float, is_long: bool, initial_stop: float
     ) -> TrailingStopState:
         """
         初始化追踪止损
@@ -686,19 +687,16 @@ class RiskManager:
             is_active=False,
             activation_price=activation_price,
             current_stop_price=initial_stop,
-            highest_price=entry_price if is_long else float('inf'),
+            highest_price=entry_price if is_long else float("inf"),
             lowest_price=entry_price if not is_long else 0,
-            last_update_time=datetime.now().isoformat()
+            last_update_time=datetime.now().isoformat(),
         )
 
         self._trailing_stops[symbol] = state
         return state
 
     def update_trailing_stop(
-        self,
-        symbol: str,
-        current_price: float,
-        is_long: bool
+        self, symbol: str, current_price: float, is_long: bool
     ) -> TrailingStopState | None:
         """
         更新追踪止损
@@ -758,7 +756,7 @@ class RiskManager:
         current_price: float,
         is_long: bool,
         entry_price: float,
-        holding_periods: int
+        holding_periods: int,
     ) -> tuple[bool, str]:
         """
         判断是否应该平仓
@@ -776,12 +774,20 @@ class RiskManager:
         # 检查追踪止损
         state = self._trailing_stops.get(symbol)
         if state and state.is_active:
-            if is_long and current_price <= state.current_stop_price or not is_long and current_price >= state.current_stop_price:
+            if (
+                is_long
+                and current_price <= state.current_stop_price
+                or not is_long
+                and current_price >= state.current_stop_price
+            ):
                 return True, f"触发追踪止损 (止损价: {state.current_stop_price:.2f})"
 
         # 检查最大持仓时间
         if holding_periods >= self.params.max_holding_periods:
-            return True, f"持仓超过最大周期数 ({holding_periods} >= {self.params.max_holding_periods})"
+            return (
+                True,
+                f"持仓超过最大周期数 ({holding_periods} >= {self.params.max_holding_periods})",
+            )
 
         return False, ""
 

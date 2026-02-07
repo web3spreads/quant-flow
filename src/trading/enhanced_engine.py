@@ -31,6 +31,7 @@ from src.trading.risk_manager import (
 @dataclass
 class EnhancedDecision:
     """增强型交易决策"""
+
     # 决策信息
     decision_id: str
     timestamp: str
@@ -77,7 +78,7 @@ class EnhancedTradingEngine:
         min_signal_quality: SignalQuality = SignalQuality.FAIR,
         min_confidence: float = 0.4,
         enable_risk_filter: bool = True,
-        enable_timing_filter: bool = True
+        enable_timing_filter: bool = True,
     ):
         """
         初始化增强型交易引擎
@@ -110,7 +111,7 @@ class EnhancedTradingEngine:
         account_balance: float,
         current_positions: list[dict[str, Any]],
         multi_timeframe_trends: dict[str, str] | None = None,
-        leverage: int = 3
+        leverage: int = 3,
     ) -> EnhancedDecision:
         """
         执行完整的分析和决策流程
@@ -137,9 +138,7 @@ class EnhancedTradingEngine:
 
         # 第一步：市场状态分析
         market_analysis = self.market_analyzer.analyze(
-            df=df,
-            current_price=current_price,
-            multi_timeframe_trends=multi_timeframe_trends
+            df=df, current_price=current_price, multi_timeframe_trends=multi_timeframe_trends
         )
         reasoning.append(f"市场状态: {market_analysis.state.value}")
 
@@ -148,7 +147,7 @@ class EnhancedTradingEngine:
         risk_assessment = self.risk_manager.assess_risk(
             account_balance=account_balance,
             current_positions=current_positions,
-            market_volatility=market_analysis.volatility.volatility_state
+            market_volatility=market_analysis.volatility.volatility_state,
         )
 
         if risk_assessment.risk_level.value >= 5:  # VERY_HIGH or EXTREME
@@ -157,14 +156,14 @@ class EnhancedTradingEngine:
         # 第三步：信号评分
         trading_signal = self.signal_scorer.score_signal(
             symbol=symbol,
-            market_data={'current_price': current_price},
+            market_data={"current_price": current_price},
             trend_analysis=market_analysis.trend,
             momentum_analysis=market_analysis.momentum,
             volume_analysis=market_analysis.volume,
             volatility_analysis=market_analysis.volatility,
             support_resistance=market_analysis.support_resistance,
             multi_timeframe_trends=multi_timeframe_trends,
-            current_position=current_position
+            current_position=current_position,
         )
 
         reasoning.append(f"信号质量: {trading_signal.quality.value}")
@@ -179,7 +178,7 @@ class EnhancedTradingEngine:
             current_atr=market_analysis.volatility.current_atr,
             volatility_state=market_analysis.volatility.volatility_state,
             support_level=market_analysis.support_resistance.nearest_support,
-            resistance_level=market_analysis.support_resistance.nearest_resistance
+            resistance_level=market_analysis.support_resistance.nearest_resistance,
         )
 
         take_profit_result = self.risk_manager.calculate_dynamic_take_profit(
@@ -188,7 +187,7 @@ class EnhancedTradingEngine:
             is_long=is_long,
             current_atr=market_analysis.volatility.current_atr,
             resistance_level=market_analysis.support_resistance.nearest_resistance,
-            support_level=market_analysis.support_resistance.nearest_support
+            support_level=market_analysis.support_resistance.nearest_support,
         )
 
         # 第五步：计算仓位大小
@@ -198,7 +197,7 @@ class EnhancedTradingEngine:
             stop_loss_price=stop_loss_result.stop_loss_price,
             leverage=leverage,
             current_atr=market_analysis.volatility.current_atr,
-            volatility_state=market_analysis.volatility.volatility_state
+            volatility_state=market_analysis.volatility.volatility_state,
         )
 
         # 第六步：决策过滤和验证
@@ -206,7 +205,7 @@ class EnhancedTradingEngine:
             trading_signal=trading_signal,
             risk_assessment=risk_assessment,
             market_analysis=market_analysis,
-            current_position=current_position
+            current_position=current_position,
         )
 
         blockers.extend(filter_blockers)
@@ -215,13 +214,11 @@ class EnhancedTradingEngine:
         overall_confidence = self._calculate_overall_confidence(
             signal_confidence=trading_signal.confidence,
             risk_assessment=risk_assessment,
-            market_analysis=market_analysis
+            market_analysis=market_analysis,
         )
 
         decision_quality = self._determine_decision_quality(
-            trading_signal=trading_signal,
-            overall_confidence=overall_confidence,
-            blockers=blockers
+            trading_signal=trading_signal, overall_confidence=overall_confidence, blockers=blockers
         )
 
         # 添加警告
@@ -236,7 +233,7 @@ class EnhancedTradingEngine:
             stop_loss=stop_loss_result,
             take_profit=take_profit_result,
             position_size=position_size_result,
-            decision_quality=decision_quality
+            decision_quality=decision_quality,
         )
 
         # 创建决策对象
@@ -258,7 +255,7 @@ class EnhancedTradingEngine:
             reasoning=reasoning,
             warnings=warnings,
             blockers=blockers,
-            prompt_injection=prompt_injection
+            prompt_injection=prompt_injection,
         )
 
         # 保存到历史
@@ -268,12 +265,10 @@ class EnhancedTradingEngine:
 
         return decision
 
-    def _find_position(
-        self, symbol: str, positions: list[dict[str, Any]]
-    ) -> dict[str, Any] | None:
+    def _find_position(self, symbol: str, positions: list[dict[str, Any]]) -> dict[str, Any] | None:
         """查找指定符号的持仓"""
         for pos in positions:
-            if pos.get('coin') == symbol:
+            if pos.get("coin") == symbol:
                 return pos
         return None
 
@@ -282,7 +277,7 @@ class EnhancedTradingEngine:
         trading_signal: TradingSignal,
         risk_assessment: RiskAssessment,
         market_analysis: MarketAnalysisResult,
-        current_position: dict[str, Any] | None
+        current_position: dict[str, Any] | None,
     ) -> tuple[bool, str, list[str]]:
         """
         应用过滤器决定是否交易
@@ -302,7 +297,7 @@ class EnhancedTradingEngine:
             SignalType.LONG_ENTRY: "buy",
             SignalType.LONG_EXIT: "sell",
             SignalType.SHORT_ENTRY: "sell_short",
-            SignalType.SHORT_EXIT: "buy_to_cover"
+            SignalType.SHORT_EXIT: "buy_to_cover",
         }
         action = signal_to_action.get(trading_signal.signal_type, "hold")
 
@@ -312,18 +307,22 @@ class EnhancedTradingEngine:
             SignalQuality.POOR,
             SignalQuality.FAIR,
             SignalQuality.GOOD,
-            SignalQuality.EXCELLENT
+            SignalQuality.EXCELLENT,
         ]
 
         signal_quality_index = quality_order.index(trading_signal.quality)
         min_quality_index = quality_order.index(self.min_signal_quality)
 
         if signal_quality_index < min_quality_index:
-            blockers.append(f"信号质量不足: {trading_signal.quality.value} < {self.min_signal_quality.value}")
+            blockers.append(
+                f"信号质量不足: {trading_signal.quality.value} < {self.min_signal_quality.value}"
+            )
 
         # 过滤2: 置信度检查
         if trading_signal.confidence < self.min_confidence:
-            blockers.append(f"置信度不足: {trading_signal.confidence:.0%} < {self.min_confidence:.0%}")
+            blockers.append(
+                f"置信度不足: {trading_signal.confidence:.0%} < {self.min_confidence:.0%}"
+            )
 
         # 过滤3: 风险检查
         if self.enable_risk_filter:
@@ -343,15 +342,13 @@ class EnhancedTradingEngine:
             blockers.append("信号验证失败")
 
         # 过滤6: 市场状态检查
-        dangerous_states = [
-            MarketState.UNKNOWN
-        ]
+        dangerous_states = [MarketState.UNKNOWN]
         if market_analysis.state in dangerous_states:
             blockers.append(f"市场状态不确定: {market_analysis.state.value}")
 
         # 检查是否应该平仓（优先级更高）
         if current_position:
-            size = float(current_position.get('szi', 0))
+            size = float(current_position.get("szi", 0))
             if size > 0 and trading_signal.signal_type == SignalType.LONG_EXIT:
                 # 有多头仓位且收到平多信号，应该平仓
                 return True, "sell", []
@@ -369,7 +366,7 @@ class EnhancedTradingEngine:
         self,
         signal_confidence: float,
         risk_assessment: RiskAssessment,
-        market_analysis: MarketAnalysisResult
+        market_analysis: MarketAnalysisResult,
     ) -> float:
         """计算综合置信度"""
         # 信号置信度权重 50%
@@ -386,10 +383,7 @@ class EnhancedTradingEngine:
         return max(0, min(1, confidence))
 
     def _determine_decision_quality(
-        self,
-        trading_signal: TradingSignal,
-        overall_confidence: float,
-        blockers: list[str]
+        self, trading_signal: TradingSignal, overall_confidence: float, blockers: list[str]
     ) -> str:
         """确定决策质量"""
         if blockers:
@@ -397,7 +391,10 @@ class EnhancedTradingEngine:
 
         if overall_confidence >= 0.8 and trading_signal.quality == SignalQuality.EXCELLENT:
             return "excellent"
-        elif overall_confidence >= 0.6 and trading_signal.quality in [SignalQuality.EXCELLENT, SignalQuality.GOOD]:
+        elif overall_confidence >= 0.6 and trading_signal.quality in [
+            SignalQuality.EXCELLENT,
+            SignalQuality.GOOD,
+        ]:
             return "good"
         elif overall_confidence >= 0.4:
             return "fair"
@@ -412,7 +409,7 @@ class EnhancedTradingEngine:
         stop_loss: StopLossResult,
         take_profit: TakeProfitResult,
         position_size: PositionSizeResult,
-        decision_quality: str
+        decision_quality: str,
     ) -> str:
         """生成用于注入Prompt的综合分析文本"""
         lines = []
@@ -434,7 +431,9 @@ class EnhancedTradingEngine:
         lines.append(f"- 趋势强度: {market_analysis.trend.strength:.2f}")
         lines.append(f"- 均线排列: {market_analysis.trend.ma_alignment}")
         lines.append(f"- 波动状态: {market_analysis.volatility.volatility_state}")
-        lines.append(f"- RSI状态: {market_analysis.momentum.rsi_state} ({market_analysis.momentum.rsi_value:.1f})")
+        lines.append(
+            f"- RSI状态: {market_analysis.momentum.rsi_state} ({market_analysis.momentum.rsi_value:.1f})"
+        )
         lines.append(f"- MACD状态: {market_analysis.momentum.macd_state}")
         if market_analysis.momentum.macd_crossover:
             lines.append(f"- MACD交叉: {market_analysis.momentum.macd_crossover}")
@@ -444,13 +443,19 @@ class EnhancedTradingEngine:
         # 支撑阻力
         sr = market_analysis.support_resistance
         lines.append("## 关键价位")
-        lines.append(f"- 最近支撑: ${sr.nearest_support:.2f} (距离: {sr.price_to_support_pct:.1f}%)")
-        lines.append(f"- 最近阻力: ${sr.nearest_resistance:.2f} (距离: {sr.price_to_resistance_pct:.1f}%)")
+        lines.append(
+            f"- 最近支撑: ${sr.nearest_support:.2f} (距离: {sr.price_to_support_pct:.1f}%)"
+        )
+        lines.append(
+            f"- 最近阻力: ${sr.nearest_resistance:.2f} (距离: {sr.price_to_resistance_pct:.1f}%)"
+        )
         lines.append("")
 
         # 信号因子
         lines.append("## 信号因子分析")
-        for f in sorted(trading_signal.factors, key=lambda x: abs(x.contribution), reverse=True)[:4]:
+        for f in sorted(trading_signal.factors, key=lambda x: abs(x.contribution), reverse=True)[
+            :4
+        ]:
             direction = "📈" if f.score > 0 else "📉" if f.score < 0 else "➖"
             lines.append(f"- {direction} **{f.name}**: {f.description}")
         lines.append("")
@@ -539,34 +544,34 @@ def create_enhanced_engine_from_config(config: dict[str, Any]) -> EnhancedTradin
         EnhancedTradingEngine 实例
     """
     # 解析风险参数
-    risk_config = config.get('risk', {})
+    risk_config = config.get("risk", {})
     risk_params = RiskParameters(
-        max_risk_per_trade=risk_config.get('max_risk_per_trade', 0.02),
-        max_total_exposure=risk_config.get('max_total_exposure', 0.5),
-        max_single_position=risk_config.get('max_single_position', 0.2),
-        default_stop_loss_pct=risk_config.get('stop_loss_ratio', 0.02),
-        default_take_profit_pct=risk_config.get('take_profit_ratio', 0.05),
-        min_risk_reward_ratio=risk_config.get('min_risk_reward', 1.5),
-        atr_stop_loss_multiplier=risk_config.get('atr_sl_multiplier', 1.5),
-        atr_take_profit_multiplier=risk_config.get('atr_tp_multiplier', 3.0),
-        trailing_stop_enabled=risk_config.get('trailing_stop_enabled', True),
-        trailing_stop_distance_pct=risk_config.get('trailing_stop_distance', 0.015),
-        volatility_adjustment_enabled=risk_config.get('volatility_adjustment', True)
+        max_risk_per_trade=risk_config.get("max_risk_per_trade", 0.02),
+        max_total_exposure=risk_config.get("max_total_exposure", 0.5),
+        max_single_position=risk_config.get("max_single_position", 0.2),
+        default_stop_loss_pct=risk_config.get("stop_loss_ratio", 0.02),
+        default_take_profit_pct=risk_config.get("take_profit_ratio", 0.05),
+        min_risk_reward_ratio=risk_config.get("min_risk_reward", 1.5),
+        atr_stop_loss_multiplier=risk_config.get("atr_sl_multiplier", 1.5),
+        atr_take_profit_multiplier=risk_config.get("atr_tp_multiplier", 3.0),
+        trailing_stop_enabled=risk_config.get("trailing_stop_enabled", True),
+        trailing_stop_distance_pct=risk_config.get("trailing_stop_distance", 0.015),
+        volatility_adjustment_enabled=risk_config.get("volatility_adjustment", True),
     )
 
     # 解析信号权重
-    signal_config = config.get('signal', {})
-    signal_weights = signal_config.get('weights', None)
+    signal_config = config.get("signal", {})
+    signal_weights = signal_config.get("weights", None)
 
     # 解析过滤器配置
-    filter_config = config.get('filter', {})
-    min_quality_str = filter_config.get('min_signal_quality', 'fair')
+    filter_config = config.get("filter", {})
+    min_quality_str = filter_config.get("min_signal_quality", "fair")
     quality_map = {
-        'excellent': SignalQuality.EXCELLENT,
-        'good': SignalQuality.GOOD,
-        'fair': SignalQuality.FAIR,
-        'poor': SignalQuality.POOR,
-        'invalid': SignalQuality.INVALID
+        "excellent": SignalQuality.EXCELLENT,
+        "good": SignalQuality.GOOD,
+        "fair": SignalQuality.FAIR,
+        "poor": SignalQuality.POOR,
+        "invalid": SignalQuality.INVALID,
     }
     min_quality = quality_map.get(min_quality_str.lower(), SignalQuality.FAIR)
 
@@ -574,7 +579,7 @@ def create_enhanced_engine_from_config(config: dict[str, Any]) -> EnhancedTradin
         risk_params=risk_params,
         signal_weights=signal_weights,
         min_signal_quality=min_quality,
-        min_confidence=filter_config.get('min_confidence', 0.4),
-        enable_risk_filter=filter_config.get('enable_risk_filter', True),
-        enable_timing_filter=filter_config.get('enable_timing_filter', True)
+        min_confidence=filter_config.get("min_confidence", 0.4),
+        enable_risk_filter=filter_config.get("enable_risk_filter", True),
+        enable_timing_filter=filter_config.get("enable_timing_filter", True),
     )
