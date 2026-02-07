@@ -1,0 +1,70 @@
+{
+  "active_grids": {
+    "BTC": {
+      "config": {
+        "action": "UPDATE_GRID",
+        "lower_price": 63296.8,
+        "upper_price": 68010.4,
+        "grid_num": 8,
+        "amount_per_grid": 24.42,
+        "tp_ratio": 0.006,
+        "sl_ratio": 0.05,
+        "mode": "LONG",
+        "reason": "15\u5206\u949f\u548c1\u5206\u949f\u5747\u663e\u793a\u5f3a\u52bf\u4e0a\u6da8\uff0c1\u5c0f\u65f6\u867d\u4e0a\u6da8\u8f6c\u5f31\u4f46\u6574\u4f53\u4ecd\u504f\u5f3a\uff0c\u5f53\u524d\u4ef7\u683c\u63a5\u8fd1\u533a\u95f4\u4e0a\u6cbf\uff0c\u9002\u5408LONG\u6a21\u5f0f\u4ee5\u73b0\u4ef7\u4e3a\u9876\u90e8\u5411\u4e0b\u94fa\u4e70\u5355\uff0c\u6355\u6349\u56de\u8c03\u673a\u4f1a\u3002"
+      },
+      "buy_orders": [
+        {
+          "oid": 313972497914,
+          "px": 63296.8
+        },
+        {
+          "oid": 313972571848,
+          "px": 63949.6
+        }
+      ],
+      "sell_orders": [],
+      "last_sync": 1770388301.453679
+    },
+    "ETH": {
+      "config": {
+        "action": "UPDATE_GRID",
+        "lower_price": 1949.4,
+        "upper_price": 2094.5,
+        "grid_num": 8,
+        "amount_per_grid": 15.5,
+        "tp_ratio": 0.006,
+        "sl_ratio": 0.05,
+        "mode": "LONG",
+        "reason": "\u5f53\u524d\u4ef7\u683c $2073.8 \u63a5\u8fd1\u4e0a\u65b9\u963b\u529b\u4f4d $2100.3\uff0c15\u5206\u949f\u548c1\u5206\u949f\u8d8b\u52bf\u663e\u793a\u5f3a\u52bf\u4e0b\u8dcc\uff0c\u9884\u671f\u4ef7\u683c\u5c06\u56de\u8c03\u3002LONG \u6a21\u5f0f\u5c06\u7f51\u683c\u4ee5\u73b0\u4ef7\u4e3a\u9876\u90e8\u5411\u4e0b\u94fa\u4e70\u5355\uff0c\u9002\u5408\u9022\u4f4e\u5438\u7eb3\u3002"
+      },
+      "buy_orders": [
+        {
+          "oid": 314706998387,
+          "px": 1949.4
+        },
+        {
+          "oid": 314707021313,
+          "px": 1969.5
+        },
+        {
+          "oid": 314707050731,
+          "px": 1989.8
+        },
+        {
+          "oid": 314707073606,
+          "px": 2010.3
+        },
+        {
+          "oid": 314707116538,
+          "px": 2031.0
+        },
+        {
+          "oid": 314707146226,
+          "px": 2052.0
+        }
+      ],
+      "sell_orders": [],
+      "last_sync": 1770446807.009727
+    }
+  }
+}
