@@ -83,7 +83,7 @@ def parse_args():
     parser.add_argument(
         '--interval',
         type=int,
-        default=15,
+        default=5,
         help='决策间隔（分钟，默认: 15）'
     )
 
