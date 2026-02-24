@@ -162,17 +162,21 @@ class HyperliquidDataCollector:
             return ohlcv_df
 
         # 收集永续合约特征（当前时刻快照）
+        # 快照数据只能代表当前时刻，不可广播到历史时间点（否则会导致数据泄漏）
+        # 因此只将快照赋值给每个交易对的最新一条记录，历史记录填 NaN
         perp_features = self.collect_perpetual_features(symbols)
         if perp_features is not None:
-            # 将快照数据广播到所有时间点
-            # 注意：这是简化处理，真实场景需要历史资金费率数据
             for col in PERPETUAL_RAW_COLUMNS:
                 if col in perp_features.columns:
-                    ohlcv_df[f"${col}"] = 0.0  # 初始化列
+                    ohlcv_df[f"${col}"] = float("nan")  # 历史时间点无数据，填 NaN
                     for symbol in symbols:
                         if symbol in perp_features.index:
-                            mask = ohlcv_df.index.get_level_values("instrument") == symbol
-                            ohlcv_df.loc[mask, f"${col}"] = perp_features.loc[symbol, col]
+                            sym_mask = ohlcv_df.index.get_level_values("instrument") == symbol
+                            sym_rows = ohlcv_df.loc[sym_mask]
+                            if not sym_rows.empty:
+                                # 只赋值给最新一条记录
+                                latest_idx = sym_rows.index[-1]
+                                ohlcv_df.loc[latest_idx, f"${col}"] = perp_features.loc[symbol, col]
 
         logger.info(f"完整数据集收集完成: {ohlcv_df.shape}")
         return ohlcv_df

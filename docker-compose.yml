@@ -85,13 +85,7 @@ services:
     # Commented out as the app may need to write temporary files
     # read_only: true
 
-    # Health check（slim 镜像无 pgrep，使用 python 检测进程）
-    healthcheck:
-      test: ["CMD", "python", "-c", "import os,sys; pids=[p for p in os.listdir('/proc') if p.isdigit()]; cmds=[open(f'/proc/{p}/cmdline').read() for p in pids if os.path.exists(f'/proc/{p}/cmdline')]; sys.exit(0 if any('main.py' in c for c in cmds) else 1)"]
-      interval: 60s
-      timeout: 10s
-      start_period: 60s
-      retries: 3
+    # Health check 由 Dockerfile 中的 HEALTHCHECK 指令定义，此处不重复配置
 
 networks:
   quant-network:
