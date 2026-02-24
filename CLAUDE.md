@@ -1,6 +1,32 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 Claude Code (claude.ai/code) 在本仓库中工作时提供指导。
+
+---
+
+## 宪法（Constitution）
+
+> **以下条款具有最高优先级，适用于本项目的所有开发活动，不可被其他规则覆盖。**
+
+### 第一条：官方语言
+
+本项目的官方沟通语言为**中文**。所有文档、代码注释、提交信息（commit message）、PR 描述、Issue 讨论、变量命名说明、日志输出、以及与 AI 助手的交互，**必须使用中文**。禁止使用非中文语言进行沟通和文档编写。
+
+**具体要求：**
+- 所有 `.md` 文档必须使用中文撰写
+- 代码注释和 docstring 必须使用中文
+- Git commit message 必须使用中文
+- PR/Issue 标题和描述必须使用中文
+- 日志输出信息必须使用中文
+- 配置文件中的说明注释必须使用中文
+- 与 Claude Code 的所有交互必须使用中文回复
+
+**例外情况：**
+- 代码中的变量名、函数名、类名等标识符使用英文（遵循 Python 编码规范）
+- 第三方库的 API 调用和技术术语可保留英文原文
+- 国际通用的技术缩写（如 API、SDK、LLM、OHLCV 等）可使用英文
+
+---
 
 ## 项目概述
 
