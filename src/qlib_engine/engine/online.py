@@ -5,16 +5,21 @@
 确保模型随市场变化持续适应，避免模型老化。
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from ..data.collector import HyperliquidDataCollector
 from ..data.handler import CryptoAlpha158
 from ..model.evaluator import ModelEvaluator
 from ..model.trainer import QLibModelTrainer
+
+if TYPE_CHECKING:
+    from ..data.collector import HyperliquidDataCollector
 
 logger = logging.getLogger("QuantFlow.QLib")
 

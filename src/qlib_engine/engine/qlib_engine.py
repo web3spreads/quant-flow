@@ -5,19 +5,24 @@ QLib 核心引擎
 提供统一的接口供 main.py 调用。
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from ..data.collector import HyperliquidDataCollector
 from ..data.handler import CryptoAlpha158
 from ..model.evaluator import ModelEvaluator
 from ..model.predictor import SignalPredictor
 from ..model.trainer import QLibModelTrainer
 from ..strategy.risk_integrator import RiskIntegrator
 from ..strategy.signal_strategy import QLibSignalStrategy, TradeDecision
+
+if TYPE_CHECKING:
+    from ..data.collector import HyperliquidDataCollector
 
 logger = logging.getLogger("QuantFlow.QLib")
 
@@ -93,6 +98,7 @@ class QuantFlowQLibEngine:
         risk_config = self.config.get("risk_integration", {})
 
         # 初始化数据层
+        from ..data.collector import HyperliquidDataCollector
         self.collector = HyperliquidDataCollector(testnet=testnet)
         self.handler = CryptoAlpha158(
             include_perpetual=data_config.get("include_perpetual", True),

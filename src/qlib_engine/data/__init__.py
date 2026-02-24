@@ -6,7 +6,6 @@ QLib 数据层
 """
 
 from .calendar import CryptoCalendar
-from .collector import HyperliquidDataCollector
 from .handler import CryptoAlpha158
 from .perpetual import PERPETUAL_FEATURE_CONFIG
 
@@ -16,3 +15,11 @@ __all__ = [
     "CryptoAlpha158",
     "PERPETUAL_FEATURE_CONFIG",
 ]
+
+
+def __getattr__(name):
+    """延迟导入依赖外部 SDK 的模块"""
+    if name == "HyperliquidDataCollector":
+        from .collector import HyperliquidDataCollector
+        return HyperliquidDataCollector
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

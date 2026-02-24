@@ -6,7 +6,6 @@ QLib 为主脑（数据驱动、可量化、可回测），LLM 为顾问（情�
 """
 
 from .engine.experiment import ExperimentManager
-from .engine.online import OnlineModelManager
 from .engine.qlib_engine import QuantFlowQLibEngine
 
 __all__ = [
@@ -14,3 +13,11 @@ __all__ = [
     "OnlineModelManager",
     "ExperimentManager",
 ]
+
+
+def __getattr__(name):
+    """延迟导入依赖外部 SDK 的模块"""
+    if name == "OnlineModelManager":
+        from .engine.online import OnlineModelManager
+        return OnlineModelManager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

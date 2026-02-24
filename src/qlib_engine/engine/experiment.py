@@ -138,7 +138,7 @@ class ExperimentManager:
         Returns:
             实验记录对象
         """
-        experiment_id = f"{experiment_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        experiment_id = f"{experiment_type}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
         record = ExperimentRecord(experiment_id, experiment_type)
 
         if tags:

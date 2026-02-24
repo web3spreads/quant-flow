@@ -5,7 +5,6 @@ QLib 引擎层
 """
 
 from .experiment import ExperimentManager, ExperimentRecord
-from .online import OnlineModelManager
 from .qlib_engine import QuantFlowQLibEngine
 
 __all__ = [
@@ -14,3 +13,11 @@ __all__ = [
     "ExperimentManager",
     "ExperimentRecord",
 ]
+
+
+def __getattr__(name):
+    """延迟导入 OnlineModelManager（依赖链较深）"""
+    if name == "OnlineModelManager":
+        from .online import OnlineModelManager
+        return OnlineModelManager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
