@@ -15,7 +15,7 @@
 **具体要求：**
 - 所有 `.md` 文档必须使用中文撰写
 - 代码注释和 docstring 必须使用中文
-- Git commit message 必须使用中文
+- Git commit message 必须使用英文分类前缀开头（如 `feat:`, `fix:`, `hotfix:`, `refactor:`, `docs:`, `style:`, `test:`, `chore:`, `perf:`, `ci:`, `build:`, `revert:`），分类前缀后的描述内容使用中文。禁止使用中文分类前缀（如"功能:"、"修复:"等）
 - PR/Issue 标题和描述必须使用中文
 - 日志输出信息必须使用中文
 - 配置文件中的说明注释必须使用中文
@@ -25,6 +25,7 @@
 - 代码中的变量名、函数名、类名等标识符使用英文（遵循 Python 编码规范）
 - 第三方库的 API 调用和技术术语可保留英文原文
 - 国际通用的技术缩写（如 API、SDK、LLM、OHLCV 等）可使用英文
+- Git commit message 的分类前缀必须使用英文（如 `feat:`, `fix:`, `hotfix:` 等）
 
 ---
 
