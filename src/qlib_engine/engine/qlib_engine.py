@@ -194,7 +194,7 @@ class QuantFlowQLibEngine:
             )
             return True
         except Exception as e:
-            logger.warning(f"加载已有模型失败: {e}")
+            logger.warning(f"加载已有模型失败: {e}", exc_info=True)
             return False
 
     def prepare_and_train(

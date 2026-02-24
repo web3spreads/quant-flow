@@ -88,8 +88,8 @@ class HyperliquidDataCollector:
             df = pd.read_parquet(path)
             logger.info(f"加载本地数据: {symbol}_{freq}, {len(df)} 行")
             return df
-        except Exception as e:
-            logger.warning(f"加载本地数据失败 ({path}): {e}")
+        except Exception:
+            logger.warning(f"加载本地数据失败 ({path})", exc_info=True)
             return pd.DataFrame()
 
     def _save_local_data(self, symbol: str, freq: str, df: pd.DataFrame) -> None:
@@ -111,8 +111,8 @@ class HyperliquidDataCollector:
             df = df.sort_values("timestamp").reset_index(drop=True)
             df.to_parquet(path, index=False)
             logger.info(f"保存本地数据: {symbol}_{freq}, {len(df)} 行 → {path}")
-        except Exception as e:
-            logger.warning(f"保存本地数据失败 ({path}): {e}")
+        except Exception:
+            logger.warning(f"保存本地数据失败 ({path})", exc_info=True)
 
     def collect_ohlcv(
         self,
