@@ -27,7 +27,7 @@ WORKDIR /app
 
 # Create non-root user for security
 RUN useradd -m -u 1000 -s /bin/bash quantflow && \
-    mkdir -p /app/logs/decisions /app/logs/trades && \
+    mkdir -p /app/logs/decisions /app/logs/trades /app/models/qlib && \
     chown -R quantflow:quantflow /app
 
 # Copy uv binary and virtual environment from builder

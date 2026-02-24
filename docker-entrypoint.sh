@@ -41,6 +41,16 @@ else
     echo -e "${GREEN}✅ logs 目录创建完成${NC}"
 fi
 
+# 检查并修复 models 目录权限（QLib 模型存储）
+MODELS_DIR="/app/models"
+echo -e "${YELLOW}📁 检查 models 目录权限...${NC}"
+mkdir -p "$MODELS_DIR/qlib" 2>/dev/null || true
+if [ -d "$MODELS_DIR" ] && [ ! -w "$MODELS_DIR/qlib" ]; then
+    echo -e "${YELLOW}⚠️  models/qlib 目录权限不足，尝试修复...${NC}"
+    chmod -R u+w "$MODELS_DIR" 2>/dev/null || true
+fi
+echo -e "${GREEN}✅ models 目录权限检查完成${NC}"
+
 # 验证必要的配置文件
 echo -e "${YELLOW}📋 检查配置文件...${NC}"
 
