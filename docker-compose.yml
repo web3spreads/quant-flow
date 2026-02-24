@@ -10,6 +10,11 @@ services:
 
     # Environment variables (override with .env file)
     environment:
+      # 容器运行用户 UID/GID，设置为宿主机用户的 id 以解决挂载卷权限问题
+      # 获取方式: id -u (UID), id -g (GID)
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+
       # LLM Client Configuration
       # OpenAI/DeepSeek API Configuration
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -49,8 +54,7 @@ services:
       - ./prompts:/app/prompts:ro
 
       # Logs directory (persistent, read-write)
-      # IMPORTANT: Run ./init-deployment.sh first to set correct permissions
-      # Or manually: chmod -R 777 ./logs
+      # 容器 entrypoint 会根据 PUID/PGID 自动修复权限，无需手动 chmod
       - ./logs:/app/logs
 
       # Optional: Mount .env file if you prefer file-based config

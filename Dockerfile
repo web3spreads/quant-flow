@@ -25,9 +25,15 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Create non-root user for security
-RUN useradd -m -u 1000 -s /bin/bash quantflow && \
-    mkdir -p /app/logs/decisions /app/logs/trades /app/models/qlib && \
+# 安装 gosu 和 shadow（gosu 用于安全降权，shadow 提供 usermod/groupmod）
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && gosu nobody true
+
+# 创建默认运行用户（PUID/PGID 环境变量可在运行时覆盖 uid/gid）
+RUN groupadd -g 1000 quantflow && \
+    useradd -m -u 1000 -g quantflow -s /bin/bash quantflow && \
+    mkdir -p /app/logs/decisions /app/logs/trades /app/models/qlib /app/data/qlib /app/experiments && \
     chown -R quantflow:quantflow /app
 
 # Copy uv binary and virtual environment from builder
@@ -35,16 +41,13 @@ COPY --from=builder /bin/uv /bin/uv
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
-COPY --chown=quantflow:quantflow . .
+COPY . .
 
 # Copy and set permissions for entrypoint script
-COPY --chown=quantflow:quantflow docker-entrypoint.sh /usr/local/bin/
+COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Switch to non-root user
-USER quantflow
-
-# Set environment variables
+# 不设置 USER —— entrypoint 以 root 启动，动态匹配 PUID/PGID 后降权运行
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     LOG_LEVEL=INFO \
@@ -54,5 +57,4 @@ ENV PYTHONUNBUFFERED=1 \
 HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import os,sys; pids=[p for p in os.listdir('/proc') if p.isdigit()]; cmds=[open(f'/proc/{p}/cmdline').read() for p in pids if os.path.exists(f'/proc/{p}/cmdline')]; sys.exit(0 if any('main.py' in c for c in cmds) else 1)"
 
-# Use entrypoint script to handle permissions and startup
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

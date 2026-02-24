@@ -5,53 +5,63 @@ set -e
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
+
+APP_USER="quantflow"
+APP_GROUP="quantflow"
+
+# 需要写入权限的目录列表
+WRITABLE_DIRS=(
+    "/app/logs"
+    "/app/logs/decisions"
+    "/app/logs/trades"
+    "/app/models"
+    "/app/models/qlib"
+    "/app/data/qlib"
+    "/app/experiments"
+)
 
 echo -e "${GREEN}🚀 启动 Quant Flow 容器...${NC}"
 
-# 检查并修复 logs 目录权限
-LOGS_DIR="/app/logs"
+# ========== 动态 UID/GID 匹配 ==========
+# 读取环境变量，默认 1000
+PUID=${PUID:-1000}
+PGID=${PGID:-1000}
 
-if [ -d "$LOGS_DIR" ]; then
-    echo -e "${YELLOW}📁 检查 logs 目录权限...${NC}"
+CUR_UID=$(id -u "$APP_USER")
+CUR_GID=$(getent group "$APP_GROUP" | cut -d: -f3)
 
-    # 检查当前用户是否可以写入
-    if [ ! -w "$LOGS_DIR" ]; then
-        echo -e "${YELLOW}⚠️  logs 目录权限不足，尝试修复...${NC}"
+echo -e "${YELLOW}📋 运行用户: ${APP_USER} (目标 UID=${PUID}, GID=${PGID}; 当前 UID=${CUR_UID}, GID=${CUR_GID})${NC}"
 
-        # 尝试修复权限（这在某些情况下可能需要 root 权限）
-        chmod -R u+w "$LOGS_DIR" 2>/dev/null || {
-            echo -e "${RED}❌ 无法修复 logs 目录权限${NC}"
-            echo -e "${YELLOW}💡 解决方案：${NC}"
-            echo -e "   1. 停止容器: docker-compose down"
-            echo -e "   2. 修复权限: chmod -R 777 ./logs"
-            echo -e "   3. 重启容器: docker-compose up -d"
-            exit 1
-        }
-    fi
-
-    # 确保子目录也可写
-    mkdir -p "$LOGS_DIR/decisions" "$LOGS_DIR/trades"
-    chmod -R u+w "$LOGS_DIR/decisions" "$LOGS_DIR/trades" 2>/dev/null || true
-
-    echo -e "${GREEN}✅ logs 目录权限检查完成${NC}"
-else
-    echo -e "${YELLOW}📁 创建 logs 目录...${NC}"
-    mkdir -p "$LOGS_DIR/decisions" "$LOGS_DIR/trades"
-    echo -e "${GREEN}✅ logs 目录创建完成${NC}"
+# 如果 GID 不匹配，修改组 ID
+if [ "$PGID" != "$CUR_GID" ]; then
+    echo -e "${YELLOW}🔧 调整 GID: ${CUR_GID} -> ${PGID}${NC}"
+    groupmod -o -g "$PGID" "$APP_GROUP"
 fi
 
-# 检查并修复 models 目录权限（QLib 模型存储）
-MODELS_DIR="/app/models"
-echo -e "${YELLOW}📁 检查 models 目录权限...${NC}"
-mkdir -p "$MODELS_DIR/qlib" 2>/dev/null || true
-if [ -d "$MODELS_DIR" ] && [ ! -w "$MODELS_DIR/qlib" ]; then
-    echo -e "${YELLOW}⚠️  models/qlib 目录权限不足，尝试修复...${NC}"
-    chmod -R u+w "$MODELS_DIR" 2>/dev/null || true
+# 如果 UID 不匹配，修改用户 ID
+if [ "$PUID" != "$CUR_UID" ]; then
+    echo -e "${YELLOW}🔧 调整 UID: ${CUR_UID} -> ${PUID}${NC}"
+    usermod -o -u "$PUID" "$APP_USER"
 fi
-echo -e "${GREEN}✅ models 目录权限检查完成${NC}"
 
-# 验证必要的配置文件
+# ========== 修复可写目录权限 ==========
+echo -e "${YELLOW}📁 修复可写目录权限...${NC}"
+
+for dir in "${WRITABLE_DIRS[@]}"; do
+    mkdir -p "$dir"
+    chown "$PUID:$PGID" "$dir"
+done
+
+# 修复已有日志文件的归属（仅修改属主不匹配的文件，避免大量无效操作）
+find /app/logs -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
+find /app/models -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
+find /app/data/qlib -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
+find /app/experiments -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
+
+echo -e "${GREEN}✅ 目录权限修复完成${NC}"
+
+# ========== 验证配置文件 ==========
 echo -e "${YELLOW}📋 检查配置文件...${NC}"
 
 if [ ! -f "/app/config.yaml" ]; then
@@ -62,8 +72,8 @@ fi
 
 echo -e "${GREEN}✅ 配置文件检查完成${NC}"
 
-# 启动应用程序
-echo -e "${GREEN}🎯 启动应用程序...${NC}"
+# ========== 降权启动应用 ==========
+echo -e "${GREEN}🎯 以 ${APP_USER}(UID=${PUID}, GID=${PGID}) 启动应用程序...${NC}"
 echo ""
 
-exec python main.py
+exec gosu "$APP_USER" python main.py

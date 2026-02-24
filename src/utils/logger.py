@@ -344,11 +344,14 @@ class TradingLogger:
             "error_message": error_message,
         }
 
-        # 根据格式保存
-        if self.decision_log_format == "json":
-            self._save_decision_json(timestamp, log_entry)
-        else:
-            self._save_decision_csv(timestamp, log_entry)
+        # 根据格式保存（日志写入失败不应影响主流程）
+        try:
+            if self.decision_log_format == "json":
+                self._save_decision_json(timestamp, log_entry)
+            else:
+                self._save_decision_csv(timestamp, log_entry)
+        except OSError as e:
+            self.logger.warning(f"决策日志写入失败: {e}")
 
     def _save_decision_json(self, timestamp: datetime, log_entry: dict[str, Any]):
         """保存决策日志为 JSON 格式"""
