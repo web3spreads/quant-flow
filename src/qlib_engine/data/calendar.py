@@ -94,8 +94,10 @@ class CryptoCalendar:
             timestamps.append(current)
             current += self.delta
 
-        logger.info(f"生成加密货币日历: {len(timestamps)} 个时间点 ({self.freq}), "
-                     f"{start.strftime('%Y-%m-%d')} ~ {end.strftime('%Y-%m-%d')}")
+        logger.info(
+            f"生成加密货币日历: {len(timestamps)} 个时间点 ({self.freq}), "
+            f"{start.strftime('%Y-%m-%d')} ~ {end.strftime('%Y-%m-%d')}"
+        )
         return timestamps
 
     def generate_index(

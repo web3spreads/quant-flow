@@ -19,5 +19,6 @@ def __getattr__(name):
     """延迟导入 OnlineModelManager（依赖链较深）"""
     if name == "OnlineModelManager":
         from .online import OnlineModelManager
+
         return OnlineModelManager
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

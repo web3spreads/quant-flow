@@ -21,5 +21,6 @@ def __getattr__(name):
     """延迟导入依赖外部 SDK 的模块"""
     if name == "HyperliquidDataCollector":
         from .collector import HyperliquidDataCollector
+
         return HyperliquidDataCollector
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

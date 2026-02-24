@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -166,13 +165,16 @@ class OnlineModelManager:
 
         # 4. 训练新模型
         new_models = self.trainer.train_all(
-            X_train, y_train, X_valid, y_valid,
+            X_train,
+            y_train,
+            X_valid,
+            y_valid,
             model_types=self.model_candidates,
         )
 
         # 5. 评估新模型
         evaluation_results = {}
-        for model_type, model in new_models.items():
+        for model_type, _model in new_models.items():
             pred = self.trainer.predict(model_type, X_test)
             eval_result = self.evaluator.evaluate(pred, y_test, freq=freq)
             evaluation_results[model_type] = eval_result
@@ -200,7 +202,7 @@ class OnlineModelManager:
             self._model_versions.append(version_info)
             # 保持版本数量限制
             if len(self._model_versions) > self._max_versions:
-                self._model_versions = self._model_versions[-self._max_versions:]
+                self._model_versions = self._model_versions[-self._max_versions :]
 
             self.trainer.save_model(best_model, tag=f"v{self._current_version}")
             logger.info(
@@ -213,11 +215,13 @@ class OnlineModelManager:
         # 更新状态
         self._last_retrain_time = datetime.now()
         self._retrain_count += 1
-        self._performance_history.append({
-            "timestamp": datetime.now().isoformat(),
-            "evaluation": evaluation_results,
-            "switched": should_switch,
-        })
+        self._performance_history.append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "evaluation": evaluation_results,
+                "switched": should_switch,
+            }
+        )
 
         # 更新数据缓存
         for symbol in symbols:
@@ -268,7 +272,7 @@ class OnlineModelManager:
         threshold = self.config.get("switch_threshold", 0.8)
         if new_icir < prev_icir * threshold:
             logger.info(
-                f"新模型 ICIR ({new_icir:.4f}) 不及旧模型 ({prev_icir:.4f}) 的 {threshold*100}%"
+                f"新模型 ICIR ({new_icir:.4f}) 不及旧模型 ({prev_icir:.4f}) 的 {threshold * 100}%"
             )
             return False
 
@@ -337,14 +341,16 @@ class OnlineModelManager:
         records = []
         for entry in self._performance_history:
             for model_type, eval_result in entry.get("evaluation", {}).items():
-                records.append({
-                    "timestamp": entry["timestamp"],
-                    "model": model_type,
-                    "IC": eval_result.get("IC", 0),
-                    "ICIR": eval_result.get("ICIR", 0),
-                    "夏普比率": eval_result.get("夏普比率", 0),
-                    "switched": entry["switched"],
-                })
+                records.append(
+                    {
+                        "timestamp": entry["timestamp"],
+                        "model": model_type,
+                        "IC": eval_result.get("IC", 0),
+                        "ICIR": eval_result.get("ICIR", 0),
+                        "夏普比率": eval_result.get("夏普比率", 0),
+                        "switched": entry["switched"],
+                    }
+                )
 
         return pd.DataFrame(records)
 

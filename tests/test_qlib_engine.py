@@ -41,7 +41,6 @@ from src.qlib_engine.model.trainer import QLibModelTrainer
 from src.qlib_engine.strategy.risk_integrator import RiskIntegrator
 from src.qlib_engine.strategy.signal_strategy import QLibSignalStrategy, TradeDecision
 
-
 # ============================================================
 # 公共 Fixtures
 # ============================================================
@@ -57,13 +56,16 @@ def sample_ohlcv_df():
     close_prices = base_price + np.cumsum(np.random.randn(n) * 100)
     close_prices = np.maximum(close_prices, 1000)  # 保证正值
 
-    df = pd.DataFrame({
-        "$open": close_prices + np.random.randn(n) * 50,
-        "$high": close_prices + abs(np.random.randn(n) * 200),
-        "$low": close_prices - abs(np.random.randn(n) * 200),
-        "$close": close_prices,
-        "$volume": np.random.uniform(1e6, 5e6, n),
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "$open": close_prices + np.random.randn(n) * 50,
+            "$high": close_prices + abs(np.random.randn(n) * 200),
+            "$low": close_prices - abs(np.random.randn(n) * 200),
+            "$close": close_prices,
+            "$volume": np.random.uniform(1e6, 5e6, n),
+        },
+        index=dates,
+    )
     df.index.name = "datetime"
 
     # 确保 high >= open, close 且 low <= open, close
@@ -213,9 +215,12 @@ class TestPerpetualFactors:
     def test_feature_config_structure(self):
         """测试因子配置结构正确（表达式, 名称）"""
         for config_list in [
-            KBAR_FEATURE_CONFIG, PRICE_FEATURE_CONFIG,
-            MA_FEATURE_CONFIG, VOLATILITY_FEATURE_CONFIG,
-            ROLLING_FEATURE_CONFIG, CORRELATION_FEATURE_CONFIG,
+            KBAR_FEATURE_CONFIG,
+            PRICE_FEATURE_CONFIG,
+            MA_FEATURE_CONFIG,
+            VOLATILITY_FEATURE_CONFIG,
+            ROLLING_FEATURE_CONFIG,
+            CORRELATION_FEATURE_CONFIG,
             PERPETUAL_FEATURE_CONFIG,
         ]:
             for item in config_list:
@@ -430,7 +435,8 @@ class TestQLibModelTrainer:
         trainer = QLibModelTrainer(model_dir=tmp_dir)
 
         results = trainer.train_all(
-            X.iloc[:200], y.iloc[:200],
+            X.iloc[:200],
+            y.iloc[:200],
             model_types=["linear"],
         )
         assert "linear" in results
@@ -564,6 +570,7 @@ class TestSignalPredictor:
         X, y = sample_features_and_labels
         # 训练一个简单模型
         from sklearn.linear_model import Ridge
+
         model = Ridge()
         model.fit(X.iloc[:200], y.iloc[:200])
 
@@ -627,18 +634,30 @@ class TestTradingSignal:
     def test_is_actionable_neutral(self):
         """中性信号不可执行"""
         signal = TradingSignal(
-            symbol="BTC", raw_score=0.0, normalized_score=0.1,
-            direction=SignalDirection.NEUTRAL, strength=0.1,
-            confidence=0.5, percentile=0.5, model_type="test", feature_count=10,
+            symbol="BTC",
+            raw_score=0.0,
+            normalized_score=0.1,
+            direction=SignalDirection.NEUTRAL,
+            strength=0.1,
+            confidence=0.5,
+            percentile=0.5,
+            model_type="test",
+            feature_count=10,
         )
         assert not signal.is_actionable
 
     def test_is_actionable_strong(self):
         """强信号可执行"""
         signal = TradingSignal(
-            symbol="BTC", raw_score=0.05, normalized_score=0.8,
-            direction=SignalDirection.STRONG_LONG, strength=0.8,
-            confidence=0.7, percentile=0.9, model_type="test", feature_count=10,
+            symbol="BTC",
+            raw_score=0.05,
+            normalized_score=0.8,
+            direction=SignalDirection.STRONG_LONG,
+            strength=0.8,
+            confidence=0.7,
+            percentile=0.9,
+            model_type="test",
+            feature_count=10,
         )
         assert signal.is_actionable
         assert signal.is_long
@@ -647,9 +666,15 @@ class TestTradingSignal:
     def test_is_short(self):
         """做空信号识别"""
         signal = TradingSignal(
-            symbol="ETH", raw_score=-0.05, normalized_score=-0.6,
-            direction=SignalDirection.SHORT, strength=0.6,
-            confidence=0.6, percentile=0.2, model_type="test", feature_count=10,
+            symbol="ETH",
+            raw_score=-0.05,
+            normalized_score=-0.6,
+            direction=SignalDirection.SHORT,
+            strength=0.6,
+            confidence=0.6,
+            percentile=0.2,
+            model_type="test",
+            feature_count=10,
         )
         assert signal.is_short
         assert not signal.is_long
@@ -657,9 +682,15 @@ class TestTradingSignal:
     def test_to_dict(self):
         """测试序列化"""
         signal = TradingSignal(
-            symbol="BTC", raw_score=0.01, normalized_score=0.5,
-            direction=SignalDirection.LONG, strength=0.5,
-            confidence=0.6, percentile=0.7, model_type="linear", feature_count=50,
+            symbol="BTC",
+            raw_score=0.01,
+            normalized_score=0.5,
+            direction=SignalDirection.LONG,
+            strength=0.5,
+            confidence=0.6,
+            percentile=0.7,
+            model_type="linear",
+            feature_count=50,
         )
         d = signal.to_dict()
         assert d["symbol"] == "BTC"
@@ -688,25 +719,43 @@ class TestQLibSignalStrategy:
     @pytest.fixture
     def strong_long_signal(self):
         return TradingSignal(
-            symbol="BTC", raw_score=0.05, normalized_score=0.8,
-            direction=SignalDirection.STRONG_LONG, strength=0.8,
-            confidence=0.7, percentile=0.9, model_type="lightgbm", feature_count=50,
+            symbol="BTC",
+            raw_score=0.05,
+            normalized_score=0.8,
+            direction=SignalDirection.STRONG_LONG,
+            strength=0.8,
+            confidence=0.7,
+            percentile=0.9,
+            model_type="lightgbm",
+            feature_count=50,
         )
 
     @pytest.fixture
     def weak_neutral_signal(self):
         return TradingSignal(
-            symbol="BTC", raw_score=0.001, normalized_score=0.1,
-            direction=SignalDirection.NEUTRAL, strength=0.1,
-            confidence=0.5, percentile=0.5, model_type="lightgbm", feature_count=50,
+            symbol="BTC",
+            raw_score=0.001,
+            normalized_score=0.1,
+            direction=SignalDirection.NEUTRAL,
+            strength=0.1,
+            confidence=0.5,
+            percentile=0.5,
+            model_type="lightgbm",
+            feature_count=50,
         )
 
     @pytest.fixture
     def short_signal(self):
         return TradingSignal(
-            symbol="ETH", raw_score=-0.03, normalized_score=-0.6,
-            direction=SignalDirection.SHORT, strength=0.6,
-            confidence=0.6, percentile=0.2, model_type="lightgbm", feature_count=50,
+            symbol="ETH",
+            raw_score=-0.03,
+            normalized_score=-0.6,
+            direction=SignalDirection.SHORT,
+            strength=0.6,
+            confidence=0.6,
+            percentile=0.2,
+            model_type="lightgbm",
+            feature_count=50,
         )
 
     def test_generate_decision_buy(self, strategy, strong_long_signal):
@@ -774,9 +823,15 @@ class TestQLibSignalStrategy:
     def test_risk_reward_ratio_minimum(self, strategy):
         """测试风险回报比最低限制"""
         weak_signal = TradingSignal(
-            symbol="BTC", raw_score=0.01, normalized_score=0.35,
-            direction=SignalDirection.WEAK_LONG, strength=0.35,
-            confidence=0.4, percentile=0.6, model_type="test", feature_count=10,
+            symbol="BTC",
+            raw_score=0.01,
+            normalized_score=0.35,
+            direction=SignalDirection.WEAK_LONG,
+            strength=0.35,
+            confidence=0.4,
+            percentile=0.6,
+            model_type="test",
+            feature_count=10,
         )
         sl, tp = strategy._calculate_stop_levels(weak_signal, None)
         assert tp / (sl + 1e-12) >= 1.5
@@ -784,9 +839,15 @@ class TestQLibSignalStrategy:
     def test_trade_decision_to_dict(self):
         """测试 TradeDecision 序列化"""
         decision = TradeDecision(
-            symbol="BTC", action="buy", should_trade=True,
-            direction="long", signal_strength=0.7, confidence=0.6,
-            suggested_size_pct=0.2, stop_loss_pct=0.02, take_profit_pct=0.06,
+            symbol="BTC",
+            action="buy",
+            should_trade=True,
+            direction="long",
+            signal_strength=0.7,
+            confidence=0.6,
+            suggested_size_pct=0.2,
+            stop_loss_pct=0.02,
+            take_profit_pct=0.06,
             reasoning=["测试理由"],
         )
         d = decision.to_dict()
@@ -805,9 +866,15 @@ class TestRiskIntegrator:
     @pytest.fixture
     def buy_decision(self):
         return TradeDecision(
-            symbol="BTC", action="buy", should_trade=True,
-            direction="long", signal_strength=0.7, confidence=0.6,
-            suggested_size_pct=0.2, stop_loss_pct=0.02, take_profit_pct=0.06,
+            symbol="BTC",
+            action="buy",
+            should_trade=True,
+            direction="long",
+            signal_strength=0.7,
+            confidence=0.6,
+            suggested_size_pct=0.2,
+            stop_loss_pct=0.02,
+            take_profit_pct=0.06,
         )
 
     def test_no_risk_modules(self, integrator, buy_decision):
@@ -819,9 +886,15 @@ class TestRiskIntegrator:
     def test_skip_non_trade_decision(self, integrator):
         """测试非交易决策跳过风控"""
         hold_decision = TradeDecision(
-            symbol="BTC", action="hold", should_trade=False,
-            direction="neutral", signal_strength=0, confidence=0,
-            suggested_size_pct=0, stop_loss_pct=0, take_profit_pct=0,
+            symbol="BTC",
+            action="hold",
+            should_trade=False,
+            direction="neutral",
+            signal_strength=0,
+            confidence=0,
+            suggested_size_pct=0,
+            stop_loss_pct=0,
+            take_profit_pct=0,
         )
         result = integrator.apply_risk_controls(hold_decision)
         assert result.should_trade is False
@@ -836,9 +909,15 @@ class TestRiskIntegrator:
 
         integrator = RiskIntegrator(account_protector=mock_protector, qlib_weight=0.7)
         decision = TradeDecision(
-            symbol="BTC", action="buy", should_trade=True,
-            direction="long", signal_strength=0.7, confidence=0.6,
-            suggested_size_pct=0.2, stop_loss_pct=0.02, take_profit_pct=0.06,
+            symbol="BTC",
+            action="buy",
+            should_trade=True,
+            direction="long",
+            signal_strength=0.7,
+            confidence=0.6,
+            suggested_size_pct=0.2,
+            stop_loss_pct=0.02,
+            take_profit_pct=0.06,
         )
 
         result = integrator.apply_risk_controls(
@@ -855,9 +934,15 @@ class TestRiskIntegrator:
 
         integrator = RiskIntegrator(position_sizer=mock_sizer, qlib_weight=0.7)
         decision = TradeDecision(
-            symbol="BTC", action="buy", should_trade=True,
-            direction="long", signal_strength=0.7, confidence=0.6,
-            suggested_size_pct=0.2, stop_loss_pct=0.02, take_profit_pct=0.06,
+            symbol="BTC",
+            action="buy",
+            should_trade=True,
+            direction="long",
+            signal_strength=0.7,
+            confidence=0.6,
+            suggested_size_pct=0.2,
+            stop_loss_pct=0.02,
+            take_profit_pct=0.06,
         )
 
         result = integrator.apply_risk_controls(
@@ -1046,9 +1131,7 @@ class TestOnlineModelManager:
 
     def test_should_switch_model_bad_quality(self, online_manager):
         """测试质量不达标不切换"""
-        online_manager._model_versions = [
-            {"evaluation": {"ICIR": 1.0, "IC": 0.05}}
-        ]
+        online_manager._model_versions = [{"evaluation": {"ICIR": 1.0, "IC": 0.05}}]
         # IC 和 ICIR 都为负，不应切换
         assert online_manager._should_switch_model({"ICIR": -0.1, "IC": -0.01}) is False
 
@@ -1070,18 +1153,20 @@ class TestQuantFlowQLibEngine:
 
     @pytest.fixture
     def engine(self):
-        return QuantFlowQLibEngine(config={
-            "data": {"freq": "1h", "include_perpetual": False, "label_periods": 5},
-            "model": {"model_dir": tempfile.mkdtemp(), "candidates": ["linear"]},
-            "strategy": {
-                "signal_threshold": 0.3,
-                "max_position_pct": 0.3,
-                "default_stop_loss_pct": 0.02,
-                "default_take_profit_pct": 0.06,
-                "min_confidence": 0.3,
-            },
-            "risk_integration": {"qlib_signal_weight": 0.7},
-        })
+        return QuantFlowQLibEngine(
+            config={
+                "data": {"freq": "1h", "include_perpetual": False, "label_periods": 5},
+                "model": {"model_dir": tempfile.mkdtemp(), "candidates": ["linear"]},
+                "strategy": {
+                    "signal_threshold": 0.3,
+                    "max_position_pct": 0.3,
+                    "default_stop_loss_pct": 0.02,
+                    "default_take_profit_pct": 0.06,
+                    "min_confidence": 0.3,
+                },
+                "risk_integration": {"qlib_signal_weight": 0.7},
+            }
+        )
 
     def _manual_initialize(self, engine, **kwargs):
         """手动初始化引擎（跳过 HyperliquidDataCollector 依赖）"""
@@ -1094,7 +1179,8 @@ class TestQuantFlowQLibEngine:
         engine.collector = MagicMock()
         engine.handler = CryptoAlpha158(
             include_perpetual=data_config.get("include_perpetual", False),
-            normalize=True, fillna=True,
+            normalize=True,
+            fillna=True,
             label_periods=data_config.get("label_periods", 5),
         )
         engine.trainer = QLibModelTrainer(
@@ -1287,19 +1373,23 @@ class TestEndToEndPipeline:
         )
 
         # 记录参数
-        record.log_params({
-            "learning_rate": 0.05,
-            "num_leaves": 128,
-            "n_estimators": 500,
-        })
+        record.log_params(
+            {
+                "learning_rate": 0.05,
+                "num_leaves": 128,
+                "n_estimators": 500,
+            }
+        )
 
         # 记录指标
-        record.log_metrics({
-            "IC": 0.065,
-            "ICIR": 1.23,
-            "夏普比率": 2.1,
-            "最大回撤": -0.08,
-        })
+        record.log_metrics(
+            {
+                "IC": 0.065,
+                "ICIR": 1.23,
+                "夏普比率": 2.1,
+                "最大回撤": -0.08,
+            }
+        )
 
         # 结束
         manager.end_experiment(status="completed")

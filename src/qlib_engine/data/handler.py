@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 
 from .perpetual import (
-    get_all_feature_config,
     get_feature_names,
 )
 
@@ -129,8 +128,8 @@ class CryptoAlpha158:
                 # 价格在区间内的位置
                 rolling_high = high.rolling(window).max()
                 rolling_low = low.rolling(window).min()
-                result[f"POSITION_{window}"] = (
-                    (close - rolling_low) / (rolling_high - rolling_low + 1e-12)
+                result[f"POSITION_{window}"] = (close - rolling_low) / (
+                    rolling_high - rolling_low + 1e-12
                 )
             else:
                 result[f"VSTD_{window}"] = np.nan
@@ -150,9 +149,7 @@ class CryptoAlpha158:
 
         return result
 
-    def _calculate_perpetual_features(
-        self, df: pd.DataFrame, result: pd.DataFrame
-    ) -> None:
+    def _calculate_perpetual_features(self, df: pd.DataFrame, result: pd.DataFrame) -> None:
         """
         计算永续合约特有因子
 
@@ -171,8 +168,14 @@ class CryptoAlpha158:
             result["资金费率_偏离均值"] = fr - fr.rolling(24, min_periods=1).mean()
         else:
             # 如果没有资金费率数据，填充为 0
-            for col_name in ["资金费率", "资金费率_8期均值", "资金费率_24期均值",
-                             "资金费率_24期标准差", "资金费率_1期变化", "资金费率_偏离均值"]:
+            for col_name in [
+                "资金费率",
+                "资金费率_8期均值",
+                "资金费率_24期均值",
+                "资金费率_24期标准差",
+                "资金费率_1期变化",
+                "资金费率_偏离均值",
+            ]:
                 result[col_name] = 0.0
 
         # 未平仓量因子
@@ -186,8 +189,14 @@ class CryptoAlpha158:
             result["未平仓量_24期均值"] = oi.rolling(24, min_periods=1).mean()
             result["未平仓量_偏离均值"] = oi / oi.rolling(24, min_periods=1).mean() - 1
         else:
-            for col_name in ["未平仓量_对数", "未平仓量_1期变化率", "未平仓量_24期变化率",
-                             "未平仓量_成交量比", "未平仓量_24期均值", "未平仓量_偏离均值"]:
+            for col_name in [
+                "未平仓量_对数",
+                "未平仓量_1期变化率",
+                "未平仓量_24期变化率",
+                "未平仓量_成交量比",
+                "未平仓量_24期均值",
+                "未平仓量_偏离均值",
+            ]:
                 result[col_name] = 0.0
 
         # 溢价率因子
@@ -206,9 +215,7 @@ class CryptoAlpha158:
         result["成交量_偏离168期均值"] = vol / vol.rolling(168, min_periods=1).mean() - 1
 
         # 价量相关性（24期）
-        result["价量相关性_24期"] = df["$close"].rolling(24, min_periods=5).corr(
-            np.log(vol + 1)
-        )
+        result["价量相关性_24期"] = df["$close"].rolling(24, min_periods=5).corr(np.log(vol + 1))
 
     def calculate_label(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -340,10 +347,7 @@ class CryptoAlpha158:
 
         feature_names = [col for col in features_df.columns if col != "instrument"]
 
-        logger.info(
-            f"数据处理完成: {features_df.shape[0]} 行, "
-            f"{len(feature_names)} 个特征"
-        )
+        logger.info(f"数据处理完成: {features_df.shape[0]} 行, {len(feature_names)} 个特征")
 
         return {
             "features": features_df,

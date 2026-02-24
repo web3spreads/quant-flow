@@ -108,7 +108,9 @@ class QLibModelTrainer:
             训练好的模型对象
         """
         if model_type not in self.MODEL_CONFIGS:
-            raise ValueError(f"不支持的模型类型: {model_type}，支持: {list(self.MODEL_CONFIGS.keys())}")
+            raise ValueError(
+                f"不支持的模型类型: {model_type}，支持: {list(self.MODEL_CONFIGS.keys())}"
+            )
 
         # 合并参数：默认 → 自定义 → 传入
         model_params = {**self.MODEL_CONFIGS[model_type]["default_params"]}
@@ -127,9 +129,12 @@ class QLibModelTrainer:
             X_valid_clean, y_valid_clean = None, None
 
         model = self._create_and_fit(
-            model_type, model_params,
-            X_train_clean, y_train_clean,
-            X_valid_clean, y_valid_clean,
+            model_type,
+            model_params,
+            X_train_clean,
+            y_train_clean,
+            X_valid_clean,
+            y_valid_clean,
         )
 
         self.trained_models[model_type] = model
@@ -137,9 +142,13 @@ class QLibModelTrainer:
         return model
 
     def _create_and_fit(
-        self, model_type, params,
-        X_train, y_train,
-        X_valid, y_valid,
+        self,
+        model_type,
+        params,
+        X_train,
+        y_train,
+        X_valid,
+        y_valid,
     ):
         """创建模型实例并拟合"""
         if model_type == "lightgbm":
@@ -189,7 +198,7 @@ class QLibModelTrainer:
         except ImportError:
             raise ImportError("请安装 xgboost: pip install xgboost")
 
-        early_stopping_rounds = params.pop("early_stopping_rounds", 50)
+        params.pop("early_stopping_rounds", None)
         n_estimators = params.pop("n_estimators", 500)
 
         model = xgb.XGBRegressor(n_estimators=n_estimators, **params)
@@ -261,9 +270,7 @@ class QLibModelTrainer:
         results = {}
         for model_type in model_types:
             try:
-                model = self.train(
-                    model_type, X_train, y_train, X_valid, y_valid
-                )
+                model = self.train(model_type, X_train, y_train, X_valid, y_valid)
                 results[model_type] = model
             except Exception as e:
                 logger.error(f"训练 {model_type} 失败: {e}")

@@ -175,8 +175,7 @@ class ExperimentManager:
             self._active_record = None
 
         logger.info(
-            f"实验结束: {target.experiment_id} "
-            f"(状态={status}, 指标数={len(target.metrics)})"
+            f"实验结束: {target.experiment_id} (状态={status}, 指标数={len(target.metrics)})"
         )
 
     def _save_record(self, record: ExperimentRecord) -> None:
@@ -198,13 +197,15 @@ class ExperimentManager:
         """更新实验索引文件"""
         index = []
         for eid, record in self._records.items():
-            index.append({
-                "experiment_id": eid,
-                "experiment_type": record.experiment_type,
-                "start_time": record.start_time,
-                "end_time": record.end_time,
-                "status": record.status,
-            })
+            index.append(
+                {
+                    "experiment_id": eid,
+                    "experiment_type": record.experiment_type,
+                    "start_time": record.start_time,
+                    "end_time": record.end_time,
+                    "status": record.status,
+                }
+            )
 
         index_file = self.experiment_dir / "index.json"
         with open(index_file, "w", encoding="utf-8") as f:
@@ -268,16 +269,18 @@ class ExperimentManager:
                 continue
             if status and record.status != status:
                 continue
-            results.append({
-                "experiment_id": record.experiment_id,
-                "type": record.experiment_type,
-                "start_time": record.start_time,
-                "status": record.status,
-                "metrics_summary": {
-                    k: round(v, 4) if isinstance(v, float) else v
-                    for k, v in list(record.metrics.items())[:5]
-                },
-            })
+            results.append(
+                {
+                    "experiment_id": record.experiment_id,
+                    "type": record.experiment_type,
+                    "start_time": record.start_time,
+                    "status": record.status,
+                    "metrics_summary": {
+                        k: round(v, 4) if isinstance(v, float) else v
+                        for k, v in list(record.metrics.items())[:5]
+                    },
+                }
+            )
 
         # 按开始时间倒序
         results.sort(key=lambda x: x["start_time"], reverse=True)

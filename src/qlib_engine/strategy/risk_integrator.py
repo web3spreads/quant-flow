@@ -101,9 +101,7 @@ class RiskIntegrator:
 
         # 3. 仓位调整
         if self.position_sizer and account_info:
-            adjusted_size = self._adjust_position_size(
-                decision, account_info, market_data
-            )
+            adjusted_size = self._adjust_position_size(decision, account_info, market_data)
             if adjusted_size is not None:
                 decision.reasoning.append(
                     f"风控仓位调整: {decision.suggested_size_pct:.1%} → {adjusted_size:.1%}"
@@ -112,9 +110,7 @@ class RiskIntegrator:
 
         # 4. 止盈止损调整
         if self.risk_manager and market_data:
-            adjusted_sl, adjusted_tp = self._adjust_stop_levels(
-                decision, market_data
-            )
+            adjusted_sl, adjusted_tp = self._adjust_stop_levels(decision, market_data)
             if adjusted_sl is not None:
                 decision.reasoning.append(
                     f"风控止损调整: {decision.stop_loss_pct:.2%} → {adjusted_sl:.2%}"
@@ -150,7 +146,8 @@ class RiskIntegrator:
                 )
                 # 如果保护器建议暂停交易
                 if protection and protection.get("action") in (
-                    "PAUSE_NEW_TRADES", "CLOSE_ALL_POSITIONS"
+                    "PAUSE_NEW_TRADES",
+                    "CLOSE_ALL_POSITIONS",
                 ):
                     decision.should_trade = False
                     decision.blockers.append(
@@ -210,9 +207,8 @@ class RiskIntegrator:
                 )
                 if risk_size is not None:
                     # 加权融合
-                    blended = (
-                        decision.suggested_size_pct * self.qlib_weight
-                        + risk_size * (1 - self.qlib_weight)
+                    blended = decision.suggested_size_pct * self.qlib_weight + risk_size * (
+                        1 - self.qlib_weight
                     )
                     return blended
         except Exception as e:

@@ -76,13 +76,9 @@ class ModelEvaluator:
             annualize_factor = self._get_annualize_factor(freq)
             results["年化收益率"] = long_short_returns.mean() * annualize_factor
             results["年化波动率"] = long_short_returns.std() * np.sqrt(annualize_factor)
-            results["夏普比率"] = (
-                results["年化收益率"] / (results["年化波动率"] + 1e-12)
-            )
+            results["夏普比率"] = results["年化收益率"] / (results["年化波动率"] + 1e-12)
             results["最大回撤"] = self._max_drawdown(long_short_returns)
-            results["卡尔马比率"] = (
-                results["年化收益率"] / (abs(results["最大回撤"]) + 1e-12)
-            )
+            results["卡尔马比率"] = results["年化收益率"] / (abs(results["最大回撤"]) + 1e-12)
             results["胜率"] = (long_short_returns > 0).mean()
         else:
             results["年化收益率"] = 0

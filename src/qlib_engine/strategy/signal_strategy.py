@@ -22,20 +22,21 @@ class TradeDecision:
     QLib 信号驱动的交易决策，包含方向、仓位、止盈止损等信息。
     与现有 OrderManager 兼容。
     """
+
     symbol: str
-    action: str              # buy/sell/sell_short/buy_to_cover/hold
-    should_trade: bool       # 是否应该执行交易
-    direction: str           # long/short/neutral
-    signal_strength: float   # 信号强度 [0, 1]
-    confidence: float        # 置信度 [0, 1]
+    action: str  # buy/sell/sell_short/buy_to_cover/hold
+    should_trade: bool  # 是否应该执行交易
+    direction: str  # long/short/neutral
+    signal_strength: float  # 信号强度 [0, 1]
+    confidence: float  # 置信度 [0, 1]
     suggested_size_pct: float  # 建议仓位比例 [0, 1]
-    stop_loss_pct: float     # 建议止损百分比
-    take_profit_pct: float   # 建议止盈百分比
+    stop_loss_pct: float  # 建议止损百分比
+    take_profit_pct: float  # 建议止盈百分比
     reasoning: list[str] = field(default_factory=list)  # 决策理由
-    warnings: list[str] = field(default_factory=list)   # 警告信息
-    blockers: list[str] = field(default_factory=list)   # 阻止原因
-    timestamp: str = ""      # 决策时间
-    model_type: str = ""     # 使用的模型
+    warnings: list[str] = field(default_factory=list)  # 警告信息
+    blockers: list[str] = field(default_factory=list)  # 阻止原因
+    timestamp: str = ""  # 决策时间
+    model_type: str = ""  # 使用的模型
 
     def __post_init__(self):
         if not self.timestamp:
@@ -137,9 +138,7 @@ class QLibSignalStrategy:
 
         # 检查信号是否可执行
         if not signal.is_actionable:
-            return self._hold_decision(
-                signal, reasoning=["信号强度不足，保持观望"]
-            )
+            return self._hold_decision(signal, reasoning=["信号强度不足，保持观望"])
 
         # 检查置信度
         if signal.confidence < self.min_confidence:
@@ -154,23 +153,17 @@ class QLibSignalStrategy:
         has_position = current_position is not None and current_position.get("size", 0) > 0
         position_side = current_position.get("side") if has_position else None
 
-        action, direction = self._determine_action(
-            signal, has_position, position_side, reasoning
-        )
+        action, direction = self._determine_action(signal, has_position, position_side, reasoning)
 
         if action == "hold":
             return self._hold_decision(signal, reasoning=reasoning)
 
         # --- 计算仓位大小 ---
-        size_pct = self._calculate_position_size(
-            signal, account_balance, market_context
-        )
+        size_pct = self._calculate_position_size(signal, account_balance, market_context)
         reasoning.append(f"建议仓位: {size_pct:.1%}")
 
         # --- 计算止盈止损 ---
-        stop_loss_pct, take_profit_pct = self._calculate_stop_levels(
-            signal, market_context
-        )
+        stop_loss_pct, take_profit_pct = self._calculate_stop_levels(signal, market_context)
         reasoning.append(
             f"止损: {stop_loss_pct:.2%}, 止盈: {take_profit_pct:.2%}, "
             f"风险回报比: {take_profit_pct / (stop_loss_pct + 1e-12):.1f}"

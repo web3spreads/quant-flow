@@ -11,9 +11,9 @@
 
 # 永续合约特有的原始数据列名（从 Hyperliquid API 收集）
 PERPETUAL_RAW_COLUMNS = [
-    "funding_rate",           # 资金费率（每 8 小时结算一次）
-    "open_interest",          # 未平仓合约量（美元计价）
-    "premium",                # 溢价率（标记价格 vs 指数价格）
+    "funding_rate",  # 资金费率（每 8 小时结算一次）
+    "open_interest",  # 未平仓合约量（美元计价）
+    "premium",  # 溢价率（标记价格 vs 指数价格）
 ]
 
 
@@ -35,7 +35,6 @@ PERPETUAL_FEATURE_CONFIG = [
     # 资金费率偏移变化
     ("$funding_rate - Ref($funding_rate, 1)", "资金费率_1期变化"),
     ("$funding_rate - Mean($funding_rate, 24)", "资金费率_偏离均值"),
-
     # --- 未平仓量因子 ---
     # 未平仓量原值（对数化）
     ("Log($open_interest + 1)", "未平仓量_对数"),
@@ -48,12 +47,10 @@ PERPETUAL_FEATURE_CONFIG = [
     ("Mean($open_interest, 24)", "未平仓量_24期均值"),
     # 未平仓量趋势强度
     ("$open_interest / Mean($open_interest, 24) - 1", "未平仓量_偏离均值"),
-
     # --- 溢价率因子 ---
     ("$premium", "溢价率"),
     ("Mean($premium, 24)", "溢价率_24期均值"),
     ("Std($premium, 24)", "溢价率_24期标准差"),
-
     # --- 价量关系因子（增强版）---
     # 成交量异常检测
     ("$volume / Mean($volume, 24) - 1", "成交量_偏离24期均值"),
@@ -70,28 +67,24 @@ PERPETUAL_FEATURE_CONFIG = [
 # K线形态因子
 KBAR_FEATURE_CONFIG = [
     # K线基本形态
-    ("($close - $open) / $open", "KMID"),           # K线中点（涨跌幅）
-    ("($high - $low) / $open", "KLEN"),              # K线长度（振幅）
+    ("($close - $open) / $open", "KMID"),  # K线中点（涨跌幅）
+    ("($high - $low) / $open", "KLEN"),  # K线长度（振幅）
     ("($close - $open) / ($high - $low + 1e-12)", "KSFT"),  # K线偏移
     ("($high - Max($open, $close)) / $open", "KUP"),  # 上影线
-    ("(Min($open, $close) - $low) / $open", "KLOW"),   # 下影线
+    ("(Min($open, $close) - $low) / $open", "KLOW"),  # 下影线
     ("($high - Max($open, $close)) / ($high - $low + 1e-12)", "KSHUP"),  # 上影线比例
-    ("(Min($open, $close) - $low) / ($high - $low + 1e-12)", "KSHDN"),   # 下影线比例
+    ("(Min($open, $close) - $low) / ($high - $low + 1e-12)", "KSHDN"),  # 下影线比例
 ]
 
 # 价格动量因子（多时间窗口）
 PRICE_FEATURE_CONFIG = []
 for _window in [1, 2, 3, 5, 10, 20, 30, 60]:
-    PRICE_FEATURE_CONFIG.append(
-        (f"Ref($close, {_window}) / $close - 1", f"ROC_{_window}")
-    )
+    PRICE_FEATURE_CONFIG.append((f"Ref($close, {_window}) / $close - 1", f"ROC_{_window}"))
 
 # 均线偏离因子
 MA_FEATURE_CONFIG = []
 for _window in [5, 10, 20, 30, 60]:
-    MA_FEATURE_CONFIG.append(
-        (f"Mean($close, {_window}) / $close - 1", f"MA_偏离_{_window}")
-    )
+    MA_FEATURE_CONFIG.append((f"Mean($close, {_window}) / $close - 1", f"MA_偏离_{_window}"))
 
 # 波动率因子
 VOLATILITY_FEATURE_CONFIG = []
@@ -113,8 +106,10 @@ for _window in [5, 10, 20, 30, 60]:
     )
     # 最高价/最低价位置
     ROLLING_FEATURE_CONFIG.append(
-        (f"($close - Min($low, {_window})) / (Max($high, {_window}) - Min($low, {_window}) + 1e-12)",
-         f"POSITION_{_window}")
+        (
+            f"($close - Min($low, {_window})) / (Max($high, {_window}) - Min($low, {_window}) + 1e-12)",
+            f"POSITION_{_window}",
+        )
     )
 
 # 相关性因子

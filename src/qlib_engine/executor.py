@@ -101,7 +101,9 @@ class QLibDecisionExecutor:
         # 计算实际交易金额
         usdt_amount = self._calculate_trade_amount(decision, account_balance)
         if usdt_amount < self.min_trade_amount:
-            result["output"] = f"计算金额 ${usdt_amount:.2f} 低于最小交易金额 ${self.min_trade_amount}"
+            result["output"] = (
+                f"计算金额 ${usdt_amount:.2f} 低于最小交易金额 ${self.min_trade_amount}"
+            )
             return result
 
         # 确定杠杆

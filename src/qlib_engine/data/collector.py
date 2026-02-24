@@ -6,14 +6,11 @@ Hyperliquid 数据收集器
 """
 
 import logging
-from datetime import datetime, timedelta
 
-import numpy as np
 import pandas as pd
 
 from src.data.market_data import MarketDataFetcher
 
-from .calendar import CryptoCalendar
 from .perpetual import PERPETUAL_RAW_COLUMNS
 
 logger = logging.getLogger("QuantFlow.QLib")
@@ -70,13 +67,15 @@ class HyperliquidDataCollector:
             df["instrument"] = symbol
 
             # 重命名为 QLib 标准格式（$ 前缀）
-            df = df.rename(columns={
-                "open": "$open",
-                "high": "$high",
-                "low": "$low",
-                "close": "$close",
-                "volume": "$volume",
-            })
+            df = df.rename(
+                columns={
+                    "open": "$open",
+                    "high": "$high",
+                    "low": "$low",
+                    "close": "$close",
+                    "volume": "$volume",
+                }
+            )
 
             all_data.append(df)
 

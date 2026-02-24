@@ -20,8 +20,10 @@ def __getattr__(name):
     """延迟导入依赖外部 SDK 的模块"""
     if name == "OnlineModelManager":
         from .engine.online import OnlineModelManager
+
         return OnlineModelManager
     if name == "QLibDecisionExecutor":
         from .executor import QLibDecisionExecutor
+
         return QLibDecisionExecutor
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -17,6 +17,7 @@ logger = logging.getLogger("QuantFlow.QLib")
 
 class SignalDirection(Enum):
     """交易信号方向"""
+
     STRONG_LONG = "强烈做多"
     LONG = "做多"
     WEAK_LONG = "弱做多"
@@ -33,15 +34,16 @@ class TradingSignal:
 
     包含模型预测的原始分数和经过处理的交易信号。
     """
+
     symbol: str
-    raw_score: float         # 模型原始预测分数
+    raw_score: float  # 模型原始预测分数
     normalized_score: float  # 标准化后的分数 [-1, 1]
     direction: SignalDirection  # 信号方向
-    strength: float          # 信号强度 [0, 1]
-    confidence: float        # 置信度 [0, 1]
-    percentile: float        # 历史分位数 [0, 1]
-    model_type: str          # 使用的模型类型
-    feature_count: int       # 使用的特征数量
+    strength: float  # 信号强度 [0, 1]
+    confidence: float  # 置信度 [0, 1]
+    percentile: float  # 历史分位数 [0, 1]
+    model_type: str  # 使用的模型类型
+    feature_count: int  # 使用的特征数量
 
     @property
     def is_actionable(self) -> bool:
@@ -151,7 +153,7 @@ class SignalPredictor:
         self._score_history[symbol].append(raw_score)
         # 限制历史窗口
         if len(self._score_history[symbol]) > self.history_window:
-            self._score_history[symbol] = self._score_history[symbol][-self.history_window:]
+            self._score_history[symbol] = self._score_history[symbol][-self.history_window :]
 
         # 标准化分数
         normalized_score = self._normalize_score(raw_score, symbol)

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -69,9 +68,9 @@ class QuantFlowQLibEngine:
 
         # 状态
         self._raw_data: dict[str, pd.DataFrame] = {}  # 每个交易对的原始数据
-        self._features: dict[str, pd.DataFrame] = {}   # 每个交易对的因子数据
-        self._best_model_type: str = "lightgbm"        # 当前最优模型
-        self._last_train_time: datetime | None = None   # 上次训练时间
+        self._features: dict[str, pd.DataFrame] = {}  # 每个交易对的因子数据
+        self._best_model_type: str = "lightgbm"  # 当前最优模型
+        self._last_train_time: datetime | None = None  # 上次训练时间
 
     def initialize(
         self,
@@ -99,6 +98,7 @@ class QuantFlowQLibEngine:
 
         # 初始化数据层
         from ..data.collector import HyperliquidDataCollector
+
         self.collector = HyperliquidDataCollector(testnet=testnet)
         self.handler = CryptoAlpha158(
             include_perpetual=data_config.get("include_perpetual", True),
@@ -174,9 +174,7 @@ class QuantFlowQLibEngine:
             raise RuntimeError("引擎未初始化，请先调用 initialize()")
 
         if model_types is None:
-            model_types = self.config.get("model", {}).get(
-                "candidates", ["lightgbm"]
-            )
+            model_types = self.config.get("model", {}).get("candidates", ["lightgbm"])
 
         logger.info(f"开始准备数据和训练模型: 交易对={symbols}, 频率={freq}")
 
@@ -193,9 +191,11 @@ class QuantFlowQLibEngine:
         feature_names = processed["feature_names"]
 
         # 3. 数据分割（按时间顺序）
-        timestamps = features.index.get_level_values("datetime").unique().sort_values() \
-            if isinstance(features.index, pd.MultiIndex) \
+        timestamps = (
+            features.index.get_level_values("datetime").unique().sort_values()
+            if isinstance(features.index, pd.MultiIndex)
             else features.index.sort_values()
+        )
 
         n_total = len(timestamps)
         n_train = int(n_total * 0.7)
@@ -206,9 +206,8 @@ class QuantFlowQLibEngine:
 
         if isinstance(features.index, pd.MultiIndex):
             train_mask = features.index.get_level_values("datetime") <= train_end
-            valid_mask = (
-                (features.index.get_level_values("datetime") > train_end)
-                & (features.index.get_level_values("datetime") <= valid_end)
+            valid_mask = (features.index.get_level_values("datetime") > train_end) & (
+                features.index.get_level_values("datetime") <= valid_end
             )
             test_mask = features.index.get_level_values("datetime") > valid_end
         else:
@@ -228,19 +227,20 @@ class QuantFlowQLibEngine:
         X_valid = self.handler.transform(X_valid)
         X_test = self.handler.transform(X_test)
 
-        logger.info(
-            f"数据分割: 训练={len(X_train)}, 验证={len(X_valid)}, 测试={len(X_test)}"
-        )
+        logger.info(f"数据分割: 训练={len(X_train)}, 验证={len(X_valid)}, 测试={len(X_test)}")
 
         # 5. 训练模型
         models = self.trainer.train_all(
-            X_train, y_train, X_valid, y_valid,
+            X_train,
+            y_train,
+            X_valid,
+            y_valid,
             model_types=model_types,
         )
 
         # 6. 评估模型
         evaluation_results = {}
-        for model_type, model in models.items():
+        for model_type, _model in models.items():
             pred = self.trainer.predict(model_type, X_test)
             eval_result = self.evaluator.evaluate(pred, y_test, freq=freq)
             evaluation_results[model_type] = eval_result
@@ -264,7 +264,9 @@ class QuantFlowQLibEngine:
 
         # 缓存原始数据和因子
         for symbol in symbols:
-            if isinstance(raw_data.index, pd.MultiIndex) and symbol in raw_data.index.get_level_values("instrument"):
+            if isinstance(
+                raw_data.index, pd.MultiIndex
+            ) and symbol in raw_data.index.get_level_values("instrument"):
                 self._raw_data[symbol] = raw_data.xs(symbol, level="instrument")
                 if symbol in features.index.get_level_values("instrument"):
                     self._features[symbol] = features.xs(symbol, level="instrument")
@@ -331,8 +333,9 @@ class QuantFlowQLibEngine:
             raw = self.collector.collect_ohlcv([symbol], freq=freq, limit=100)
             if raw.empty:
                 return {"error": "数据获取失败"}
-            latest_data = raw.xs(symbol, level="instrument") \
-                if isinstance(raw.index, pd.MultiIndex) else raw
+            latest_data = (
+                raw.xs(symbol, level="instrument") if isinstance(raw.index, pd.MultiIndex) else raw
+            )
 
         # 计算因子
         features = self.handler.calculate_features(latest_data)
@@ -404,8 +407,9 @@ class QuantFlowQLibEngine:
                     take_profit_pct=0,
                     reasoning=["数据获取失败"],
                 )
-            latest_data = raw.xs(symbol, level="instrument") \
-                if isinstance(raw.index, pd.MultiIndex) else raw
+            latest_data = (
+                raw.xs(symbol, level="instrument") if isinstance(raw.index, pd.MultiIndex) else raw
+            )
 
         # 计算因子
         features = self.handler.calculate_features(latest_data)
