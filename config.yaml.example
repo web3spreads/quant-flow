@@ -319,6 +319,13 @@ qlib:
     # 标签预测期数（预测未来 N 期收益率）
     label_periods: 5
 
+    # 本地数据存储目录（用于数据累加，数据和模型分离）
+    data_dir: data/qlib
+
+    # 是否启用数据持久化（开启后历史 OHLCV 数据会以 parquet 格式累加存储）
+    # 每次训练仅增量拉取新数据，减少 API 调用；随时间推移训练数据量持续增长
+    persist_data: true
+
   # 模型层配置
   model:
     # 模型保存目录

@@ -99,7 +99,11 @@ class QuantFlowQLibEngine:
         # 初始化数据层
         from ..data.collector import HyperliquidDataCollector
 
-        self.collector = HyperliquidDataCollector(testnet=testnet)
+        self.collector = HyperliquidDataCollector(
+            testnet=testnet,
+            data_dir=data_config.get("data_dir", "data/qlib"),
+            persist_data=data_config.get("persist_data", True),
+        )
         self.handler = CryptoAlpha158(
             include_perpetual=data_config.get("include_perpetual", True),
             normalize=True,
@@ -143,6 +147,55 @@ class QuantFlowQLibEngine:
 
         self.initialized = True
         logger.info("QLib 引擎初始化完成")
+
+    def load_trained_model(self) -> bool:
+        """
+        尝试从磁盘加载最新的已训练模型
+
+        检查 models/ 目录下是否存在可用的已训练模型，
+        若存在且未过期（训练时间 < retrain_interval_hours），则直接加载跳过训练。
+
+        Returns:
+            是否成功加载
+        """
+        if not self.initialized:
+            logger.warning("引擎未初始化，无法加载模型")
+            return False
+
+        # 查找最新的 best 模型
+        result = self.trainer.find_latest_model(tag="best")
+        if result is None:
+            logger.info("未找到已有模型，需要执行训练")
+            return False
+
+        model_path, model_type, train_time = result
+
+        # 检查模型是否过期
+        retrain_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
+        elapsed_hours = (datetime.now() - train_time).total_seconds() / 3600
+
+        if elapsed_hours >= retrain_hours:
+            logger.info(
+                f"已有模型已过期: 训练于 {train_time}, "
+                f"已过 {elapsed_hours:.1f} 小时 (阈值 {retrain_hours} 小时)"
+            )
+            return False
+
+        # 加载模型
+        try:
+            self.trainer.load_model(model_path, model_type=model_type)
+            self.model_trained = True
+            self._best_model_type = model_type
+            self._last_train_time = train_time
+
+            logger.info(
+                f"成功加载已有模型: 类型={model_type}, "
+                f"训练时间={train_time}, 剩余有效期={retrain_hours - elapsed_hours:.1f}h"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"加载已有模型失败: {e}", exc_info=True)
+            return False
 
     def prepare_and_train(
         self,

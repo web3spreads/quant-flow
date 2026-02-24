@@ -303,6 +303,56 @@ class QLibModelTrainer:
         predictions = model.predict(X_clean)
         return pd.Series(predictions, index=X.index, name="score")
 
+    def find_latest_model(self, tag: str = "best") -> tuple[Path, str, datetime] | None:
+        """
+        查找指定 tag 的最新模型文件
+
+        从 model_dir 中扫描匹配 *_{tag}_*.pkl 的文件，
+        根据文件名中的时间戳找到最新的模型。
+
+        Args:
+            tag: 模型标签（默认 "best"）
+
+        Returns:
+            (文件路径, 模型类型, 训练时间) 或 None（未找到）
+        """
+        pattern = f"*_{tag}_*.pkl"
+        candidates = list(self.model_dir.glob(pattern))
+
+        if not candidates:
+            logger.info(f"未找到匹配 '{pattern}' 的模型文件")
+            return None
+
+        best_match = None
+        latest_time = None
+
+        for path in candidates:
+            # 文件名格式: {model_type}_{tag}_{YYYYmmdd_HHMMSS}.pkl
+            stem = path.stem  # 去掉 .pkl
+            parts = stem.split(f"_{tag}_")
+            if len(parts) != 2:
+                continue
+
+            model_type = parts[0]
+            timestamp_str = parts[1]
+
+            try:
+                train_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            except ValueError:
+                logger.warning(f"无法解析模型文件时间戳: {path.name}")
+                continue
+
+            if latest_time is None or train_time > latest_time:
+                latest_time = train_time
+                best_match = (path, model_type, train_time)
+
+        if best_match:
+            logger.info(
+                f"找到最新模型: {best_match[0].name}, "
+                f"类型={best_match[1]}, 训练时间={best_match[2]}"
+            )
+        return best_match
+
     def save_model(self, model_type: str, tag: str = "") -> Path:
         """
         保存模型到磁盘

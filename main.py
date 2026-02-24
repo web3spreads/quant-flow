@@ -436,30 +436,42 @@ class QuantFlowBot:
                 trading_lock=self._trading_lock,
             )
 
-            # 执行首次训练
-            qlib_data_config = self.config.qlib_config.get("data", {})
-            freq = qlib_data_config.get("freq", "1h")
-            limit = qlib_data_config.get("limit", 500)
+            # 优先尝试加载已有模型，避免每次启动都重新训练
+            model_ready = engine.load_trained_model()
+            if model_ready:
+                self.logger.print_info(
+                    f"✅ 已加载已有 QLib 模型，跳过训练 "
+                    f"(类型={engine._best_model_type}, "
+                    f"训练时间={engine._last_train_time})"
+                )
+            else:
+                # 无可用模型或已过期，执行首次训练
+                qlib_data_config = self.config.qlib_config.get("data", {})
+                freq = qlib_data_config.get("freq", "1h")
+                limit = qlib_data_config.get("limit", 500)
 
-            self.logger.print_info(f"QLib 模型训练中... (freq={freq}, limit={limit})")
-            train_result = engine.prepare_and_train(
-                symbols=self.config.symbols,
-                freq=freq,
-                limit=limit,
-            )
+                self.logger.print_info(f"QLib 模型训练中... (freq={freq}, limit={limit})")
+                train_result = engine.prepare_and_train(
+                    symbols=self.config.symbols,
+                    freq=freq,
+                    limit=limit,
+                )
 
-            if engine.model_trained:
+                model_ready = engine.model_trained
+                if model_ready:
+                    self.logger.print_info("✅ QLib 模型训练完成")
+                    self.logger.print_info(f"  训练结果: {train_result}")
+                    self._notify_qlib_retrain(train_result, success=True)
+                else:
+                    self.logger.print_warning("⚠️ QLib 模型训练失败，回退到 LLM Agent 模式")
+                    self._notify_qlib_retrain(train_result, success=False)
+
+            if model_ready:
                 self.qlib_engine = engine
                 self.qlib_executor = executor
-                self.logger.print_info("✅ QLib 模型训练完成")
-                self.logger.print_info(f"  训练结果: {train_result}")
-                # 首次训练也发通知
-                self._notify_qlib_retrain(train_result, success=True)
             else:
-                self.logger.print_warning("⚠️ QLib 模型训练失败，回退到 LLM Agent 模式")
                 self.qlib_engine = None
                 self.qlib_executor = None
-                self._notify_qlib_retrain(train_result, success=False)
 
         except Exception as e:
             self.logger.print_warning(f"⚠️ QLib 引擎初始化失败，回退到 LLM Agent 模式: {e}")

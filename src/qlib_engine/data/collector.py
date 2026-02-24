@@ -3,9 +3,11 @@ Hyperliquid 数据收集器
 
 从 Hyperliquid DEX 收集永续合约数据，转换为 QLib 可用的 DataFrame 格式。
 复用现有的 MarketDataFetcher 进行底层数据获取。
+支持本地 parquet 文件持久化，实现数据累加存储和增量拉取。
 """
 
 import logging
+from pathlib import Path
 
 import pandas as pd
 
@@ -24,18 +26,93 @@ class HyperliquidDataCollector:
     1. 从 Hyperliquid API 收集 OHLCV + 永续合约特有数据
     2. 转换为 QLib 标准的 MultiIndex DataFrame 格式
     3. 处理数据质量问题（缺失值、异常值等）
+    4. 本地持久化历史数据，支持增量拉取和数据累加
     """
 
-    def __init__(self, testnet: bool = False):
+    def __init__(
+        self,
+        testnet: bool = False,
+        data_dir: str = "data/qlib",
+        persist_data: bool = True,
+    ):
         """
         初始化数据收集器
 
         Args:
             testnet: 是否使用测试网
+            data_dir: 本地数据存储目录
+            persist_data: 是否启用数据持久化
         """
         self.fetcher = MarketDataFetcher(testnet=testnet)
         self.testnet = testnet
-        logger.info(f"数据收集器初始化完成 ({'测试网' if testnet else '主网'})")
+        self.persist_data = persist_data
+        self.data_dir = Path(data_dir)
+
+        if self.persist_data:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            f"数据收集器初始化完成 ({'测试网' if testnet else '主网'}"
+            f"{', 数据持久化=' + str(self.data_dir) if self.persist_data else ''})"
+        )
+
+    def _get_data_path(self, symbol: str, freq: str) -> Path:
+        """
+        返回本地数据文件路径
+
+        Args:
+            symbol: 交易对
+            freq: 数据频率
+
+        Returns:
+            本地 parquet 文件路径
+        """
+        return self.data_dir / f"{symbol}_{freq}.parquet"
+
+    def _load_local_data(self, symbol: str, freq: str) -> pd.DataFrame:
+        """
+        从本地加载已有数据
+
+        Args:
+            symbol: 交易对
+            freq: 数据频率
+
+        Returns:
+            本地数据 DataFrame，不存在则返回空 DataFrame
+        """
+        path = self._get_data_path(symbol, freq)
+        if not path.exists():
+            return pd.DataFrame()
+
+        try:
+            df = pd.read_parquet(path)
+            logger.info(f"加载本地数据: {symbol}_{freq}, {len(df)} 行")
+            return df
+        except Exception:
+            logger.warning(f"加载本地数据失败 ({path})", exc_info=True)
+            return pd.DataFrame()
+
+    def _save_local_data(self, symbol: str, freq: str, df: pd.DataFrame) -> None:
+        """
+        保存数据到本地（去重 + 按时间排序）
+
+        Args:
+            symbol: 交易对
+            freq: 数据频率
+            df: 要保存的 DataFrame（需包含 timestamp 列）
+        """
+        if df.empty:
+            return
+
+        path = self._get_data_path(symbol, freq)
+        try:
+            # 按 timestamp 去重并排序
+            df = df.drop_duplicates(subset=["timestamp"], keep="last")
+            df = df.sort_values("timestamp").reset_index(drop=True)
+            df.to_parquet(path, index=False)
+            logger.info(f"保存本地数据: {symbol}_{freq}, {len(df)} 行 → {path}")
+        except Exception:
+            logger.warning(f"保存本地数据失败 ({path})", exc_info=True)
 
     def collect_ohlcv(
         self,
@@ -45,6 +122,9 @@ class HyperliquidDataCollector:
     ) -> pd.DataFrame:
         """
         收集多个交易对的 OHLCV 数据
+
+        启用数据持久化后，会先加载本地已有数据，仅从 API 增量拉取新数据，
+        合并后保存到本地。返回最近 limit 条数据（保持接口兼容）。
 
         Args:
             symbols: 交易对列表（如 ['BTC', 'ETH', 'SOL']）
@@ -58,10 +138,44 @@ class HyperliquidDataCollector:
         all_data = []
 
         for symbol in symbols:
+            # 尝试加载本地数据并增量拉取
+            if self.persist_data:
+                local_df = self._load_local_data(symbol, freq)
+            else:
+                local_df = pd.DataFrame()
+
+            # 从 API 拉取数据
             df = self.fetcher.fetch_ohlcv(symbol, timeframe=freq, limit=limit)
             if df is None or df.empty:
-                logger.warning(f"跳过 {symbol}: 无法获取数据")
-                continue
+                if local_df.empty:
+                    logger.warning(f"跳过 {symbol}: 无法获取数据且无本地数据")
+                    continue
+                else:
+                    # API 失败但有本地数据，使用本地数据
+                    logger.warning(f"{symbol}: API 获取失败，使用本地缓存数据")
+                    df = local_df
+            else:
+                # 合并本地 + 新数据
+                if not local_df.empty and self.persist_data:
+                    merged = pd.concat([local_df, df], ignore_index=True)
+                    # 按 timestamp 去重，保留最新的
+                    merged = merged.drop_duplicates(subset=["timestamp"], keep="last")
+                    merged = merged.sort_values("timestamp").reset_index(drop=True)
+
+                    incremental_count = len(merged) - len(local_df)
+                    logger.info(
+                        f"{symbol}: 增量拉取 {incremental_count} 条新数据, "
+                        f"合并后总计 {len(merged)} 条"
+                    )
+
+                    # 保存合并后的全量数据
+                    self._save_local_data(symbol, freq, merged)
+
+                    # 返回最近 limit 条（保持接口兼容）
+                    df = merged.tail(limit).reset_index(drop=True)
+                elif self.persist_data:
+                    # 首次拉取，直接保存
+                    self._save_local_data(symbol, freq, df)
 
             # 添加 instrument 列
             df["instrument"] = symbol
