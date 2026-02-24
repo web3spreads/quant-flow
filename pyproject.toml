@@ -27,6 +27,10 @@ dependencies = [
     "rich>=14.2.0",
     "apprise>=1.9.5",
     "jinja2>=3.1.6",
+    # QLib 量化引擎依赖
+    "lightgbm>=4.0.0",
+    "scikit-learn>=1.4.0",
+    "xgboost>=2.0.0",
 ]
 
 [project.optional-dependencies]

@@ -1,6 +1,33 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 Claude Code (claude.ai/code) 在本仓库中工作时提供指导。
+
+---
+
+## 宪法（Constitution）
+
+> **以下条款具有最高优先级，适用于本项目的所有开发活动，不可被其他规则覆盖。**
+
+### 第一条：官方语言
+
+本项目的官方沟通语言为**中文**。所有文档、代码注释、提交信息（commit message）、PR 描述、Issue 讨论、变量命名说明、日志输出、以及与 AI 助手的交互，**必须使用中文**。禁止使用非中文语言进行沟通和文档编写。
+
+**具体要求：**
+- 所有 `.md` 文档必须使用中文撰写
+- 代码注释和 docstring 必须使用中文
+- Git commit message 必须使用英文分类前缀开头（如 `feat:`, `fix:`, `hotfix:`, `refactor:`, `docs:`, `style:`, `test:`, `chore:`, `perf:`, `ci:`, `build:`, `revert:`），分类前缀后的描述内容使用中文。禁止使用中文分类前缀（如"功能:"、"修复:"等）
+- PR/Issue 标题和描述必须使用中文
+- 日志输出信息必须使用中文
+- 配置文件中的说明注释必须使用中文
+- 与 Claude Code 的所有交互必须使用中文回复
+
+**例外情况：**
+- 代码中的变量名、函数名、类名等标识符使用英文（遵循 Python 编码规范）
+- 第三方库的 API 调用和技术术语可保留英文原文
+- 国际通用的技术缩写（如 API、SDK、LLM、OHLCV 等）可使用英文
+- Git commit message 的分类前缀必须使用英文（如 `feat:`, `fix:`, `hotfix:` 等）
+
+---
 
 ## 项目概述
 
@@ -11,21 +38,26 @@ Quant Flow 是一个基于 LangChain/LangGraph 的 AI 永续合约自动交易�
 ## 常用命令
 
 ```bash
-# 安装依赖
-pip install -e .
+# 安装依赖（uv 管理）
+uv sync                       # 安装所有依赖
+uv sync --group dev           # 安装开发依赖
 
 # 运行主程序
-python main.py
+uv run python main.py
 
 # 指定配置文件运行
-python main.py --config config.yaml --env .env
+uv run python main.py --config config.yaml --env .env
 
 # 运行测试
-pytest tests/
-pytest tests/test_agents_langgraph.py -v  # 单个文件
+uv run pytest tests/
+uv run pytest tests/test_agents_langgraph.py -v  # 单个文件
 
 # 语法检查
-python -m py_compile src/trading/client.py
+uv run python -m py_compile src/trading/client.py
+
+# 添加新依赖
+uv add <package>              # 添加运行时依赖
+uv add --group dev <package>  # 添加开发依赖
 
 # Docker 部署
 docker-compose up -d
@@ -254,13 +286,13 @@ account_protection:
 
 ```bash
 # 运行所有测试
-pytest tests/
+uv run pytest tests/
 
 # 运行特定测试
-pytest tests/test_decision_validator.py -v
+uv run pytest tests/test_decision_validator.py -v
 
 # 带覆盖率
-pytest tests/ --cov=src
+uv run pytest tests/ --cov=src
 ```
 
 主要测试文件：

@@ -37,6 +37,9 @@ from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
 from src.utils.logger import get_logger
 
+# QLib 量化引擎（延迟导入，仅在启用时使用）
+# from src.qlib_engine import QuantFlowQLibEngine, QLibDecisionExecutor
+
 
 class QuantFlowBot:
     """Quant Flow 交易机器人 - 多 Agent 架构"""
@@ -68,15 +71,15 @@ class QuantFlowBot:
         # 打印启动信息
         print_startup_banner(config=self.config, console=self.logger.console)
 
+        # 交易周期锁（防止并发执行，需在组件初始化前创建，QLib 执行器会引用）
+        self._trading_lock = threading.Lock()
+
         # 初始化组件
         self._initialize_components()
 
         # 调度器
         self.scheduler = None
         self.is_running = False
-
-        # 交易周期锁（防止并发执行）
-        self._trading_lock = threading.Lock()
         self._skipped_cycles = 0  # 跳过的周期计数
 
         # 交易统计
@@ -352,6 +355,13 @@ class QuantFlowBot:
             )
             self.market_info_store = MarketInfoStore(base_dir=store_dir)
 
+        # 11. QLib 量化引擎（可选）
+        self.qlib_engine = None
+        self.qlib_executor = None
+
+        if getattr(self.config, "qlib_enabled", False):
+            self._initialize_qlib_engine()
+
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info("  - 1 个汇总 Agent")
@@ -360,6 +370,8 @@ class QuantFlowBot:
             self.logger.print_info("  - 1 个复盘 Agent")
         if self.external_info_agent:
             self.logger.print_info("  - 1 个外部信息收集 Agent")
+        if self.qlib_engine:
+            self.logger.print_info("  - 1 个 QLib 量化引擎（主决策源）")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -382,6 +394,79 @@ class QuantFlowBot:
                 f"获取动态费率失败，使用默认值: {DEFAULT_PERP_FEE_RATES}，原因: {e}"
             )
             return DEFAULT_PERP_FEE_RATES
+
+    def _initialize_qlib_engine(self):
+        """初始化 QLib 量化引擎"""
+        self.logger.print_section("🧠 初始化 QLib 量化引擎...", style="bold blue")
+        try:
+            from src.qlib_engine import QLibDecisionExecutor, QuantFlowQLibEngine
+
+            # 创建 QLib 引擎
+            engine = QuantFlowQLibEngine(config=self.config.qlib_config)
+
+            # 从已有的 EnhancedSingleSymbolAgent 提取共享风控模块
+            decision_validator = None
+            position_sizer = None
+            risk_manager = None
+            account_protector = None
+
+            first_agent = next(iter(self.symbol_agents.values()), None)
+            if first_agent and isinstance(first_agent, EnhancedSingleSymbolAgent):
+                decision_validator = getattr(first_agent, "decision_validator", None)
+                enhanced_engine = getattr(first_agent, "enhanced_engine", None)
+                if enhanced_engine:
+                    position_sizer = getattr(enhanced_engine, "position_sizer", None)
+                    risk_manager = getattr(enhanced_engine, "risk_manager", None)
+                    account_protector = getattr(enhanced_engine, "account_protector", None)
+
+            # 初始化引擎（传入风控模块）
+            engine.initialize(
+                testnet=self.config.hyperliquid_testnet,
+                decision_validator=decision_validator,
+                position_sizer=position_sizer,
+                risk_manager=risk_manager,
+                account_protector=account_protector,
+            )
+
+            # 创建决策执行器
+            executor = QLibDecisionExecutor(
+                order_manager=self.order_manager,
+                max_trade_amount=self.config.max_trade_amount,
+                max_leverage=self.config.max_leverage,
+                trading_lock=self._trading_lock,
+            )
+
+            # 执行首次训练
+            qlib_data_config = self.config.qlib_config.get("data", {})
+            freq = qlib_data_config.get("freq", "1h")
+            limit = qlib_data_config.get("limit", 500)
+
+            self.logger.print_info(f"QLib 模型训练中... (freq={freq}, limit={limit})")
+            train_result = engine.prepare_and_train(
+                symbols=self.config.symbols,
+                freq=freq,
+                limit=limit,
+            )
+
+            if engine.model_trained:
+                self.qlib_engine = engine
+                self.qlib_executor = executor
+                self.logger.print_info("✅ QLib 模型训练完成")
+                self.logger.print_info(f"  训练结果: {train_result}")
+                # 首次训练也发通知
+                self._notify_qlib_retrain(train_result, success=True)
+            else:
+                self.logger.print_warning("⚠️ QLib 模型训练失败，回退到 LLM Agent 模式")
+                self.qlib_engine = None
+                self.qlib_executor = None
+                self._notify_qlib_retrain(train_result, success=False)
+
+        except Exception as e:
+            self.logger.print_warning(f"⚠️ QLib 引擎初始化失败，回退到 LLM Agent 模式: {e}")
+            self.logger.logger.exception(e)
+            self.qlib_engine = None
+            self.qlib_executor = None
+            self._notify_qlib_retrain({"error": str(e)}, success=False)
 
     def _check_and_display_balance(self):
         """检查并显示账户余额信息"""
@@ -686,7 +771,84 @@ class QuantFlowBot:
                                 else f"{external_info_header}{market_info_summary}"
                             )
 
-                    # 调用单币 Agent 决策
+                    # QLib 优先决策路径
+                    if self.qlib_engine and self.qlib_engine.model_trained:
+                        try:
+                            # 提取当前 symbol 的持仓信息
+                            symbol_position = next(
+                                (p for p in current_positions if p.get("coin") == symbol),
+                                None,
+                            )
+
+                            # 调用 QLib 生成交易决策
+                            # latest_data=None 让 QLib 自行获取数据（确保 $close 等列名兼容）
+                            qlib_decision = self.qlib_engine.generate_trade_decision(
+                                symbol=symbol,
+                                current_position=symbol_position,
+                                account_balance=balance_info.get("available", 0),
+                                account_info={
+                                    "balance": balance_info.get("available", 0),
+                                    "equity": balance_info.get("total", 0),
+                                    "positions": current_positions,
+                                    "daily_pnl": 0.0,
+                                },
+                                latest_data=None,
+                                market_data={
+                                    "current_price": market_data.get("current_price", 0),
+                                    "atr": market_data.get("atr_14", 0),
+                                    "volatility": market_data.get("volatility", 0),
+                                    "df": df,
+                                },
+                            )
+
+                            self.logger.print_info(
+                                f"[{symbol}]QLib 决策: {qlib_decision.action} "
+                                f"(信号={qlib_decision.signal_strength:.2f}, "
+                                f"置信度={qlib_decision.confidence:.2f})"
+                            )
+
+                            # 执行决策
+                            exec_result = self.qlib_executor.execute(
+                                decision=qlib_decision,
+                                account_balance=balance_info.get("available", 0),
+                            )
+
+                            # 转换为 decision_history 格式
+                            hist = self.qlib_executor.decision_to_history_format(
+                                qlib_decision, exec_result
+                            )
+
+                            # 记录决策历史
+                            self.decision_history.add_decision(
+                                symbol=symbol,
+                                decision=hist["decision"],
+                                market_data=market_data,
+                                reason=hist["reason"][:200],
+                                action_details=hist["action_details"],
+                            )
+
+                            # 记录决策日志
+                            self.logger.log_decision(
+                                symbol=symbol,
+                                market_data=market_data,
+                                prompt="[QLib 量化引擎]",
+                                ai_response=exec_result.get("output", ""),
+                                decision=hist["decision"],
+                                action_details=hist["action_details"],
+                                status="SUCCESS",
+                            )
+
+                            # QLib 成功处理，跳过 LLM Agent
+                            continue
+
+                        except Exception as e:
+                            self.logger.print_warning(
+                                f"⚠️ [{symbol}] QLib 决策失败，回退到 LLM Agent: {e}"
+                            )
+                            self.logger.logger.exception(e)
+                            # 不 continue，自动 fallback 到下方 LLM Agent
+
+                    # 调用单币 Agent 决策（LLM 兜底）
                     agent = self.symbol_agents[symbol]
 
                     # 如果是增强型Agent，使用增强决策方法
@@ -871,6 +1033,23 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
+            # 添加 QLib 重训练定时任务
+            if self.qlib_engine:
+                online_config = self.config.qlib_config.get("online", {})
+                retrain_hours = online_config.get("retrain_interval_hours", 168)
+                retrain_minutes = int(retrain_hours * 60)
+
+                self.scheduler.add_job(
+                    self._run_qlib_retrain,
+                    trigger=IntervalTrigger(minutes=retrain_minutes),
+                    id="qlib_retrain",
+                    name="QLib 模型重训练任务",
+                    replace_existing=True,
+                )
+                self.logger.print_info(
+                    f"🧠 QLib 重训练任务已添加，间隔: {retrain_hours} 小时"
+                )
+
             # 如果配置了立即执行，先执行一次
             if self.config.run_immediately:
                 self.logger.print_info("立即执行第一次交易循环...")
@@ -953,6 +1132,136 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"外部信息收集任务异常: {e}")
             self.logger.logger.exception(e)
+
+    def _run_qlib_retrain(self):
+        """执行 QLib 模型重训练任务"""
+        if not self.qlib_engine:
+            return
+
+        try:
+            if not self.qlib_engine.should_retrain():
+                self.logger.print_info("QLib 模型尚未达到重训练条件，跳过")
+                return
+
+            self.logger.print_section("🧠 开始 QLib 模型重训练", style="bold blue")
+
+            qlib_data_config = self.config.qlib_config.get("data", {})
+            freq = qlib_data_config.get("freq", "1h")
+            limit = qlib_data_config.get("limit", 500)
+
+            train_result = self.qlib_engine.prepare_and_train(
+                symbols=self.config.symbols,
+                freq=freq,
+                limit=limit,
+            )
+
+            if self.qlib_engine.model_trained:
+                self.logger.print_info(f"✅ QLib 模型重训练完成: {train_result}")
+                self._notify_qlib_retrain(train_result, success=True)
+            else:
+                self.logger.print_warning("⚠️ QLib 模型重训练失败，继续使用旧模型")
+                self._notify_qlib_retrain(train_result, success=False)
+
+        except Exception as e:
+            self.logger.print_error(f"QLib 重训练任务异常: {e}")
+            self.logger.logger.exception(e)
+            self._notify_qlib_retrain({"error": str(e)}, success=False)
+
+    def _notify_qlib_retrain(self, train_result: dict, success: bool):
+        """发送 QLib 重训练结果通知（包含完整评估指标和训练数据详情，方便排查和观察效果）"""
+        if not self.notifier or not self.notifier.enabled:
+            return
+        try:
+            from datetime import datetime as dt
+            from src.notification.notifier import NotificationEvent
+
+            if success:
+                best_model = train_result.get("best_model", "未知")
+                models_trained = train_result.get("models_trained", [])
+                feature_count = train_result.get("feature_count", 0)
+                train_samples = train_result.get("train_samples", 0)
+                valid_samples = train_result.get("valid_samples", 0)
+                test_samples = train_result.get("test_samples", 0)
+                total_raw = train_result.get("total_raw_samples", 0)
+                evaluation = train_result.get("evaluation", {})
+
+                # 训练数据时间范围
+                data_start = train_result.get("data_time_start", "未知")
+                data_end = train_result.get("data_time_end", "未知")
+                train_cutoff = train_result.get("train_cutoff", "未知")
+                valid_cutoff = train_result.get("valid_cutoff", "未知")
+                freq = train_result.get("freq", "未知")
+                candles_limit = train_result.get("candles_limit", 0)
+
+                # 各交易对样本数
+                per_symbol = train_result.get("per_symbol_samples", {})
+                symbols_list = train_result.get("symbols", self.config.symbols)
+                symbol_detail = " | ".join(
+                    f"{s}={per_symbol.get(s, 0)}条" for s in symbols_list
+                )
+
+                # 特征名（前 20 个）
+                feature_names = train_result.get("feature_names", [])
+                feature_preview = ", ".join(feature_names[:10])
+                if len(feature_names) > 10:
+                    feature_preview += f" ... 等共{feature_count}个"
+
+                # 构建每个模型的评估指标详情
+                model_details = []
+                for model_name in models_trained:
+                    eval_data = evaluation.get(model_name, {})
+                    ic = float(eval_data.get("IC", 0) or 0)
+                    rank_ic = float(eval_data.get("Rank_IC", 0) or 0)
+                    icir = float(eval_data.get("ICIR", 0) or 0)
+                    ic_mean = float(eval_data.get("IC_均值", 0) or 0)
+                    ic_std = float(eval_data.get("IC_标准差", 0) or 0)
+                    pred_mean = float(eval_data.get("预测均值", 0) or 0)
+                    pred_std = float(eval_data.get("预测标准差", 0) or 0)
+
+                    is_best = " ⭐" if model_name == best_model else ""
+                    model_details.append(
+                        f"  [{model_name}]{is_best}\n"
+                        f"    IC={ic:.6f} | Rank_IC={rank_ic:.6f} | ICIR={icir:.4f}\n"
+                        f"    IC均值={ic_mean:.6f} | IC标准差={ic_std:.6f}\n"
+                        f"    预测均值={pred_mean:.8f} | 预测标准差={pred_std:.8f}"
+                    )
+
+                now_str = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                title = "🧠 QLib 模型重训练完成"
+                message = (
+                    f"⏰ 训练时间: {now_str}\n"
+                    f"\n--- 📊 训练数据概况 ---\n"
+                    f"参与训练交易对: {', '.join(symbols_list)}\n"
+                    f"数据频率: {freq} | 每交易对请求: {candles_limit} 根K线\n"
+                    f"原始数据总量: {total_raw} 条\n"
+                    f"各交易对数据量: {symbol_detail}\n"
+                    f"数据时间范围: {data_start} ~ {data_end}\n"
+                    f"训练集截止: {train_cutoff}\n"
+                    f"验证集截止: {valid_cutoff}\n"
+                    f"\n--- 🔢 数据分割 ---\n"
+                    f"训练集: {train_samples} | 验证集: {valid_samples} | 测试集: {test_samples}\n"
+                    f"特征数: {feature_count}\n"
+                    f"特征预览: {feature_preview}\n"
+                    f"\n--- 🏆 模型评估 ---\n"
+                    f"最优模型: {best_model} ⭐\n"
+                    + "\n".join(model_details)
+                    + f"\n\n💡 IC>0.03 为有效信号，ICIR>0.5 为较好稳定性"
+                )
+            else:
+                title = "⚠️ QLib 模型重训练失败"
+                error = train_result.get("error", "未知错误")
+                now_str = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+                message = (
+                    f"⏰ 时间: {now_str}\n"
+                    f"交易对: {', '.join(self.config.symbols)}\n"
+                    f"状态: 训练失败，继续使用旧模型\n"
+                    f"错误详情: {error}"
+                )
+
+            self.notifier.notify(NotificationEvent.SYSTEM_STARTUP, title, message)
+        except Exception as e:
+            self.logger.print_warning(f"发送 QLib 训练通知失败: {e}")
 
     def _maybe_run_review_cycle(self):
         """根据配置触发复盘 Agent"""

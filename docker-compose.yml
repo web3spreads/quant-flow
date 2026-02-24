@@ -85,13 +85,7 @@ services:
     # Commented out as the app may need to write temporary files
     # read_only: true
 
-    # Health check
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "python main.py"]
-      interval: 60s
-      timeout: 10s
-      start_period: 30s
-      retries: 3
+    # Health check 由 Dockerfile 中的 HEALTHCHECK 指令定义，此处不重复配置
 
 networks:
   quant-network:
