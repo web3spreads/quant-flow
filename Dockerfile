@@ -1,5 +1,5 @@
 # Multi-stage build for optimized image size
-FROM python:3.13-slim AS builder
+FROM python:3.12-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -14,13 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy dependency files
-COPY pyproject.toml uv.lock* .python-version README.md ./
+COPY pyproject.toml .python-version README.md ./
 
-# Install Python dependencies via uv
-RUN uv sync --frozen --no-dev --no-install-project
+# Install Python dependencies via uv（不使用 lock 文件，因本地 uv 版本较旧）
+RUN uv sync --no-dev --no-install-project
 
 # Final stage
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
@@ -50,9 +50,9 @@ ENV PYTHONUNBUFFERED=1 \
     LOG_LEVEL=INFO \
     PATH="/app/.venv/bin:$PATH"
 
-# Health check (checks if the process is running)
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD pgrep -f "python main.py" || exit 1
+# Health check（slim 镜像无 pgrep，改用 /proc 检测）
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import os,sys; pids=[p for p in os.listdir('/proc') if p.isdigit()]; cmds=[open(f'/proc/{p}/cmdline').read() for p in pids if os.path.exists(f'/proc/{p}/cmdline')]; sys.exit(0 if any('main.py' in c for c in cmds) else 1)"
 
 # Use entrypoint script to handle permissions and startup
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

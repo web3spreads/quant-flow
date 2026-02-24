@@ -66,6 +66,7 @@ class Config:
         self._init_enhanced_analysis_config()
         self._init_logging_config()
         self._init_notifications_config()
+        self._init_qlib_config()
 
     def _load_yaml_config(self) -> dict[str, Any]:
         """加载 YAML 配置文件"""
@@ -302,6 +303,12 @@ class Config:
     def _init_notifications_config(self):
         """初始化通知配置"""
         self.notifications = self.config_data.get("notifications", {"enabled": False})
+
+    def _init_qlib_config(self):
+        """初始化 QLib 量化引擎配置"""
+        qlib = self.config_data.get("qlib", {})
+        self.qlib_enabled: bool = qlib.get("enabled", False)
+        self.qlib_config: dict = qlib  # 完整配置段传给 QLib 引擎
 
     def validate(self):
         """验证配置的有效性"""

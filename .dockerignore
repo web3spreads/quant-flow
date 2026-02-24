@@ -71,6 +71,5 @@ htmlcov/
 .tox/
 
 # Other
-.python-version
 *.bak
 *.tmp

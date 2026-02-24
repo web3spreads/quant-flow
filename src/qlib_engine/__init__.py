@@ -12,6 +12,7 @@ __all__ = [
     "QuantFlowQLibEngine",
     "OnlineModelManager",
     "ExperimentManager",
+    "QLibDecisionExecutor",
 ]
 
 
@@ -20,4 +21,7 @@ def __getattr__(name):
     if name == "OnlineModelManager":
         from .engine.online import OnlineModelManager
         return OnlineModelManager
+    if name == "QLibDecisionExecutor":
+        from .executor import QLibDecisionExecutor
+        return QLibDecisionExecutor
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

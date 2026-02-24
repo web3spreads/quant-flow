@@ -272,13 +272,39 @@ class QuantFlowQLibEngine:
         self.model_trained = True
         self._last_train_time = datetime.now()
 
+        # 收集训练数据详情（供通知和排查使用）
+        data_time_start = timestamps[0]
+        data_time_end = timestamps[-1]
+
+        # 统计各交易对样本数
+        per_symbol_samples = {}
+        if isinstance(raw_data.index, pd.MultiIndex):
+            for sym in symbols:
+                if sym in raw_data.index.get_level_values("instrument"):
+                    per_symbol_samples[sym] = int(
+                        (raw_data.index.get_level_values("instrument") == sym).sum()
+                    )
+        else:
+            per_symbol_samples[symbols[0] if symbols else "unknown"] = len(raw_data)
+
         result = {
             "models_trained": list(models.keys()),
             "best_model": self._best_model_type,
             "evaluation": evaluation_results,
             "feature_count": len(feature_names),
             "train_samples": len(X_train),
+            "valid_samples": len(X_valid),
             "test_samples": len(X_test),
+            "total_raw_samples": len(raw_data),
+            "data_time_start": str(data_time_start),
+            "data_time_end": str(data_time_end),
+            "train_cutoff": str(train_end),
+            "valid_cutoff": str(valid_end),
+            "per_symbol_samples": per_symbol_samples,
+            "symbols": symbols,
+            "freq": freq,
+            "candles_limit": limit,
+            "feature_names": feature_names[:20],  # 前 20 个特征名供参考
         }
 
         logger.info(f"模型训练完成: 最优模型={self._best_model_type}")
