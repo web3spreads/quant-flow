@@ -56,36 +56,42 @@ QLib 量化引擎是 Quant Flow 项目的核心决策模块，基于微软 QLib 
 
 ## 安装步骤
 
-### 1. 安装基础依赖
+### 1. 安装 uv（如尚未安装）
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### 2. 安装基础依赖
 
 ```bash
 # 从项目根目录
-pip install -e .
+uv sync
 ```
 
 这会自动安装 `pyproject.toml` 中定义的所有依赖，包括新增的 `lightgbm`、`scikit-learn`、`xgboost`。
 
-### 2. 验证安装
+### 3. 验证安装
 
 ```bash
 # 验证核心模块可导入
-python -c "from src.qlib_engine import QuantFlowQLibEngine; print('QLib 引擎安装成功')"
+uv run python -c "from src.qlib_engine import QuantFlowQLibEngine; print('QLib 引擎安装成功')"
 
 # 验证 ML 库
-python -c "import lightgbm; import xgboost; import sklearn; print('ML 库安装成功')"
+uv run python -c "import lightgbm; import xgboost; import sklearn; print('ML 库安装成功')"
 ```
 
-### 3. 运行测试
+### 4. 运行测试
 
 ```bash
 # 运行所有 QLib 引擎测试（96 个测试用例）
-pytest tests/test_qlib_engine.py -v
+uv run pytest tests/test_qlib_engine.py -v
 
 # 快速检查
-pytest tests/test_qlib_engine.py --tb=short
+uv run pytest tests/test_qlib_engine.py --tb=short
 ```
 
-### 4. 准备目录结构
+### 5. 准备目录结构
 
 引擎运行时会创建以下目录（自动创建）：
 
@@ -378,13 +384,13 @@ logging.getLogger("QuantFlow.QLib").setLevel(logging.INFO)
 
 ```bash
 # 全部测试
-pytest tests/test_qlib_engine.py -v
+uv run pytest tests/test_qlib_engine.py -v
 
 # 指定模块测试
-pytest tests/test_qlib_engine.py -k "TestCryptoAlpha158" -v
+uv run pytest tests/test_qlib_engine.py -k "TestCryptoAlpha158" -v
 
 # 集成测试
-pytest tests/test_qlib_engine.py -k "TestEndToEndPipeline" -v
+uv run pytest tests/test_qlib_engine.py -k "TestEndToEndPipeline" -v
 ```
 
 ## 常见问题
@@ -392,7 +398,12 @@ pytest tests/test_qlib_engine.py -k "TestEndToEndPipeline" -v
 ### Q: `ModuleNotFoundError: No module named 'lightgbm'`
 
 ```bash
-pip install lightgbm>=4.0.0
+uv sync  # 重新同步依赖
+```
+
+如果 uv sync 后仍然缺失，手动添加：
+```bash
+uv add lightgbm
 ```
 
 如果安装失败（Linux 无编译环境），使用 conda：
@@ -404,7 +415,7 @@ conda install -c conda-forge lightgbm
 
 数据收集器依赖 Hyperliquid SDK：
 ```bash
-pip install hyperliquid-python-sdk>=0.21.0
+uv sync  # 重新同步依赖
 ```
 
 ### Q: 训练样本不足

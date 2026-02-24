@@ -38,21 +38,26 @@ Quant Flow 是一个基于 LangChain/LangGraph 的 AI 永续合约自动交易�
 ## 常用命令
 
 ```bash
-# 安装依赖
-pip install -e .
+# 安装依赖（uv 管理）
+uv sync                       # 安装所有依赖
+uv sync --group dev           # 安装开发依赖
 
 # 运行主程序
-python main.py
+uv run python main.py
 
 # 指定配置文件运行
-python main.py --config config.yaml --env .env
+uv run python main.py --config config.yaml --env .env
 
 # 运行测试
-pytest tests/
-pytest tests/test_agents_langgraph.py -v  # 单个文件
+uv run pytest tests/
+uv run pytest tests/test_agents_langgraph.py -v  # 单个文件
 
 # 语法检查
-python -m py_compile src/trading/client.py
+uv run python -m py_compile src/trading/client.py
+
+# 添加新依赖
+uv add <package>              # 添加运行时依赖
+uv add --group dev <package>  # 添加开发依赖
 
 # Docker 部署
 docker-compose up -d
@@ -281,13 +286,13 @@ account_protection:
 
 ```bash
 # 运行所有测试
-pytest tests/
+uv run pytest tests/
 
 # 运行特定测试
-pytest tests/test_decision_validator.py -v
+uv run pytest tests/test_decision_validator.py -v
 
 # 带覆盖率
-pytest tests/ --cov=src
+uv run pytest tests/ --cov=src
 ```
 
 主要测试文件：

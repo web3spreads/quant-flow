@@ -36,15 +36,18 @@ docker-compose logs -f
 ### 本地部署
 
 ```bash
-# 安装（需要 Python 3.11+）
-pip install -e .
+# 安装 uv（如尚未安装）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 安装依赖（需要 Python 3.11+）
+uv sync
 
 # 配置
 cp .env.example .env
 cp config.yaml.example config.yaml
 
 # 运行
-python main.py
+uv run python main.py
 ```
 
 ## 配置
@@ -173,10 +176,10 @@ Leverage exceeds maximum allowed
 
 ```bash
 # 运行所有测试
-pytest tests/
+uv run pytest tests/
 
 # 单个测试
-pytest tests/test_decision_validator.py -v
+uv run pytest tests/test_decision_validator.py -v
 ```
 
 获取测试资金：[Hyperliquid 测试网水龙头](https://app.hyperliquid-testnet.xyz/faucet)

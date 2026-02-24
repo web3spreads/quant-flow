@@ -1,5 +1,5 @@
 # Multi-stage build for optimized image size
-FROM python:3.13-slim as builder
+FROM python:3.13-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -10,12 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files
-COPY pyproject.toml README.md ./
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .
+# Copy dependency files
+COPY pyproject.toml uv.lock* .python-version README.md ./
+
+# Install Python dependencies via uv
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Final stage
 FROM python:3.13-slim
@@ -28,9 +30,9 @@ RUN useradd -m -u 1000 -s /bin/bash quantflow && \
     mkdir -p /app/logs/decisions /app/logs/trades && \
     chown -R quantflow:quantflow /app
 
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Copy uv binary and virtual environment from builder
+COPY --from=builder /bin/uv /bin/uv
+COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
 COPY --chown=quantflow:quantflow . .
@@ -45,7 +47,8 @@ USER quantflow
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    LOG_LEVEL=INFO
+    LOG_LEVEL=INFO \
+    PATH="/app/.venv/bin:$PATH"
 
 # Health check (checks if the process is running)
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
