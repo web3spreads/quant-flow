@@ -27,8 +27,8 @@ class GridManager:
                     data = json.load(f)
                     if "active_grids" not in data: data = {"active_grids": {}}
                     return data
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.logger.print_error(f"加载网格状态文件 {self.state_file} 失败: {e}")
         return {"active_grids": {}}
 
     def _save_state(self):
@@ -187,6 +187,7 @@ class GridManager:
 
         if failed:
             self.logger.print_warning(f"   [Grid] ⚠️ {len(failed)} 个订单取消失败，保留状态以便重试")
+            return
 
         del self.state["active_grids"][symbol]
         self._save_state()

@@ -49,7 +49,9 @@ class GridAgent:
                 return ai_decision
             except Exception as e:
                 # 兜底逻辑：AI 抽风时强制由数学引擎接管
-                return calculate_grid_config(float(market_data['current_price']), 50.0) # 安全兜底
+                balance_info = self.order_manager.get_available_balance_info()
+                available = float(balance_info.get('available', 50.0))
+                return calculate_grid_config(float(market_data['current_price']), min(available, self.trade_amount))
                 
         except Exception as e:
             return {"action": "ERROR", "reason": str(e)}
