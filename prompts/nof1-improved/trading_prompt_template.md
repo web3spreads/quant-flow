@@ -135,6 +135,8 @@ ATR(14, 4H): {{ atr_14_4h }}
 
 ---
 
+{{ qlib_signal_text }}
+
 {{ historical_summary }}
 
 ## 🎯 激进决策框架 (Alpha Arena Improved)

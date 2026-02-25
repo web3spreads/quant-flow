@@ -231,8 +231,10 @@ class QuantFlowQLibEngine:
 
         logger.info(f"开始准备数据和训练模型: 交易对={symbols}, 频率={freq}")
 
-        # 1. 收集数据
-        raw_data = self.collector.collect_full_dataset(symbols, freq=freq, limit=limit)
+        # 1. 收集数据（训练时使用全量本地累积数据，以获得更多样本）
+        raw_data = self.collector.collect_full_dataset(
+            symbols, freq=freq, limit=limit, use_all_local=True
+        )
         if raw_data.empty:
             logger.error("数据收集失败，无法训练模型")
             return {"error": "数据收集失败"}

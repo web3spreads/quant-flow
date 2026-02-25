@@ -167,6 +167,8 @@
 - 不确定时选择 do_nothing，耐心等待高质量机会
 - 手续费必须能被预期盈利覆盖 3-5 倍以上
 
+{{ qlib_signal_text }}
+
 {{ historical_summary }}
 
 ## 🎯 你的目标

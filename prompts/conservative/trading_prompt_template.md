@@ -175,6 +175,8 @@ ETH 作为第二大市值币种，在保守策略中同样占有重要地位：
     - 任何不确定时都选择 do_nothing
     - 默认倾向：使用较小金额和较低杠杆
 
+{{ qlib_signal_text }}
+
 {{ historical_summary }}
 
 ## 🎯 你的目标

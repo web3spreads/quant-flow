@@ -75,6 +75,8 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 {% if recent_trades_text %}
 {{ recent_trades_text }}
 {% endif %}
+{{ qlib_signal_text }}
+
 {{ historical_summary }}
 
 ## 决策指南

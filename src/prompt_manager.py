@@ -806,6 +806,74 @@ class PromptManager:
             context.setdefault("current_positions", str(current_positions))
             context.setdefault("recent_trades_text", "")
 
+            # QLib 量化信号（如果可用）
+            qlib_enabled = enriched_data.get("qlib_enabled", False)
+            qlib_signal = enriched_data.get("qlib_signal", {})
+            context["qlib_enabled"] = qlib_enabled
+            context["qlib_signal"] = qlib_signal
+
+            if qlib_enabled and qlib_signal:
+                # 格式化 QLib 信号文本
+                direction = qlib_signal.get("direction", "中性")
+                strength = qlib_signal.get("strength", 0)
+                confidence = qlib_signal.get("confidence", 0)
+                raw_score = qlib_signal.get("raw_score", 0)
+                normalized_score = qlib_signal.get("normalized_score", 0)
+                percentile = qlib_signal.get("percentile", 0.5)
+                model_type = qlib_signal.get("model_type", "未知")
+                is_actionable = qlib_signal.get("is_actionable", False)
+
+                # 根据方向生成建议
+                direction_emoji = {
+                    "强烈做多": "🟢🟢",
+                    "做多": "🟢",
+                    "弱做多": "🟡↑",
+                    "中性": "⚪",
+                    "弱做空": "🟡↓",
+                    "做空": "🔴",
+                    "强烈做空": "🔴🔴",
+                }.get(direction, "⚪")
+
+                # 信号强度等级
+                if strength >= 0.7:
+                    strength_text = "强"
+                elif strength >= 0.4:
+                    strength_text = "中等"
+                else:
+                    strength_text = "弱"
+
+                qlib_text = f"""
+## 🧠 QLib 量化模型信号
+
+**模型预测（{model_type} 模型）:**
+- 信号方向: {direction_emoji} **{direction}**
+- 信号强度: {strength:.1%}（{strength_text}）
+- 模型置信度: {confidence:.1%}
+- 标准化分数: {normalized_score:+.4f}（原始: {raw_score:+.6f}）
+- 历史分位数: {percentile:.0%}
+- 是否可执行: {"是" if is_actionable else "否（强度不足）"}
+
+**QLib 信号解读:**
+- 该信号来自基于历史数据训练的机器学习模型，预测未来价格趋势方向
+- 信号强度 > 40% 且方向明确时，应作为重要参考
+- 信号与技术指标方向一致时，增加决策信心
+- 信号与技术指标矛盾时，建议保守或观望
+
+**结合技术指标的建议:**
+- ✅ QLib 信号 + 技术指标一致 → 可增大仓位/杠杆
+- ⚠️ QLib 信号 + 技术指标矛盾 → 建议观望或小仓位试探
+- ❌ QLib 信号弱或中性 → 主要依据技术指标判断
+"""
+                context["qlib_signal_text"] = qlib_text
+            else:
+                context["qlib_signal_text"] = ""
+
+        else:
+            # enriched_data 为空时设置默认值
+            context["qlib_enabled"] = False
+            context["qlib_signal"] = {}
+            context["qlib_signal_text"] = ""
+
         # 使用 Jinja2 渲染模板
         prompt = self.trading_prompt_template.render(context)
 

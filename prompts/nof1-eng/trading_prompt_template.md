@@ -72,6 +72,8 @@ RSI Indicators (14-period, 4-Hour): {{ rsi_14_4h_indicators }}
 
 ---
 
+{{ qlib_signal_text }}
+
 {{ historical_summary }}
 
 ## Decision Guidelines

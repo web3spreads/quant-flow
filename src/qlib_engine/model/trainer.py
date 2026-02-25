@@ -54,12 +54,12 @@ class QLibModelTrainer:
             "class": "XGBModel",
             "default_params": {
                 "learning_rate": 0.05,
-                "max_depth": 6,
+                "max_depth": 5,
                 "n_estimators": 500,
                 "colsample_bytree": 0.85,
                 "subsample": 0.85,
-                "reg_alpha": 10,
-                "reg_lambda": 10,
+                "reg_alpha": 1,
+                "reg_lambda": 1,
                 "early_stopping_rounds": 50,
                 "verbosity": 0,
             },
@@ -198,7 +198,7 @@ class QLibModelTrainer:
         except ImportError:
             raise ImportError("请安装 xgboost: pip install xgboost")
 
-        params.pop("early_stopping_rounds", None)
+        early_stopping_rounds = params.pop("early_stopping_rounds", 50)
         n_estimators = params.pop("n_estimators", 500)
 
         model = xgb.XGBRegressor(n_estimators=n_estimators, **params)
@@ -207,6 +207,9 @@ class QLibModelTrainer:
         if X_valid is not None and y_valid is not None:
             fit_params["eval_set"] = [(X_valid, y_valid)]
             fit_params["verbose"] = False
+            # 将 early_stopping_rounds 传递给 fit，启用早停防止过拟合
+            if early_stopping_rounds and early_stopping_rounds > 0:
+                fit_params["early_stopping_rounds"] = early_stopping_rounds
 
         model.fit(X_train, y_train, **fit_params)
         return model
