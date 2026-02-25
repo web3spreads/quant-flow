@@ -21,33 +21,45 @@ def find_project_root(marker="pyproject.toml"):
 project_root = find_project_root()
 sys.path.insert(0, str(project_root))
 
+import pytest
+
 from src.agent.external_info_agent import ExternalInfoAgent
+from src.llm import LLMClientManager
 from src.utils.logger import get_logger
 
 
 def test_langchain_workflow():
-    """测试 LangChain 工作流"""
+    """测试 LangChain 工作流（需要 EXA_API_KEY 和完整 LLM 配置）"""
+    exa_api_key = os.getenv("EXA_API_KEY")
+    if not exa_api_key:
+        pytest.skip("未设置 EXA_API_KEY 环境变量，跳过外部 API 集成测试")
+
     print("=" * 60)
     print("测试外部信息收集 Agent")
     print("=" * 60)
 
     logger = get_logger()
 
-    # 从环境变量读取 API 密钥
-    exa_api_key = os.getenv("EXA_API_KEY")
-    if not exa_api_key:
-        print("❌ 未设置 EXA_API_KEY 环境变量")
-        return
+    try:
+        from src.config import get_config
+        from src.llm.llm_client import LLMClientConfig
+
+        config = get_config()
+        llm_config = LLMClientConfig(
+            client_type=config.llm_client_type,
+            model=getattr(config, "llm_model", None),
+        )
+        llm_manager = LLMClientManager(config=llm_config)
+    except Exception as e:
+        pytest.skip(f"LLM 配置不完整，跳过集成测试: {e}")
 
     # 创建 Agent
     agent = ExternalInfoAgent(
         logger=logger,
-        openai_api_base=os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1"),
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        openai_model=os.getenv("OPENAI_MODEL", "deepseek-chat"),
-        exa_api_key=exa_api_key,  # 必须显式传入
+        llm_manager=llm_manager,
+        exa_api_key=exa_api_key,
         symbols=["BTC", "ETH"],
-        interval_hours=3.0,  # 使用 3 小时间隔
+        interval_hours=3.0,
     )
 
     # 测试收集

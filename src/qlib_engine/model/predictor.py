@@ -97,6 +97,26 @@ class SignalPredictor:
     5. 置信度估计 → 基于历史分布
     """
 
+    # ---- 置信度计算中的归一化参数 ----
+    # IC 范围通常 [-0.1, 0.3]，映射到 [0, 1]
+    IC_NORM_OFFSET = 0.05
+    IC_NORM_RANGE = 0.3
+    # ICIR 范围通常 [-1, 3]，映射到 [0, 1]
+    ICIR_NORM_OFFSET = 0.5
+    ICIR_NORM_RANGE = 3.0
+
+    # ---- 置信度维度权重 ----
+    WEIGHT_MODEL_QUALITY = 0.40
+    WEIGHT_SIGNAL_STRENGTH = 0.25
+    WEIGHT_HISTORY_CONSISTENCY = 0.20
+    WEIGHT_SAMPLE_SIZE = 0.15
+
+    # 样本量满分所需的最小历史长度
+    SAMPLE_FULL_SCORE_COUNT = 50
+
+    # 最低置信度
+    MIN_CONFIDENCE = 0.1
+
     def __init__(
         self,
         signal_threshold: float = 0.3,
@@ -115,6 +135,11 @@ class SignalPredictor:
         self.strong_threshold = strong_threshold
         self.history_window = history_window
         self._score_history: dict[str, list[float]] = {}  # 每个交易对的历史分数
+        self._model_eval_metrics: dict = {}  # 缓存模型评估指标
+
+    def update_model_metrics(self, metrics: dict) -> None:
+        """更新模型评估指标（训练/重训练后调用）"""
+        self._model_eval_metrics = metrics or {}
 
     def predict(
         self,
@@ -165,7 +190,7 @@ class SignalPredictor:
         strength = abs(normalized_score)
 
         # 计算置信度
-        confidence = self._estimate_confidence(raw_score, symbol)
+        confidence = self._estimate_confidence(raw_score, symbol, normalized_score)
 
         # 计算历史分位数
         percentile = self._calculate_percentile(raw_score, symbol)
@@ -248,34 +273,64 @@ class SignalPredictor:
             else:
                 return SignalDirection.WEAK_SHORT
 
-    def _estimate_confidence(self, score: float, symbol: str) -> float:
+    def _estimate_confidence(
+        self, score: float, symbol: str, normalized_score: float = 0.0
+    ) -> float:
         """
-        估计预测的置信度
+        估计预测的置信度（综合4个维度）
 
-        基于历史预测分数的分布来估计当前预测的可靠性。
-        分数越偏离历史均值且历史样本越多，置信度越高。
+        维度：
+        - 模型质量（40%）：基于 IC 和 ICIR
+        - 信号强度（25%）：标准化分数绝对值越大越高
+        - 历史一致性（20%）：最近预测方向的一致性
+        - 样本量（15%）：历史长度 / 50
 
         Args:
             score: 原始分数
             symbol: 交易对
+            normalized_score: 标准化分数 [-1, 1]
 
         Returns:
-            置信度 [0, 1]
+            置信度 [0.1, 1]
         """
+        # 维度1：模型质量 —— 基于 IC 和 ICIR
+        ic = self._model_eval_metrics.get("IC", 0)
+        icir = self._model_eval_metrics.get("ICIR", 0)
+        ic_score = max(0, min(1, (ic + self.IC_NORM_OFFSET) / self.IC_NORM_RANGE))
+        icir_score = max(0, min(1, (icir + self.ICIR_NORM_OFFSET) / self.ICIR_NORM_RANGE))
+        model_quality = ic_score * 0.5 + icir_score * 0.5
+
+        # 维度2：信号强度 —— 标准化分数绝对值
+        signal_strength = min(abs(normalized_score), 1.0)
+
+        # 维度3：历史一致性 —— 最近预测方向的一致性
         history = self._score_history.get(symbol, [])
+        if len(history) >= 5:
+            recent = history[-10:]
+            direction_consistency = abs(sum(1 if s > 0 else -1 for s in recent)) / len(recent)
+        else:
+            direction_consistency = 0.3  # 数据不足时给保守值
 
-        if len(history) < 10:
-            return 0.3  # 历史数据不足，低置信度
+        # 维度4：样本量
+        sample_score = min(len(history) / self.SAMPLE_FULL_SCORE_COUNT, 1.0)
 
-        # 基于样本量的基础置信度
-        sample_confidence = min(len(history) / 100, 1.0) * 0.5
+        # 加权汇总
+        confidence = (
+            model_quality * self.WEIGHT_MODEL_QUALITY
+            + signal_strength * self.WEIGHT_SIGNAL_STRENGTH
+            + direction_consistency * self.WEIGHT_HISTORY_CONSISTENCY
+            + sample_score * self.WEIGHT_SAMPLE_SIZE
+        )
 
-        # 基于信号一致性的置信度（最近 N 个预测方向是否一致）
-        recent = history[-10:]
-        direction_consistency = abs(sum(1 if s > 0 else -1 for s in recent)) / len(recent)
+        confidence = max(self.MIN_CONFIDENCE, min(1.0, confidence))
 
-        confidence = sample_confidence + direction_consistency * 0.5
-        return min(confidence, 1.0)
+        logger.debug(
+            f"[{symbol}] 置信度计算: 模型质量={model_quality:.3f}, "
+            f"信号强度={signal_strength:.3f}, 一致性={direction_consistency:.3f}, "
+            f"样本量={sample_score:.3f} → 置信度={confidence:.3f}"
+        )
+
+        return confidence
 
     def _calculate_percentile(self, score: float, symbol: str) -> float:
         """

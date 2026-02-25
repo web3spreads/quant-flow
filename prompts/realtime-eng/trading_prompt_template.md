@@ -198,6 +198,8 @@ Assuming max amount and leverage
 - Stronger signal -> Larger position; Weaker signal -> Smaller position.
 - When uncertain, probe with small positions; do not need to completely abandon opportunities.
 
+{{ qlib_signal_text }}
+
 {{ historical_summary }}
 
 ## 🎯 Your Goal

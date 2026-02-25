@@ -119,17 +119,20 @@ class HyperliquidDataCollector:
         symbols: list[str],
         freq: str = "1h",
         limit: int = 500,
+        use_all_local: bool = False,
     ) -> pd.DataFrame:
         """
         收集多个交易对的 OHLCV 数据
 
         启用数据持久化后，会先加载本地已有数据，仅从 API 增量拉取新数据，
-        合并后保存到本地。返回最近 limit 条数据（保持接口兼容）。
+        合并后保存到本地。
 
         Args:
             symbols: 交易对列表（如 ['BTC', 'ETH', 'SOL']）
             freq: 时间频率（1m/5m/15m/1h/4h/1d）
-            limit: 每个交易对获取的 K 线数量
+            limit: 每个交易对从 API 获取的 K 线数量
+            use_all_local: 为 True 时返回全量本地累积数据（用于模型训练），
+                           为 False 时仅返回最近 limit 条（用于实时预测，保持接口兼容）
 
         Returns:
             MultiIndex DataFrame，索引为 (datetime, instrument)
@@ -171,8 +174,12 @@ class HyperliquidDataCollector:
                     # 保存合并后的全量数据
                     self._save_local_data(symbol, freq, merged)
 
-                    # 返回最近 limit 条（保持接口兼容）
-                    df = merged.tail(limit).reset_index(drop=True)
+                    # use_all_local=True 时返回全量数据，否则只返回最近 limit 条
+                    if use_all_local:
+                        df = merged.reset_index(drop=True)
+                        logger.info(f"{symbol}: 使用全量本地数据 {len(df)} 条（用于模型训练）")
+                    else:
+                        df = merged.tail(limit).reset_index(drop=True)
                 elif self.persist_data:
                     # 首次拉取，直接保存
                     self._save_local_data(symbol, freq, df)
@@ -258,6 +265,7 @@ class HyperliquidDataCollector:
         symbols: list[str],
         freq: str = "1h",
         limit: int = 500,
+        use_all_local: bool = False,
     ) -> pd.DataFrame:
         """
         收集完整数据集（OHLCV + 永续合约特征）
@@ -265,13 +273,14 @@ class HyperliquidDataCollector:
         Args:
             symbols: 交易对列表
             freq: 时间频率
-            limit: K 线数量
+            limit: 从 API 拉取的 K 线数量
+            use_all_local: 为 True 时使用全量本地累积数据（用于模型训练）
 
         Returns:
             包含所有特征的 MultiIndex DataFrame
         """
         # 收集 OHLCV 基础数据
-        ohlcv_df = self.collect_ohlcv(symbols, freq=freq, limit=limit)
+        ohlcv_df = self.collect_ohlcv(symbols, freq=freq, limit=limit, use_all_local=use_all_local)
         if ohlcv_df.empty:
             return ohlcv_df
 

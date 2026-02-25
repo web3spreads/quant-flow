@@ -468,11 +468,13 @@ class TestQLibModelTrainer:
         X = pd.DataFrame({"a": [1, 2, np.inf, 4], "b": [5, np.nan, 7, 8]})
         y = pd.Series([0.1, np.nan, 0.3, 0.4])
 
-        X_clean, y_clean = trainer._clean_data(X, y)
+        X_clean, y_clean = trainer._fit_clean_params(X, y)
         # NaN 标签行应被移除
         assert len(y_clean) == 3
         # 无穷值应被替换为 0
         assert not np.isinf(X_clean.values).any()
+        # 训练集中位数应被缓存
+        assert trainer._train_medians is not None
 
     def test_get_feature_importance_linear(self, sample_features_and_labels, tmp_dir):
         """测试线性模型无 feature_importances_ 属性"""
@@ -625,7 +627,9 @@ class TestSignalPredictor:
         """测试低历史样本量下的置信度"""
         predictor._score_history["BTC"] = [0.01, 0.02, 0.03]
         conf = predictor._estimate_confidence(0.04, "BTC")
-        assert conf == 0.3  # 默认低置信度
+        # 低历史样本量时置信度较低，但不低于最低值
+        assert conf >= predictor.MIN_CONFIDENCE
+        assert conf < 0.5  # 历史不足时不应给出高置信度
 
 
 class TestTradingSignal:

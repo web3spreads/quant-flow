@@ -243,6 +243,8 @@ class ModelEvaluator:
         """
         根据指定指标选择最优模型
 
+        NaN 指标的模型会被自动排除（预测标准差为 0 意味着模型输出常数，无效）。
+
         Args:
             model_results: {模型名: 评估结果字典}
             metric: 评选指标
@@ -250,7 +252,27 @@ class ModelEvaluator:
         Returns:
             最优模型名称
         """
-        best_model = max(model_results, key=lambda k: model_results[k].get(metric, 0))
-        best_score = model_results[best_model].get(metric, 0)
-        logger.info(f"最优模型: {best_model} ({metric}={best_score:.4f})")
+        import math
+
+        def _safe_score(k):
+            """获取安全的评分值，NaN 和 Inf 视为负无穷"""
+            val = model_results[k].get(metric, 0)
+            # 预测标准差为 0 说明模型输出常数，视为无效
+            pred_std = model_results[k].get("预测标准差", -1)
+            if pred_std == 0:
+                logger.warning(f"模型 {k} 预测标准差为 0（输出常数），排除")
+                return float("-inf")
+            if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
+                logger.warning(f"模型 {k} 的 {metric} 为 {val}，排除")
+                return float("-inf")
+            return val
+
+        best_model = max(model_results, key=_safe_score)
+        best_score = _safe_score(best_model)
+        if best_score == float("-inf"):
+            # 所有模型都无效，选第一个作为 fallback
+            best_model = next(iter(model_results))
+            logger.warning(f"所有模型指标均无效，默认选择: {best_model}")
+        else:
+            logger.info(f"最优模型: {best_model} ({metric}={best_score:.4f})")
         return best_model

@@ -34,12 +34,13 @@ class QLibModelTrainer:
             "default_params": {
                 "loss": "mse",
                 "learning_rate": 0.05,
-                "num_leaves": 128,
+                "num_leaves": 31,
                 "max_depth": 6,
                 "colsample_bytree": 0.85,
                 "subsample": 0.85,
                 "lambda_l1": 10,
                 "lambda_l2": 10,
+                "min_child_samples": 20,
                 "num_threads": 4,
                 "n_estimators": 500,
                 "early_stopping_rounds": 50,
@@ -54,22 +55,30 @@ class QLibModelTrainer:
             "class": "XGBModel",
             "default_params": {
                 "learning_rate": 0.05,
-                "max_depth": 6,
+                "max_depth": 5,
                 "n_estimators": 500,
                 "colsample_bytree": 0.85,
                 "subsample": 0.85,
-                "reg_alpha": 10,
-                "reg_lambda": 10,
+                "reg_alpha": 1,
+                "reg_lambda": 1,
+                "eval_metric": "rmse",
                 "early_stopping_rounds": 50,
                 "verbosity": 0,
             },
         },
     }
 
+    # LightGBM 跳过的最小样本量阈值（树模型在小数据集上易过拟合）
+    MIN_SAMPLES_LIGHTGBM = 300
+
+    # 高 NaN 列删除阈值
+    HIGH_NAN_RATIO = 0.5
+
     def __init__(
         self,
         model_dir: str = "models",
         custom_params: dict | None = None,
+        min_samples_lightgbm: int | None = None,
     ):
         """
         初始化模型训练器
@@ -77,12 +86,20 @@ class QLibModelTrainer:
         Args:
             model_dir: 模型保存目录
             custom_params: 自定义模型参数（覆盖默认值）
+            min_samples_lightgbm: LightGBM 最小样本量阈值（可选，覆盖默认值）
         """
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.custom_params = custom_params or {}
         self.trained_models = {}
         self.evaluation_results = {}
+
+        if min_samples_lightgbm is not None:
+            self.MIN_SAMPLES_LIGHTGBM = min_samples_lightgbm
+
+        # 训练集清洗参数（fit 后缓存，供 predict/transform 复用）
+        self._train_medians: pd.Series | None = None
+        self._dropped_columns: list[str] = []
 
     def train(
         self,
@@ -121,10 +138,10 @@ class QLibModelTrainer:
 
         logger.info(f"开始训练模型: {model_type}, 训练样本={len(X_train)}")
 
-        # 清理数据
-        X_train_clean, y_train_clean = self._clean_data(X_train, y_train)
+        # 清理数据（在训练集上 fit，验证集上 transform）
+        X_train_clean, y_train_clean = self._fit_clean_params(X_train, y_train)
         if X_valid is not None and y_valid is not None:
-            X_valid_clean, y_valid_clean = self._clean_data(X_valid, y_valid)
+            X_valid_clean, y_valid_clean = self._apply_clean_params(X_valid, y_valid)
         else:
             X_valid_clean, y_valid_clean = None, None
 
@@ -198,7 +215,7 @@ class QLibModelTrainer:
         except ImportError:
             raise ImportError("请安装 xgboost: pip install xgboost")
 
-        params.pop("early_stopping_rounds", None)
+        early_stopping_rounds = params.pop("early_stopping_rounds", 50)
         n_estimators = params.pop("n_estimators", 500)
 
         model = xgb.XGBRegressor(n_estimators=n_estimators, **params)
@@ -207,21 +224,27 @@ class QLibModelTrainer:
         if X_valid is not None and y_valid is not None:
             fit_params["eval_set"] = [(X_valid, y_valid)]
             fit_params["verbose"] = False
+            # 将 early_stopping_rounds 传递给 fit，启用早停防止过拟合
+            if early_stopping_rounds and early_stopping_rounds > 0:
+                fit_params["early_stopping_rounds"] = early_stopping_rounds
 
         model.fit(X_train, y_train, **fit_params)
         return model
 
-    def _clean_data(
+    def _fit_clean_params(
         self,
         X: pd.DataFrame,
         y: pd.Series,
     ) -> tuple[pd.DataFrame, pd.Series]:
         """
-        清理训练数据：移除标签为 NaN 的样本，处理特征中的无穷值
+        在训练集上拟合清洗参数并清理数据（fit + transform）
+
+        计算中位数和需要删除的列，缓存到实例上，
+        供 _apply_clean_params 和 predict 复用，防止数据泄露。
 
         Args:
-            X: 特征
-            y: 标签
+            X: 训练特征
+            y: 训练标签
 
         Returns:
             (清理后的特征, 清理后的标签)
@@ -238,9 +261,69 @@ class QLibModelTrainer:
 
         # 处理特征中的无穷值
         X = X.replace([np.inf, -np.inf], np.nan)
-        X = X.fillna(0)
 
-        logger.debug(f"数据清理: {valid_mask.sum()}/{len(valid_mask)} 个有效样本")
+        # 删除 NaN 比例超过阈值的特征列（仅在训练集上决定）
+        nan_ratio = X.isna().mean()
+        self._dropped_columns = nan_ratio[nan_ratio > self.HIGH_NAN_RATIO].index.tolist()
+        if self._dropped_columns:
+            logger.warning(
+                f"删除 {len(self._dropped_columns)} 个高 NaN 列 "
+                f"(>{self.HIGH_NAN_RATIO:.0%}): {self._dropped_columns[:5]}"
+            )
+            X = X.drop(columns=self._dropped_columns)
+
+        # 在训练集上计算中位数并缓存
+        self._train_medians = X.median()
+        X = X.fillna(self._train_medians)
+
+        logger.debug(
+            f"数据清理(fit): {valid_mask.sum()}/{len(valid_mask)} 个有效样本, "
+            f"{len(X.columns)} 个特征列"
+        )
+        return X, y
+
+    def _apply_clean_params(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series | None = None,
+    ) -> tuple[pd.DataFrame, pd.Series | None]:
+        """
+        使用已拟合的训练集参数清理数据（仅 transform）
+
+        复用 _fit_clean_params 缓存的中位数和删除列，
+        确保验证集/测试集使用训练集的统计量，防止数据泄露。
+
+        Args:
+            X: 特征
+            y: 标签（可选）
+
+        Returns:
+            (清理后的特征, 清理后的标签)
+        """
+        if y is not None:
+            common_index = X.index.intersection(y.index)
+            X = X.loc[common_index]
+            y = y.loc[common_index]
+
+            valid_mask = y.notna()
+            X = X[valid_mask]
+            y = y[valid_mask]
+
+        X = X.replace([np.inf, -np.inf], np.nan)
+
+        # 删除训练时确定的列
+        cols_to_drop = [c for c in self._dropped_columns if c in X.columns]
+        if cols_to_drop:
+            X = X.drop(columns=cols_to_drop)
+
+        # 使用训练集的中位数填充
+        if self._train_medians is not None:
+            # 只使用当前列存在的中位数
+            fill_values = self._train_medians.reindex(X.columns, fill_value=0)
+            X = X.fillna(fill_values)
+        else:
+            X = X.fillna(0)
+
         return X, y
 
     def train_all(
@@ -270,6 +353,13 @@ class QLibModelTrainer:
         results = {}
         for model_type in model_types:
             try:
+                # 训练样本不足时跳过 LightGBM（树模型易过拟合小数据集）
+                if model_type == "lightgbm" and len(X_train) < self.MIN_SAMPLES_LIGHTGBM:
+                    logger.warning(
+                        f"训练样本不足 ({len(X_train)} < {self.MIN_SAMPLES_LIGHTGBM})，跳过 LightGBM"
+                    )
+                    continue
+
                 model = self.train(model_type, X_train, y_train, X_valid, y_valid)
                 results[model_type] = model
             except Exception as e:
@@ -297,8 +387,18 @@ class QLibModelTrainer:
 
         model = self.trained_models[model_type]
 
-        # 清理输入
-        X_clean = X.replace([np.inf, -np.inf], np.nan).fillna(0)
+        # 清理输入（使用训练集的统计量，防止数据泄露）
+        X_clean = X.replace([np.inf, -np.inf], np.nan)
+        # 删除训练时确定的列
+        cols_to_drop = [c for c in self._dropped_columns if c in X_clean.columns]
+        if cols_to_drop:
+            X_clean = X_clean.drop(columns=cols_to_drop)
+        # 使用训练集的中位数填充（而非当前数据的中位数）
+        if self._train_medians is not None:
+            fill_values = self._train_medians.reindex(X_clean.columns, fill_value=0)
+            X_clean = X_clean.fillna(fill_values)
+        else:
+            X_clean = X_clean.fillna(0)
 
         predictions = model.predict(X_clean)
         return pd.Series(predictions, index=X.index, name="score")

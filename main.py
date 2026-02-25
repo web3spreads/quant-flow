@@ -783,84 +783,37 @@ class QuantFlowBot:
                                 else f"{external_info_header}{market_info_summary}"
                             )
 
-                    # QLib 优先决策路径
+                    # QLib 信号作为参考注入 LLM 决策
                     if self.qlib_engine and self.qlib_engine.model_trained:
                         try:
-                            # 提取当前 symbol 的持仓信息
-                            symbol_position = next(
-                                (p for p in current_positions if p.get("coin") == symbol),
-                                None,
-                            )
+                            # 获取 QLib 预测信号
+                            qlib_signal = self.qlib_engine.predict(symbol)
 
-                            # 调用 QLib 生成交易决策
-                            # latest_data=None 让 QLib 自行获取数据（确保 $close 等列名兼容）
-                            qlib_decision = self.qlib_engine.generate_trade_decision(
-                                symbol=symbol,
-                                current_position=symbol_position,
-                                account_balance=balance_info.get("available", 0),
-                                account_info={
-                                    "balance": balance_info.get("available", 0),
-                                    "equity": balance_info.get("total", 0),
-                                    "positions": current_positions,
-                                    "daily_pnl": 0.0,
-                                },
-                                latest_data=None,
-                                market_data={
-                                    "current_price": market_data.get("current_price", 0),
-                                    "atr": market_data.get("atr_14", 0),
-                                    "volatility": market_data.get("volatility", 0),
-                                    "df": df,
-                                },
-                            )
-
-                            self.logger.print_info(
-                                f"[{symbol}]QLib 决策: {qlib_decision.action} "
-                                f"(信号={qlib_decision.signal_strength:.2f}, "
-                                f"置信度={qlib_decision.confidence:.2f})"
-                            )
-
-                            # 执行决策
-                            exec_result = self.qlib_executor.execute(
-                                decision=qlib_decision,
-                                account_balance=balance_info.get("available", 0),
-                            )
-
-                            # 转换为 decision_history 格式
-                            hist = self.qlib_executor.decision_to_history_format(
-                                qlib_decision, exec_result
-                            )
-
-                            # 记录决策历史
-                            self.decision_history.add_decision(
-                                symbol=symbol,
-                                decision=hist["decision"],
-                                market_data=market_data,
-                                reason=hist["reason"][:200],
-                                action_details=hist["action_details"],
-                            )
-
-                            # 记录决策日志
-                            self.logger.log_decision(
-                                symbol=symbol,
-                                market_data=market_data,
-                                prompt="[QLib 量化引擎]",
-                                ai_response=exec_result.get("output", ""),
-                                decision=hist["decision"],
-                                action_details=hist["action_details"],
-                                status="SUCCESS",
-                            )
-
-                            # QLib 成功处理，跳过 LLM Agent
-                            continue
-
+                            if "error" not in qlib_signal:
+                                # 将 QLib 信号注入 enriched_data，供 LLM 提示词模板引用
+                                enriched_data["qlib_signal"] = qlib_signal
+                                enriched_data["qlib_enabled"] = True
+                                self.logger.print_info(
+                                    f"[{symbol}] QLib 信号: "
+                                    f"方向={qlib_signal.get('direction', '未知')}, "
+                                    f"强度={qlib_signal.get('strength', 0):.3f}, "
+                                    f"置信度={qlib_signal.get('confidence', 0):.3f}"
+                                )
+                            else:
+                                enriched_data["qlib_enabled"] = False
+                                self.logger.print_warning(
+                                    f"[{symbol}] QLib 预测失败: {qlib_signal['error']}"
+                                )
                         except Exception as e:
+                            enriched_data["qlib_enabled"] = False
                             self.logger.print_warning(
-                                f"⚠️ [{symbol}] QLib 决策失败，回退到 LLM Agent: {e}"
+                                f"⚠️ [{symbol}] QLib 信号获取失败: {e}"
                             )
                             self.logger.logger.exception(e)
-                            # 不 continue，自动 fallback 到下方 LLM Agent
+                    else:
+                        enriched_data["qlib_enabled"] = False
 
-                    # 调用单币 Agent 决策（LLM 兜底）
+                    # 调用单币 Agent 决策（LLM 主决策，参考 QLib 信号）
                     agent = self.symbol_agents[symbol]
 
                     # 如果是增强型Agent，使用增强决策方法
@@ -1045,21 +998,23 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
-            # 添加 QLib 重训练定时任务
+            # 添加 QLib 重训练检查定时任务（实际由 should_retrain 动态决定）
             if self.qlib_engine:
-                online_config = self.config.qlib_config.get("online", {})
-                retrain_hours = online_config.get("retrain_interval_hours", 168)
-                retrain_minutes = int(retrain_hours * 60)
+                check_interval_hours = self.config.qlib_config.get(
+                    "online", {}
+                ).get("check_interval_hours", 4)
+                check_interval_minutes = int(check_interval_hours * 60)
 
                 self.scheduler.add_job(
                     self._run_qlib_retrain,
-                    trigger=IntervalTrigger(minutes=retrain_minutes),
+                    trigger=IntervalTrigger(minutes=check_interval_minutes),
                     id="qlib_retrain",
-                    name="QLib 模型重训练任务",
+                    name="QLib 模型重训练检查任务",
                     replace_existing=True,
                 )
                 self.logger.print_info(
-                    f"🧠 QLib 重训练任务已添加，间隔: {retrain_hours} 小时"
+                    f"🧠 QLib 重训练检查任务已添加，检查间隔: {check_interval_hours} 小时 "
+                    f"(实际重训练间隔由样本量动态决定)"
                 )
 
             # 如果配置了立即执行，先执行一次
@@ -1185,6 +1140,7 @@ class QuantFlowBot:
             return
         try:
             from datetime import datetime as dt
+
             from src.notification.notifier import NotificationEvent
 
             if success:
@@ -1258,7 +1214,7 @@ class QuantFlowBot:
                     f"\n--- 🏆 模型评估 ---\n"
                     f"最优模型: {best_model} ⭐\n"
                     + "\n".join(model_details)
-                    + f"\n\n💡 IC>0.03 为有效信号，ICIR>0.5 为较好稳定性"
+                    + "\n\n💡 IC>0.03 为有效信号，ICIR>0.5 为较好稳定性"
                 )
             else:
                 title = "⚠️ QLib 模型重训练失败"
