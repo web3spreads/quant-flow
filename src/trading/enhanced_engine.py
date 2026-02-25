@@ -10,6 +10,7 @@
 5. 自适应参数调整
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -26,6 +27,8 @@ from src.trading.risk_manager import (
     StopLossResult,
     TakeProfitResult,
 )
+
+logger = logging.getLogger("QuantFlow.EnhancedEngine")
 
 
 @dataclass
@@ -70,6 +73,21 @@ class EnhancedDecision:
 
 class EnhancedTradingEngine:
     """增强型交易引擎"""
+
+    # QLib 强信号判定阈值
+    QLIB_STRONG_STRENGTH_THRESHOLD = 0.5
+    QLIB_STRONG_CONFIDENCE_THRESHOLD = 0.3
+
+    # 综合置信度权重（有 QLib 信号时）
+    CONFIDENCE_WEIGHT_QLIB = 0.40
+    CONFIDENCE_WEIGHT_SIGNAL_WITH_QLIB = 0.30
+    CONFIDENCE_WEIGHT_RISK_WITH_QLIB = 0.20
+    CONFIDENCE_WEIGHT_MTF_WITH_QLIB = 0.10
+
+    # 综合置信度权重（无 QLib 信号时）
+    CONFIDENCE_WEIGHT_SIGNAL = 0.50
+    CONFIDENCE_WEIGHT_RISK = 0.30
+    CONFIDENCE_WEIGHT_MTF = 0.20
 
     def __init__(
         self,
@@ -289,10 +307,6 @@ class EnhancedTradingEngine:
         Returns:
             (should_trade, action, blockers)
         """
-        import logging as _logging
-
-        _logger = _logging.getLogger("QuantFlow.EnhancedEngine")
-
         blockers = []
 
         # 解析 QLib 信号
@@ -303,7 +317,10 @@ class EnhancedTradingEngine:
             qlib_strength = qlib_signal.get("strength", 0)
             qlib_confidence = qlib_signal.get("confidence", 0)
             qlib_direction = qlib_signal.get("direction", "")
-        qlib_is_strong = qlib_strength > 0.5 and qlib_confidence > 0.3
+        qlib_is_strong = (
+            qlib_strength > self.QLIB_STRONG_STRENGTH_THRESHOLD
+            and qlib_confidence > self.QLIB_STRONG_CONFIDENCE_THRESHOLD
+        )
 
         # 检查是否应该平仓（优先级最高，高于 QLib）
         if current_position:
@@ -319,13 +336,13 @@ class EnhancedTradingEngine:
                 # QLib 强信号覆盖 NO_SIGNAL
                 if "做多" in qlib_direction or "LONG" in qlib_direction.upper():
                     action = "buy"
-                    _logger.info(
+                    logger.info(
                         f"QLib 信号覆盖 NO_SIGNAL → 做多 "
                         f"(强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
                     )
                 elif "做空" in qlib_direction or "SHORT" in qlib_direction.upper():
                     action = "sell_short"
-                    _logger.info(
+                    logger.info(
                         f"QLib 信号覆盖 NO_SIGNAL → 做空 "
                         f"(强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
                     )
@@ -371,7 +388,7 @@ class EnhancedTradingEngine:
 
         if signal_quality_index < min_quality_index:
             if qlib_is_strong:
-                _logger.info("QLib 强信号放松信号质量过滤")
+                logger.info("QLib 强信号放松信号质量过滤")
             else:
                 blockers.append(
                     f"信号质量不足: {trading_signal.quality.value} < {self.min_signal_quality.value}"
@@ -380,7 +397,7 @@ class EnhancedTradingEngine:
         # 过滤2: 置信度检查
         if trading_signal.confidence < self.min_confidence:
             if qlib_is_strong:
-                _logger.info("QLib 强信号放松置信度过滤")
+                logger.info("QLib 强信号放松置信度过滤")
             else:
                 blockers.append(
                     f"置信度不足: {trading_signal.confidence:.0%} < {self.min_confidence:.0%}"
@@ -426,21 +443,21 @@ class EnhancedTradingEngine:
         mtf_factor = market_analysis.multi_timeframe_alignment
 
         if qlib_signal and qlib_signal.get("confidence", 0) > 0:
-            # 有 QLib 信号时：QLib 40%，信号评分 30%，风险 20%，多周期 10%
+            # 有 QLib 信号时融合置信度
             qlib_conf = qlib_signal.get("confidence", 0)
             qlib_str = qlib_signal.get("strength", 0)
             confidence = (
-                (qlib_conf * qlib_str) * 0.40
-                + signal_confidence * 0.30
-                + risk_factor * 0.20
-                + mtf_factor * 0.10
+                (qlib_conf * qlib_str) * self.CONFIDENCE_WEIGHT_QLIB
+                + signal_confidence * self.CONFIDENCE_WEIGHT_SIGNAL_WITH_QLIB
+                + risk_factor * self.CONFIDENCE_WEIGHT_RISK_WITH_QLIB
+                + mtf_factor * self.CONFIDENCE_WEIGHT_MTF_WITH_QLIB
             )
         else:
             # 无 QLib 信号时保持原有权重
             confidence = (
-                signal_confidence * 0.50
-                + risk_factor * 0.30
-                + mtf_factor * 0.20
+                signal_confidence * self.CONFIDENCE_WEIGHT_SIGNAL
+                + risk_factor * self.CONFIDENCE_WEIGHT_RISK
+                + mtf_factor * self.CONFIDENCE_WEIGHT_MTF
             )
 
         return max(0, min(1, confidence))

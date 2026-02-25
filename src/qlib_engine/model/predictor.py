@@ -97,6 +97,26 @@ class SignalPredictor:
     5. 置信度估计 → 基于历史分布
     """
 
+    # ---- 置信度计算中的归一化参数 ----
+    # IC 范围通常 [-0.1, 0.3]，映射到 [0, 1]
+    IC_NORM_OFFSET = 0.05
+    IC_NORM_RANGE = 0.3
+    # ICIR 范围通常 [-1, 3]，映射到 [0, 1]
+    ICIR_NORM_OFFSET = 0.5
+    ICIR_NORM_RANGE = 3.0
+
+    # ---- 置信度维度权重 ----
+    WEIGHT_MODEL_QUALITY = 0.40
+    WEIGHT_SIGNAL_STRENGTH = 0.25
+    WEIGHT_HISTORY_CONSISTENCY = 0.20
+    WEIGHT_SAMPLE_SIZE = 0.15
+
+    # 样本量满分所需的最小历史长度
+    SAMPLE_FULL_SCORE_COUNT = 50
+
+    # 最低置信度
+    MIN_CONFIDENCE = 0.1
+
     def __init__(
         self,
         signal_threshold: float = 0.3,
@@ -273,19 +293,17 @@ class SignalPredictor:
         Returns:
             置信度 [0.1, 1]
         """
-        # 维度1：模型质量（40%）—— 基于 IC 和 ICIR
+        # 维度1：模型质量 —— 基于 IC 和 ICIR
         ic = self._model_eval_metrics.get("IC", 0)
         icir = self._model_eval_metrics.get("ICIR", 0)
-        # IC 范围通常 [-0.1, 0.3]，映射到 [0, 1]
-        ic_score = max(0, min(1, (ic + 0.05) / 0.3))
-        # ICIR 范围通常 [-1, 3]，映射到 [0, 1]
-        icir_score = max(0, min(1, (icir + 0.5) / 3.0))
+        ic_score = max(0, min(1, (ic + self.IC_NORM_OFFSET) / self.IC_NORM_RANGE))
+        icir_score = max(0, min(1, (icir + self.ICIR_NORM_OFFSET) / self.ICIR_NORM_RANGE))
         model_quality = (ic_score * 0.5 + icir_score * 0.5)
 
-        # 维度2：信号强度（25%）—— 标准化分数绝对值
+        # 维度2：信号强度 —— 标准化分数绝对值
         signal_strength = min(abs(normalized_score), 1.0)
 
-        # 维度3：历史一致性（20%）—— 最近预测方向的一致性
+        # 维度3：历史一致性 —— 最近预测方向的一致性
         history = self._score_history.get(symbol, [])
         if len(history) >= 5:
             recent = history[-10:]
@@ -293,19 +311,18 @@ class SignalPredictor:
         else:
             direction_consistency = 0.3  # 数据不足时给保守值
 
-        # 维度4：样本量（15%）—— 历史长度 / 50
-        sample_score = min(len(history) / 50, 1.0)
+        # 维度4：样本量
+        sample_score = min(len(history) / self.SAMPLE_FULL_SCORE_COUNT, 1.0)
 
         # 加权汇总
         confidence = (
-            model_quality * 0.40
-            + signal_strength * 0.25
-            + direction_consistency * 0.20
-            + sample_score * 0.15
+            model_quality * self.WEIGHT_MODEL_QUALITY
+            + signal_strength * self.WEIGHT_SIGNAL_STRENGTH
+            + direction_consistency * self.WEIGHT_HISTORY_CONSISTENCY
+            + sample_score * self.WEIGHT_SAMPLE_SIZE
         )
 
-        # 最低置信度 0.1
-        confidence = max(0.1, min(1.0, confidence))
+        confidence = max(self.MIN_CONFIDENCE, min(1.0, confidence))
 
         logger.debug(
             f"[{symbol}] 置信度计算: 模型质量={model_quality:.3f}, "

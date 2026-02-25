@@ -998,9 +998,11 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
-            # 添加 QLib 重训练检查定时任务（固定 4h 检查，实际由 should_retrain 动态决定）
+            # 添加 QLib 重训练检查定时任务（实际由 should_retrain 动态决定）
             if self.qlib_engine:
-                check_interval_hours = 4
+                check_interval_hours = self.config.qlib_config.get(
+                    "online", {}
+                ).get("check_interval_hours", 4)
                 check_interval_minutes = int(check_interval_hours * 60)
 
                 self.scheduler.add_job(
@@ -1138,6 +1140,7 @@ class QuantFlowBot:
             return
         try:
             from datetime import datetime as dt
+
             from src.notification.notifier import NotificationEvent
 
             if success:
@@ -1211,7 +1214,7 @@ class QuantFlowBot:
                     f"\n--- 🏆 模型评估 ---\n"
                     f"最优模型: {best_model} ⭐\n"
                     + "\n".join(model_details)
-                    + f"\n\n💡 IC>0.03 为有效信号，ICIR>0.5 为较好稳定性"
+                    + "\n\n💡 IC>0.03 为有效信号，ICIR>0.5 为较好稳定性"
                 )
             else:
                 title = "⚠️ QLib 模型重训练失败"

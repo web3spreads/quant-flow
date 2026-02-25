@@ -539,14 +539,10 @@ class QuantFlowQLibEngine:
 
     def _get_dynamic_retrain_interval(self) -> float:
         """根据样本量计算动态重训练间隔（小时）"""
-        config_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
+        from . import get_dynamic_retrain_interval
 
-        if self._last_train_samples < 500:
-            return min(6.0, config_hours)
-        elif self._last_train_samples < 2000:
-            return min(4.0, config_hours)
-        else:
-            return config_hours
+        config_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
+        return get_dynamic_retrain_interval(self._last_train_samples, config_hours)
 
     def get_status(self) -> dict:
         """

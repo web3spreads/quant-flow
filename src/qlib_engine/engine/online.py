@@ -101,15 +101,10 @@ class OnlineModelManager:
 
     def _get_dynamic_retrain_interval(self) -> float:
         """根据缓存数据量计算动态重训练间隔（小时）"""
-        # 估算缓存数据量
-        total_cached = sum(len(df) for df in self._data_cache.values()) if self._data_cache else 0
+        from . import get_dynamic_retrain_interval
 
-        if total_cached < 500:
-            return min(6.0, self.retrain_interval_hours)
-        elif total_cached < 2000:
-            return min(4.0, self.retrain_interval_hours)
-        else:
-            return self.retrain_interval_hours
+        total_cached = sum(len(df) for df in self._data_cache.values()) if self._data_cache else 0
+        return get_dynamic_retrain_interval(total_cached, self.retrain_interval_hours)
 
     def rolling_retrain(
         self,
