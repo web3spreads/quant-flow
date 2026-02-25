@@ -862,14 +862,6 @@ class SingleSymbolAgent:
         
         return callbacks
 
-        # 如果限价单功能启用，添加限价单回调
-        if self.limit_order_enabled:
-            callbacks["buy_limit"] = self._buy_limit_callback
-            callbacks["sell_short_limit"] = self._sell_short_limit_callback
-            callbacks["cancel_limit_order"] = self._cancel_limit_order_callback
-
-        return callbacks
-
     def _check_fee_guard(self) -> str | None:
         """
         确保当前止盈目标足以覆盖手续费，避免因为手续费导致的小额亏损

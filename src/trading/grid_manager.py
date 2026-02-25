@@ -27,7 +27,8 @@ class GridManager:
                     data = json.load(f)
                     if "active_grids" not in data: data = {"active_grids": {}}
                     return data
-                except: pass
+                except Exception:
+                    pass
         return {"active_grids": {}}
 
     def _save_state(self):
@@ -55,7 +56,7 @@ class GridManager:
         try:
             new_num = int(new_num)
             if new_num <= 0: new_num = 10
-        except:
+        except (ValueError, TypeError):
             new_num = 10
             
         new_amount = params.get("amount_per_grid")
@@ -145,7 +146,8 @@ class GridManager:
             if 'response' in limit_order_res:
                 return limit_order_res['response']['data']['statuses'][0]['resting']['oid']
             return None
-        except: return None
+        except Exception:
+            return None
 
     def _calculate_grid_prices(self, lower: float, upper: float, num: int, grid_type: str) -> List[float]:
         if num < 2: return [lower]
@@ -153,7 +155,8 @@ class GridManager:
         try:
             if hasattr(lower, "real"): lower = float(lower.real)
             if hasattr(upper, "real"): upper = float(upper.real)
-        except: pass
+        except Exception:
+            pass
 
         prices = []
         if grid_type == "ARITHMETIC":
@@ -171,13 +174,20 @@ class GridManager:
     def _cancel_all_orders(self, symbol: str):
         grid = self.state["active_grids"].get(symbol)
         if not grid: return
-        
+
         oids = [o['oid'] for o in grid.get("buy_orders", []) if isinstance(o, dict)] + \
                [o['oid'] for o in grid.get("sell_orders", []) if isinstance(o, dict)]
+        failed = []
         for oid in oids:
-            try: self.order_manager.client.cancel_order(symbol, oid)
-            except: pass
-        
+            try:
+                self.order_manager.client.cancel_order(symbol, oid)
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] ⚠️ 取消订单 {oid} 失败: {e}")
+                failed.append(oid)
+
+        if failed:
+            self.logger.print_warning(f"   [Grid] ⚠️ {len(failed)} 个订单取消失败，保留状态以便重试")
+
         del self.state["active_grids"][symbol]
         self._save_state()
 

@@ -269,7 +269,7 @@ class Notifier:
 
         try:
             # 使用 Apprise 发送通知
-            result = self.apprise.notify(title=title, body=message)
+            result = self.apprise.notify(title=full_title, body=message)
 
             if result:
                 self.logger.info(f"📤 通知发送成功: {full_title}")
