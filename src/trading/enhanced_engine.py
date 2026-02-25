@@ -80,16 +80,20 @@ class EnhancedTradingEngine:
     QLIB_STRONG_CONFIDENCE_THRESHOLD = 0.3
 
     # QLib 方向分类（基于 SignalDirection 枚举值）
-    QLIB_LONG_DIRECTIONS = frozenset({
-        SignalDirection.STRONG_LONG.value,
-        SignalDirection.LONG.value,
-        SignalDirection.WEAK_LONG.value,
-    })
-    QLIB_SHORT_DIRECTIONS = frozenset({
-        SignalDirection.STRONG_SHORT.value,
-        SignalDirection.SHORT.value,
-        SignalDirection.WEAK_SHORT.value,
-    })
+    QLIB_LONG_DIRECTIONS = frozenset(
+        {
+            SignalDirection.STRONG_LONG.value,
+            SignalDirection.LONG.value,
+            SignalDirection.WEAK_LONG.value,
+        }
+    )
+    QLIB_SHORT_DIRECTIONS = frozenset(
+        {
+            SignalDirection.STRONG_SHORT.value,
+            SignalDirection.SHORT.value,
+            SignalDirection.WEAK_SHORT.value,
+        }
+    )
 
     # 综合置信度权重（有 QLib 信号时）
     CONFIDENCE_WEIGHT_QLIB = 0.40

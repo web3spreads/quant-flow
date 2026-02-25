@@ -778,9 +778,7 @@ class PromptManager:
             context.update(enriched_data)
 
         # 确保关键字段有默认值（无论 enriched_data 是否存在）
-        self._set_enriched_defaults(
-            context, current_price, rsi, balance_info, current_positions
-        )
+        self._set_enriched_defaults(context, current_price, rsi, balance_info, current_positions)
 
         # QLib 量化信号（如果可用）
         self._set_qlib_signal_text(context, enriched_data)
