@@ -777,73 +777,100 @@ class PromptManager:
             # 直接合并所有enriched_data字段
             context.update(enriched_data)
 
-            # 确保关键字段有默认值
-            context.setdefault("elapsed_minutes", 0)
-            context.setdefault("mid_prices", [])
-            context.setdefault("ema_indicators", [])
-            context.setdefault("macd_indicators", [])
-            context.setdefault("rsi_7_indicators", [])
-            context.setdefault("rsi_14_indicators", [])
-            context.setdefault("current_ema20", current_price)
-            context.setdefault("current_rsi", rsi)
-            context.setdefault("oi_latest", 0)
-            context.setdefault("oi_average", 0)
-            context.setdefault("funding_rate", 0)
-            context.setdefault("ema_20_4h", current_price)
-            context.setdefault("ema_50_4h", current_price)
-            context.setdefault("atr_3_4h", 0)
-            context.setdefault("atr_14_4h", 0)
-            context.setdefault("current_volume", 0)
-            context.setdefault("avg_volume", 0)
-            context.setdefault("macd_4h_indicators", [])
-            context.setdefault("rsi_14_4h_indicators", [])
-            context.setdefault("total_return_pct", 0)
-            context.setdefault("account_value", 10000)
-            context.setdefault(
-                "available_cash",
-                balance_info.get("available", 0) if balance_info else 0,
-            )
-            context.setdefault("sharpe_ratio", 0)
-            context.setdefault("current_positions", str(current_positions))
-            context.setdefault("recent_trades_text", "")
+        # 确保关键字段有默认值（无论 enriched_data 是否存在）
+        self._set_enriched_defaults(context, current_price, rsi, balance_info, current_positions)
 
-            # QLib 量化信号（如果可用）
-            qlib_enabled = enriched_data.get("qlib_enabled", False)
-            qlib_signal = enriched_data.get("qlib_signal", {})
-            context["qlib_enabled"] = qlib_enabled
-            context["qlib_signal"] = qlib_signal
+        # QLib 量化信号（如果可用）
+        self._set_qlib_signal_text(context, enriched_data)
 
-            if qlib_enabled and qlib_signal:
-                # 格式化 QLib 信号文本
-                direction = qlib_signal.get("direction", "中性")
-                strength = qlib_signal.get("strength", 0)
-                confidence = qlib_signal.get("confidence", 0)
-                raw_score = qlib_signal.get("raw_score", 0)
-                normalized_score = qlib_signal.get("normalized_score", 0)
-                percentile = qlib_signal.get("percentile", 0.5)
-                model_type = qlib_signal.get("model_type", "未知")
-                is_actionable = qlib_signal.get("is_actionable", False)
+        # 使用 Jinja2 渲染模板
+        prompt = self.trading_prompt_template.render(context)
 
-                # 根据方向生成建议（使用 SignalDirection 枚举）
-                direction_emoji = {
-                    SignalDirection.STRONG_LONG.value: "🟢🟢",
-                    SignalDirection.LONG.value: "🟢",
-                    SignalDirection.WEAK_LONG.value: "🟡↑",
-                    SignalDirection.NEUTRAL.value: "⚪",
-                    SignalDirection.WEAK_SHORT.value: "🟡↓",
-                    SignalDirection.SHORT.value: "🔴",
-                    SignalDirection.STRONG_SHORT.value: "🔴🔴",
-                }.get(direction, "⚪")
+        return prompt
 
-                # 信号强度等级（使用与 predictor 一致的阈值）
-                if strength >= 0.7:
-                    strength_text = "强"
-                elif strength >= 0.4:
-                    strength_text = "中等"
-                else:
-                    strength_text = "弱"
+    @staticmethod
+    def _set_enriched_defaults(
+        context: dict,
+        current_price: float,
+        rsi: float,
+        balance_info: dict | None,
+        current_positions: list,
+    ) -> None:
+        """设置 enriched_data 相关字段的默认值，避免 Jinja2 UndefinedError"""
+        context.setdefault("elapsed_minutes", 0)
+        context.setdefault("mid_prices", [])
+        context.setdefault("ema_indicators", [])
+        context.setdefault("macd_indicators", [])
+        context.setdefault("rsi_7_indicators", [])
+        context.setdefault("rsi_14_indicators", [])
+        context.setdefault("current_ema20", current_price)
+        context.setdefault("current_rsi", rsi)
+        context.setdefault("oi_latest", 0)
+        context.setdefault("oi_average", 0)
+        context.setdefault("funding_rate", 0)
+        context.setdefault("ema_20_4h", current_price)
+        context.setdefault("ema_50_4h", current_price)
+        context.setdefault("atr_3_4h", 0)
+        context.setdefault("atr_14_4h", 0)
+        context.setdefault("current_volume", 0)
+        context.setdefault("avg_volume", 0)
+        context.setdefault("macd_4h_indicators", [])
+        context.setdefault("rsi_14_4h_indicators", [])
+        context.setdefault("total_return_pct", 0)
+        context.setdefault("account_value", 10000)
+        context.setdefault(
+            "available_cash",
+            balance_info.get("available", 0) if balance_info else 0,
+        )
+        context.setdefault("sharpe_ratio", 0)
+        context.setdefault("current_positions", str(current_positions))
+        context.setdefault("recent_trades_text", "")
 
-                qlib_text = f"""
+    @staticmethod
+    def _set_qlib_signal_text(
+        context: dict,
+        enriched_data: dict | None,
+    ) -> None:
+        """根据 enriched_data 中的 QLib 信号生成提示词文本"""
+        qlib_enabled = (enriched_data or {}).get("qlib_enabled", False)
+        qlib_signal = (enriched_data or {}).get("qlib_signal", {})
+        context["qlib_enabled"] = qlib_enabled
+        context["qlib_signal"] = qlib_signal
+
+        if not (qlib_enabled and qlib_signal):
+            context["qlib_signal_text"] = ""
+            return
+
+        # 格式化 QLib 信号文本
+        direction = qlib_signal.get("direction", "中性")
+        strength = qlib_signal.get("strength", 0)
+        confidence = qlib_signal.get("confidence", 0)
+        raw_score = qlib_signal.get("raw_score", 0)
+        normalized_score = qlib_signal.get("normalized_score", 0)
+        percentile = qlib_signal.get("percentile", 0.5)
+        model_type = qlib_signal.get("model_type", "未知")
+        is_actionable = qlib_signal.get("is_actionable", False)
+
+        # 根据方向生成建议（使用 SignalDirection 枚举）
+        direction_emoji = {
+            SignalDirection.STRONG_LONG.value: "🟢🟢",
+            SignalDirection.LONG.value: "🟢",
+            SignalDirection.WEAK_LONG.value: "🟡↑",
+            SignalDirection.NEUTRAL.value: "⚪",
+            SignalDirection.WEAK_SHORT.value: "🟡↓",
+            SignalDirection.SHORT.value: "🔴",
+            SignalDirection.STRONG_SHORT.value: "🔴🔴",
+        }.get(direction, "⚪")
+
+        # 信号强度等级（使用与 predictor 一致的阈值）
+        if strength >= 0.7:
+            strength_text = "强"
+        elif strength >= 0.4:
+            strength_text = "中等"
+        else:
+            strength_text = "弱"
+
+        context["qlib_signal_text"] = f"""
 ## 🧠 QLib 量化模型信号
 
 **模型预测（{model_type} 模型）:**
@@ -865,48 +892,6 @@ class PromptManager:
 - ⚠️ QLib 信号 + 技术指标矛盾 → 建议观望或小仓位试探
 - ❌ QLib 信号弱或中性 → 主要依据技术指标判断
 """
-                context["qlib_signal_text"] = qlib_text
-            else:
-                context["qlib_signal_text"] = ""
-
-        else:
-            # enriched_data 为空时设置所有默认值，避免 Jinja2 UndefinedError
-            context["qlib_enabled"] = False
-            context["qlib_signal"] = {}
-            context["qlib_signal_text"] = ""
-            context.setdefault("elapsed_minutes", 0)
-            context.setdefault("mid_prices", [])
-            context.setdefault("ema_indicators", [])
-            context.setdefault("macd_indicators", [])
-            context.setdefault("rsi_7_indicators", [])
-            context.setdefault("rsi_14_indicators", [])
-            context.setdefault("current_ema20", current_price)
-            context.setdefault("current_rsi", rsi)
-            context.setdefault("oi_latest", 0)
-            context.setdefault("oi_average", 0)
-            context.setdefault("funding_rate", 0)
-            context.setdefault("ema_20_4h", current_price)
-            context.setdefault("ema_50_4h", current_price)
-            context.setdefault("atr_3_4h", 0)
-            context.setdefault("atr_14_4h", 0)
-            context.setdefault("current_volume", 0)
-            context.setdefault("avg_volume", 0)
-            context.setdefault("macd_4h_indicators", [])
-            context.setdefault("rsi_14_4h_indicators", [])
-            context.setdefault("total_return_pct", 0)
-            context.setdefault("account_value", 10000)
-            context.setdefault(
-                "available_cash",
-                balance_info.get("available", 0) if balance_info else 0,
-            )
-            context.setdefault("sharpe_ratio", 0)
-            context.setdefault("current_positions", str(current_positions))
-            context.setdefault("recent_trades_text", "")
-
-        # 使用 Jinja2 渲染模板
-        prompt = self.trading_prompt_template.render(context)
-
-        return prompt
 
     def format_review_prompt(
         self,
