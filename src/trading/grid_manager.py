@@ -34,6 +34,14 @@ class GridManager:
         with open(self.state_file, 'w') as f:
             json.dump(self.state, f, indent=2)
 
+    def update_grid(self, symbol: str, market_data: Dict[str, Any], agent: Any, trends: Dict[str, str] = None):
+        """
+        统一入口：获取状态 -> AI 决策 -> 同步网格
+        """
+        summary = self.get_grid_summary(symbol)
+        ai_config = agent.make_decision(market_data, trends, summary)
+        self.sync_grid(symbol, ai_config)
+
     def sync_grid(self, symbol: str, ai_config: Dict[str, Any]):
         """
         核心逻辑：根据 AI 最新的决策，同步现实中的网格状态。
