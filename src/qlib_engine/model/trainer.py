@@ -34,12 +34,13 @@ class QLibModelTrainer:
             "default_params": {
                 "loss": "mse",
                 "learning_rate": 0.05,
-                "num_leaves": 128,
+                "num_leaves": 31,
                 "max_depth": 6,
                 "colsample_bytree": 0.85,
                 "subsample": 0.85,
                 "lambda_l1": 10,
                 "lambda_l2": 10,
+                "min_child_samples": 20,
                 "num_threads": 4,
                 "n_estimators": 500,
                 "early_stopping_rounds": 50,
@@ -60,6 +61,7 @@ class QLibModelTrainer:
                 "subsample": 0.85,
                 "reg_alpha": 1,
                 "reg_lambda": 1,
+                "eval_metric": "rmse",
                 "early_stopping_rounds": 50,
                 "verbosity": 0,
             },
@@ -220,7 +222,7 @@ class QLibModelTrainer:
         y: pd.Series,
     ) -> tuple[pd.DataFrame, pd.Series]:
         """
-        清理训练数据：移除标签为 NaN 的样本，处理特征中的无穷值
+        清理训练数据：移除标签为 NaN 的样本，删除高 NaN 列，中位数填充
 
         Args:
             X: 特征
@@ -241,9 +243,24 @@ class QLibModelTrainer:
 
         # 处理特征中的无穷值
         X = X.replace([np.inf, -np.inf], np.nan)
-        X = X.fillna(0)
 
-        logger.debug(f"数据清理: {valid_mask.sum()}/{len(valid_mask)} 个有效样本")
+        # 删除 NaN 比例 > 50% 的特征列
+        nan_ratio = X.isna().mean()
+        high_nan_cols = nan_ratio[nan_ratio > 0.5].index.tolist()
+        if high_nan_cols:
+            logger.warning(
+                f"删除 {len(high_nan_cols)} 个高 NaN 列 (>50%): {high_nan_cols[:5]}"
+            )
+            X = X.drop(columns=high_nan_cols)
+
+        # 用中位数填充 NaN（替代 fillna(0)，避免特征退化）
+        medians = X.median()
+        X = X.fillna(medians)
+
+        logger.debug(
+            f"数据清理: {valid_mask.sum()}/{len(valid_mask)} 个有效样本, "
+            f"{len(X.columns)} 个特征列"
+        )
         return X, y
 
     def train_all(
@@ -273,6 +290,13 @@ class QLibModelTrainer:
         results = {}
         for model_type in model_types:
             try:
+                # 训练样本 < 300 时跳过 LightGBM（树模型易过拟合小数据集）
+                if model_type == "lightgbm" and len(X_train) < 300:
+                    logger.warning(
+                        f"训练样本不足 ({len(X_train)} < 300)，跳过 LightGBM"
+                    )
+                    continue
+
                 model = self.train(model_type, X_train, y_train, X_valid, y_valid)
                 results[model_type] = model
             except Exception as e:
@@ -300,8 +324,9 @@ class QLibModelTrainer:
 
         model = self.trained_models[model_type]
 
-        # 清理输入
-        X_clean = X.replace([np.inf, -np.inf], np.nan).fillna(0)
+        # 清理输入（用中位数填充，与训练时一致）
+        X_clean = X.replace([np.inf, -np.inf], np.nan)
+        X_clean = X_clean.fillna(X_clean.median())
 
         predictions = model.predict(X_clean)
         return pd.Series(predictions, index=X.index, name="score")

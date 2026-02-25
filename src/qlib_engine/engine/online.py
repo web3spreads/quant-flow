@@ -82,7 +82,7 @@ class OnlineModelManager:
 
     def should_retrain(self) -> bool:
         """
-        判断是否需要重新训练
+        判断是否需要重新训练（动态间隔）
 
         Returns:
             是否需要重训练
@@ -90,8 +90,26 @@ class OnlineModelManager:
         if self._last_retrain_time is None:
             return True
 
+        retrain_hours = self._get_dynamic_retrain_interval()
         elapsed = (datetime.now() - self._last_retrain_time).total_seconds() / 3600
-        return elapsed >= self.retrain_interval_hours
+
+        if elapsed >= retrain_hours:
+            logger.info(
+                f"达到动态重训练间隔: 已过 {elapsed:.1f}h >= {retrain_hours}h"
+            )
+        return elapsed >= retrain_hours
+
+    def _get_dynamic_retrain_interval(self) -> float:
+        """根据缓存数据量计算动态重训练间隔（小时）"""
+        # 估算缓存数据量
+        total_cached = sum(len(df) for df in self._data_cache.values()) if self._data_cache else 0
+
+        if total_cached < 500:
+            return min(6.0, self.retrain_interval_hours)
+        elif total_cached < 2000:
+            return min(4.0, self.retrain_interval_hours)
+        else:
+            return self.retrain_interval_hours
 
     def rolling_retrain(
         self,

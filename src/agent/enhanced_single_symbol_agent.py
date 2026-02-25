@@ -140,6 +140,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         account_balance: float,
         current_positions: list,
         multi_timeframe_trends: dict[str, str] | None = None,
+        qlib_signal: dict | None = None,
     ) -> EnhancedDecision | None:
         """
         使用增强引擎进行分析
@@ -150,6 +151,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             account_balance: 账户余额
             current_positions: 当前持仓列表
             multi_timeframe_trends: 多周期趋势
+            qlib_signal: QLib 量化信号（可选）
 
         Returns:
             EnhancedDecision 或 None
@@ -166,6 +168,7 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
                 current_positions=current_positions,
                 multi_timeframe_trends=multi_timeframe_trends,
                 leverage=self.max_leverage,
+                qlib_signal=qlib_signal,
             )
 
             self._last_enhanced_decision = decision
@@ -341,12 +344,16 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         if df is not None and account_balance is not None and self.enable_enhanced_analysis:
             current_price = market_data.get("current_price", 0)
 
+            # 提取 QLib 信号（从 enriched_data 透传）
+            qlib_signal = enriched_data.get("qlib_signal") if enriched_data else None
+
             enhanced_decision = self.analyze_with_enhanced_engine(
                 df=df,
                 current_price=current_price,
                 account_balance=account_balance,
                 current_positions=current_positions,
                 multi_timeframe_trends=multi_timeframe_trends,
+                qlib_signal=qlib_signal,
             )
 
             if enhanced_decision:

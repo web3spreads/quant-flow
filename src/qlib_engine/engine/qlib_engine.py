@@ -71,6 +71,8 @@ class QuantFlowQLibEngine:
         self._features: dict[str, pd.DataFrame] = {}  # 每个交易对的因子数据
         self._best_model_type: str = "lightgbm"  # 当前最优模型
         self._last_train_time: datetime | None = None  # 上次训练时间
+        self._last_train_samples: int = 0  # 上次训练样本量
+        self._last_evaluation: dict = {}  # 上次模型评估指标
 
     def initialize(
         self,
@@ -187,6 +189,10 @@ class QuantFlowQLibEngine:
             self.model_trained = True
             self._best_model_type = model_type
             self._last_train_time = train_time
+
+            # 加载已有模型时给保守默认评估指标
+            self._last_evaluation = {"IC": 0.05, "ICIR": 0.5}
+            self.predictor.update_model_metrics(self._last_evaluation)
 
             logger.info(
                 f"成功加载已有模型: 类型={model_type}, "
@@ -312,6 +318,11 @@ class QuantFlowQLibEngine:
             # 保存最优模型
             self.trainer.save_model(self._best_model_type, tag="best")
 
+            # 将评估指标传给 predictor，用于置信度计算
+            best_eval = evaluation_results.get(self._best_model_type, {})
+            self._last_evaluation = best_eval
+            self.predictor.update_model_metrics(best_eval)
+
             # 获取特征重要性
             importance = self.trainer.get_feature_importance(self._best_model_type)
             if importance is not None:
@@ -328,6 +339,7 @@ class QuantFlowQLibEngine:
 
         self.model_trained = True
         self._last_train_time = datetime.now()
+        self._last_train_samples = len(raw_data)
 
         # 收集训练数据详情（供通知和排查使用）
         data_time_start = timestamps[0]
@@ -502,7 +514,12 @@ class QuantFlowQLibEngine:
 
     def should_retrain(self) -> bool:
         """
-        判断是否需要重新训练模型
+        判断是否需要重新训练模型（动态间隔）
+
+        根据上次训练样本量动态调整间隔：
+        - < 500 样本：6 小时
+        - 500-2000 样本：4 小时
+        - >= 2000 样本：使用配置值（默认 168h）
 
         Returns:
             True 如果需要重训练
@@ -510,9 +527,26 @@ class QuantFlowQLibEngine:
         if not self.model_trained or self._last_train_time is None:
             return True
 
-        retrain_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
+        retrain_hours = self._get_dynamic_retrain_interval()
         elapsed = (datetime.now() - self._last_train_time).total_seconds() / 3600
+
+        if elapsed >= retrain_hours:
+            logger.info(
+                f"达到动态重训练间隔: 已过 {elapsed:.1f}h >= {retrain_hours}h "
+                f"(样本量={self._last_train_samples})"
+            )
         return elapsed >= retrain_hours
+
+    def _get_dynamic_retrain_interval(self) -> float:
+        """根据样本量计算动态重训练间隔（小时）"""
+        config_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
+
+        if self._last_train_samples < 500:
+            return min(6.0, config_hours)
+        elif self._last_train_samples < 2000:
+            return min(4.0, config_hours)
+        else:
+            return config_hours
 
     def get_status(self) -> dict:
         """

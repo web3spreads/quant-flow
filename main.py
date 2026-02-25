@@ -998,21 +998,21 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
-            # 添加 QLib 重训练定时任务
+            # 添加 QLib 重训练检查定时任务（固定 4h 检查，实际由 should_retrain 动态决定）
             if self.qlib_engine:
-                online_config = self.config.qlib_config.get("online", {})
-                retrain_hours = online_config.get("retrain_interval_hours", 168)
-                retrain_minutes = int(retrain_hours * 60)
+                check_interval_hours = 4
+                check_interval_minutes = int(check_interval_hours * 60)
 
                 self.scheduler.add_job(
                     self._run_qlib_retrain,
-                    trigger=IntervalTrigger(minutes=retrain_minutes),
+                    trigger=IntervalTrigger(minutes=check_interval_minutes),
                     id="qlib_retrain",
-                    name="QLib 模型重训练任务",
+                    name="QLib 模型重训练检查任务",
                     replace_existing=True,
                 )
                 self.logger.print_info(
-                    f"🧠 QLib 重训练任务已添加，间隔: {retrain_hours} 小时"
+                    f"🧠 QLib 重训练检查任务已添加，检查间隔: {check_interval_hours} 小时 "
+                    f"(实际重训练间隔由样本量动态决定)"
                 )
 
             # 如果配置了立即执行，先执行一次
