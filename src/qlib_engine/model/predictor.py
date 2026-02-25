@@ -298,7 +298,7 @@ class SignalPredictor:
         icir = self._model_eval_metrics.get("ICIR", 0)
         ic_score = max(0, min(1, (ic + self.IC_NORM_OFFSET) / self.IC_NORM_RANGE))
         icir_score = max(0, min(1, (icir + self.ICIR_NORM_OFFSET) / self.ICIR_NORM_RANGE))
-        model_quality = (ic_score * 0.5 + icir_score * 0.5)
+        model_quality = ic_score * 0.5 + icir_score * 0.5
 
         # 维度2：信号强度 —— 标准化分数绝对值
         signal_strength = min(abs(normalized_score), 1.0)

@@ -177,9 +177,7 @@ class HyperliquidDataCollector:
                     # use_all_local=True 时返回全量数据，否则只返回最近 limit 条
                     if use_all_local:
                         df = merged.reset_index(drop=True)
-                        logger.info(
-                            f"{symbol}: 使用全量本地数据 {len(df)} 条（用于模型训练）"
-                        )
+                        logger.info(f"{symbol}: 使用全量本地数据 {len(df)} 条（用于模型训练）")
                     else:
                         df = merged.tail(limit).reset_index(drop=True)
                 elif self.persist_data:

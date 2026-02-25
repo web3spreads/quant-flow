@@ -36,6 +36,7 @@ def get_dynamic_retrain_interval(
     else:
         return config_hours
 
+
 __all__ = [
     "QuantFlowQLibEngine",
     "OnlineModelManager",

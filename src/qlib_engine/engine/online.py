@@ -94,9 +94,7 @@ class OnlineModelManager:
         elapsed = (datetime.now() - self._last_retrain_time).total_seconds() / 3600
 
         if elapsed >= retrain_hours:
-            logger.info(
-                f"达到动态重训练间隔: 已过 {elapsed:.1f}h >= {retrain_hours}h"
-            )
+            logger.info(f"达到动态重训练间隔: 已过 {elapsed:.1f}h >= {retrain_hours}h")
         return elapsed >= retrain_hours
 
     def _get_dynamic_retrain_interval(self) -> float:
