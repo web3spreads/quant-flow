@@ -505,6 +505,8 @@ class QLibModelTrainer:
             logger.info(f"模型已加载（含清洗参数）: {path}")
         else:
             model = data
+            self._train_medians = None
+            self._dropped_columns = []
             logger.info(f"模型已加载（旧格式，无清洗参数）: {path}")
 
         self.trained_models[model_type] = model
