@@ -461,6 +461,40 @@ class ExecutionAgent:
                 else:
                     return "❌ 未找到 CANCEL_LIMIT_ORDER 工具回调"
 
+            elif decision == DecisionType.BUY_LIMIT:
+                callback = tools_callbacks.get('buy_limit')
+                if callback:
+                    return callback(
+                        symbol=symbol,
+                        amount=execution_plan.amount,
+                        leverage=execution_plan.leverage,
+                        price=execution_plan.price
+                    )
+                else:
+                    return f"❌ 未找到 BUY_LIMIT 工具回调"
+
+            elif decision == DecisionType.SELL_SHORT_LIMIT:
+                callback = tools_callbacks.get('sell_short_limit')
+                if callback:
+                    return callback(
+                        symbol=symbol,
+                        amount=execution_plan.amount,
+                        leverage=execution_plan.leverage,
+                        price=execution_plan.price
+                    )
+                else:
+                    return f"❌ 未找到 SELL_SHORT_LIMIT 工具回调"
+
+            elif decision == DecisionType.CANCEL_LIMIT_ORDER:
+                callback = tools_callbacks.get('cancel_limit_order')
+                if callback:
+                    return callback(
+                        symbol=symbol,
+                        order_id=execution_plan.order_id
+                    )
+                else:
+                    return f"❌ 未找到 CANCEL_LIMIT_ORDER 工具回调"
+
             return f"❌ 未识别的决策类型: {decision}"
 
         except Exception as e:

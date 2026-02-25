@@ -41,6 +41,7 @@ uv.lock
 .env.local
 
 # Logs
+logs/runtime/
 logs/*.json
 logs/*.csv
 logs/decisions/*
@@ -73,3 +74,5 @@ backtest_results/
 !.env.example
 .env.testnet
 .env.backtest
+.env.mainnet
+.env.grid

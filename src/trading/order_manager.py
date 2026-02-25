@@ -942,7 +942,8 @@ class OrderManager:
             return []
 
     def execute_long_limit(
-        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None
+        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None,
+        tp_ratio: float | None = None, sl_ratio: float | None = None,
     ) -> dict[str, Any] | None:
         """
         执行限价开多操作（带止盈止损计算）
@@ -952,6 +953,8 @@ class OrderManager:
             usdt_amount: 投入金额
             limit_price: 限价价格
             leverage: 杠杆倍数
+            tp_ratio: 自定义止盈比例（覆盖默认值）
+            sl_ratio: 自定义止损比例（覆盖默认值）
 
         Returns:
             订单信息（包含止盈止损价格）
@@ -982,8 +985,10 @@ class OrderManager:
                 return None
 
             # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
-            tp_price = limit_price * (1 + self.take_profit_ratio)
-            sl_price = limit_price * (1 - self.stop_loss_ratio)
+            actual_tp_ratio = tp_ratio if tp_ratio is not None else self.take_profit_ratio
+            actual_sl_ratio = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
+            tp_price = limit_price * (1 + actual_tp_ratio)
+            sl_price = limit_price * (1 - actual_sl_ratio)
 
             # 格式化价格
             tp_price = self.client.format_price(symbol, tp_price)
@@ -1018,7 +1023,8 @@ class OrderManager:
             return None
 
     def execute_short_limit(
-        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None
+        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None,
+        tp_ratio: float | None = None, sl_ratio: float | None = None,
     ) -> dict[str, Any] | None:
         """
         执行限价开空操作（带止盈止损计算）
@@ -1028,6 +1034,8 @@ class OrderManager:
             usdt_amount: 投入金额
             limit_price: 限价价格
             leverage: 杠杆倍数
+            tp_ratio: 自定义止盈比例（覆盖默认值）
+            sl_ratio: 自定义止损比例（覆盖默认值）
 
         Returns:
             订单信息（包含止盈止损价格）
@@ -1059,8 +1067,10 @@ class OrderManager:
 
             # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
             # 做空：止盈价 = 限价 * (1 - take_profit_ratio)，止损价 = 限价 * (1 + stop_loss_ratio)
-            tp_price = limit_price * (1 - self.take_profit_ratio)
-            sl_price = limit_price * (1 + self.stop_loss_ratio)
+            actual_tp_ratio = tp_ratio if tp_ratio is not None else self.take_profit_ratio
+            actual_sl_ratio = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
+            tp_price = limit_price * (1 - actual_tp_ratio)
+            sl_price = limit_price * (1 + actual_sl_ratio)
 
             # 格式化价格
             tp_price = self.client.format_price(symbol, tp_price)

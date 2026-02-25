@@ -715,6 +715,60 @@ class PromptManager:
             "limit_order_enabled": limit_order_enabled,
             "open_limit_orders": open_limit_orders or [],
         }
+        
+        # 格式化限价单信息文本（根据语言选择）
+        def _generate_limit_orders_text(orders, lang):
+            if lang == "en":
+                strings = {
+                    "header": "\n## 📋 Pending Limit Orders\n\n",
+                    "no_orders": "No pending limit orders\n",
+                    "order_fmt": "- **Order #{order_id}** {side_emoji} {side_text}\n"
+                                 "  - Limit Price: ${limit_price:.2f}\n"
+                                 "  - Current Price: ${current_price:.2f}\n"
+                                 "  - Price Gap: {price_diff_str}\n"
+                                 "  - Size: {size:.6f}\n\n",
+                    "side_text": {"buy": "Limit Long", "sell": "Limit Short"},
+                }
+            else:
+                strings = {
+                    "header": "\n## 📋 待处理限价单\n\n",
+                    "no_orders": "暂无待处理的限价单\n",
+                    "order_fmt": "- **订单 #{order_id}** {side_emoji} {side_text}\n"
+                                 "  - 限价: ${limit_price:.2f}\n"
+                                 "  - 当前价: ${current_price:.2f}\n"
+                                 "  - 价格差距: {price_diff_str}\n"
+                                 "  - 数量: {size:.6f}\n\n",
+                    "side_text": {"buy": "限价开多", "sell": "限价开空"},
+                }
+            text = strings["header"]
+            if orders:
+                for order in orders:
+                    order_id = order.get('order_id', 0)
+                    side = order.get('side', 'unknown')
+                    limit_price = order.get('limit_price', 0)
+                    size = order.get('size', 0)
+                    current_price = order.get('current_price', 0)
+                    price_diff = order.get('price_diff_percent', 0)
+                    side_emoji = "📈" if side == 'buy' else "📉"
+                    side_text = strings["side_text"].get(side, side)
+                    price_diff_str = f"{price_diff:+.2f}%"
+                    text += strings["order_fmt"].format(
+                        order_id=order_id,
+                        side_emoji=side_emoji,
+                        side_text=side_text,
+                        limit_price=limit_price,
+                        current_price=current_price,
+                        price_diff_str=price_diff_str,
+                        size=size,
+                    )
+            else:
+                text += strings["no_orders"]
+            return text
+
+        if limit_order_enabled:
+            context["limit_orders_text"] = _generate_limit_orders_text(open_limit_orders, self.language)
+        else:
+            context["limit_orders_text"] = ""
 
         # 格式化限价单信息文本（根据语言选择）
         def _generate_limit_orders_text(orders, lang):
