@@ -754,8 +754,8 @@ class QuantFlowBot:
                             f"{symbol} 历史记录不足（{history_count} < 10），跳过汇总"
                         )
 
-                    # 追加复盘经验，帮助 Agent 复用历史经验
-                    if self.review_memory_store:
+                    # 追加复盘经验，帮助 Agent 复用历史经验（仅在复盘功能启用时）
+                    if self.config.review_enabled and self.review_memory_store:
                         lessons_text = self.review_memory_store.get_lessons_summary(
                             symbol, limit=5
                         )
@@ -766,8 +766,8 @@ class QuantFlowBot:
                                 else lessons_text
                             )
 
-                    # 追加外部市场信息，帮助 Agent 基于市场环境做决策
-                    if self.market_info_store:
+                    # 追加外部市场信息，帮助 Agent 基于市场环境做决策（仅在外部信息功能启用时）
+                    if getattr(self.config, "external_info_enabled", False) and self.market_info_store:
                         max_summary_length = getattr(
                             self.config, "external_info_max_summary_length", 2000
                         )
