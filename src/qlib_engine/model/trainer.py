@@ -471,10 +471,16 @@ class QLibModelTrainer:
         filename = f"{model_type}_{tag}_{timestamp}.pkl" if tag else f"{model_type}_{timestamp}.pkl"
         path = self.model_dir / filename
 
+        # 同时保存模型和清洗参数，确保 predict 时使用训练集的统计量
+        artifact = {
+            "model": self.trained_models[model_type],
+            "train_medians": self._train_medians,
+            "dropped_columns": self._dropped_columns,
+        }
         with open(path, "wb") as f:
-            pickle.dump(self.trained_models[model_type], f)
+            pickle.dump(artifact, f)
 
-        logger.info(f"模型已保存: {path}")
+        logger.info(f"模型已保存（含清洗参数）: {path}")
         return path
 
     def load_model(self, path: str | Path, model_type: str = "loaded") -> object:
@@ -489,10 +495,19 @@ class QLibModelTrainer:
             加载的模型对象
         """
         with open(path, "rb") as f:
-            model = pickle.load(f)  # noqa: S301
+            data = pickle.load(f)  # noqa: S301
+
+        # 兼容旧格式（直接保存模型对象）和新格式（包含清洗参数的字典）
+        if isinstance(data, dict) and "model" in data:
+            model = data["model"]
+            self._train_medians = data.get("train_medians")
+            self._dropped_columns = data.get("dropped_columns", [])
+            logger.info(f"模型已加载（含清洗参数）: {path}")
+        else:
+            model = data
+            logger.info(f"模型已加载（旧格式，无清洗参数）: {path}")
 
         self.trained_models[model_type] = model
-        logger.info(f"模型已加载: {path}")
         return model
 
     def get_feature_importance(self, model_type: str = "lightgbm") -> pd.Series | None:

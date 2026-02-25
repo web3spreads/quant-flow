@@ -19,6 +19,7 @@ import pandas as pd
 
 from src.data.market_state import MarketAnalysisResult, MarketState, MarketStateAnalyzer
 from src.data.signal_scorer import SignalQuality, SignalScorer, SignalType, TradingSignal
+from src.qlib_engine.model.predictor import SignalDirection
 from src.trading.risk_manager import (
     PositionSizeResult,
     RiskAssessment,
@@ -77,6 +78,18 @@ class EnhancedTradingEngine:
     # QLib 强信号判定阈值
     QLIB_STRONG_STRENGTH_THRESHOLD = 0.5
     QLIB_STRONG_CONFIDENCE_THRESHOLD = 0.3
+
+    # QLib 方向分类（基于 SignalDirection 枚举值）
+    QLIB_LONG_DIRECTIONS = frozenset({
+        SignalDirection.STRONG_LONG.value,
+        SignalDirection.LONG.value,
+        SignalDirection.WEAK_LONG.value,
+    })
+    QLIB_SHORT_DIRECTIONS = frozenset({
+        SignalDirection.STRONG_SHORT.value,
+        SignalDirection.SHORT.value,
+        SignalDirection.WEAK_SHORT.value,
+    })
 
     # 综合置信度权重（有 QLib 信号时）
     CONFIDENCE_WEIGHT_QLIB = 0.40
@@ -333,21 +346,21 @@ class EnhancedTradingEngine:
         # 检查信号类型 —— QLib 可覆盖 NO_SIGNAL
         if trading_signal.signal_type == SignalType.NO_SIGNAL:
             if qlib_is_strong:
-                # QLib 强信号覆盖 NO_SIGNAL
-                if "做多" in qlib_direction or "LONG" in qlib_direction.upper():
+                # QLib 强信号覆盖 NO_SIGNAL（使用枚举值精确匹配）
+                if qlib_direction in self.QLIB_LONG_DIRECTIONS:
                     action = "buy"
                     logger.info(
                         f"QLib 信号覆盖 NO_SIGNAL → 做多 "
-                        f"(强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
+                        f"(方向={qlib_direction}, 强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
                     )
-                elif "做空" in qlib_direction or "SHORT" in qlib_direction.upper():
+                elif qlib_direction in self.QLIB_SHORT_DIRECTIONS:
                     action = "sell_short"
                     logger.info(
                         f"QLib 信号覆盖 NO_SIGNAL → 做空 "
-                        f"(强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
+                        f"(方向={qlib_direction}, 强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
                     )
                 else:
-                    blockers.append("无有效交易信号")
+                    blockers.append(f"QLib 方向不明确: {qlib_direction}")
                     return False, "hold", blockers
 
                 # QLib 覆盖后仍检查风险
