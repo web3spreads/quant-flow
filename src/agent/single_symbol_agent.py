@@ -183,10 +183,6 @@ class SingleSymbolAgent:
                     f"[{self.symbol}Agent] 执行买入开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)"
                 )
 
-                # 检查余额方法已在 OrderManager 中修复
-                if not hasattr(self.order_manager, 'check_sufficient_balance'):
-                    self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
-                
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
@@ -417,10 +413,6 @@ class SingleSymbolAgent:
                 self.logger.print_info(
                     f"[{self.symbol}Agent] 执行卖空开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)"
                 )
-
-                # 检查余额方法已在 OrderManager 中修复
-                if not hasattr(self.order_manager, 'check_sufficient_balance'):
-                     self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
 
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
@@ -853,13 +845,13 @@ class SingleSymbolAgent:
             "buy_spot": self._buy_spot_callback,
 
         }
-        
+
         # 如果限价单功能启用，添加限价单回调
         if self.limit_order_enabled:
             callbacks['buy_limit'] = self._buy_limit_callback
             callbacks['sell_short_limit'] = self._sell_short_limit_callback
             callbacks['cancel_limit_order'] = self._cancel_limit_order_callback
-        
+
         return callbacks
 
     def _check_fee_guard(self) -> str | None:

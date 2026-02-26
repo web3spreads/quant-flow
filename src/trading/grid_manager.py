@@ -3,12 +3,14 @@
 支持网格同步、AI 止盈止损和状态持久化
 """
 
-import time
 import json
 import os
-from typing import Dict, Any, List, Optional
+import time
+from typing import Any, Dict, List, Optional
+
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
+
 
 class GridManager:
     """管理网格订单的动态同步"""
@@ -58,7 +60,7 @@ class GridManager:
             if new_num <= 0: new_num = 10
         except (ValueError, TypeError):
             new_num = 10
-            
+
         new_amount = params.get("amount_per_grid")
         tp_ratio = params.get("tp_ratio")
         sl_ratio = params.get("sl_ratio")
@@ -81,7 +83,7 @@ class GridManager:
         # 2. 计算新价格分布
         prices = self._calculate_grid_prices(new_lower, new_upper, new_num, ai_config.get("grid_type", "GEOMETRIC"))
         current_price = self.order_manager.client.get_current_price(symbol)
-        
+
         buy_orders = []
         sell_orders = []
 
@@ -146,7 +148,7 @@ class GridManager:
             if 'response' in limit_order_res:
                 return limit_order_res['response']['data']['statuses'][0]['resting']['oid']
             return None
-        except Exception:
+        except (KeyError, IndexError, TypeError, AttributeError):
             return None
 
     def _calculate_grid_prices(self, lower: float, upper: float, num: int, grid_type: str) -> List[float]:
@@ -155,8 +157,8 @@ class GridManager:
         try:
             if hasattr(lower, "real"): lower = float(lower.real)
             if hasattr(upper, "real"): upper = float(upper.real)
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.print_warning(f"计算网格价格时发生意外转换错误: {e}")
 
         prices = []
         if grid_type == "ARITHMETIC":
@@ -264,7 +266,7 @@ class GridManager:
     def get_grid_summary(self, symbol: str) -> str:
         grid = self.state["active_grids"].get(symbol)
         if not grid: return "目前无运行中的网格。"
-        
+
         config = grid['config']
         params = config.get("parameters", config)
         return (f"当前正在运行 {symbol} 天地单网格：\n"

@@ -4,10 +4,12 @@
 
 import json
 import re
-from typing import Dict, Any
-from langchain_openai import ChatOpenAI
+
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
 from src.utils.grid_math import calculate_grid_config
+
 
 class GridAgent:
     def __init__(self, symbol, order_manager, logger, openai_api_base, openai_api_key, openai_model, trade_amount):
@@ -20,21 +22,23 @@ class GridAgent:
     def make_decision(self, market_data, multi_timeframe_trends, current_grid_summary):
         try:
             # 1. AI 只负责逻辑决策
-            messages = [SystemMessage(content=self._get_decision_system_prompt()), 
+            messages = [SystemMessage(content=self._get_decision_system_prompt()),
                         HumanMessage(content=self._format_prompt(market_data, multi_timeframe_trends, current_grid_summary))]
             response = self.llm.invoke(messages)
             content = response.content
-            
+
             try:
                 json_match = re.search(r'\{[\s\S]*\}', content)
+                if not json_match:
+                    raise ValueError("未能从LLM响应中解析出JSON内容")
                 ai_decision = json.loads(json_match.group(0))
-                
+
                 # 2. 如果需要更新，将决策传递给数学引擎
                 if ai_decision.get("action") == "UPDATE_GRID":
                     current_price = float(market_data.get('current_price'))
                     balance_info = self.order_manager.get_available_balance_info()
                     available = float(balance_info.get('available', 0))
-                    
+
                     # AI 给出倾向性参数
                     math_config = calculate_grid_config(
                         current_price=current_price,
@@ -45,14 +49,14 @@ class GridAgent:
                     )
                     math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
                     return math_config
-                
+
                 return ai_decision
-            except Exception as e:
+            except Exception:
                 # 兜底逻辑：AI 抽风时强制由数学引擎接管
                 balance_info = self.order_manager.get_available_balance_info()
-                available = float(balance_info.get('available', 50.0))
+                available = float(balance_info.get('available', 0.0))
                 return calculate_grid_config(float(market_data['current_price']), min(available, self.trade_amount))
-                
+
         except Exception as e:
             return {"action": "ERROR", "reason": str(e)}
 

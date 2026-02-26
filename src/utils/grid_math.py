@@ -2,7 +2,8 @@
 网格计算数学引擎 (理科男强修版 - 彻底修复 Hyperliquid 保证金占用逻辑)
 """
 
-from typing import Dict, Any, List
+from typing import Any, Dict
+
 
 def calculate_grid_config(
     current_price: float,
@@ -22,7 +23,7 @@ def calculate_grid_config(
     
     修正方案：将单格金额大幅度压缩，确保 (单格金额 * 格子数) 远低于 (可用余额 * 杠杆)。
     """
-    
+
     # 1. 计算区间 (保持原样)
     if mode == "LONG":
         lower_price = current_price * (1 - width_pct)
@@ -33,30 +34,30 @@ def calculate_grid_config(
     else: # NEUTRAL
         lower_price = current_price * (1 - width_pct/2)
         upper_price = current_price * (1 + width_pct/2)
-        
+
     # 2. 【核心修正】极其保守的金额分配
     # 既然之前的 0.6 安全系数还是报错，说明测试网可能在撤单未完全释放时就预扣了新单。
     # 我们将安全系数调至 0.4，并强制限制单格金额。
-    conservative_safety = 0.4 
-    
+    conservative_safety = 0.4
+
     # 总额度计算
     total_notional_cap = available_balance * leverage * conservative_safety
-    
+
     # 单格金额
     amount_per_grid = total_notional_cap / grid_num
-    
+
     # 强制兜底：如果算出来太大，强制压低到 25 USD 左右，这足够触发网格利润了
     if amount_per_grid > 30.0:
         amount_per_grid = 25.5
-        
+
     # Hyperliquid 最小限制
     if amount_per_grid < 15.5:
         amount_per_grid = 15.5
-        
+
     # 3. 计算止盈止损
     tp_ratio = round((width_pct / grid_num) * 0.8, 4)
     sl_ratio = 0.05
-    
+
     return {
         "action": "UPDATE_GRID",
         "lower_price": round(lower_price, 1),

@@ -3,21 +3,24 @@
 Grid Flow - 动态 AI 天地单
 """
 
-import sys, os, time
 import argparse
+import sys
+import traceback
 from datetime import datetime
+
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from src.config import get_config
-from src.utils.logger import get_logger
-from src.data.market_data import MarketDataFetcher
-from src.data.indicators import TechnicalIndicators
-from src.trading.client import HyperliquidClient
-from src.trading.order_manager import OrderManager
 from src.agent.grid_agent import GridAgent
-from src.trading.grid_manager import GridManager
+from src.config import get_config
+from src.data.indicators import TechnicalIndicators
+from src.data.market_data import MarketDataFetcher
 from src.notification.notifier import Notifier
+from src.trading.client import HyperliquidClient
+from src.trading.grid_manager import GridManager
+from src.trading.order_manager import OrderManager
+from src.utils.logger import get_logger
+
 
 class GridFlowBot:
     def __init__(self, config_path="config.grid.yaml", env_file=".env.grid"):
@@ -29,12 +32,12 @@ class GridFlowBot:
         """
         self.config = get_config(config_path, env_file=env_file)
         self.logger = get_logger(log_level="INFO")
-        
+
         # 0. 初始化通知系统
         # 自动识别测试网模式（从配置中读取，或者手动指定）
         is_testnet = self.config.hyperliquid_testnet
         self.notifier = Notifier(self.config.notifications, is_testnet=is_testnet)
-        
+
         # 1. 客户端初始化
         self.hyperliquid_client = HyperliquidClient(
             private_key=self.config.hyperliquid_private_key,
@@ -42,11 +45,11 @@ class GridFlowBot:
             testnet=is_testnet,
             api_urls=getattr(self.config, 'hyperliquid_api_urls', None),
         )
-        
+
         self.market_fetcher = MarketDataFetcher(testnet=is_testnet)
         self.order_manager = OrderManager(self.hyperliquid_client)
         self.grid_manager = GridManager(self.order_manager, self.logger, notifier=self.notifier)
-        
+
         # 网格 Agent 初始化
         self.agent = GridAgent(
             symbol=self.config.symbols[0],
@@ -57,21 +60,21 @@ class GridFlowBot:
             openai_model=self.config.openai_model,
             trade_amount=self.config.config_data['trading'].get('max_total_investment', 100.0)
         )
-        
+
         self.scheduler = BlockingScheduler()
 
     def run_cycle(self):
         """执行一个网格交易周期"""
         try:
             self.logger.print_header(f"🔄 网格交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            
+
             # 获取市场数据
             df = self.market_fetcher.fetch_ohlcv(
                 symbol=self.config.symbols[0],
                 timeframe=self.config.timeframe,
                 limit=100
             )
-            
+
             if df is None or df.empty:
                 self.logger.print_error("无法获取市场数据")
                 return
@@ -96,13 +99,11 @@ class GridFlowBot:
 
             # 运行网格管理逻辑
             self.grid_manager.sync_grid(self.config.symbols[0], ai_decision)
-            
-            self.logger.print_header(f"✅ 网格交易周期完成")
-            
+
+            self.logger.print_header("✅ 网格交易周期完成")
+
         except Exception as e:
-            self.logger.print_error(f"网格周期执行异常: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.print_error(f"网格周期执行异常: {e}\n{traceback.format_exc()}")
 
     def run(self):
         """启动机器人"""
@@ -114,11 +115,11 @@ class GridFlowBot:
             name="AI网格决策循环",
             replace_existing=True
         )
-        
+
         # 如果配置了立即执行
         if self.config.run_immediately:
             self.run_cycle()
-            
+
         self.logger.print_info(f"🚀 AI网格机器人已启动 (间隔: {self.config.interval_minutes} 分钟)")
         self.scheduler.start()
 
@@ -144,9 +145,7 @@ def main():
     except KeyboardInterrupt:
         print("\n👋 用户手动停止。")
     except Exception as e:
-        print(f"\n❌ 启动失败: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"\n❌ 启动失败: {e}\n{traceback.format_exc()}")
         sys.exit(1)
 
 if __name__ == "__main__":
