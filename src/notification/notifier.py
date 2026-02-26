@@ -788,7 +788,7 @@ class Notifier:
             f"【单格投入】${amount}",
             f"【止盈比例】{tp*100 if tp else '默认'}%",
             f"【止损比例】{sl*100 if sl else '默认'}%",
-            f"",
+            "",
             f"【AI 理由】{reason}"
         ]
         self.notify(NotificationEvent.GRID_UPDATE, title, "\n".join(lines))

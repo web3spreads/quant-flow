@@ -2,7 +2,7 @@
 网格计算数学引擎 (理科男强修版 - 彻底修复 Hyperliquid 保证金占用逻辑)
 """
 
-from typing import Any, Dict
+from typing import Any
 
 
 def calculate_grid_config(
@@ -12,15 +12,15 @@ def calculate_grid_config(
     width_pct: float = 0.05,
     grid_num: int = 6,
     leverage: int = 10
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     针对 Hyperliquid 保证金占用逻辑进行强力修正。
-    
+
     【终极修正逻辑】：
     Hyperliquid 测试网对于限价单的保证金检查极其严苛。
     如果我们有 $77 可用余额，10x 杠杆，理论总额度 $770。
     但如果一次性挂 6-8 个格子，系统会因为并行订单的潜在占用导致 Insufficient margin。
-    
+
     修正方案：将单格金额大幅度压缩，确保 (单格金额 * 格子数) 远低于 (可用余额 * 杠杆)。
     """
 

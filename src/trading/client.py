@@ -39,7 +39,7 @@ class HyperliquidClient:
             api_urls: 备用 API 地址列表
         """
         self.testnet = testnet
-        
+
         # 处理 API 地址列表
         default_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
         self.api_urls = api_urls if api_urls else [default_url]
@@ -87,11 +87,11 @@ class HyperliquidClient:
         """轮转到下一个 API 地址"""
         if len(self.api_urls) <= 1:
             return False
-            
+
         self.current_url_index = (self.current_url_index + 1) % len(self.api_urls)
         self.base_url = self.api_urls[self.current_url_index]
         print(f"⚠️ API 请求失败，正在切换至备用节点: {self.base_url}")
-        
+
         # 重新实例化 SDK 组件
         self.info = Info(self.base_url, skip_ws=True)
         self.exchange = Exchange(
@@ -105,9 +105,9 @@ class HyperliquidClient:
         """执行带 Fallback 机制的请求"""
         attempts = 0
         max_attempts = len(self.api_urls)
-        
+
         last_exception = None
-        
+
         while attempts < max_attempts:
             try:
                 # 获取当前要调用的对象 (info 或 exchange)
@@ -120,13 +120,13 @@ class HyperliquidClient:
                 last_exception = e
                 attempts += 1
                 print(f"❌ API 调用异常 ({self.base_url}): {e}")
-                
+
                 if attempts < max_attempts:
                     if not self._rotate_api():
                         break
                 else:
                     break
-        
+
         # 如果所有尝试都失败，抛出异常或返回 None
         print(f"🚨 所有 API 节点均已尝试，请求最终失败: {last_exception}")
         raise last_exception

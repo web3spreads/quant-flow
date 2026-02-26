@@ -75,7 +75,7 @@ class GridAgent:
 ## JSON 输出格式
 {
   "action": "UPDATE_GRID",
-  "mode": "NEUTRAL", 
+  "mode": "NEUTRAL",
   "width_pct": 0.06,
   "grid_num": 8,
   "reason": "趋势说明"

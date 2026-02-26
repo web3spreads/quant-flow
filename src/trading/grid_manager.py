@@ -6,7 +6,7 @@
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
@@ -22,12 +22,13 @@ class GridManager:
         self.state_file = state_file
         self.state = self._load_state()
 
-    def _load_state(self) -> Dict[str, Any]:
+    def _load_state(self) -> dict[str, Any]:
         if os.path.exists(self.state_file):
-            with open(self.state_file, 'r') as f:
+            with open(self.state_file) as f:
                 try:
                     data = json.load(f)
-                    if "active_grids" not in data: data = {"active_grids": {}}
+                    if "active_grids" not in data:
+                        data = {"active_grids": {}}
                     return data
                 except Exception as e:
                     self.logger.print_error(f"加载网格状态文件 {self.state_file} 失败: {e}")
@@ -37,7 +38,7 @@ class GridManager:
         with open(self.state_file, 'w') as f:
             json.dump(self.state, f, indent=2)
 
-    def sync_grid(self, symbol: str, ai_config: Dict[str, Any]):
+    def sync_grid(self, symbol: str, ai_config: dict[str, Any]):
         """
         核心逻辑：根据 AI 最新的决策，同步现实中的网格状态。
         """
@@ -57,7 +58,8 @@ class GridManager:
         # 增加安全检查
         try:
             new_num = int(new_num)
-            if new_num <= 0: new_num = 10
+            if new_num <= 0:
+                new_num = 10
         except (ValueError, TypeError):
             new_num = 10
 
@@ -89,7 +91,8 @@ class GridManager:
 
         # 3. 重新布置
         for i, p in enumerate(prices):
-            if i > 0: time.sleep(1.0) # 防限流
+            if i > 0:
+                time.sleep(1.0)  # 防限流
 
             try:
                 if p < current_price:
@@ -142,7 +145,7 @@ class GridManager:
                 reason=ai_config.get("reason", "N/A")
             )
 
-    def _extract_oid(self, limit_order_res: Dict[str, Any]) -> Optional[int]:
+    def _extract_oid(self, limit_order_res: dict[str, Any]) -> int | None:
         try:
             # 兼容 SDK 原始返回格式
             if 'response' in limit_order_res:
@@ -151,12 +154,15 @@ class GridManager:
         except (KeyError, IndexError, TypeError, AttributeError):
             return None
 
-    def _calculate_grid_prices(self, lower: float, upper: float, num: int, grid_type: str) -> List[float]:
-        if num < 2: return [lower]
+    def _calculate_grid_prices(self, lower: float, upper: float, num: int, grid_type: str) -> list[float]:
+        if num < 2:
+            return [lower]
         # 确保输入是实数而非复数
         try:
-            if hasattr(lower, "real"): lower = float(lower.real)
-            if hasattr(upper, "real"): upper = float(upper.real)
+            if hasattr(lower, "real"):
+                lower = float(lower.real)
+            if hasattr(upper, "real"):
+                upper = float(upper.real)
         except Exception as e:
             self.logger.print_warning(f"计算网格价格时发生意外转换错误: {e}")
 
@@ -167,7 +173,8 @@ class GridManager:
                 prices.append(round(lower + i * diff, 1))
         else: # GEOMETRIC
             # 增加安全检查
-            if lower <= 0 or upper <= 0: return [lower]
+            if lower <= 0 or upper <= 0:
+                return [lower]
             ratio = (upper / lower) ** (1 / (num - 1))
             for i in range(num):
                 prices.append(round(lower * (ratio ** i), 1))
@@ -175,7 +182,8 @@ class GridManager:
 
     def _cancel_all_orders(self, symbol: str):
         grid = self.state["active_grids"].get(symbol)
-        if not grid: return
+        if not grid:
+            return
 
         oids = [o['oid'] for o in grid.get("buy_orders", []) if isinstance(o, dict)] + \
                [o['oid'] for o in grid.get("sell_orders", []) if isinstance(o, dict)]
@@ -265,7 +273,8 @@ class GridManager:
 
     def get_grid_summary(self, symbol: str) -> str:
         grid = self.state["active_grids"].get(symbol)
-        if not grid: return "目前无运行中的网格。"
+        if not grid:
+            return "目前无运行中的网格。"
 
         config = grid['config']
         params = config.get("parameters", config)
