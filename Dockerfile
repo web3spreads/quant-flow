@@ -51,8 +51,8 @@ ENV PYTHONUNBUFFERED=1 \
     LOG_LEVEL=INFO \
     PATH="/app/.venv/bin:$PATH"
 
-# Health check（slim 镜像无 pgrep，改用 /proc 检测）
+# Health check：检测 supervisord 进程存在（slim 镜像无 pgrep，用 /proc 扫描）
 HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import os,sys; pids=[p for p in os.listdir('/proc') if p.isdigit()]; cmds=[open(f'/proc/{p}/cmdline').read() for p in pids if os.path.exists(f'/proc/{p}/cmdline')]; sys.exit(0 if any('main.py' in c for c in cmds) else 1)"
+    CMD python -c "import os,sys; pids=[p for p in os.listdir('/proc') if p.isdigit()]; cmds=[open(f'/proc/{p}/cmdline').read() for p in pids if os.path.exists(f'/proc/{p}/cmdline')]; sys.exit(0 if any('supervisord' in c for c in cmds) else 1)"
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -15,6 +15,7 @@ from src.agent.grid_agent import GridAgent
 from src.config import get_config
 from src.data.indicators import TechnicalIndicators
 from src.data.market_data import MarketDataFetcher
+from src.llm import LLMClientManager
 from src.notification.notifier import Notifier
 from src.trading.client import HyperliquidClient
 from src.trading.grid_manager import GridManager
@@ -43,22 +44,27 @@ class GridFlowBot:
             private_key=self.config.hyperliquid_private_key,
             account_address=self.config.hyperliquid_account_address,
             testnet=is_testnet,
-            api_urls=getattr(self.config, 'hyperliquid_api_urls', None),
+            api_urls=getattr(self.config, "hyperliquid_api_urls", None),
         )
 
         self.market_fetcher = MarketDataFetcher(testnet=is_testnet)
         self.order_manager = OrderManager(self.hyperliquid_client)
         self.grid_manager = GridManager(self.order_manager, self.logger, notifier=self.notifier)
 
+        # LLM 客户端管理器
+        self.logger.print_info("初始化 LLM 客户端管理器...")
+        llm_client_config = self.config.get_llm_client_config()
+        self.llm_manager = LLMClientManager.get_instance(llm_client_config)
+        self.logger.print_info(f"✅ LLM 客户端类型: {self.config.llm_client_type}")
+        self.logger.print_info(f"✅ LLM 模型: {self.config.llm_model}")
+
         # 网格 Agent 初始化
         self.agent = GridAgent(
             symbol=self.config.symbols[0],
             order_manager=self.order_manager,
             logger=self.logger,
-            openai_api_base=self.config.openai_api_base,
-            openai_api_key=self.config.openai_api_key,
-            openai_model=self.config.openai_model,
-            trade_amount=self.config.config_data['trading'].get('max_total_investment', 100.0)
+            llm_manager=self.llm_manager,
+            trade_amount=self.config.config_data["trading"].get("max_total_investment", 100.0),
         )
 
         self.scheduler = BlockingScheduler()
@@ -66,13 +72,13 @@ class GridFlowBot:
     def run_cycle(self):
         """执行一个网格交易周期"""
         try:
-            self.logger.print_header(f"🔄 网格交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            self.logger.print_header(
+                f"🔄 网格交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
 
             # 获取市场数据
             df = self.market_fetcher.fetch_ohlcv(
-                symbol=self.config.symbols[0],
-                timeframe=self.config.timeframe,
-                limit=100
+                symbol=self.config.symbols[0], timeframe=self.config.timeframe, limit=100
             )
 
             if df is None or df.empty:
@@ -113,7 +119,7 @@ class GridFlowBot:
             trigger=IntervalTrigger(minutes=self.config.interval_minutes),
             id="grid_cycle",
             name="AI网格决策循环",
-            replace_existing=True
+            replace_existing=True,
         )
 
         # 如果配置了立即执行
@@ -123,19 +129,17 @@ class GridFlowBot:
         self.logger.print_info(f"🚀 AI网格机器人已启动 (间隔: {self.config.interval_minutes} 分钟)")
         self.scheduler.start()
 
+
 def main():
     parser = argparse.ArgumentParser(description="Grid Flow - AI驱动的动态天地单")
     parser.add_argument(
-        '--config',
+        "--config",
         type=str,
-        default='config.grid.yaml',
-        help='配置文件路径 (默认: config.grid.yaml)'
+        default="config.grid.yaml",
+        help="配置文件路径 (默认: config.grid.yaml)",
     )
     parser.add_argument(
-        '--env-file',
-        type=str,
-        default='.env.grid',
-        help='环境变量文件路径 (默认: .env.grid)'
+        "--env-file", type=str, default=".env", help="环境变量文件路径 (默认: .env)"
     )
     args = parser.parse_args()
 
@@ -147,6 +151,7 @@ def main():
     except Exception as e:
         print(f"\n❌ 启动失败: {e}\n{traceback.format_exc()}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

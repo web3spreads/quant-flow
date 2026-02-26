@@ -6,7 +6,6 @@ import json
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from src.utils.grid_math import calculate_grid_config
 
@@ -17,18 +16,14 @@ class GridAgent:
         symbol,
         order_manager,
         logger,
-        openai_api_base,
-        openai_api_key,
-        openai_model,
+        llm_manager,
         trade_amount,
     ):
         self.symbol = symbol
         self.order_manager = order_manager
         self.logger = logger
         self.trade_amount = trade_amount
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base, api_key=openai_api_key, model=openai_model, temperature=0.1
-        )
+        self.llm = llm_manager.get_client(temperature=0.1)
 
     def make_decision(self, market_data, multi_timeframe_trends, current_grid_summary):
         try:
