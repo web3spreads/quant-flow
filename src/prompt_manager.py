@@ -715,7 +715,7 @@ class PromptManager:
             "limit_order_enabled": limit_order_enabled,
             "open_limit_orders": open_limit_orders or [],
         }
-
+        
         # 格式化限价单信息文本（根据语言选择）
         def _generate_limit_orders_text(orders, lang):
             if lang == "en":

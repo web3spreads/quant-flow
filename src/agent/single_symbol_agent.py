@@ -183,6 +183,10 @@ class SingleSymbolAgent:
                     f"[{self.symbol}Agent] 执行买入开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)"
                 )
 
+                # 检查余额方法已在 OrderManager 中修复
+                if not hasattr(self.order_manager, 'check_sufficient_balance'):
+                    self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
+                
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
@@ -413,6 +417,10 @@ class SingleSymbolAgent:
                 self.logger.print_info(
                     f"[{self.symbol}Agent] 执行卖空开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)"
                 )
+
+                # 检查余额方法已在 OrderManager 中修复
+                if not hasattr(self.order_manager, 'check_sufficient_balance'):
+                     self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
 
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
@@ -661,6 +669,7 @@ class SingleSymbolAgent:
                     if price <= 0:
                         return "❌ 限价价格必须大于0"
 
+
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
                         return fee_guard_msg
@@ -677,6 +686,7 @@ class SingleSymbolAgent:
                         f"[{self.symbol}Agent] 执行限价开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})"
                     )
 
+
                     if not self.order_manager.check_sufficient_balance(actual_amount):
                         return f"❌ 余额不足，需要 {actual_amount} USDT"
 
@@ -690,6 +700,7 @@ class SingleSymbolAgent:
                     if result and result.get("success"):
                         tp_price = result.get("take_profit_price", 0)
                         sl_price = result.get("stop_loss_price", 0)
+
                         return (
                             f"✅ 限价开多订单已提交！\n"
                             f"  币种: {symbol}\n"
@@ -723,6 +734,7 @@ class SingleSymbolAgent:
                     if price <= 0:
                         return "❌ 限价价格必须大于0"
 
+
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
                         return fee_guard_msg
@@ -739,6 +751,7 @@ class SingleSymbolAgent:
                         f"[{self.symbol}Agent] 执行限价开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})"
                     )
 
+
                     if not self.order_manager.check_sufficient_balance(actual_amount):
                         return f"❌ 余额不足，需要 {actual_amount} USDT"
 
@@ -752,6 +765,7 @@ class SingleSymbolAgent:
                     if result and result.get("success"):
                         tp_price = result.get("take_profit_price", 0)
                         sl_price = result.get("stop_loss_price", 0)
+
                         return (
                             f"✅ 限价开空订单已提交！\n"
                             f"  币种: {symbol}\n"
@@ -782,6 +796,7 @@ class SingleSymbolAgent:
                     result = self.order_manager.cancel_limit_order(symbol=symbol, order_id=order_id)
 
                     if result and result.get("success"):
+
                         return f"✅ 限价单 {order_id} 已成功取消"
                     else:
                         return f"❌ 取消限价单失败: {result.get('message', '未知错误') if result else '取消失败'}"
@@ -801,6 +816,7 @@ class SingleSymbolAgent:
             buy_limit_callback if self.limit_order_enabled else None,
             sell_short_limit_callback if self.limit_order_enabled else None,
             cancel_limit_order_callback if self.limit_order_enabled else None,
+
         )
 
         # 保存回调函数引用以供后续使用
@@ -835,14 +851,15 @@ class SingleSymbolAgent:
             "buy_to_cover": self._buy_to_cover_callback,
             "do_nothing": self._do_nothing_callback,
             "buy_spot": self._buy_spot_callback,
-        }
 
+        }
+        
         # 如果限价单功能启用，添加限价单回调
         if self.limit_order_enabled:
-            callbacks["buy_limit"] = self._buy_limit_callback
-            callbacks["sell_short_limit"] = self._sell_short_limit_callback
-            callbacks["cancel_limit_order"] = self._cancel_limit_order_callback
-
+            callbacks['buy_limit'] = self._buy_limit_callback
+            callbacks['sell_short_limit'] = self._sell_short_limit_callback
+            callbacks['cancel_limit_order'] = self._cancel_limit_order_callback
+        
         return callbacks
 
     def _check_fee_guard(self) -> str | None:
@@ -925,6 +942,7 @@ class SingleSymbolAgent:
                 enriched_data=enriched_data,
                 limit_order_enabled=self.limit_order_enabled,
                 open_limit_orders=open_limit_orders,
+
             )
 
             # 显示 Prompt
