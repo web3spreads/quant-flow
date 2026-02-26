@@ -942,8 +942,13 @@ class OrderManager:
             return []
 
     def execute_long_limit(
-        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None,
-        tp_ratio: float | None = None, sl_ratio: float | None = None,
+        self,
+        symbol: str,
+        usdt_amount: float,
+        limit_price: float,
+        leverage: int | None = None,
+        tp_ratio: float | None = None,
+        sl_ratio: float | None = None,
     ) -> dict[str, Any] | None:
         """
         执行限价开多操作（带止盈止损计算）
@@ -1023,8 +1028,13 @@ class OrderManager:
             return None
 
     def execute_short_limit(
-        self, symbol: str, usdt_amount: float, limit_price: float, leverage: int | None = None,
-        tp_ratio: float | None = None, sl_ratio: float | None = None,
+        self,
+        symbol: str,
+        usdt_amount: float,
+        limit_price: float,
+        leverage: int | None = None,
+        tp_ratio: float | None = None,
+        sl_ratio: float | None = None,
     ) -> dict[str, Any] | None:
         """
         执行限价开空操作（带止盈止损计算）

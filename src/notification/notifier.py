@@ -25,7 +25,7 @@ class NotificationEvent(StrEnum):
     SYSTEM_SHUTDOWN = "system_shutdown"  # 系统关闭
     EXTERNAL_INFO_SUMMARY = "external_info_summary"  # 外部信息汇总完成
     REVIEW_LESSON_LEARNED = "review_lesson_learned"  # 复盘获得新经验
-    GRID_UPDATE = "grid_update"             # 网格更新
+    GRID_UPDATE = "grid_update"  # 网格更新
 
 
 class Notifier:
@@ -778,7 +778,19 @@ class Notifier:
         message = "\n".join(lines)
         self.notify(NotificationEvent.EXTERNAL_INFO_SUMMARY, title, message)
 
-    def notify_grid_update(self, symbol: str, lower: float, upper: float, num: int, amount: float, tp: float, sl: float, buy_count: int, sell_count: int, reason: str):
+    def notify_grid_update(
+        self,
+        symbol: str,
+        lower: float,
+        upper: float,
+        num: int,
+        amount: float,
+        tp: float,
+        sl: float,
+        buy_count: int,
+        sell_count: int,
+        reason: str,
+    ):
         """发送网格更新通知"""
         title = f"🚀 网格部署: {symbol}"
         lines = [
@@ -786,9 +798,9 @@ class Notifier:
             f"【区间】${lower} - ${upper}",
             f"【网格数】{num} (买:{buy_count} | 卖:{sell_count})",
             f"【单格投入】${amount}",
-            f"【止盈比例】{tp*100 if tp else '默认'}%",
-            f"【止损比例】{sl*100 if sl else '默认'}%",
+            f"【止盈比例】{tp * 100 if tp else '默认'}%",
+            f"【止损比例】{sl * 100 if sl else '默认'}%",
             "",
-            f"【AI 理由】{reason}"
+            f"【AI 理由】{reason}",
         ]
         self.notify(NotificationEvent.GRID_UPDATE, title, "\n".join(lines))

@@ -24,7 +24,13 @@ class HyperliquidClient:
     提供统一的交易接口，使用 Hyperliquid 官方 Python SDK
     """
 
-    def __init__(self, private_key: str, account_address: str | None = None, testnet: bool = False, api_urls: list[str] | None = None):
+    def __init__(
+        self,
+        private_key: str,
+        account_address: str | None = None,
+        testnet: bool = False,
+        api_urls: list[str] | None = None,
+    ):
         """
         初始化 Hyperliquid 客户端
 
@@ -536,7 +542,7 @@ class HyperliquidClient:
                 size,
                 None,  # px=None 表示使用当前市价
                 slippage,  # 滑点容忍度
-                is_exchange=True
+                is_exchange=True,
             )
 
             return order_result
@@ -581,7 +587,7 @@ class HyperliquidClient:
                 price,
                 {"limit": {"tif": "Gtc"}},  # Good-til-Cancel
                 reduce_only=reduce_only,
-                is_exchange=True
+                is_exchange=True,
             )
             return order_result
         except Exception as e:
@@ -835,8 +841,14 @@ class HyperliquidClient:
 
             # 下单
             order_result = self._request_with_fallback(
-                "order", symbol, is_buy, size, limit_price, order_type, reduce_only=True,
-                is_exchange=True
+                "order",
+                symbol,
+                is_buy,
+                size,
+                limit_price,
+                order_type,
+                reduce_only=True,
+                is_exchange=True,
             )
 
             # 如果失败，添加请求参数到结果中便于调试
@@ -882,9 +894,7 @@ class HyperliquidClient:
             取消结果
         """
         try:
-            cancel_result = self._request_with_fallback(
-                "cancel", symbol, oid, is_exchange=True
-            )
+            cancel_result = self._request_with_fallback("cancel", symbol, oid, is_exchange=True)
             return cancel_result
         except Exception as e:
             print(f"❌ 取消订单失败: {e}")
@@ -932,8 +942,10 @@ class HyperliquidClient:
                             # 尝试设置杠杆
                             result = self._request_with_fallback(
                                 "update_leverage",
-                                leverage, symbol, is_cross=is_cross,
-                                is_exchange=True
+                                leverage,
+                                symbol,
+                                is_cross=is_cross,
+                                is_exchange=True,
                             )
 
                             # 如果失败，返回特殊状态，允许使用当前杠杆
@@ -966,8 +978,7 @@ class HyperliquidClient:
 
             # 设置杠杆
             result = self._request_with_fallback(
-                "update_leverage", leverage, symbol, is_cross=is_cross,
-                is_exchange=True
+                "update_leverage", leverage, symbol, is_cross=is_cross, is_exchange=True
             )
 
             # 验证结果
@@ -1003,7 +1014,10 @@ class HyperliquidClient:
         try:
             candles = self._request_with_fallback(
                 "candles_snapshot",
-                coin=symbol, interval=interval, startTime=start_time, endTime=end_time
+                coin=symbol,
+                interval=interval,
+                startTime=start_time,
+                endTime=end_time,
             )
             return candles
         except Exception as e:
@@ -1083,9 +1097,7 @@ class HyperliquidClient:
             if size is None:
                 # 全仓平仓 - 使用官方 market_close 方法（最简单最可靠）
                 print(f"🔴 市价全平 {symbol}")
-                result = self._request_with_fallback(
-                    "market_close", symbol, is_exchange=True
-                )
+                result = self._request_with_fallback("market_close", symbol, is_exchange=True)
                 return result
             else:
                 # 部分平仓 - 需要判断持仓方向
@@ -1114,7 +1126,7 @@ class HyperliquidClient:
                     close_size,
                     None,  # px=None 使用市价
                     0.01,  # 1% 滑点（官方推荐，比原来的5%更合理）
-                    is_exchange=True
+                    is_exchange=True,
                 )
 
                 return result

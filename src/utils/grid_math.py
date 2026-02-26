@@ -11,7 +11,7 @@ def calculate_grid_config(
     mode: str = "NEUTRAL",
     width_pct: float = 0.05,
     grid_num: int = 6,
-    leverage: int = 10
+    leverage: int = 10,
 ) -> dict[str, Any]:
     """
     针对 Hyperliquid 保证金占用逻辑进行强力修正。
@@ -31,9 +31,9 @@ def calculate_grid_config(
     elif mode == "SHORT":
         lower_price = current_price * 0.99
         upper_price = current_price * (1 + width_pct)
-    else: # NEUTRAL
-        lower_price = current_price * (1 - width_pct/2)
-        upper_price = current_price * (1 + width_pct/2)
+    else:  # NEUTRAL
+        lower_price = current_price * (1 - width_pct / 2)
+        upper_price = current_price * (1 + width_pct / 2)
 
     # 2. 【核心修正】极其保守的金额分配
     # 既然之前的 0.6 安全系数还是报错，说明测试网可能在撤单未完全释放时就预扣了新单。
@@ -66,5 +66,5 @@ def calculate_grid_config(
         "amount_per_grid": round(amount_per_grid, 2),
         "tp_ratio": tp_ratio,
         "sl_ratio": sl_ratio,
-        "mode": mode
+        "mode": mode,
     }

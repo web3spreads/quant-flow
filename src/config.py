@@ -389,8 +389,16 @@ class Config:
         """返回配置摘要（不包含敏感信息）"""
         # 确定运行模式
         mode = "Hyperliquid 测试网 🧪" if self.hyperliquid_testnet else "Hyperliquid 主网 ⚠️"
-        vault_info = f"\n        Vault 地址: {self.hyperliquid_vault_address}" if getattr(self, 'hyperliquid_vault_address', '') else ""
-        api_info = f"\n        API 列表: {', '.join(self.hyperliquid_api_urls)}" if getattr(self, 'hyperliquid_api_urls', []) else ""
+        vault_info = (
+            f"\n        Vault 地址: {self.hyperliquid_vault_address}"
+            if getattr(self, "hyperliquid_vault_address", "")
+            else ""
+        )
+        api_info = (
+            f"\n        API 列表: {', '.join(self.hyperliquid_api_urls)}"
+            if getattr(self, "hyperliquid_api_urls", [])
+            else ""
+        )
 
         return f"""
         === Quant Flow 配置摘要 ===
