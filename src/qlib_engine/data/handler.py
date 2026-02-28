@@ -206,8 +206,9 @@ class CryptoAlpha158:
         gain = delta.where(delta > 0, 0.0)
         loss = (-delta).where(delta < 0, 0.0)
 
-        avg_gain = gain.rolling(window=period, min_periods=period).mean()
-        avg_loss = loss.rolling(window=period, min_periods=period).mean()
+        # 使用 Wilder 指数平滑（等价于 span=period 的 EWM），比 SMA 更灵敏
+        avg_gain = gain.ewm(span=period, adjust=False, min_periods=period).mean()
+        avg_loss = loss.ewm(span=period, adjust=False, min_periods=period).mean()
 
         rs = avg_gain / (avg_loss + 1e-12)
         rsi = 100 - (100 / (1 + rs))
