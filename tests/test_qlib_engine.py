@@ -550,12 +550,12 @@ class TestModelEvaluator:
         assert best == "model_a"
 
     def test_select_best_model_ic_direction(self, evaluator):
-        """测试 IC 方向正确的模型获得加分"""
+        """测试 IC 方向正确的模型获得加分，IC<0 的模型被惩罚"""
         results = {
             "model_pos": {"IC": 0.03, "ICIR": 0.4},
-            "model_neg": {"IC": -0.05, "ICIR": 0.5},
+            "model_neg": {"IC": -0.05, "ICIR": 0.4},
         }
-        # IC > 0 的模型获得 1.5 倍加权，应胜出
+        # ICIR 相同时，IC>0 的模型获得 1.5 倍加权，IC<0 的模型被 0.3 倍惩罚
         best = evaluator.select_best_model(results)
         assert best == "model_pos"
 
