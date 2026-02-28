@@ -28,6 +28,7 @@ from src.qlib_engine.data.perpetual import (
     PERPETUAL_RAW_COLUMNS,
     PRICE_FEATURE_CONFIG,
     ROLLING_FEATURE_CONFIG,
+    TECHNICAL_FEATURE_CONFIG,
     VOLATILITY_FEATURE_CONFIG,
     get_all_feature_config,
     get_feature_expressions,
@@ -221,6 +222,7 @@ class TestPerpetualFactors:
             VOLATILITY_FEATURE_CONFIG,
             ROLLING_FEATURE_CONFIG,
             CORRELATION_FEATURE_CONFIG,
+            TECHNICAL_FEATURE_CONFIG,
             PERPETUAL_FEATURE_CONFIG,
         ]:
             for item in config_list:
@@ -234,8 +236,8 @@ class TestPerpetualFactors:
         assert len(KBAR_FEATURE_CONFIG) == 7
 
     def test_price_feature_count(self):
-        """测试价格动量因子数量（8 个窗口）"""
-        assert len(PRICE_FEATURE_CONFIG) == 8
+        """测试价格动量因子数量（6 个窗口：1,2,3,5,10,20）"""
+        assert len(PRICE_FEATURE_CONFIG) == 6
 
     def test_get_all_feature_config(self):
         """测试获取全部因子配置"""
@@ -267,8 +269,9 @@ class TestCryptoAlpha158:
         handler = CryptoAlpha158()
         assert handler.include_perpetual is True
         assert handler.normalize is True
-        assert handler.label_periods == 5
-        assert len(handler.feature_names) > 50  # 应该有 60+ 个因子
+        assert handler.label_periods == 3  # v2 默认改为 3
+        # feature_names 在首次 calculate_features 前为空列表
+        assert handler.feature_names == []
 
     def test_calculate_features(self, sample_ohlcv_df):
         """测试基础因子计算"""
@@ -283,8 +286,8 @@ class TestCryptoAlpha158:
         # 应包含价格动量因子
         assert "ROC_1" in features.columns
         assert "ROC_20" in features.columns
-        # 应包含均线偏离因子
-        assert "MA_偏离_5" in features.columns
+        # 应包含均线偏离因子（v2 英文命名）
+        assert "MA_BIAS_5" in features.columns
         # 应包含波动率因子
         assert "CV_20" in features.columns
 
@@ -293,18 +296,20 @@ class TestCryptoAlpha158:
         handler = CryptoAlpha158(include_perpetual=True)
         features = handler.calculate_features(sample_ohlcv_with_perpetual)
 
-        assert "资金费率" in features.columns
-        assert "资金费率_8期均值" in features.columns
-        assert "未平仓量_对数" in features.columns
-        assert "溢价率" in features.columns
+        # v2 使用英文命名
+        assert "FR" in features.columns
+        assert "FR_MA8" in features.columns
+        assert "OI_LOG" in features.columns
+        assert "PREM" in features.columns
 
     def test_calculate_features_without_perpetual_data(self, sample_ohlcv_df):
-        """测试缺少永续合约数据时的兜底处理"""
+        """测试缺少永续合约数据时不生成永续因子（v2 行为：跳过而非填零）"""
         handler = CryptoAlpha158(include_perpetual=True)
         features = handler.calculate_features(sample_ohlcv_df)
-        # 应该填充为 0 而不是报错
-        assert "资金费率" in features.columns
-        assert (features["资金费率"] == 0.0).all()
+        # v2: 数据不存在时不生成永续因子（避免全零噪声）
+        assert "FR" not in features.columns
+        assert "OI_LOG" not in features.columns
+        assert "PREM" not in features.columns
 
     def test_calculate_label(self, sample_ohlcv_df):
         """测试标签计算"""
@@ -390,6 +395,7 @@ class TestQLibModelTrainer:
         assert "lightgbm" in QLibModelTrainer.MODEL_CONFIGS
         assert "linear" in QLibModelTrainer.MODEL_CONFIGS
         assert "xgboost" in QLibModelTrainer.MODEL_CONFIGS
+        assert "elasticnet" in QLibModelTrainer.MODEL_CONFIGS  # v2 新增
 
     def test_train_linear(self, sample_features_and_labels, tmp_dir):
         """测试线性模型训练"""
@@ -543,16 +549,24 @@ class TestModelEvaluator:
         assert comparison.index[0] == "model_a"
 
     def test_select_best_model(self, evaluator):
-        """测试选择最优模型"""
+        """测试综合评分选择最优模型（v2: ICIR*0.4 + IC*0.3 + 单调性*0.2）"""
         results = {
             "model_a": {"IC": 0.05, "ICIR": 0.8},
             "model_b": {"IC": 0.08, "ICIR": 0.6},
         }
-        best = evaluator.select_best_model(results, metric="ICIR")
+        # model_a 综合评分更高（ICIR 权重占 0.4）
+        best = evaluator.select_best_model(results)
         assert best == "model_a"
 
-        best_ic = evaluator.select_best_model(results, metric="IC")
-        assert best_ic == "model_b"
+    def test_select_best_model_ic_direction(self, evaluator):
+        """测试 IC 方向正确的模型获得加分"""
+        results = {
+            "model_pos": {"IC": 0.03, "ICIR": 0.4},
+            "model_neg": {"IC": -0.05, "ICIR": 0.5},
+        }
+        # IC > 0 的模型获得 1.5 倍加权，应胜出
+        best = evaluator.select_best_model(results)
+        assert best == "model_pos"
 
 
 class TestSignalPredictor:

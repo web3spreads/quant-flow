@@ -1,8 +1,13 @@
 """
-永续合约特有因子定义
+永续合约特有因子定义（v2 重构版）
 
 定义加密货币永续合约独有的特征，这些特征在传统股票市场中不存在，
 包括资金费率、未平仓合约量、多空比等。
+
+v2 改进：
+- 使用统一英文命名
+- 精简特征定义，与 handler.py 保持一致
+- 实际计算逻辑在 handler.py 中，本文件仅做定义和注册
 """
 
 # ============================================================
@@ -18,93 +23,71 @@ PERPETUAL_RAW_COLUMNS = [
 
 
 # ============================================================
-# 永续合约衍生因子配置
+# 永续合约衍生因子配置（v2 精简版）
 # ============================================================
 
-# 基于永续合约原始数据构建的衍生因子
-# 使用 QLib 表达式引擎语法
 PERPETUAL_FEATURE_CONFIG = [
     # --- 资金费率因子 ---
-    # 资金费率原值
-    ("$funding_rate", "资金费率"),
-    # 资金费率移动平均（平滑后的趋势）
-    ("Mean($funding_rate, 8)", "资金费率_8期均值"),
-    ("Mean($funding_rate, 24)", "资金费率_24期均值"),
-    # 资金费率标准差（波动性）
-    ("Std($funding_rate, 24)", "资金费率_24期标准差"),
-    # 资金费率偏移变化
-    ("$funding_rate - Ref($funding_rate, 1)", "资金费率_1期变化"),
-    ("$funding_rate - Mean($funding_rate, 24)", "资金费率_偏离均值"),
+    ("$funding_rate", "FR"),
+    ("Mean($funding_rate, 8)", "FR_MA8"),
+    ("Mean($funding_rate, 24)", "FR_MA24"),
+    ("Std($funding_rate, 24)", "FR_STD24"),
+    ("$funding_rate - Ref($funding_rate, 1)", "FR_DIFF1"),
+    ("$funding_rate - Mean($funding_rate, 24)", "FR_DEVMA"),
     # --- 未平仓量因子 ---
-    # 未平仓量原值（对数化）
-    ("Log($open_interest + 1)", "未平仓量_对数"),
-    # 未平仓量变化率
-    ("$open_interest / Ref($open_interest, 1) - 1", "未平仓量_1期变化率"),
-    ("$open_interest / Ref($open_interest, 24) - 1", "未平仓量_24期变化率"),
-    # 未平仓量与成交量的比率
-    ("$open_interest / ($volume + 1)", "未平仓量_成交量比"),
-    # 未平仓量移动平均
-    ("Mean($open_interest, 24)", "未平仓量_24期均值"),
-    # 未平仓量趋势强度
-    ("$open_interest / Mean($open_interest, 24) - 1", "未平仓量_偏离均值"),
+    ("Log($open_interest + 1)", "OI_LOG"),
+    ("$open_interest / Ref($open_interest, 1) - 1", "OI_ROC1"),
+    ("$open_interest / Ref($open_interest, 24) - 1", "OI_ROC24"),
+    ("$open_interest / ($volume + 1)", "OI_VOL_RATIO"),
+    ("$open_interest / Mean($open_interest, 24) - 1", "OI_DEVMA"),
     # --- 溢价率因子 ---
-    ("$premium", "溢价率"),
-    ("Mean($premium, 24)", "溢价率_24期均值"),
-    ("Std($premium, 24)", "溢价率_24期标准差"),
-    # --- 价量关系因子（增强版）---
-    # 成交量异常检测
-    ("$volume / Mean($volume, 24) - 1", "成交量_偏离24期均值"),
-    ("$volume / Mean($volume, 168) - 1", "成交量_偏离168期均值"),
-    # 价量背离指标
-    ("Corr($close, $volume, 24)", "价量相关性_24期"),
+    ("$premium", "PREM"),
+    ("Mean($premium, 24)", "PREM_MA24"),
+    ("Std($premium, 24)", "PREM_STD24"),
 ]
 
 
 # ============================================================
-# Alpha158 基础因子配置（适配加密货币）
+# Alpha158 基础因子配置（v2 精简版）
 # ============================================================
 
 # K线形态因子
 KBAR_FEATURE_CONFIG = [
-    # K线基本形态
-    ("($close - $open) / $open", "KMID"),  # K线中点（涨跌幅）
-    ("($high - $low) / $open", "KLEN"),  # K线长度（振幅）
-    ("($close - $open) / ($high - $low + 1e-12)", "KSFT"),  # K线偏移
-    ("($high - Max($open, $close)) / $open", "KUP"),  # 上影线
-    ("(Min($open, $close) - $low) / $open", "KLOW"),  # 下影线
-    ("($high - Max($open, $close)) / ($high - $low + 1e-12)", "KSHUP"),  # 上影线比例
-    ("(Min($open, $close) - $low) / ($high - $low + 1e-12)", "KSHDN"),  # 下影线比例
+    ("($close - $open) / $open", "KMID"),
+    ("($high - $low) / $open", "KLEN"),
+    ("($close - $open) / ($high - $low + 1e-12)", "KSFT"),
+    ("($high - Max($open, $close)) / $open", "KUP"),
+    ("(Min($open, $close) - $low) / $open", "KLOW"),
+    ("($high - Max($open, $close)) / ($high - $low + 1e-12)", "KSHUP"),
+    ("(Min($open, $close) - $low) / ($high - $low + 1e-12)", "KSHDN"),
 ]
 
-# 价格动量因子（多时间窗口）
+# 价格动量因子（精简窗口：去掉30/60）
 PRICE_FEATURE_CONFIG = []
-for _window in [1, 2, 3, 5, 10, 20, 30, 60]:
+for _window in [1, 2, 3, 5, 10, 20]:
     PRICE_FEATURE_CONFIG.append((f"Ref($close, {_window}) / $close - 1", f"ROC_{_window}"))
 
-# 均线偏离因子
+# 均线偏离因子（精简窗口）
 MA_FEATURE_CONFIG = []
-for _window in [5, 10, 20, 30, 60]:
-    MA_FEATURE_CONFIG.append((f"Mean($close, {_window}) / $close - 1", f"MA_偏离_{_window}"))
+for _window in [5, 10, 20]:
+    MA_FEATURE_CONFIG.append((f"Mean($close, {_window}) / $close - 1", f"MA_BIAS_{_window}"))
 
-# 波动率因子
+# 波动率因子（精简窗口）
 VOLATILITY_FEATURE_CONFIG = []
-for _window in [5, 10, 20, 30, 60]:
+for _window in [5, 10, 20]:
     VOLATILITY_FEATURE_CONFIG.append(
         (f"Std($close, {_window}) / Mean($close, {_window})", f"CV_{_window}")
     )
 
-# 滚动统计因子
+# 滚动统计因子（精简窗口）
 ROLLING_FEATURE_CONFIG = []
-for _window in [5, 10, 20, 30, 60]:
-    # 收益率标准差
+for _window in [5, 10, 20]:
     ROLLING_FEATURE_CONFIG.append(
         (f"Std(Ref($close, 1) / $close - 1, {_window})", f"VSTD_{_window}")
     )
-    # 成交量标准差
     ROLLING_FEATURE_CONFIG.append(
         (f"Std($volume, {_window}) / (Mean($volume, {_window}) + 1e-12)", f"VWSTD_{_window}")
     )
-    # 最高价/最低价位置
     ROLLING_FEATURE_CONFIG.append(
         (
             f"($close - Min($low, {_window})) / (Max($high, {_window}) - Min($low, {_window}) + 1e-12)",
@@ -112,18 +95,30 @@ for _window in [5, 10, 20, 30, 60]:
         )
     )
 
-# 相关性因子
+# 相关性因子（精简窗口）
 CORRELATION_FEATURE_CONFIG = [
-    ("Corr($close, Log($volume + 1), 5)", "价量相关性_5"),
-    ("Corr($close, Log($volume + 1), 10)", "价量相关性_10"),
-    ("Corr($close, Log($volume + 1), 20)", "价量相关性_20"),
-    ("Corr($close, Log($volume + 1), 60)", "价量相关性_60"),
+    ("Corr($close, Log($volume + 1), 5)", "CORR_PV_5"),
+    ("Corr($close, Log($volume + 1), 10)", "CORR_PV_10"),
+    ("Corr($close, Log($volume + 1), 20)", "CORR_PV_20"),
+]
+
+# 新增技术指标因子
+TECHNICAL_FEATURE_CONFIG = [
+    ("RSI($close, 14)", "RSI_14"),
+    ("MACD_LINE($close, 12, 26) / $close", "MACD_LINE"),
+    ("MACD_SIGNAL($close, 12, 26, 9) / $close", "MACD_SIGNAL"),
+    ("MACD_HIST($close, 12, 26, 9) / $close", "MACD_HIST"),
+    ("BB_PCTB($close, 20, 2)", "BB_PCTB"),
+    ("BB_WIDTH($close, 20, 2)", "BB_WIDTH"),
+    ("ATR($high, $low, $close, 14) / $close", "ATR_14"),
+    ("OBV_ROC($close, $volume, 10)", "OBV_ROC_10"),
+    ("$volume / Mean($volume, 24) - 1", "VOL_BIAS_24"),
 ]
 
 
 def get_all_feature_config(include_perpetual: bool = True) -> list[tuple[str, str]]:
     """
-    获取完整的因子配置列表
+    获取完整的因子配置列表（v2 版本）
 
     Args:
         include_perpetual: 是否包含永续合约特有因子
@@ -138,6 +133,7 @@ def get_all_feature_config(include_perpetual: bool = True) -> list[tuple[str, st
     features.extend(VOLATILITY_FEATURE_CONFIG)
     features.extend(ROLLING_FEATURE_CONFIG)
     features.extend(CORRELATION_FEATURE_CONFIG)
+    features.extend(TECHNICAL_FEATURE_CONFIG)
 
     if include_perpetual:
         features.extend(PERPETUAL_FEATURE_CONFIG)
@@ -147,7 +143,7 @@ def get_all_feature_config(include_perpetual: bool = True) -> list[tuple[str, st
 
 def get_feature_expressions(include_perpetual: bool = True) -> list[str]:
     """
-    获取所有因子的表达式列表（用于 QLib DataLoader）
+    获取所有因子的表达式列表
 
     Args:
         include_perpetual: 是否包含永续合约特有因子

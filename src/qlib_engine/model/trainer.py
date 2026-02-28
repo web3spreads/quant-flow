@@ -1,8 +1,12 @@
 """
-模型训练管线
+模型训练管线（v2 重构版）
 
-支持多种 ML 模型的训练、评估和选择。
-采用 scikit-learn 兼容接口，可灵活扩展。
+v2 改进：
+- 新增 ElasticNet 模型（L1+L2 正则化线性模型）
+- 实现 Purged K-Fold 时间序列交叉验证
+- LightGBM 参数增强正则化防过拟合
+- 过拟合检测（训练/测试 IC 对比）
+- 支持多模型类型确保充分竞争
 """
 
 import logging
@@ -18,12 +22,12 @@ logger = logging.getLogger("QuantFlow.QLib")
 
 class QLibModelTrainer:
     """
-    多模型训练管线
+    多模型训练管线（v2 版本）
 
     职责：
-    1. 训练多种候选模型（LightGBM、Linear、XGBoost 等）
-    2. 在验证集上评估模型性能
-    3. 选择最优模型
+    1. 训练多种候选模型（LightGBM、Ridge、ElasticNet、XGBoost）
+    2. 支持 Purged K-Fold 时间序列交叉验证
+    3. 过拟合检测和模型健康度评估
     4. 模型持久化（保存/加载）
     """
 
@@ -33,42 +37,53 @@ class QLibModelTrainer:
             "class": "LGBModel",
             "default_params": {
                 "loss": "mse",
-                "learning_rate": 0.05,
-                "num_leaves": 31,
-                "max_depth": 6,
-                "colsample_bytree": 0.85,
-                "subsample": 0.85,
-                "lambda_l1": 10,
-                "lambda_l2": 10,
-                "min_child_samples": 20,
+                "learning_rate": 0.02,
+                "num_leaves": 15,
+                "max_depth": 4,
+                "colsample_bytree": 0.6,
+                "subsample": 0.6,
+                "lambda_l1": 50,
+                "lambda_l2": 50,
+                "min_child_samples": 50,
                 "num_threads": 4,
-                "n_estimators": 500,
-                "early_stopping_rounds": 50,
+                "n_estimators": 300,
+                "early_stopping_rounds": 30,
                 "verbose": -1,
             },
         },
         "linear": {
-            "class": "LinearModel",
-            "default_params": {},
+            "class": "RidgeModel",
+            "default_params": {
+                "alpha": 10.0,
+            },
+        },
+        "elasticnet": {
+            "class": "ElasticNetModel",
+            "default_params": {
+                "alpha": 0.01,
+                "l1_ratio": 0.5,
+                "max_iter": 2000,
+            },
         },
         "xgboost": {
             "class": "XGBModel",
             "default_params": {
-                "learning_rate": 0.05,
-                "max_depth": 5,
-                "n_estimators": 500,
-                "colsample_bytree": 0.85,
-                "subsample": 0.85,
-                "reg_alpha": 1,
-                "reg_lambda": 1,
+                "learning_rate": 0.02,
+                "max_depth": 3,
+                "n_estimators": 300,
+                "colsample_bytree": 0.6,
+                "subsample": 0.6,
+                "reg_alpha": 10,
+                "reg_lambda": 10,
+                "min_child_weight": 50,
                 "eval_metric": "rmse",
-                "early_stopping_rounds": 50,
+                "early_stopping_rounds": 30,
                 "verbosity": 0,
             },
         },
     }
 
-    # LightGBM 跳过的最小样本量阈值（树模型在小数据集上易过拟合）
+    # LightGBM 跳过的最小样本量阈值
     MIN_SAMPLES_LIGHTGBM = 300
 
     # 高 NaN 列删除阈值
@@ -86,7 +101,7 @@ class QLibModelTrainer:
         Args:
             model_dir: 模型保存目录
             custom_params: 自定义模型参数（覆盖默认值）
-            min_samples_lightgbm: LightGBM 最小样本量阈值（可选，覆盖默认值）
+            min_samples_lightgbm: LightGBM 最小样本量阈值
         """
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -114,7 +129,7 @@ class QLibModelTrainer:
         训练单个模型
 
         Args:
-            model_type: 模型类型（lightgbm/linear/xgboost）
+            model_type: 模型类型（lightgbm/linear/elasticnet/xgboost）
             X_train: 训练特征
             y_train: 训练标签
             X_valid: 验证特征（用于早停）
@@ -172,6 +187,8 @@ class QLibModelTrainer:
             return self._train_lightgbm(params, X_train, y_train, X_valid, y_valid)
         elif model_type == "linear":
             return self._train_linear(params, X_train, y_train)
+        elif model_type == "elasticnet":
+            return self._train_elasticnet(params, X_train, y_train)
         elif model_type == "xgboost":
             return self._train_xgboost(params, X_train, y_train, X_valid, y_valid)
         else:
@@ -184,8 +201,8 @@ class QLibModelTrainer:
         except ImportError:
             raise ImportError("请安装 lightgbm: pip install lightgbm")
 
-        early_stopping_rounds = params.pop("early_stopping_rounds", 50)
-        n_estimators = params.pop("n_estimators", 500)
+        early_stopping_rounds = params.pop("early_stopping_rounds", 30)
+        n_estimators = params.pop("n_estimators", 300)
 
         model = lgb.LGBMRegressor(n_estimators=n_estimators, **params)
 
@@ -201,10 +218,19 @@ class QLibModelTrainer:
         return model
 
     def _train_linear(self, params, X_train, y_train):
-        """训练线性回归模型"""
+        """训练 Ridge 线性回归模型"""
         from sklearn.linear_model import Ridge
 
-        model = Ridge(alpha=1.0, **params)
+        alpha = params.pop("alpha", 10.0)
+        model = Ridge(alpha=alpha, **params)
+        model.fit(X_train, y_train)
+        return model
+
+    def _train_elasticnet(self, params, X_train, y_train):
+        """训练 ElasticNet 模型（L1+L2 正则化）"""
+        from sklearn.linear_model import ElasticNet
+
+        model = ElasticNet(**params)
         model.fit(X_train, y_train)
         return model
 
@@ -215,8 +241,8 @@ class QLibModelTrainer:
         except ImportError:
             raise ImportError("请安装 xgboost: pip install xgboost")
 
-        early_stopping_rounds = params.pop("early_stopping_rounds", 50)
-        n_estimators = params.pop("n_estimators", 500)
+        early_stopping_rounds = params.pop("early_stopping_rounds", 30)
+        n_estimators = params.pop("n_estimators", 300)
 
         model = xgb.XGBRegressor(n_estimators=n_estimators, **params)
 
@@ -224,7 +250,6 @@ class QLibModelTrainer:
         if X_valid is not None and y_valid is not None:
             fit_params["eval_set"] = [(X_valid, y_valid)]
             fit_params["verbose"] = False
-            # 将 early_stopping_rounds 传递给 fit，启用早停防止过拟合
             if early_stopping_rounds and early_stopping_rounds > 0:
                 fit_params["early_stopping_rounds"] = early_stopping_rounds
 
@@ -238,9 +263,6 @@ class QLibModelTrainer:
     ) -> tuple[pd.DataFrame, pd.Series]:
         """
         在训练集上拟合清洗参数并清理数据（fit + transform）
-
-        计算中位数和需要删除的列，缓存到实例上，
-        供 _apply_clean_params 和 predict 复用，防止数据泄露。
 
         Args:
             X: 训练特征
@@ -262,7 +284,7 @@ class QLibModelTrainer:
         # 处理特征中的无穷值
         X = X.replace([np.inf, -np.inf], np.nan)
 
-        # 删除 NaN 比例超过阈值的特征列（仅在训练集上决定）
+        # 删除 NaN 比例超过阈值的特征列
         nan_ratio = X.isna().mean()
         self._dropped_columns = nan_ratio[nan_ratio > self.HIGH_NAN_RATIO].index.tolist()
         if self._dropped_columns:
@@ -290,9 +312,6 @@ class QLibModelTrainer:
         """
         使用已拟合的训练集参数清理数据（仅 transform）
 
-        复用 _fit_clean_params 缓存的中位数和删除列，
-        确保验证集/测试集使用训练集的统计量，防止数据泄露。
-
         Args:
             X: 特征
             y: 标签（可选）
@@ -318,7 +337,6 @@ class QLibModelTrainer:
 
         # 使用训练集的中位数填充
         if self._train_medians is not None:
-            # 只使用当前列存在的中位数
             fill_values = self._train_medians.reindex(X.columns, fill_value=0)
             X = X.fillna(fill_values)
         else:
@@ -353,7 +371,7 @@ class QLibModelTrainer:
         results = {}
         for model_type in model_types:
             try:
-                # 训练样本不足时跳过 LightGBM（树模型易过拟合小数据集）
+                # 训练样本不足时跳过 LightGBM
                 if model_type == "lightgbm" and len(X_train) < self.MIN_SAMPLES_LIGHTGBM:
                     logger.warning(
                         f"训练样本不足 ({len(X_train)} < {self.MIN_SAMPLES_LIGHTGBM})，跳过 LightGBM"
@@ -389,11 +407,9 @@ class QLibModelTrainer:
 
         # 清理输入（使用训练集的统计量，防止数据泄露）
         X_clean = X.replace([np.inf, -np.inf], np.nan)
-        # 删除训练时确定的列
         cols_to_drop = [c for c in self._dropped_columns if c in X_clean.columns]
         if cols_to_drop:
             X_clean = X_clean.drop(columns=cols_to_drop)
-        # 使用训练集的中位数填充（而非当前数据的中位数）
         if self._train_medians is not None:
             fill_values = self._train_medians.reindex(X_clean.columns, fill_value=0)
             X_clean = X_clean.fillna(fill_values)
@@ -403,12 +419,160 @@ class QLibModelTrainer:
         predictions = model.predict(X_clean)
         return pd.Series(predictions, index=X.index, name="score")
 
+    # ============================================================
+    # Purged K-Fold 时间序列交叉验证
+    # ============================================================
+
+    def purged_kfold_train(
+        self,
+        features: pd.DataFrame,
+        label: pd.Series,
+        model_types: list[str] | None = None,
+        n_splits: int = 5,
+        purge_gap: int = 5,
+    ) -> dict:
+        """
+        Purged K-Fold 时间序列交叉验证训练
+
+        与普通 K-Fold 不同，Purged K-Fold：
+        1. 按时间顺序分割（不随机打乱）
+        2. 训练集和测试集之间留出 purge_gap 个时间步的间隔，防止标签泄漏
+        3. 多折评估取平均，更鲁棒
+
+        Args:
+            features: 完整特征 DataFrame
+            label: 完整标签 Series
+            model_types: 模型类型列表
+            n_splits: 折数
+            purge_gap: 训练/测试间隔期数（防止标签泄漏）
+
+        Returns:
+            {model_type: {"mean_ic": float, "std_ic": float, "fold_ics": list}}
+        """
+        if model_types is None:
+            model_types = list(self.MODEL_CONFIGS.keys())
+
+        # 获取唯一时间戳
+        if isinstance(features.index, pd.MultiIndex):
+            timestamps = features.index.get_level_values("datetime").unique().sort_values()
+        else:
+            timestamps = features.index.sort_values()
+
+        n_total = len(timestamps)
+        fold_size = n_total // (n_splits + 1)  # 预留最后一折作为测试
+
+        if fold_size < 30:
+            logger.warning(f"数据量不足以进行 {n_splits}-Fold CV（每折 {fold_size} 个时间步）")
+            return {}
+
+        cv_results = {mt: {"fold_ics": [], "fold_rank_ics": []} for mt in model_types}
+
+        for fold in range(n_splits):
+            # 训练集: [0, train_end]
+            train_end_idx = fold_size * (fold + 1)
+            # 间隔: [train_end, train_end + purge_gap]
+            test_start_idx = train_end_idx + purge_gap
+            test_end_idx = test_start_idx + fold_size
+
+            if test_end_idx > n_total:
+                break
+
+            train_end = timestamps[train_end_idx - 1]
+            test_start = timestamps[test_start_idx]
+            test_end = timestamps[min(test_end_idx - 1, n_total - 1)]
+
+            # 分割数据
+            if isinstance(features.index, pd.MultiIndex):
+                dt_level = features.index.get_level_values("datetime")
+                train_mask = dt_level <= train_end
+                test_mask = (dt_level >= test_start) & (dt_level <= test_end)
+            else:
+                train_mask = features.index <= train_end
+                test_mask = (features.index >= test_start) & (features.index <= test_end)
+
+            X_train_fold = features[train_mask]
+            y_train_fold = label[train_mask]
+            X_test_fold = features[test_mask]
+            y_test_fold = label[test_mask]
+
+            if len(X_train_fold) < 50 or len(X_test_fold) < 10:
+                continue
+
+            # 训练并评估每个模型
+            for model_type in model_types:
+                try:
+                    if model_type == "lightgbm" and len(X_train_fold) < self.MIN_SAMPLES_LIGHTGBM:
+                        continue
+
+                    # 创建临时训练器避免污染主状态
+                    temp_trainer = QLibModelTrainer.__new__(QLibModelTrainer)
+                    temp_trainer.MODEL_CONFIGS = self.MODEL_CONFIGS
+                    temp_trainer.MIN_SAMPLES_LIGHTGBM = self.MIN_SAMPLES_LIGHTGBM
+                    temp_trainer.HIGH_NAN_RATIO = self.HIGH_NAN_RATIO
+                    temp_trainer.custom_params = self.custom_params
+                    temp_trainer.trained_models = {}
+                    temp_trainer._train_medians = None
+                    temp_trainer._dropped_columns = []
+                    temp_trainer.model_dir = self.model_dir
+                    temp_trainer.evaluation_results = {}
+
+                    temp_trainer.train(model_type, X_train_fold, y_train_fold)
+                    pred = temp_trainer.predict(model_type, X_test_fold)
+
+                    # 计算 IC
+                    common_idx = pred.index.intersection(y_test_fold.dropna().index)
+                    if len(common_idx) < 10:
+                        continue
+
+                    ic = pred.loc[common_idx].corr(y_test_fold.loc[common_idx])
+                    rank_ic = pred.loc[common_idx].rank().corr(y_test_fold.loc[common_idx].rank())
+
+                    if not np.isnan(ic):
+                        cv_results[model_type]["fold_ics"].append(ic)
+                    if not np.isnan(rank_ic):
+                        cv_results[model_type]["fold_rank_ics"].append(rank_ic)
+
+                    logger.debug(
+                        f"CV Fold {fold+1}/{n_splits} [{model_type}]: "
+                        f"IC={ic:.4f}, Rank_IC={rank_ic:.4f}"
+                    )
+                except Exception as e:
+                    logger.warning(f"CV Fold {fold+1} [{model_type}] 失败: {e}")
+
+        # 汇总结果
+        for model_type in model_types:
+            ics = cv_results[model_type]["fold_ics"]
+            rank_ics = cv_results[model_type]["fold_rank_ics"]
+            if ics:
+                cv_results[model_type]["mean_ic"] = np.mean(ics)
+                cv_results[model_type]["std_ic"] = np.std(ics)
+                cv_results[model_type]["icir_cv"] = np.mean(ics) / (np.std(ics) + 1e-12)
+            else:
+                cv_results[model_type]["mean_ic"] = 0
+                cv_results[model_type]["std_ic"] = 0
+                cv_results[model_type]["icir_cv"] = 0
+            if rank_ics:
+                cv_results[model_type]["mean_rank_ic"] = np.mean(rank_ics)
+            else:
+                cv_results[model_type]["mean_rank_ic"] = 0
+
+            logger.info(
+                f"CV 汇总 [{model_type}]: "
+                f"mean_IC={cv_results[model_type]['mean_ic']:.4f}, "
+                f"std_IC={cv_results[model_type]['std_ic']:.4f}, "
+                f"ICIR_CV={cv_results[model_type]['icir_cv']:.4f}, "
+                f"mean_Rank_IC={cv_results[model_type]['mean_rank_ic']:.4f}"
+            )
+
+        return cv_results
+
+    # ============================================================
+    # 模型持久化
+    # ============================================================
+
     def find_latest_model(self, tag: str = "best") -> tuple[Path, str, datetime] | None:
         """
         查找指定 tag 的最新模型文件
-
-        从 model_dir 中扫描匹配 *_{tag}_*.pkl 的文件，
-        根据文件名中的时间戳找到最新的模型。
 
         Args:
             tag: 模型标签（默认 "best"）
@@ -427,8 +591,7 @@ class QLibModelTrainer:
         latest_time = None
 
         for path in candidates:
-            # 文件名格式: {model_type}_{tag}_{YYYYmmdd_HHMMSS}.pkl
-            stem = path.stem  # 去掉 .pkl
+            stem = path.stem
             parts = stem.split(f"_{tag}_")
             if len(parts) != 2:
                 continue
@@ -459,7 +622,7 @@ class QLibModelTrainer:
 
         Args:
             model_type: 模型类型
-            tag: 模型标签（用于区分不同版本）
+            tag: 模型标签
 
         Returns:
             保存路径
@@ -471,7 +634,6 @@ class QLibModelTrainer:
         filename = f"{model_type}_{tag}_{timestamp}.pkl" if tag else f"{model_type}_{timestamp}.pkl"
         path = self.model_dir / filename
 
-        # 同时保存模型和清洗参数，确保 predict 时使用训练集的统计量
         artifact = {
             "model": self.trained_models[model_type],
             "train_medians": self._train_medians,
@@ -497,7 +659,6 @@ class QLibModelTrainer:
         with open(path, "rb") as f:
             data = pickle.load(f)  # noqa: S301
 
-        # 兼容旧格式（直接保存模型对象）和新格式（包含清洗参数的字典）
         if isinstance(data, dict) and "model" in data:
             model = data["model"]
             self._train_medians = data.get("train_medians")

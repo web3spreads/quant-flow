@@ -1,11 +1,15 @@
 """
-模型评估和信号分析
+模型评估和信号分析（v2 重构版）
 
-提供 IC/ICIR/夏普/回撤等多维度的模型评估指标，
-帮助选择最优模型和验证信号有效性。
+v2 改进：
+- 改进 IC/ICIR 计算：时序 IC 替代截面 IC（品种过少时）
+- 过拟合检测：对比训练/测试 IC 差异
+- 分组回测：按预测分数分组统计实际收益
+- 模型选择改用综合评分（IC + ICIR + 稳定性）
 """
 
 import logging
+import math
 
 import numpy as np
 import pandas as pd
@@ -15,13 +19,14 @@ logger = logging.getLogger("QuantFlow.QLib")
 
 class ModelEvaluator:
     """
-    模型评估器
+    模型评估器（v2 版本）
 
     提供量化投资领域标准的模型评估指标：
     - IC（信息系数）：预测值与实际收益的相关系数
     - Rank IC：基于排名的 IC，更加鲁棒
     - ICIR：IC 的信息比率，衡量 IC 的稳定性
-    - 年化收益率、夏普比率、最大回撤等
+    - 过拟合度：训练/测试性能差异
+    - 分组回测：按预测分数分层统计
     """
 
     def evaluate(
@@ -29,14 +34,18 @@ class ModelEvaluator:
         predictions: pd.Series,
         labels: pd.Series,
         freq: str = "1h",
+        train_predictions: pd.Series | None = None,
+        train_labels: pd.Series | None = None,
     ) -> dict:
         """
         全面评估模型性能
 
         Args:
-            predictions: 预测分数
-            labels: 实际标签（收益率）
+            predictions: 测试集预测分数
+            labels: 测试集实际标签（收益率）
             freq: 数据频率（用于年化计算）
+            train_predictions: 训练集预测（用于过拟合检测）
+            train_labels: 训练集标签（用于过拟合检测）
 
         Returns:
             评估指标字典
@@ -59,8 +68,8 @@ class ModelEvaluator:
         results["IC"] = pred.corr(label)
         results["Rank_IC"] = pred.rank().corr(label.rank())
 
-        # 分期计算 IC（用于 ICIR）
-        ic_series = self._calculate_rolling_ic(pred, label)
+        # 时序滚动 IC（更适合少量品种的情况）
+        ic_series = self._calculate_rolling_ic(pred, label, window=min(20, len(pred) // 3))
         if len(ic_series) > 1:
             results["IC_均值"] = ic_series.mean()
             results["IC_标准差"] = ic_series.std()
@@ -69,6 +78,14 @@ class ModelEvaluator:
             results["IC_均值"] = results["IC"]
             results["IC_标准差"] = 0
             results["ICIR"] = 0
+
+        # 分组回测（预测分数分3层）
+        group_returns = self._grouped_backtest(pred, label, n_groups=3)
+        if group_returns is not None:
+            results["分组单调性"] = group_returns.get("monotonicity", 0)
+            results["多头组均值"] = group_returns.get("long_mean", 0)
+            results["空头组均值"] = group_returns.get("short_mean", 0)
+            results["多空收益差"] = group_returns.get("long_short_spread", 0)
 
         # 多空策略收益评估
         long_short_returns = self._simulate_long_short(pred, label)
@@ -85,12 +102,114 @@ class ModelEvaluator:
             results["夏普比率"] = 0
             results["最大回撤"] = 0
 
+        # 过拟合检测
+        if train_predictions is not None and train_labels is not None:
+            overfit_metrics = self._detect_overfit(
+                train_predictions, train_labels, pred, label
+            )
+            results.update(overfit_metrics)
+
         # 样本统计
         results["样本数"] = len(pred)
         results["预测均值"] = pred.mean()
         results["预测标准差"] = pred.std()
 
         return results
+
+    def _detect_overfit(
+        self,
+        train_pred: pd.Series,
+        train_label: pd.Series,
+        test_pred: pd.Series,
+        test_label: pd.Series,
+    ) -> dict:
+        """
+        检测过拟合程度
+
+        通过对比训练集和测试集的 IC 差异来判断过拟合程度。
+        overfit_ratio > 2 表示严重过拟合。
+
+        Returns:
+            {"train_IC": float, "test_IC": float, "overfit_ratio": float}
+        """
+        # 训练集 IC
+        common = train_pred.index.intersection(train_label.index)
+        tp = train_pred.loc[common].dropna()
+        tl = train_label.loc[common].dropna()
+        common = tp.index.intersection(tl.index)
+        train_ic = tp.loc[common].corr(tl.loc[common]) if len(common) > 10 else 0
+
+        # 测试集 IC
+        common = test_pred.index.intersection(test_label.index)
+        sp = test_pred.loc[common].dropna()
+        sl = test_label.loc[common].dropna()
+        common = sp.index.intersection(sl.index)
+        test_ic = sp.loc[common].corr(sl.loc[common]) if len(common) > 10 else 0
+
+        # 过拟合比率：训练IC / 测试IC
+        if abs(test_ic) > 1e-6:
+            overfit_ratio = abs(train_ic) / abs(test_ic)
+        else:
+            overfit_ratio = float("inf") if abs(train_ic) > 0.01 else 1.0
+
+        logger.info(
+            f"过拟合检测: train_IC={train_ic:.4f}, test_IC={test_ic:.4f}, "
+            f"过拟合比率={overfit_ratio:.2f}"
+        )
+
+        return {
+            "train_IC": train_ic,
+            "test_IC": test_ic,
+            "过拟合比率": overfit_ratio,
+        }
+
+    def _grouped_backtest(
+        self,
+        predictions: pd.Series,
+        labels: pd.Series,
+        n_groups: int = 3,
+    ) -> dict | None:
+        """
+        分组回测：按预测分数分层统计实际收益
+
+        理想情况下，预测分数高的组应有更高的实际收益（单调递增）。
+
+        Args:
+            predictions: 预测分数
+            labels: 实际收益
+            n_groups: 分组数
+
+        Returns:
+            {"group_means": list, "monotonicity": float, ...}
+        """
+        if len(predictions) < n_groups * 5:
+            return None
+
+        combined = pd.DataFrame({"pred": predictions, "label": labels})
+        combined = combined.dropna()
+
+        if len(combined) < n_groups * 5:
+            return None
+
+        # 按预测分数分组
+        combined["group"] = pd.qcut(combined["pred"], n_groups, labels=False, duplicates="drop")
+        group_means = combined.groupby("group")["label"].mean()
+
+        # 单调性检测：计算排列的 Spearman 相关
+        if len(group_means) >= 2:
+            monotonicity = group_means.corr(pd.Series(range(len(group_means)), index=group_means.index))
+        else:
+            monotonicity = 0
+
+        return {
+            "group_means": group_means.tolist(),
+            "monotonicity": monotonicity if not np.isnan(monotonicity) else 0,
+            "long_mean": group_means.iloc[-1] if len(group_means) > 0 else 0,
+            "short_mean": group_means.iloc[0] if len(group_means) > 0 else 0,
+            "long_short_spread": (
+                group_means.iloc[-1] - group_means.iloc[0] if len(group_means) > 1 else 0
+            ),
+        }
 
     def _calculate_rolling_ic(
         self,
@@ -109,6 +228,7 @@ class ModelEvaluator:
         Returns:
             滚动 IC Series
         """
+        window = max(5, min(window, len(predictions) // 2))
         combined = pd.DataFrame({"pred": predictions, "label": labels})
         ic_series = combined["pred"].rolling(window).corr(combined["label"])
         return ic_series.dropna()
@@ -122,8 +242,6 @@ class ModelEvaluator:
         """
         模拟多空策略收益
 
-        做多预测分数最高的 quantile，做空最低的 quantile
-
         Args:
             predictions: 预测分数
             labels: 实际收益
@@ -133,10 +251,8 @@ class ModelEvaluator:
             多空策略的收益 Series
         """
         if isinstance(predictions.index, pd.MultiIndex):
-            # 截面数据：在每个时间点上选择多空
             return self._simulate_long_short_cross_section(predictions, labels, quantile)
 
-        # 时间序列：根据预测方向计算收益
         long_threshold = predictions.quantile(1 - quantile)
         short_threshold = predictions.quantile(quantile)
 
@@ -163,7 +279,6 @@ class ModelEvaluator:
             dt_data = combined.xs(dt, level=0)
             if len(dt_data) < 3:
                 continue
-            # 做多评分最高的，做空评分最低的
             sorted_data = dt_data.sort_values("pred")
             n_long = max(1, int(len(sorted_data) * quantile))
             long_ret = sorted_data["label"].tail(n_long).mean()
@@ -176,32 +291,14 @@ class ModelEvaluator:
         return pd.DataFrame(returns).set_index("datetime")["return"]
 
     def _max_drawdown(self, returns: pd.Series) -> float:
-        """
-        计算最大回撤
-
-        Args:
-            returns: 收益序列
-
-        Returns:
-            最大回撤（负数）
-        """
+        """计算最大回撤"""
         cumulative = (1 + returns).cumprod()
         peak = cumulative.expanding().max()
         drawdown = (cumulative - peak) / peak
         return drawdown.min()
 
     def _get_annualize_factor(self, freq: str) -> float:
-        """
-        获取年化因子
-
-        加密货币 24/7 交易，一年 = 365 天
-
-        Args:
-            freq: 数据频率
-
-        Returns:
-            年化因子
-        """
+        """获取年化因子（加密货币 24/7 交易）"""
         freq_hours = {
             "1min": 1 / 60,
             "5min": 5 / 60,
@@ -212,7 +309,6 @@ class ModelEvaluator:
             "1d": 24,
         }
         hours = freq_hours.get(freq, 1)
-        # 加密货币：365 天 × 24 小时
         periods_per_year = (365 * 24) / hours
         return periods_per_year
 
@@ -239,40 +335,81 @@ class ModelEvaluator:
         self,
         model_results: dict[str, dict],
         metric: str = "ICIR",
+        cv_results: dict | None = None,
     ) -> str:
         """
-        根据指定指标选择最优模型
+        根据综合评分选择最优模型
 
-        NaN 指标的模型会被自动排除（预测标准差为 0 意味着模型输出常数，无效）。
+        评分 = ICIR * 0.4 + IC * 0.3 + 分组单调性 * 0.2 + CV_ICIR * 0.1
+
+        NaN 指标的模型会被自动排除。
 
         Args:
             model_results: {模型名: 评估结果字典}
-            metric: 评选指标
+            metric: 主要评选指标
+            cv_results: Purged K-Fold 交叉验证结果（可选）
 
         Returns:
             最优模型名称
         """
-        import math
 
-        def _safe_score(k):
-            """获取安全的评分值，NaN 和 Inf 视为负无穷"""
-            val = model_results[k].get(metric, 0)
-            # 预测标准差为 0 说明模型输出常数，视为无效
-            pred_std = model_results[k].get("预测标准差", -1)
+        def _composite_score(k):
+            """计算综合评分"""
+            result = model_results[k]
+
+            # 基础检查
+            pred_std = result.get("预测标准差", -1)
             if pred_std == 0:
                 logger.warning(f"模型 {k} 预测标准差为 0（输出常数），排除")
                 return float("-inf")
-            if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
-                logger.warning(f"模型 {k} 的 {metric} 为 {val}，排除")
-                return float("-inf")
-            return val
 
-        best_model = max(model_results, key=_safe_score)
-        best_score = _safe_score(best_model)
+            icir = result.get("ICIR", 0)
+            ic = result.get("IC", 0)
+
+            # 检查 NaN
+            for val, name in [(icir, "ICIR"), (ic, "IC")]:
+                if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
+                    logger.warning(f"模型 {k} 的 {name} 为 {val}，排除")
+                    return float("-inf")
+
+            # 综合评分
+            score = abs(icir) * 0.4 + abs(ic) * 0.3
+
+            # 分组单调性加分
+            monotonicity = result.get("分组单调性", 0)
+            if not math.isnan(monotonicity):
+                score += abs(monotonicity) * 0.2
+
+            # CV 结果加分
+            if cv_results and k in cv_results:
+                cv_icir = cv_results[k].get("icir_cv", 0)
+                if not math.isnan(cv_icir):
+                    score += abs(cv_icir) * 0.1
+
+            # IC 方向正确的模型优先（IC > 0 表示预测方向正确）
+            if ic > 0:
+                score *= 1.5  # IC 为正的模型获得 1.5 倍加权
+
+            # 过拟合惩罚
+            overfit_ratio = result.get("过拟合比率", 1.0)
+            if isinstance(overfit_ratio, (int, float)) and not math.isinf(overfit_ratio):
+                if overfit_ratio > 3:
+                    score *= 0.5  # 严重过拟合，减半
+                elif overfit_ratio > 2:
+                    score *= 0.7  # 中度过拟合
+
+            return score
+
+        best_model = max(model_results, key=_composite_score)
+        best_score = _composite_score(best_model)
         if best_score == float("-inf"):
-            # 所有模型都无效，选第一个作为 fallback
             best_model = next(iter(model_results))
             logger.warning(f"所有模型指标均无效，默认选择: {best_model}")
         else:
-            logger.info(f"最优模型: {best_model} ({metric}={best_score:.4f})")
+            logger.info(
+                f"最优模型: {best_model} "
+                f"(综合评分={best_score:.4f}, "
+                f"IC={model_results[best_model].get('IC', 0):.4f}, "
+                f"ICIR={model_results[best_model].get('ICIR', 0):.4f})"
+            )
         return best_model

@@ -1,8 +1,15 @@
 """
-QLib 核心引擎
+QLib 核心引擎（v2 重构版）
 
 系统的中枢控制器，负责初始化和协调数据层、模型层、策略层。
-提供统一的接口供 main.py 调用。
+
+v2 改进：
+- 集成特征选择（基于训练集 IC 值筛选 top-K）
+- Purged K-Fold 交叉验证（更鲁棒的模型评估）
+- 过拟合检测（训练/测试 IC 对比）
+- 确保多模型充分竞争（lightgbm + linear + elasticnet + xgboost）
+- 增强数据累加效果（增大默认拉取量到 1000）
+- 标签优化（label_periods 默认改为 3，添加 Winsorize）
 """
 
 from __future__ import annotations
@@ -25,25 +32,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("QuantFlow.QLib")
 
+# 默认模型候选列表（v2: 增加 elasticnet，确保充分竞争）
+DEFAULT_MODEL_CANDIDATES = ["lightgbm", "linear", "elasticnet"]
+
 
 class QuantFlowQLibEngine:
     """
-    QLib 核心引擎
+    QLib 核心引擎（v2 版本）
 
     完整的量化决策链路：
-    数据收集 → 因子计算 → 模型预测 → 信号生成 → 策略决策 → 风控验证
-
-    使用方式：
-    ```python
-    engine = QuantFlowQLibEngine(config)
-    engine.initialize()
-    engine.prepare_and_train(symbols)
-
-    # 交易循环中
-    decision = engine.generate_trade_decision(symbol, current_position, balance)
-    if decision.should_trade:
-        order_manager.execute(decision)
-    ```
+    数据收集 → 因子计算 → 特征选择 → 模型训练 → CV验证 → 信号生成 → 策略决策 → 风控验证
     """
 
     def __init__(self, config: dict | None = None):
@@ -67,12 +65,13 @@ class QuantFlowQLibEngine:
         self.risk_integrator: RiskIntegrator | None = None
 
         # 状态
-        self._raw_data: dict[str, pd.DataFrame] = {}  # 每个交易对的原始数据
-        self._features: dict[str, pd.DataFrame] = {}  # 每个交易对的因子数据
-        self._best_model_type: str = "lightgbm"  # 当前最优模型
-        self._last_train_time: datetime | None = None  # 上次训练时间
-        self._last_train_samples: int = 0  # 上次训练样本量
-        self._last_evaluation: dict = {}  # 上次模型评估指标
+        self._raw_data: dict[str, pd.DataFrame] = {}
+        self._features: dict[str, pd.DataFrame] = {}
+        self._best_model_type: str = "lightgbm"
+        self._last_train_time: datetime | None = None
+        self._last_train_samples: int = 0
+        self._last_evaluation: dict = {}
+        self._last_cv_results: dict = {}
 
     def initialize(
         self,
@@ -92,13 +91,12 @@ class QuantFlowQLibEngine:
             risk_manager: 现有风险管理器（可选）
             account_protector: 现有账户保护器（可选）
         """
-        # 解析配置
         data_config = self.config.get("data", {})
         model_config = self.config.get("model", {})
         strategy_config = self.config.get("strategy", {})
         risk_config = self.config.get("risk_integration", {})
 
-        # 初始化数据层
+        # 初始化数据层（v2: label_periods 默认改为 3，增加特征选择和标签 Winsorize）
         from ..data.collector import HyperliquidDataCollector
 
         self.collector = HyperliquidDataCollector(
@@ -110,13 +108,15 @@ class QuantFlowQLibEngine:
             include_perpetual=data_config.get("include_perpetual", True),
             normalize=True,
             fillna=True,
-            label_periods=data_config.get("label_periods", 5),
+            label_periods=data_config.get("label_periods", 3),
+            feature_select_top_k=data_config.get("feature_select_top_k", 0),
+            label_winsorize_quantile=data_config.get("label_winsorize_quantile", 0.01),
         )
 
         # 初始化模型层
         model_dir = model_config.get("model_dir", "models")
         custom_params = {}
-        for model_type in ["lightgbm", "xgboost", "linear"]:
+        for model_type in ["lightgbm", "xgboost", "linear", "elasticnet"]:
             if model_type in model_config:
                 custom_params[model_type] = model_config[model_type]
 
@@ -148,14 +148,11 @@ class QuantFlowQLibEngine:
         )
 
         self.initialized = True
-        logger.info("QLib 引擎初始化完成")
+        logger.info("QLib 引擎 v2 初始化完成")
 
     def load_trained_model(self) -> bool:
         """
         尝试从磁盘加载最新的已训练模型
-
-        检查 models/ 目录下是否存在可用的已训练模型，
-        若存在且未过期（训练时间 < retrain_interval_hours），则直接加载跳过训练。
 
         Returns:
             是否成功加载
@@ -164,7 +161,6 @@ class QuantFlowQLibEngine:
             logger.warning("引擎未初始化，无法加载模型")
             return False
 
-        # 查找最新的 best 模型
         result = self.trainer.find_latest_model(tag="best")
         if result is None:
             logger.info("未找到已有模型，需要执行训练")
@@ -172,7 +168,6 @@ class QuantFlowQLibEngine:
 
         model_path, model_type, train_time = result
 
-        # 检查模型是否过期
         retrain_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
         elapsed_hours = (datetime.now() - train_time).total_seconds() / 3600
 
@@ -183,14 +178,12 @@ class QuantFlowQLibEngine:
             )
             return False
 
-        # 加载模型
         try:
             self.trainer.load_model(model_path, model_type=model_type)
             self.model_trained = True
             self._best_model_type = model_type
             self._last_train_time = train_time
 
-            # 加载已有模型时给保守默认评估指标
             self._last_evaluation = {"IC": 0.05, "ICIR": 0.5}
             self.predictor.update_model_metrics(self._last_evaluation)
 
@@ -207,18 +200,21 @@ class QuantFlowQLibEngine:
         self,
         symbols: list[str],
         freq: str = "1h",
-        limit: int = 500,
+        limit: int = 1000,
         model_types: list[str] | None = None,
     ) -> dict:
         """
-        准备数据并训练模型
+        准备数据并训练模型（v2 增强版）
 
         完整流程：
-        1. 收集历史数据
-        2. 计算因子
-        3. 数据标准化
-        4. 训练多个模型
-        5. 评估并选择最优模型
+        1. 收集历史数据（增大拉取量到 1000）
+        2. 计算因子（v2 精简特征 + 新增技术指标）
+        3. 特征选择（基于训练集 IC）
+        4. 数据标准化
+        5. 训练多个模型（确保充分竞争）
+        6. Purged K-Fold 交叉验证
+        7. 过拟合检测
+        8. 综合评分选择最优模型
 
         Args:
             symbols: 交易对列表
@@ -233,11 +229,16 @@ class QuantFlowQLibEngine:
             raise RuntimeError("引擎未初始化，请先调用 initialize()")
 
         if model_types is None:
-            model_types = self.config.get("model", {}).get("candidates", ["lightgbm"])
+            model_types = self.config.get("model", {}).get(
+                "candidates", DEFAULT_MODEL_CANDIDATES
+            )
 
-        logger.info(f"开始准备数据和训练模型: 交易对={symbols}, 频率={freq}")
+        logger.info(
+            f"开始准备数据和训练模型: 交易对={symbols}, 频率={freq}, "
+            f"候选模型={model_types}"
+        )
 
-        # 1. 收集数据（训练时使用全量本地累积数据，以获得更多样本）
+        # 1. 收集数据（使用全量本地累积数据）
         raw_data = self.collector.collect_full_dataset(
             symbols, freq=freq, limit=limit, use_all_local=True
         )
@@ -266,11 +267,10 @@ class QuantFlowQLibEngine:
         valid_end = timestamps[n_train + n_valid - 1]
 
         if isinstance(features.index, pd.MultiIndex):
-            train_mask = features.index.get_level_values("datetime") <= train_end
-            valid_mask = (features.index.get_level_values("datetime") > train_end) & (
-                features.index.get_level_values("datetime") <= valid_end
-            )
-            test_mask = features.index.get_level_values("datetime") > valid_end
+            dt_level = features.index.get_level_values("datetime")
+            train_mask = dt_level <= train_end
+            valid_mask = (dt_level > train_end) & (dt_level <= valid_end)
+            test_mask = dt_level > valid_end
         else:
             train_mask = features.index <= train_end
             valid_mask = (features.index > train_end) & (features.index <= valid_end)
@@ -283,14 +283,24 @@ class QuantFlowQLibEngine:
         X_test = features[test_mask]
         y_test = label[test_mask]
 
-        # 4. 拟合标准化参数（在训练集上）
+        # 4. 特征选择（在训练集上进行，基于 IC 排序）
+        top_k = self.handler.feature_select_top_k
+        if top_k > 0:
+            selected = self.handler.select_features_by_ic(X_train, y_train, top_k=top_k)
+            X_train = self.handler.apply_feature_selection(X_train)
+            X_valid = self.handler.apply_feature_selection(X_valid)
+            X_test = self.handler.apply_feature_selection(X_test)
+            feature_names = selected
+            logger.info(f"特征选择后保留 {len(feature_names)} 个特征")
+
+        # 5. 标准化
         X_train = self.handler.fit_transform(X_train)
         X_valid = self.handler.transform(X_valid)
         X_test = self.handler.transform(X_test)
 
         logger.info(f"数据分割: 训练={len(X_train)}, 验证={len(X_valid)}, 测试={len(X_test)}")
 
-        # 5. 训练模型
+        # 6. 训练模型
         models = self.trainer.train_all(
             X_train,
             y_train,
@@ -299,31 +309,52 @@ class QuantFlowQLibEngine:
             model_types=model_types,
         )
 
-        # 6. 评估模型
+        # 7. 评估模型（含过拟合检测）
         evaluation_results = {}
         for model_type, _model in models.items():
-            pred = self.trainer.predict(model_type, X_test)
-            eval_result = self.evaluator.evaluate(pred, y_test, freq=freq)
+            pred_test = self.trainer.predict(model_type, X_test)
+            pred_train = self.trainer.predict(model_type, X_train)
+
+            eval_result = self.evaluator.evaluate(
+                pred_test, y_test, freq=freq,
+                train_predictions=pred_train,
+                train_labels=y_train,
+            )
             evaluation_results[model_type] = eval_result
             logger.info(
                 f"模型 {model_type}: IC={eval_result.get('IC', 0):.4f}, "
                 f"ICIR={eval_result.get('ICIR', 0):.4f}, "
-                f"夏普={eval_result.get('夏普比率', 0):.4f}"
+                f"过拟合比率={eval_result.get('过拟合比率', '-')}, "
+                f"分组单调性={eval_result.get('分组单调性', 0):.3f}"
             )
 
-        # 7. 选择最优模型
-        if evaluation_results:
-            self._best_model_type = self.evaluator.select_best_model(evaluation_results)
+        # 8. Purged K-Fold 交叉验证（可选）
+        cv_results = {}
+        enable_cv = self.config.get("model", {}).get("enable_cv", True)
+        if enable_cv and n_total > 100:
+            logger.info("执行 Purged K-Fold 交叉验证...")
+            cv_results = self.trainer.purged_kfold_train(
+                features=X_train,
+                label=y_train,
+                model_types=model_types,
+                n_splits=3,
+                purge_gap=self.handler.label_periods + 1,
+            )
+            self._last_cv_results = cv_results
 
-            # 保存最优模型
+        # 9. 选择最优模型（综合评分）
+        if evaluation_results:
+            self._best_model_type = self.evaluator.select_best_model(
+                evaluation_results,
+                cv_results=cv_results if cv_results else None,
+            )
+
             self.trainer.save_model(self._best_model_type, tag="best")
 
-            # 将评估指标传给 predictor，用于置信度计算
             best_eval = evaluation_results.get(self._best_model_type, {})
             self._last_evaluation = best_eval
             self.predictor.update_model_metrics(best_eval)
 
-            # 获取特征重要性
             importance = self.trainer.get_feature_importance(self._best_model_type)
             if importance is not None:
                 logger.info(f"特征重要性 Top10:\n{importance.head(10).to_string()}")
@@ -341,11 +372,10 @@ class QuantFlowQLibEngine:
         self._last_train_time = datetime.now()
         self._last_train_samples = len(raw_data)
 
-        # 收集训练数据详情（供通知和排查使用）
+        # 收集训练数据详情
         data_time_start = timestamps[0]
         data_time_end = timestamps[-1]
 
-        # 统计各交易对样本数
         per_symbol_samples = {}
         if isinstance(raw_data.index, pd.MultiIndex):
             for sym in symbols:
@@ -360,6 +390,13 @@ class QuantFlowQLibEngine:
             "models_trained": list(models.keys()),
             "best_model": self._best_model_type,
             "evaluation": evaluation_results,
+            "cv_results": {
+                k: {
+                    "mean_ic": v.get("mean_ic", 0),
+                    "icir_cv": v.get("icir_cv", 0),
+                }
+                for k, v in cv_results.items()
+            } if cv_results else {},
             "feature_count": len(feature_names),
             "train_samples": len(X_train),
             "valid_samples": len(X_valid),
@@ -373,7 +410,7 @@ class QuantFlowQLibEngine:
             "symbols": symbols,
             "freq": freq,
             "candles_limit": limit,
-            "feature_names": feature_names[:20],  # 前 20 个特征名供参考
+            "feature_names": feature_names[:20],
         }
 
         logger.info(f"模型训练完成: 最优模型={self._best_model_type}")
@@ -394,7 +431,6 @@ class QuantFlowQLibEngine:
             logger.warning("模型尚未训练，无法生成预测")
             return {"error": "模型未训练"}
 
-        # 获取最新数据
         if latest_data is None:
             freq = self.config.get("data", {}).get("freq", "1h")
             raw = self.collector.collect_ohlcv([symbol], freq=freq, limit=100)
@@ -404,11 +440,10 @@ class QuantFlowQLibEngine:
                 raw.xs(symbol, level="instrument") if isinstance(raw.index, pd.MultiIndex) else raw
             )
 
-        # 计算因子
         features = self.handler.calculate_features(latest_data)
+        features = self.handler.apply_feature_selection(features)
         features = self.handler.transform(features)
 
-        # 生成预测信号
         signal = self.predictor.predict(
             model=self.trainer.trained_models[self._best_model_type],
             features=features,
@@ -430,15 +465,13 @@ class QuantFlowQLibEngine:
         """
         生成最终交易决策（QLib 信号 + 风控验证）
 
-        这是外部调用的主要接口。
-
         Args:
             symbol: 交易对
             current_position: 当前持仓信息
             account_balance: 账户余额
-            account_info: 账户详细信息（用于风控）
+            account_info: 账户详细信息
             latest_data: 最新市场数据
-            market_data: 市场上下文（用于风控）
+            market_data: 市场上下文
 
         Returns:
             最终交易决策
@@ -457,7 +490,6 @@ class QuantFlowQLibEngine:
                 reasoning=["QLib 模型尚未训练"],
             )
 
-        # 获取最新数据
         if latest_data is None:
             freq = self.config.get("data", {}).get("freq", "1h")
             raw = self.collector.collect_ohlcv([symbol], freq=freq, limit=100)
@@ -478,11 +510,10 @@ class QuantFlowQLibEngine:
                 raw.xs(symbol, level="instrument") if isinstance(raw.index, pd.MultiIndex) else raw
             )
 
-        # 计算因子
         features = self.handler.calculate_features(latest_data)
+        features = self.handler.apply_feature_selection(features)
         features = self.handler.transform(features)
 
-        # 生成预测信号
         signal = self.predictor.predict(
             model=self.trainer.trained_models[self._best_model_type],
             features=features,
@@ -490,14 +521,12 @@ class QuantFlowQLibEngine:
             model_type=self._best_model_type,
         )
 
-        # 生成交易决策
         decision = self.strategy.generate_decision(
             signal=signal,
             current_position=current_position,
             account_balance=account_balance,
         )
 
-        # 应用风控
         decision = self.risk_integrator.apply_risk_controls(
             decision=decision,
             market_data=market_data,
@@ -515,11 +544,6 @@ class QuantFlowQLibEngine:
     def should_retrain(self) -> bool:
         """
         判断是否需要重新训练模型（动态间隔）
-
-        根据上次训练样本量动态调整间隔：
-        - < 500 样本：6 小时
-        - 500-2000 样本：4 小时
-        - >= 2000 样本：使用配置值（默认 168h）
 
         Returns:
             True 如果需要重训练
@@ -545,12 +569,7 @@ class QuantFlowQLibEngine:
         return get_dynamic_retrain_interval(self._last_train_samples, config_hours)
 
     def get_status(self) -> dict:
-        """
-        获取引擎状态
-
-        Returns:
-            状态字典
-        """
+        """获取引擎状态"""
         return {
             "initialized": self.initialized,
             "model_trained": self.model_trained,
@@ -558,4 +577,10 @@ class QuantFlowQLibEngine:
             "last_train_time": self._last_train_time.isoformat() if self._last_train_time else None,
             "cached_symbols": list(self._raw_data.keys()),
             "should_retrain": self.should_retrain(),
+            "last_train_samples": self._last_train_samples,
+            "last_evaluation": {
+                k: round(v, 4) if isinstance(v, float) else v
+                for k, v in self._last_evaluation.items()
+                if k in ["IC", "ICIR", "分组单调性", "过拟合比率"]
+            },
         }
