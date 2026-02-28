@@ -461,7 +461,7 @@ class QuantFlowBot:
                 model_ready = engine.model_trained
                 if model_ready:
                     self.logger.print_info("✅ QLib 模型训练完成")
-                    self.logger.print_info(f"  训练结果: {train_result}")
+                    self.logger.print_info(self._format_train_summary(train_result))
                     self._notify_qlib_retrain(train_result, success=True)
                 else:
                     self.logger.print_warning("⚠️ QLib 模型训练失败，回退到 LLM Agent 模式")
@@ -1124,7 +1124,8 @@ class QuantFlowBot:
             )
 
             if self.qlib_engine.model_trained:
-                self.logger.print_info(f"✅ QLib 模型重训练完成: {train_result}")
+                self.logger.print_info("✅ QLib 模型重训练完成")
+                self.logger.print_info(self._format_train_summary(train_result))
                 self._notify_qlib_retrain(train_result, success=True)
             else:
                 self.logger.print_warning("⚠️ QLib 模型重训练失败，继续使用旧模型")
@@ -1135,97 +1136,131 @@ class QuantFlowBot:
             self.logger.logger.exception(e)
             self._notify_qlib_retrain({"error": str(e)}, success=False)
 
+    @staticmethod
+    def _format_train_summary(train_result: dict) -> str:
+        """格式化训练结果为精炼的日志摘要"""
+        import math
+
+        best = train_result.get("best_model", "N/A")
+        evaluation = train_result.get("evaluation", {})
+        cv = train_result.get("cv_results", {})
+
+        lines = [f"  最优模型: {best}"]
+
+        for name, ev in evaluation.items():
+            tag = " *" if name == best else ""
+            ic = ev.get("IC", 0) or 0
+            icir = ev.get("ICIR", 0) or 0
+            rank_ic = ev.get("Rank_IC", 0) or 0
+            pred_std = ev.get("预测标准差", 0) or 0
+            overfit = ev.get("过拟合比率", None)
+            mono = ev.get("分组单调性", 0) or 0
+
+            # 安全转换（处理 np.float64 等）
+            ic = float(ic) if not (isinstance(ic, float) and math.isnan(ic)) else 0.0
+            icir = float(icir) if not (isinstance(icir, float) and math.isnan(icir)) else 0.0
+            rank_ic = float(rank_ic) if not (isinstance(rank_ic, float) and math.isnan(rank_ic)) else 0.0
+
+            detail = f"  {name}{tag} | IC={ic:+.4f} RankIC={rank_ic:+.4f} ICIR={icir:+.3f}"
+            detail += f" mono={float(mono):.2f} predStd={float(pred_std):.6f}"
+
+            if overfit is not None and not (isinstance(overfit, float) and math.isinf(overfit)):
+                detail += f" overfit={float(overfit):.1f}x"
+
+            # CV 结果
+            cv_data = cv.get(name, {})
+            cv_icir = cv_data.get("icir_cv", None)
+            if cv_icir is not None and cv_icir != 0:
+                detail += f" cvICIR={float(cv_icir):+.3f}"
+
+            lines.append(detail)
+
+        total = train_result.get("total_raw_samples", 0)
+        tr = train_result.get("train_samples", 0)
+        va = train_result.get("valid_samples", 0)
+        te = train_result.get("test_samples", 0)
+        feat = train_result.get("feature_count", 0)
+        lines.append(f"  数据: {total}条 (train={tr}/valid={va}/test={te}), {feat}特征")
+
+        return "\n".join(lines)
+
     def _notify_qlib_retrain(self, train_result: dict, success: bool):
-        """发送 QLib 重训练结果通知（包含完整评估指标和训练数据详情，方便排查和观察效果）"""
+        """发送 QLib 重训练结果通知"""
         if not self.notifier or not self.notifier.enabled:
             return
         try:
+            import math
             from datetime import datetime as dt
 
             from src.notification.notifier import NotificationEvent
 
+            now_str = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
             if success:
-                best_model = train_result.get("best_model", "未知")
-                models_trained = train_result.get("models_trained", [])
-                feature_count = train_result.get("feature_count", 0)
+                best_model = train_result.get("best_model", "N/A")
+                evaluation = train_result.get("evaluation", {})
+                cv = train_result.get("cv_results", {})
+                symbols_list = train_result.get("symbols", self.config.symbols)
+                freq = train_result.get("freq", "N/A")
+                total_raw = train_result.get("total_raw_samples", 0)
                 train_samples = train_result.get("train_samples", 0)
                 valid_samples = train_result.get("valid_samples", 0)
                 test_samples = train_result.get("test_samples", 0)
-                total_raw = train_result.get("total_raw_samples", 0)
-                evaluation = train_result.get("evaluation", {})
+                feature_count = train_result.get("feature_count", 0)
+                data_start = train_result.get("data_time_start", "N/A")
+                data_end = train_result.get("data_time_end", "N/A")
 
-                # 训练数据时间范围
-                data_start = train_result.get("data_time_start", "未知")
-                data_end = train_result.get("data_time_end", "未知")
-                train_cutoff = train_result.get("train_cutoff", "未知")
-                valid_cutoff = train_result.get("valid_cutoff", "未知")
-                freq = train_result.get("freq", "未知")
-                candles_limit = train_result.get("candles_limit", 0)
+                # 各模型核心指标
+                model_lines = []
+                for name in train_result.get("models_trained", []):
+                    ev = evaluation.get(name, {})
+                    ic = float(ev.get("IC", 0) or 0)
+                    rank_ic = float(ev.get("Rank_IC", 0) or 0)
+                    icir = float(ev.get("ICIR", 0) or 0)
+                    pred_std = float(ev.get("预测标准差", 0) or 0)
+                    overfit = ev.get("过拟合比率", None)
+                    mono = float(ev.get("分组单调性", 0) or 0)
 
-                # 各交易对样本数
-                per_symbol = train_result.get("per_symbol_samples", {})
-                symbols_list = train_result.get("symbols", self.config.symbols)
-                symbol_detail = " | ".join(
-                    f"{s}={per_symbol.get(s, 0)}条" for s in symbols_list
-                )
+                    # 安全转换 NaN
+                    ic = ic if not math.isnan(ic) else 0.0
+                    rank_ic = rank_ic if not math.isnan(rank_ic) else 0.0
+                    icir = icir if not math.isnan(icir) else 0.0
 
-                # 特征名（前 20 个）
-                feature_names = train_result.get("feature_names", [])
-                feature_preview = ", ".join(feature_names[:10])
-                if len(feature_names) > 10:
-                    feature_preview += f" ... 等共{feature_count}个"
+                    tag = " [BEST]" if name == best_model else ""
+                    line = f"  {name}{tag}: IC={ic:+.4f} | RankIC={rank_ic:+.4f} | ICIR={icir:+.3f}"
+                    line += f" | mono={mono:.2f}"
 
-                # 构建每个模型的评估指标详情
-                model_details = []
-                for model_name in models_trained:
-                    eval_data = evaluation.get(model_name, {})
-                    ic = float(eval_data.get("IC", 0) or 0)
-                    rank_ic = float(eval_data.get("Rank_IC", 0) or 0)
-                    icir = float(eval_data.get("ICIR", 0) or 0)
-                    ic_mean = float(eval_data.get("IC_均值", 0) or 0)
-                    ic_std = float(eval_data.get("IC_标准差", 0) or 0)
-                    pred_mean = float(eval_data.get("预测均值", 0) or 0)
-                    pred_std = float(eval_data.get("预测标准差", 0) or 0)
+                    if pred_std == 0:
+                        line += " | (常数预测)"
+                    elif overfit and not (isinstance(overfit, float) and math.isinf(overfit)):
+                        line += f" | overfit={float(overfit):.1f}x"
 
-                    is_best = " ⭐" if model_name == best_model else ""
-                    model_details.append(
-                        f"  [{model_name}]{is_best}\n"
-                        f"    IC={ic:.6f} | Rank_IC={rank_ic:.6f} | ICIR={icir:.4f}\n"
-                        f"    IC均值={ic_mean:.6f} | IC标准差={ic_std:.6f}\n"
-                        f"    预测均值={pred_mean:.8f} | 预测标准差={pred_std:.8f}"
-                    )
+                    cv_icir = cv.get(name, {}).get("icir_cv", None)
+                    if cv_icir is not None and cv_icir != 0:
+                        line += f" | cvICIR={float(cv_icir):+.3f}"
 
-                now_str = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+                    model_lines.append(line)
 
-                title = "🧠 QLib 模型重训练完成"
+                title = "QLib 模型训练完成"
                 message = (
-                    f"⏰ 训练时间: {now_str}\n"
-                    f"\n--- 📊 训练数据概况 ---\n"
-                    f"参与训练交易对: {', '.join(symbols_list)}\n"
-                    f"数据频率: {freq} | 每交易对请求: {candles_limit} 根K线\n"
-                    f"原始数据总量: {total_raw} 条\n"
-                    f"各交易对数据量: {symbol_detail}\n"
-                    f"数据时间范围: {data_start} ~ {data_end}\n"
-                    f"训练集截止: {train_cutoff}\n"
-                    f"验证集截止: {valid_cutoff}\n"
-                    f"\n--- 🔢 数据分割 ---\n"
-                    f"训练集: {train_samples} | 验证集: {valid_samples} | 测试集: {test_samples}\n"
-                    f"特征数: {feature_count}\n"
-                    f"特征预览: {feature_preview}\n"
-                    f"\n--- 🏆 模型评估 ---\n"
-                    f"最优模型: {best_model} ⭐\n"
-                    + "\n".join(model_details)
-                    + "\n\n💡 IC>0.03 为有效信号，ICIR>0.5 为较好稳定性"
+                    f"时间: {now_str}\n"
+                    f"交易对: {', '.join(symbols_list)} | 频率: {freq}\n"
+                    f"数据范围: {data_start} ~ {data_end}\n"
+                    f"样本: {total_raw}条 (train={train_samples}/valid={valid_samples}/test={test_samples})"
+                    f" | 特征: {feature_count}个\n"
+                    f"\n模型评估:\n"
+                    + "\n".join(model_lines)
+                    + f"\n\n选定模型: {best_model}"
+                    + "\n(IC>0.03有效, ICIR>0.5稳定)"
                 )
             else:
-                title = "⚠️ QLib 模型重训练失败"
+                title = "QLib 模型训练失败"
                 error = train_result.get("error", "未知错误")
-                now_str = dt.now().strftime("%Y-%m-%d %H:%M:%S")
                 message = (
-                    f"⏰ 时间: {now_str}\n"
+                    f"时间: {now_str}\n"
                     f"交易对: {', '.join(self.config.symbols)}\n"
                     f"状态: 训练失败，继续使用旧模型\n"
-                    f"错误详情: {error}"
+                    f"错误: {error}"
                 )
 
             self.notifier.notify(NotificationEvent.SYSTEM_STARTUP, title, message)

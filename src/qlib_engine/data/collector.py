@@ -118,7 +118,7 @@ class HyperliquidDataCollector:
         self,
         symbols: list[str],
         freq: str = "1h",
-        limit: int = 500,
+        limit: int = 1000,
         use_all_local: bool = False,
     ) -> pd.DataFrame:
         """
@@ -126,6 +126,8 @@ class HyperliquidDataCollector:
 
         启用数据持久化后，会先加载本地已有数据，仅从 API 增量拉取新数据，
         合并后保存到本地。
+
+        v2 改进：默认 limit 增大到 1000，增强数据累加日志，添加数据质量检查。
 
         Args:
             symbols: 交易对列表（如 ['BTC', 'ETH', 'SOL']）
@@ -154,35 +156,39 @@ class HyperliquidDataCollector:
                     logger.warning(f"跳过 {symbol}: 无法获取数据且无本地数据")
                     continue
                 else:
-                    # API 失败但有本地数据，使用本地数据
                     logger.warning(f"{symbol}: API 获取失败，使用本地缓存数据")
                     df = local_df
             else:
                 # 合并本地 + 新数据
                 if not local_df.empty and self.persist_data:
                     merged = pd.concat([local_df, df], ignore_index=True)
-                    # 按 timestamp 去重，保留最新的
                     merged = merged.drop_duplicates(subset=["timestamp"], keep="last")
                     merged = merged.sort_values("timestamp").reset_index(drop=True)
 
                     incremental_count = len(merged) - len(local_df)
                     logger.info(
-                        f"{symbol}: 增量拉取 {incremental_count} 条新数据, "
-                        f"合并后总计 {len(merged)} 条"
+                        f"{symbol}: 本地已有 {len(local_df)} 条, "
+                        f"API 拉取 {len(df)} 条, "
+                        f"增量新增 {incremental_count} 条, "
+                        f"累计总量 {len(merged)} 条"
                     )
 
-                    # 保存合并后的全量数据
+                    # 数据质量检查
+                    self._check_data_quality(merged, symbol, freq)
+
                     self._save_local_data(symbol, freq, merged)
 
-                    # use_all_local=True 时返回全量数据，否则只返回最近 limit 条
                     if use_all_local:
                         df = merged.reset_index(drop=True)
-                        logger.info(f"{symbol}: 使用全量本地数据 {len(df)} 条（用于模型训练）")
+                        logger.info(
+                            f"{symbol}: 使用全量本地数据 {len(df)} 条（用于模型训练）, "
+                            f"时间范围: {merged['timestamp'].min()} ~ {merged['timestamp'].max()}"
+                        )
                     else:
                         df = merged.tail(limit).reset_index(drop=True)
                 elif self.persist_data:
-                    # 首次拉取，直接保存
                     self._save_local_data(symbol, freq, df)
+                    logger.info(f"{symbol}: 首次保存 {len(df)} 条数据")
 
             # 添加 instrument 列
             df["instrument"] = symbol
@@ -204,16 +210,54 @@ class HyperliquidDataCollector:
             logger.error("所有交易对数据收集失败")
             return pd.DataFrame()
 
-        # 合并所有交易对数据
         combined = pd.concat(all_data, ignore_index=True)
-
-        # 设置 MultiIndex
         combined = combined.set_index(["timestamp", "instrument"])
         combined.index.names = ["datetime", "instrument"]
         combined = combined.sort_index()
 
         logger.info(f"收集完成: {len(symbols)} 个交易对, {len(combined)} 行数据")
         return combined
+
+    def _check_data_quality(self, df: pd.DataFrame, symbol: str, freq: str) -> None:
+        """
+        数据质量检查
+
+        检测缺失时间段、异常价格等问题并记录日志。
+
+        Args:
+            df: 合并后的完整数据
+            symbol: 交易对
+            freq: 数据频率
+        """
+        if df.empty or "timestamp" not in df.columns:
+            return
+
+        # 检查时间连续性
+        timestamps = pd.to_datetime(df["timestamp"]).sort_values()
+        if len(timestamps) > 1:
+            freq_map = {
+                "1m": "1min",
+                "1h": "1h",
+                "4h": "4h",
+                "1d": "1D",
+                "15m": "15min",
+                "5m": "5min",
+            }
+            expected_freq = freq_map.get(freq, "1h")
+            diffs = timestamps.diff().dropna()
+            expected_diff = pd.Timedelta(expected_freq)
+            gaps = diffs[diffs > expected_diff * 2]
+            if len(gaps) > 0:
+                logger.warning(
+                    f"{symbol} 数据存在 {len(gaps)} 个时间间隔（超过2倍预期频率 {expected_freq}）"
+                )
+
+        # 检查价格异常（零值或负值）
+        for col in ["close", "open", "high", "low"]:
+            if col in df.columns:
+                invalid = (df[col] <= 0).sum()
+                if invalid > 0:
+                    logger.warning(f"{symbol} 存在 {invalid} 个无效 {col} 值（≤0）")
 
     def collect_perpetual_features(
         self,
