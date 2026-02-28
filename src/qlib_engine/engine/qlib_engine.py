@@ -229,13 +229,10 @@ class QuantFlowQLibEngine:
             raise RuntimeError("引擎未初始化，请先调用 initialize()")
 
         if model_types is None:
-            model_types = self.config.get("model", {}).get(
-                "candidates", DEFAULT_MODEL_CANDIDATES
-            )
+            model_types = self.config.get("model", {}).get("candidates", DEFAULT_MODEL_CANDIDATES)
 
         logger.info(
-            f"开始准备数据和训练模型: 交易对={symbols}, 频率={freq}, "
-            f"候选模型={model_types}"
+            f"开始准备数据和训练模型: 交易对={symbols}, 频率={freq}, 候选模型={model_types}"
         )
 
         # 1. 收集数据（使用全量本地累积数据）
@@ -316,7 +313,9 @@ class QuantFlowQLibEngine:
             pred_train = self.trainer.predict(model_type, X_train)
 
             eval_result = self.evaluator.evaluate(
-                pred_test, y_test, freq=freq,
+                pred_test,
+                y_test,
+                freq=freq,
                 train_predictions=pred_train,
                 train_labels=y_train,
             )
@@ -396,7 +395,9 @@ class QuantFlowQLibEngine:
                     "icir_cv": v.get("icir_cv", 0),
                 }
                 for k, v in cv_results.items()
-            } if cv_results else {},
+            }
+            if cv_results
+            else {},
             "feature_count": len(feature_names),
             "train_samples": len(X_train),
             "valid_samples": len(X_valid),

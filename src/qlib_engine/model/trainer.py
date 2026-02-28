@@ -539,7 +539,9 @@ class QLibModelTrainer:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", RuntimeWarning)
                         ic = pred.loc[common_idx].corr(y_test_fold.loc[common_idx])
-                        rank_ic = pred.loc[common_idx].rank().corr(y_test_fold.loc[common_idx].rank())
+                        rank_ic = (
+                            pred.loc[common_idx].rank().corr(y_test_fold.loc[common_idx].rank())
+                        )
 
                     if not np.isnan(ic):
                         cv_results[model_type]["fold_ics"].append(ic)
@@ -547,11 +549,11 @@ class QLibModelTrainer:
                         cv_results[model_type]["fold_rank_ics"].append(rank_ic)
 
                     logger.debug(
-                        f"CV Fold {fold+1}/{n_splits} [{model_type}]: "
+                        f"CV Fold {fold + 1}/{n_splits} [{model_type}]: "
                         f"IC={ic:.4f}, Rank_IC={rank_ic:.4f}"
                     )
                 except Exception as e:
-                    logger.warning(f"CV Fold {fold+1} [{model_type}] 失败: {e}")
+                    logger.warning(f"CV Fold {fold + 1} [{model_type}] 失败: {e}")
 
         # 汇总结果
         for model_type in model_types:

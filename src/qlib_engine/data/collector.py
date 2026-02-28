@@ -235,7 +235,14 @@ class HyperliquidDataCollector:
         # 检查时间连续性
         timestamps = pd.to_datetime(df["timestamp"]).sort_values()
         if len(timestamps) > 1:
-            freq_map = {"1m": "1min", "1h": "1h", "4h": "4h", "1d": "1D", "15m": "15min", "5m": "5min"}
+            freq_map = {
+                "1m": "1min",
+                "1h": "1h",
+                "4h": "4h",
+                "1d": "1D",
+                "15m": "15min",
+                "5m": "5min",
+            }
             expected_freq = freq_map.get(freq, "1h")
             diffs = timestamps.diff().dropna()
             expected_diff = pd.Timedelta(expected_freq)

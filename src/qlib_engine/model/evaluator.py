@@ -126,9 +126,7 @@ class ModelEvaluator:
 
         # 过拟合检测
         if train_predictions is not None and train_labels is not None:
-            overfit_metrics = self._detect_overfit(
-                train_predictions, train_labels, pred, label
-            )
+            overfit_metrics = self._detect_overfit(train_predictions, train_labels, pred, label)
             results.update(overfit_metrics)
 
         # 样本统计
@@ -219,7 +217,9 @@ class ModelEvaluator:
 
         # 单调性检测：计算排列的 Spearman 相关
         if len(group_means) >= 2:
-            monotonicity = group_means.corr(pd.Series(range(len(group_means)), index=group_means.index))
+            monotonicity = group_means.corr(
+                pd.Series(range(len(group_means)), index=group_means.index)
+            )
         else:
             monotonicity = 0
 
