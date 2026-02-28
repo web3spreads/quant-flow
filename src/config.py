@@ -123,6 +123,11 @@ class Config:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
 
+        # LLM Fallback 配置
+        self.llm_fallback_api_base = os.getenv("LLM_FALLBACK_API_BASE", "")
+        self.llm_fallback_api_key = os.getenv("LLM_FALLBACK_API_KEY", "")
+        self.llm_fallback_model = os.getenv("LLM_FALLBACK_MODEL", "")
+
         if not self.openai_api_key and self.require_api_credentials:
             raise ValueError("未设置 OPENAI_API_KEY 环境变量！\n请在 .env 文件中设置或使用环境变量")
 
@@ -130,7 +135,12 @@ class Config:
         """初始化 Hyperliquid 配置"""
         self.hyperliquid_private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY")
         self.hyperliquid_account_address = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", "")
+        self.hyperliquid_vault_address = os.getenv("HYPERLIQUID_VAULT_ADDRESS", "")
         self.hyperliquid_testnet = os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
+
+        # API Fallback 配置
+        fallbacks = os.getenv("HYPERLIQUID_API_FALLBACKS", "")
+        self.hyperliquid_api_urls = [url.strip() for url in fallbacks.split(",") if url.strip()]
 
         # 检查私钥配置
         if not self.hyperliquid_private_key and self.require_api_credentials:
@@ -379,13 +389,23 @@ class Config:
         """返回配置摘要（不包含敏感信息）"""
         # 确定运行模式
         mode = "Hyperliquid 测试网 🧪" if self.hyperliquid_testnet else "Hyperliquid 主网 ⚠️"
+        vault_info = (
+            f"\n        Vault 地址: {self.hyperliquid_vault_address}"
+            if getattr(self, "hyperliquid_vault_address", "")
+            else ""
+        )
+        api_info = (
+            f"\n        API 列表: {', '.join(self.hyperliquid_api_urls)}"
+            if getattr(self, "hyperliquid_api_urls", [])
+            else ""
+        )
 
         return f"""
         === Quant Flow 配置摘要 ===
         LLM 客户端: {self.llm_client_type}
         模型: {self.llm_model}
         交易平台: Hyperliquid（永续合约）
-        运行模式: {mode}
+        运行模式: {mode}{vault_info}{api_info}
         交易对: {", ".join(self.symbols)}
         单笔交易金额上限: {self.max_trade_amount} USD
         最大杠杆倍数: {self.max_leverage}x

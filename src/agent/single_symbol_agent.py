@@ -690,6 +690,7 @@ class SingleSymbolAgent:
                     if result and result.get("success"):
                         tp_price = result.get("take_profit_price", 0)
                         sl_price = result.get("stop_loss_price", 0)
+
                         return (
                             f"✅ 限价开多订单已提交！\n"
                             f"  币种: {symbol}\n"
@@ -752,6 +753,7 @@ class SingleSymbolAgent:
                     if result and result.get("success"):
                         tp_price = result.get("take_profit_price", 0)
                         sl_price = result.get("stop_loss_price", 0)
+
                         return (
                             f"✅ 限价开空订单已提交！\n"
                             f"  币种: {symbol}\n"

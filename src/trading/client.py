@@ -24,7 +24,13 @@ class HyperliquidClient:
     提供统一的交易接口，使用 Hyperliquid 官方 Python SDK
     """
 
-    def __init__(self, private_key: str, account_address: str | None = None, testnet: bool = False):
+    def __init__(
+        self,
+        private_key: str,
+        account_address: str | None = None,
+        testnet: bool = False,
+        api_urls: list[str] | None = None,
+    ):
         """
         初始化 Hyperliquid 客户端
 
@@ -36,9 +42,15 @@ class HyperliquidClient:
             private_key: 钱包私钥（0x开头的十六进制字符串）
             account_address: 主钱包地址（API 钱包模式下必填）
             testnet: 是否使用测试网（True=测试网，False=主网）
+            api_urls: 备用 API 地址列表
         """
         self.testnet = testnet
-        self.base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
+
+        # 处理 API 地址列表
+        default_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
+        self.api_urls = api_urls if api_urls else [default_url]
+        self.current_url_index = 0
+        self.base_url = self.api_urls[self.current_url_index]
 
         # 从私钥创建账户（用于签名）
         if not private_key.startswith("0x"):
@@ -76,6 +88,54 @@ class HyperliquidClient:
             self.base_url,
             account_address=self.address if self.is_api_wallet_mode else None,
         )
+
+    def _rotate_api(self):
+        """轮转到下一个 API 地址"""
+        if len(self.api_urls) <= 1:
+            return False
+
+        self.current_url_index = (self.current_url_index + 1) % len(self.api_urls)
+        self.base_url = self.api_urls[self.current_url_index]
+        print(f"⚠️ API 请求失败，正在切换至备用节点: {self.base_url}")
+
+        # 重新实例化 SDK 组件
+        self.info = Info(self.base_url, skip_ws=True)
+        self.exchange = Exchange(
+            self.account,
+            self.base_url,
+            account_address=self.address if self.is_api_wallet_mode else None,
+        )
+        return True
+
+    def _request_with_fallback(self, func_name: str, *args, is_exchange: bool = False, **kwargs):
+        """执行带 Fallback 机制的请求"""
+        attempts = 0
+        max_attempts = len(self.api_urls)
+
+        last_exception = None
+
+        while attempts < max_attempts:
+            try:
+                # 获取当前要调用的对象 (info 或 exchange)
+                target = self.exchange if is_exchange else self.info
+                # 获取对应的方法
+                func = getattr(target, func_name)
+                # 执行调用
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_exception = e
+                attempts += 1
+                print(f"❌ API 调用异常 ({self.base_url}): {e}")
+
+                if attempts < max_attempts:
+                    if not self._rotate_api():
+                        break
+                else:
+                    break
+
+        # 如果所有尝试都失败，抛出异常或返回 None
+        print(f"🚨 所有 API 节点均已尝试，请求最终失败: {last_exception}")
+        raise last_exception
 
     def fetch_user_fee_rates(
         self,
@@ -129,12 +189,16 @@ class HyperliquidClient:
         注意：可用余额应该计算为 accountValue - totalMarginUsed，而不是直接使用 totalRawUsd
         """
         try:
-            user_state = self.info.user_state(self.address)
+            user_state = self._request_with_fallback("user_state", self.address)
             margin_summary = user_state.get("marginSummary", {})
+            account_value = float(margin_summary.get("accountValue", 0))
+            total_margin_used = float(margin_summary.get("totalMarginUsed", 0))
+
             return {
-                "accountValue": float(margin_summary.get("accountValue", 0)),
-                "totalMarginUsed": float(margin_summary.get("totalMarginUsed", 0)),
+                "accountValue": account_value,
+                "totalMarginUsed": total_margin_used,
                 "totalRawUsd": float(margin_summary.get("totalRawUsd", 0)),
+                "available": account_value - total_margin_used,
                 "withdrawable": user_state.get("withdrawable", "0"),
             }
         except Exception as e:
@@ -158,7 +222,7 @@ class HyperliquidClient:
             }]
         """
         try:
-            user_state = self.info.user_state(self.address)
+            user_state = self._request_with_fallback("user_state", self.address)
             positions = []
             for asset_position in user_state.get("assetPositions", []):
                 position = asset_position.get("position", {})
@@ -186,7 +250,7 @@ class HyperliquidClient:
             }]
         """
         try:
-            user_state = self.info.user_state(self.address)
+            user_state = self._request_with_fallback("user_state", self.address)
             open_orders = user_state.get("openOrders", [])
 
             # 过滤出限价单（非触发单、非市价单）
@@ -217,7 +281,7 @@ class HyperliquidClient:
             交易对元数据，包括精度信息
         """
         try:
-            meta = self.info.meta()
+            meta = self._request_with_fallback("meta")
             universe = meta.get("universe", [])
             for asset in universe:
                 if asset.get("name") == symbol:
@@ -240,7 +304,7 @@ class HyperliquidClient:
         """
         try:
             # 获取所有市场元数据
-            all_mids = self.info.all_mids()
+            all_mids = self._request_with_fallback("all_mids")
             if symbol in all_mids:
                 return float(all_mids[symbol])
             else:
@@ -471,12 +535,14 @@ class HyperliquidClient:
             # 使用官方的 market_open 方法
             # 注意：market_open 不直接支持 reduce_only 参数
             # 如果需要 reduce_only，应该在调用前验证持仓
-            order_result = self.exchange.market_open(
+            order_result = self._request_with_fallback(
+                "market_open",
                 symbol,
                 is_buy,
                 size,
                 None,  # px=None 表示使用当前市价
                 slippage,  # 滑点容忍度
+                is_exchange=True,
             )
 
             return order_result
@@ -513,13 +579,15 @@ class HyperliquidClient:
             # 格式化价格
             price = self.format_price(symbol, price)
 
-            order_result = self.exchange.order(
+            order_result = self._request_with_fallback(
+                "order",
                 symbol,
                 is_buy,
                 size,
                 price,
                 {"limit": {"tif": "Gtc"}},  # Good-til-Cancel
                 reduce_only=reduce_only,
+                is_exchange=True,
             )
             return order_result
         except Exception as e:
@@ -772,8 +840,15 @@ class HyperliquidClient:
             limit_price = self.format_price(symbol, limit_price)
 
             # 下单
-            order_result = self.exchange.order(
-                symbol, is_buy, size, limit_price, order_type, reduce_only=True
+            order_result = self._request_with_fallback(
+                "order",
+                symbol,
+                is_buy,
+                size,
+                limit_price,
+                order_type,
+                reduce_only=True,
+                is_exchange=True,
             )
 
             # 如果失败，添加请求参数到结果中便于调试
@@ -819,7 +894,7 @@ class HyperliquidClient:
             取消结果
         """
         try:
-            cancel_result = self.exchange.cancel(symbol, oid)
+            cancel_result = self._request_with_fallback("cancel", symbol, oid, is_exchange=True)
             return cancel_result
         except Exception as e:
             print(f"❌ 取消订单失败: {e}")
@@ -865,8 +940,12 @@ class HyperliquidClient:
                             print("⚠️ 降低杠杆可能需要增加保证金，如果失败将使用当前杠杆")
 
                             # 尝试设置杠杆
-                            result = self.exchange.update_leverage(
-                                leverage, symbol, is_cross=is_cross
+                            result = self._request_with_fallback(
+                                "update_leverage",
+                                leverage,
+                                symbol,
+                                is_cross=is_cross,
+                                is_exchange=True,
                             )
 
                             # 如果失败，返回特殊状态，允许使用当前杠杆
@@ -898,7 +977,9 @@ class HyperliquidClient:
                             return {"status": "ok", "message": f"杠杆已为 {leverage}x，无需更改"}
 
             # 设置杠杆
-            result = self.exchange.update_leverage(leverage, symbol, is_cross=is_cross)
+            result = self._request_with_fallback(
+                "update_leverage", leverage, symbol, is_cross=is_cross, is_exchange=True
+            )
 
             # 验证结果
             if result.get("status") == "err":
@@ -931,8 +1012,12 @@ class HyperliquidClient:
             K线数据列表
         """
         try:
-            candles = self.info.candles_snapshot(
-                coin=symbol, interval=interval, startTime=start_time, endTime=end_time
+            candles = self._request_with_fallback(
+                "candles_snapshot",
+                coin=symbol,
+                interval=interval,
+                startTime=start_time,
+                endTime=end_time,
             )
             return candles
         except Exception as e:
@@ -1012,7 +1097,7 @@ class HyperliquidClient:
             if size is None:
                 # 全仓平仓 - 使用官方 market_close 方法（最简单最可靠）
                 print(f"🔴 市价全平 {symbol}")
-                result = self.exchange.market_close(symbol)
+                result = self._request_with_fallback("market_close", symbol, is_exchange=True)
                 return result
             else:
                 # 部分平仓 - 需要判断持仓方向
@@ -1034,12 +1119,14 @@ class HyperliquidClient:
                 print(f"🔴 市价部分平仓 {symbol}: {'买入' if is_buy else '卖出'} {close_size}")
 
                 # 使用官方 market_open 方法，配合 1% 滑点
-                result = self.exchange.market_open(
+                result = self._request_with_fallback(
+                    "market_open",
                     symbol,
                     is_buy,
                     close_size,
                     None,  # px=None 使用市价
                     0.01,  # 1% 滑点（官方推荐，比原来的5%更合理）
+                    is_exchange=True,
                 )
 
                 return result
@@ -1063,7 +1150,7 @@ class HyperliquidClient:
             现货资产索引，失败返回 None
         """
         try:
-            spot_meta = self.info.spot_meta()
+            spot_meta = self._request_with_fallback("spot_meta")
             universe = spot_meta.get("universe", [])
 
             # 构造现货交易对名称（如 "BTC/USDC"）
@@ -1278,7 +1365,7 @@ class HyperliquidClient:
             现货余额列表 [{'coin': 'BTC', 'total': '0.5', 'hold': '0.1'}, ...]
         """
         try:
-            user_state = self.info.user_state(self.address)
+            user_state = self._request_with_fallback("user_state", self.address)
 
             # 提取现货余额
             balances = user_state.get("balances", [])
