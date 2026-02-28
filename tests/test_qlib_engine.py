@@ -32,7 +32,6 @@ from src.qlib_engine.data.perpetual import (
     VOLATILITY_FEATURE_CONFIG,
     get_all_feature_config,
     get_feature_expressions,
-    get_feature_names,
 )
 from src.qlib_engine.engine.experiment import ExperimentManager, ExperimentRecord
 from src.qlib_engine.engine.qlib_engine import QuantFlowQLibEngine
@@ -246,19 +245,11 @@ class TestPerpetualFactors:
         assert len(all_with) > len(all_without)
         assert len(all_with) == len(all_without) + len(PERPETUAL_FEATURE_CONFIG)
 
-    def test_get_feature_names(self):
-        """测试获取因子名称列表"""
-        names = get_feature_names(include_perpetual=True)
-        assert isinstance(names, list)
-        assert all(isinstance(n, str) for n in names)
-        # 名称不重复
-        assert len(names) == len(set(names))
-
     def test_get_feature_expressions(self):
         """测试获取因子表达式列表"""
         exprs = get_feature_expressions(include_perpetual=True)
         assert isinstance(exprs, list)
-        assert len(exprs) == len(get_feature_names(include_perpetual=True))
+        assert len(exprs) == len(get_all_feature_config(include_perpetual=True))
 
 
 class TestCryptoAlpha158:

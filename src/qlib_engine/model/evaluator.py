@@ -9,7 +9,7 @@ v2 改进：
 """
 
 import logging
-import math
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -64,9 +64,31 @@ class ModelEvaluator:
 
         results = {}
 
-        # IC 和 Rank IC
-        results["IC"] = pred.corr(label)
-        results["Rank_IC"] = pred.rank().corr(label.rank())
+        # 预测值为常数时，corr/qcut 都会出问题，提前返回降级结果
+        if pred.std() == 0:
+            logger.warning("预测值为常数（标准差=0），返回降级评估结果")
+            results["IC"] = float("nan")
+            results["Rank_IC"] = float("nan")
+            results["IC_均值"] = float("nan")
+            results["IC_标准差"] = 0
+            results["ICIR"] = float("nan")
+            results["分组单调性"] = 0
+            results["多头组均值"] = 0
+            results["空头组均值"] = 0
+            results["多空收益差"] = 0
+            results["年化收益率"] = 0
+            results["夏普比率"] = 0
+            results["最大回撤"] = 0
+            results["样本数"] = len(pred)
+            results["预测均值"] = pred.mean()
+            results["预测标准差"] = 0.0
+            return results
+
+        # IC 和 Rank IC（抑制极端情况下的 numpy 除零警告）
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            results["IC"] = pred.corr(label)
+            results["Rank_IC"] = pred.rank().corr(label.rank())
 
         # 时序滚动 IC（更适合少量品种的情况）
         ic_series = self._calculate_rolling_ic(pred, label, window=min(20, len(pred) // 3))
@@ -353,46 +375,54 @@ class ModelEvaluator:
             最优模型名称
         """
 
+        def _safe_float(val, default=0.0):
+            """安全转换为 float，兼容 np.float64/None/NaN/Inf"""
+            if val is None or pd.isna(val):
+                return None
+            v = float(val)
+            if np.isinf(v):
+                return None
+            return v
+
         def _composite_score(k):
             """计算综合评分"""
             result = model_results[k]
 
-            # 基础检查
-            pred_std = result.get("预测标准差", -1)
-            if pred_std == 0:
+            # 基础检查：预测常数的模型直接排除
+            pred_std = _safe_float(result.get("预测标准差", -1), -1)
+            if pred_std is not None and pred_std == 0:
                 logger.warning(f"模型 {k} 预测标准差为 0（输出常数），排除")
                 return float("-inf")
 
-            icir = result.get("ICIR", 0)
-            ic = result.get("IC", 0)
+            icir = _safe_float(result.get("ICIR", 0))
+            ic = _safe_float(result.get("IC", 0))
 
-            # 检查 NaN
+            # 检查 NaN/Inf
             for val, name in [(icir, "ICIR"), (ic, "IC")]:
-                if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
-                    logger.warning(f"模型 {k} 的 {name} 为 {val}，排除")
+                if val is None:
+                    logger.warning(f"模型 {k} 的 {name} 为 NaN/Inf，排除")
                     return float("-inf")
 
-            # 综合评分
-            score = abs(icir) * 0.4 + abs(ic) * 0.3
+            # 综合评分：不取绝对值，保持方向一致性
+            # IC < 0 说明预测方向反了，应该给惩罚而非奖励
+            ic_contrib = ic * 1.5 if ic > 0 else ic * 0.3
+            icir_contrib = icir  # ICIR 也保留原值方向
+            score = icir_contrib * 0.4 + ic_contrib * 0.3
 
             # 分组单调性加分
-            monotonicity = result.get("分组单调性", 0)
-            if not math.isnan(monotonicity):
-                score += abs(monotonicity) * 0.2
+            monotonicity = _safe_float(result.get("分组单调性", 0))
+            if monotonicity is not None:
+                score += monotonicity * 0.2
 
             # CV 结果加分
             if cv_results and k in cv_results:
-                cv_icir = cv_results[k].get("icir_cv", 0)
-                if not math.isnan(cv_icir):
-                    score += abs(cv_icir) * 0.1
-
-            # IC 方向正确的模型优先（IC > 0 表示预测方向正确）
-            if ic > 0:
-                score *= 1.5  # IC 为正的模型获得 1.5 倍加权
+                cv_icir = _safe_float(cv_results[k].get("icir_cv", 0))
+                if cv_icir is not None:
+                    score += cv_icir * 0.1
 
             # 过拟合惩罚
-            overfit_ratio = result.get("过拟合比率", 1.0)
-            if isinstance(overfit_ratio, (int, float)) and not math.isinf(overfit_ratio):
+            overfit_ratio = _safe_float(result.get("过拟合比率", 1.0))
+            if overfit_ratio is not None:
                 if overfit_ratio > 3:
                     score *= 0.5  # 严重过拟合，减半
                 elif overfit_ratio > 2:

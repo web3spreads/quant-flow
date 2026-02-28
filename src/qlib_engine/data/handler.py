@@ -378,7 +378,8 @@ class CryptoAlpha158:
         feat_aligned = feat_aligned.loc[common_idx]
         label_aligned = label_aligned.loc[common_idx]
 
-        # 计算每个特征与标签的 IC（绝对值）
+        # 计算每个特征与标签的 Rank IC（绝对值）
+        # 使用 Rank IC 替代 Pearson IC，减少极端值影响，更适合金融因子选择
         ic_scores = {}
         for col in feat_aligned.columns:
             col_data = feat_aligned[col].dropna()
@@ -386,7 +387,7 @@ class CryptoAlpha158:
             if len(common) < 30:
                 ic_scores[col] = 0.0
                 continue
-            ic = col_data.loc[common].corr(label_aligned.loc[common])
+            ic = col_data.loc[common].rank().corr(label_aligned.loc[common].rank())
             ic_scores[col] = abs(ic) if not np.isnan(ic) else 0.0
 
         # 按 IC 绝对值降序排列，取 top_k

@@ -11,6 +11,7 @@ v2 改进：
 
 import logging
 import pickle
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -36,7 +37,7 @@ class QLibModelTrainer:
         "lightgbm": {
             "class": "LGBModel",
             "default_params": {
-                "loss": "mse",
+                "objective": "mse",
                 "learning_rate": 0.02,
                 "num_leaves": 15,
                 "max_depth": 4,
@@ -60,7 +61,7 @@ class QLibModelTrainer:
         "elasticnet": {
             "class": "ElasticNetModel",
             "default_params": {
-                "alpha": 0.01,
+                "alpha": 1.0,
                 "l1_ratio": 0.5,
                 "max_iter": 2000,
             },
@@ -183,6 +184,8 @@ class QLibModelTrainer:
         y_valid,
     ):
         """创建模型实例并拟合"""
+        # 复制参数字典，避免 pop() 修改调用者传入的原始字典（CV 多次调用时会出 bug）
+        params = params.copy()
         if model_type == "lightgbm":
             return self._train_lightgbm(params, X_train, y_train, X_valid, y_valid)
         elif model_type == "linear":
@@ -193,6 +196,9 @@ class QLibModelTrainer:
             return self._train_xgboost(params, X_train, y_train, X_valid, y_valid)
         else:
             raise ValueError(f"未实现的模型类型: {model_type}")
+
+    # early stopping 要求的最小验证集样本量
+    MIN_VALID_FOR_EARLY_STOPPING = 50
 
     def _train_lightgbm(self, params, X_train, y_train, X_valid, y_valid):
         """训练 LightGBM 模型"""
@@ -207,12 +213,22 @@ class QLibModelTrainer:
         model = lgb.LGBMRegressor(n_estimators=n_estimators, **params)
 
         fit_params = {}
-        if X_valid is not None and y_valid is not None:
+        # 验证集样本量充足时才启用 early stopping，过小时不可靠
+        if (
+            X_valid is not None
+            and y_valid is not None
+            and len(X_valid) >= self.MIN_VALID_FOR_EARLY_STOPPING
+        ):
             fit_params["eval_set"] = [(X_valid, y_valid)]
             fit_params["callbacks"] = [
                 lgb.early_stopping(stopping_rounds=early_stopping_rounds),
                 lgb.log_evaluation(period=0),
             ]
+        elif X_valid is not None and y_valid is not None:
+            logger.warning(
+                f"验证集样本不足 ({len(X_valid)} < {self.MIN_VALID_FOR_EARLY_STOPPING})，"
+                f"跳过 early stopping，使用全部 {n_estimators} 轮训练"
+            )
 
         model.fit(X_train, y_train, **fit_params)
         return model
@@ -505,27 +521,25 @@ class QLibModelTrainer:
                         continue
 
                     # 创建临时训练器避免污染主状态
-                    temp_trainer = QLibModelTrainer.__new__(QLibModelTrainer)
-                    temp_trainer.MODEL_CONFIGS = self.MODEL_CONFIGS
-                    temp_trainer.MIN_SAMPLES_LIGHTGBM = self.MIN_SAMPLES_LIGHTGBM
-                    temp_trainer.HIGH_NAN_RATIO = self.HIGH_NAN_RATIO
-                    temp_trainer.custom_params = self.custom_params
-                    temp_trainer.trained_models = {}
-                    temp_trainer._train_medians = None
-                    temp_trainer._dropped_columns = []
-                    temp_trainer.model_dir = self.model_dir
-                    temp_trainer.evaluation_results = {}
+                    temp_trainer = QLibModelTrainer(
+                        model_dir=str(self.model_dir),
+                        custom_params=self.custom_params,
+                        min_samples_lightgbm=self.MIN_SAMPLES_LIGHTGBM,
+                    )
 
                     temp_trainer.train(model_type, X_train_fold, y_train_fold)
                     pred = temp_trainer.predict(model_type, X_test_fold)
 
-                    # 计算 IC
+                    # 计算 IC（抑制预测值方差为 0 时 numpy 的除零警告）
                     common_idx = pred.index.intersection(y_test_fold.dropna().index)
                     if len(common_idx) < 10:
                         continue
 
-                    ic = pred.loc[common_idx].corr(y_test_fold.loc[common_idx])
-                    rank_ic = pred.loc[common_idx].rank().corr(y_test_fold.loc[common_idx].rank())
+                    # 预测值为常数时 corr 会产生 NaN 并触发 RuntimeWarning，这里抑制
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", RuntimeWarning)
+                        ic = pred.loc[common_idx].corr(y_test_fold.loc[common_idx])
+                        rank_ic = pred.loc[common_idx].rank().corr(y_test_fold.loc[common_idx].rank())
 
                     if not np.isnan(ic):
                         cv_results[model_type]["fold_ics"].append(ic)

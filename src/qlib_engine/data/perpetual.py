@@ -103,6 +103,9 @@ CORRELATION_FEATURE_CONFIG = [
 ]
 
 # 新增技术指标因子
+# 注意：以下表达式为伪 QLib 表达式，仅做文档/注册用途。
+# 实际计算逻辑在 handler.py 的 CryptoAlpha158.calculate_features() 中，
+# 并非通过 QLib 表达式引擎执行。
 TECHNICAL_FEATURE_CONFIG = [
     ("RSI($close, 14)", "RSI_14"),
     ("MACD_LINE($close, 12, 26) / $close", "MACD_LINE"),
@@ -154,14 +157,3 @@ def get_feature_expressions(include_perpetual: bool = True) -> list[str]:
     return [expr for expr, _name in get_all_feature_config(include_perpetual)]
 
 
-def get_feature_names(include_perpetual: bool = True) -> list[str]:
-    """
-    获取所有因子的名称列表
-
-    Args:
-        include_perpetual: 是否包含永续合约特有因子
-
-    Returns:
-        因子名称列表
-    """
-    return [name for _expr, name in get_all_feature_config(include_perpetual)]
