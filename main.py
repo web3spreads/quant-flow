@@ -1161,7 +1161,7 @@ class QuantFlowBot:
             icir = float(icir) if not (isinstance(icir, float) and math.isnan(icir)) else 0.0
             rank_ic = float(rank_ic) if not (isinstance(rank_ic, float) and math.isnan(rank_ic)) else 0.0
 
-            detail = f"  [{name}]{tag} IC={ic:+.4f} RankIC={rank_ic:+.4f} ICIR={icir:+.3f}"
+            detail = f"  {name}{tag} | IC={ic:+.4f} RankIC={rank_ic:+.4f} ICIR={icir:+.3f}"
             detail += f" mono={float(mono):.2f} predStd={float(pred_std):.6f}"
 
             if overfit is not None and not (isinstance(overfit, float) and math.isinf(overfit)):
