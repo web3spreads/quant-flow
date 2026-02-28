@@ -122,6 +122,7 @@ class QuantFlowBot:
             private_key=self.config.hyperliquid_private_key,
             account_address=self.config.hyperliquid_account_address or None,
             testnet=self.config.hyperliquid_testnet,
+            api_urls=getattr(self.config, 'hyperliquid_api_urls', None),
         )
 
         # 2.5 动态手续费（基于 userFees）

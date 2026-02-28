@@ -59,9 +59,16 @@ uv run python -m py_compile src/trading/client.py
 uv add <package>              # 添加运行时依赖
 uv add --group dev <package>  # 添加开发依赖
 
-# Docker 部署
-docker-compose up -d
-docker-compose logs -f
+# Docker 部署（通过 RUN_MODE 环境变量选择运行模式）
+# RUN_MODE=main  仅主交易（默认）
+# RUN_MODE=grid  仅网格交易
+# RUN_MODE=all   同时运行主交易和网格交易
+docker compose up -d
+docker compose logs -f
+
+# 分别查看各程序日志（日志文件通过 tee 写入 logs/ 目录）
+tail -f logs/main.log          # 主交易日志
+tail -f logs/grid.log          # 网格交易日志
 ```
 
 ## 核心架构

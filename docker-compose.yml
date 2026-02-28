@@ -15,6 +15,13 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
 
+      # 运行模式: main（仅主交易）/ grid（仅网格）/ all（同时运行）
+      - RUN_MODE=${RUN_MODE:-main}
+      # 主交易配置文件路径（相对于 /app）
+      - MAIN_CONFIG=${MAIN_CONFIG:-config.yaml}
+      # 网格交易配置文件路径（相对于 /app）
+      - GRID_CONFIG=${GRID_CONFIG:-config.grid.yaml}
+
       # LLM Client Configuration
       # OpenAI/DeepSeek API Configuration
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -47,8 +54,12 @@ services:
 
     # Mount volumes for configuration and persistence
     volumes:
-      # Configuration file (read-only)
+      # 主交易配置文件（只读）
       - ./config.yaml:/app/config.yaml:ro
+
+      # 网格交易配置文件（只读）
+      # RUN_MODE=grid 或 all 时需要此文件存在
+      - ./config.grid.yaml:/app/config.grid.yaml:ro
 
       # Prompts directory (read-only)
       - ./prompts:/app/prompts:ro
