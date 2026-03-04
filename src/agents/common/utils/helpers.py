@@ -5,6 +5,7 @@
 """
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -236,3 +237,39 @@ def batch_list(items: list, batch_size: int) -> list[list]:
         分批后的列表的列表
     """
     return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+
+
+def send_error_notification(
+    notifier: Any,
+    exception: Exception,
+    title: str,
+    context_details: dict[str, str],
+) -> None:
+    """
+    安全地发送错误通知
+
+    自动包含异常类型，内部捕获通知失败以避免影响调用方的控制流。
+
+    Args:
+        notifier: 通知管理器实例（可为 None）
+        exception: 捕获的异常对象
+        title: 通知标题
+        context_details: 上下文信息字典（如 交易对、阶段、说明等）
+    """
+    if not notifier:
+        return
+
+    try:
+        context_lines = [f"异常类型: {type(exception).__name__}"]
+        for key, value in context_details.items():
+            if value is not None:
+                context_lines.append(f"{key}: {value}")
+
+        notifier.notify_error(
+            title=title,
+            error_message=str(exception),
+            context="\n".join(context_lines),
+        )
+    except Exception as notify_err:
+        logger = logging.getLogger(__name__)
+        logger.error(f"错误通知发送失败: {notify_err}", exc_info=True)

@@ -11,6 +11,7 @@ from langgraph.prebuilt import create_react_agent
 from src.agent.execution_agent import ExecutionAgent
 from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.tools import TradingTools
+from src.agents.common.utils.helpers import send_error_notification
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
 from src.llm import LLMClientManager
@@ -984,6 +985,17 @@ class SingleSymbolAgent:
         except Exception as e:
             self.logger.print_error(f"[{self.symbol}Agent] 决策异常: {e}")
             self.logger.logger.exception(e)
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{self.symbol} Agent 决策异常",
+                context_details={
+                    "交易对": self.symbol,
+                    "当前价": f"${self.current_price}",
+                    "阶段": "LLM 决策分析",
+                    "说明": "LLM API 调用异常，本轮决策将降级为 ERROR",
+                },
+            )
             return "ERROR", {"error": str(e)}
 
     def _parse_decision_from_events(self, events: list) -> str:
@@ -1094,4 +1106,14 @@ class SingleSymbolAgent:
 
         except Exception as e:
             self.logger.logger.error(f"解析决策失败: {e}")
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{self.symbol} 决策解析失败",
+                context_details={
+                    "交易对": self.symbol,
+                    "阶段": "SingleSymbolAgent 决策解析",
+                    "说明": "LLM 决策解析异常，本轮决策将降级为 ERROR",
+                },
+            )
             return "ERROR"
