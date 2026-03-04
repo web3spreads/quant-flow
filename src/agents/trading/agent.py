@@ -100,6 +100,7 @@ class TradingAgent:
                 max_iterations=max_iterations,
                 llm_manager=llm_manager,
                 temperature=temperature,
+                notifier=notifier,
             )
         else:
             self.workflow = None
@@ -488,4 +489,16 @@ class TradingAgent:
         except Exception as e:
             self.logger.print_error(f"[{self.symbol}Agent] 决策异常: {e}")
             self.logger.logger.exception(e)
+            if self.notifier:
+                self.notifier.notify_error(
+                    title=f"{self.symbol} Agent 决策异常",
+                    error_message=str(e),
+                    context=(
+                        f"交易对: {self.symbol}\n"
+                        f"当前价: ${self.current_price}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"阶段: LangGraph 工作流决策\n"
+                        f"说明: 决策流程异常，本轮决策将降级为 ERROR"
+                    ),
+                )
             return "ERROR", {"error": str(e)}

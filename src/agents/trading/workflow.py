@@ -40,6 +40,7 @@ class TradingAgentWorkflow:
         llm_config: LLMConfig | None = None,
         llm_manager: LLMClientManager | None = None,
         temperature: float | None = None,
+        notifier=None,
     ):
         """
         初始化工作流
@@ -53,6 +54,7 @@ class TradingAgentWorkflow:
             llm_config: LLM 配置（旧版，与 llm_manager 二选一）
             llm_manager: LLM 客户端管理器（新版，推荐使用）
             temperature: 温度参数覆盖
+            notifier: 通知管理器（可选）
         """
         self.prompt_manager = prompt_manager
         self.tools = tools
@@ -61,6 +63,7 @@ class TradingAgentWorkflow:
         self.max_iterations = max_iterations
         self.llm_manager = llm_manager
         self.llm_config = llm_config
+        self.notifier = notifier
 
         # 初始化 LLM（优先使用 llm_manager）
         if llm_manager:
@@ -171,6 +174,12 @@ class TradingAgentWorkflow:
             error_msg = f"Prompt 准备失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
+            if self.notifier:
+                self.notifier.notify_error(
+                    title=f"{state['symbol']} Prompt 准备失败",
+                    error_message=str(e),
+                    context=f"交易对: {state['symbol']}\n异常类型: {type(e).__name__}",
+                )
             return {
                 "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
@@ -238,6 +247,17 @@ class TradingAgentWorkflow:
             error_msg = f"市场分析失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
+            if self.notifier:
+                self.notifier.notify_error(
+                    title=f"{state['symbol']} LLM 市场分析失败",
+                    error_message=str(e),
+                    context=(
+                        f"交易对: {state['symbol']}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"阶段: ReAct Agent 市场分析\n"
+                        f"说明: LLM API 调用异常，本轮决策将降级为观望"
+                    ),
+                )
             return {
                 "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
@@ -276,6 +296,16 @@ class TradingAgentWorkflow:
             error_msg = f"决策解析失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
+            if self.notifier:
+                self.notifier.notify_error(
+                    title=f"{state['symbol']} 决策解析失败",
+                    error_message=str(e),
+                    context=(
+                        f"交易对: {state['symbol']}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"阶段: 决策结果解析"
+                    ),
+                )
             return {
                 "decision_type": "ERROR",
                 "errors": state.get("errors", []) + [error_msg],
@@ -328,6 +358,7 @@ class TradingAgentWorkflow:
                     logger=self.logger,
                     llm_manager=self.llm_manager,
                     temperature=0.0,  # 执行 Agent 使用零温度
+                    notifier=self.notifier,
                 )
             elif self.llm_config:
                 execution_config = LLMConfig(
@@ -340,6 +371,7 @@ class TradingAgentWorkflow:
                     llm_config=execution_config,
                     tools_callbacks=self.tools_callbacks,
                     logger=self.logger,
+                    notifier=self.notifier,
                 )
             else:
                 raise ValueError("无法创建执行 Agent：缺少 LLM 配置")
@@ -366,6 +398,17 @@ class TradingAgentWorkflow:
             error_msg = f"后备执行失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
+            if self.notifier:
+                self.notifier.notify_error(
+                    title=f"{state['symbol']} 后备执行失败",
+                    error_message=str(e),
+                    context=(
+                        f"交易对: {state['symbol']}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"阶段: ExecutionAgent 后备执行\n"
+                        f"说明: LLM 决策执行异常，本轮决策将降级为观望"
+                    ),
+                )
             return {
                 "decision_type": "ERROR",
                 "errors": state.get("errors", []) + [error_msg],

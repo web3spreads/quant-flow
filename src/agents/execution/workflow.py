@@ -39,6 +39,7 @@ class ExecutionAgentWorkflow:
         llm_config: LLMConfig | None = None,
         llm_manager: LLMClientManager | None = None,
         temperature: float | None = 0.0,
+        notifier=None,
     ):
         """
         初始化工作流
@@ -49,11 +50,13 @@ class ExecutionAgentWorkflow:
             llm_config: LLM 配置（旧版，与 llm_manager 二选一）
             llm_manager: LLM 客户端管理器（新版，推荐使用）
             temperature: 温度参数覆盖（默认 0.0 以确保确定性）
+            notifier: 通知管理器（可选）
         """
         self.tools_callbacks = tools_callbacks
         self.logger = logger
         self.llm_manager = llm_manager
         self.llm_config = llm_config
+        self.notifier = notifier
 
         # 初始化 LLM（优先使用 llm_manager）
         if llm_manager:
@@ -232,6 +235,17 @@ class ExecutionAgentWorkflow:
             error_msg = f"决策解析异常: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[ExecutionAgent] {error_msg}")
+            if self.notifier:
+                self.notifier.notify_error(
+                    title=f"{symbol} ExecutionAgent 决策解析异常",
+                    error_message=str(e),
+                    context=(
+                        f"交易对: {symbol}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"阶段: ExecutionAgent 决策文本解析\n"
+                        f"说明: LLM 决策解析异常，本轮决策将降级为观望"
+                    ),
+                )
 
             return {
                 "parsed_decision": DecisionType.DO_NOTHING.value,
@@ -327,6 +341,17 @@ class ExecutionAgentWorkflow:
             error_msg = f"执行计划异常: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[ExecutionAgent] {error_msg}")
+            if self.notifier:
+                self.notifier.notify_error(
+                    title=f"{state['symbol']} ExecutionAgent 执行计划异常",
+                    error_message=str(e),
+                    context=(
+                        f"交易对: {state['symbol']}\n"
+                        f"异常类型: {type(e).__name__}\n"
+                        f"决策类型: {plan.get('decision', '未知')}\n"
+                        f"阶段: ExecutionAgent 执行计划"
+                    ),
+                )
 
             return {
                 "execution_result": f"❌ {error_msg}",
