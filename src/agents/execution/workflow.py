@@ -12,7 +12,7 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 
-from src.agents.common.utils.helpers import extract_json_from_text
+from src.agents.common.utils.helpers import extract_json_from_text, send_error_notification
 from src.agents.common.utils.llm import LLMConfig, create_json_llm
 from src.agents.execution.state import (
     EXECUTION_AGENT_SYSTEM_PROMPT,
@@ -235,17 +235,16 @@ class ExecutionAgentWorkflow:
             error_msg = f"决策解析异常: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[ExecutionAgent] {error_msg}")
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{symbol} ExecutionAgent 决策解析异常",
-                    error_message=str(e),
-                    context=(
-                        f"交易对: {symbol}\n"
-                        f"异常类型: {type(e).__name__}\n"
-                        f"阶段: ExecutionAgent 决策文本解析\n"
-                        f"说明: LLM 决策解析异常，本轮决策将降级为观望"
-                    ),
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{symbol} ExecutionAgent 决策解析异常",
+                context_details={
+                    "交易对": symbol,
+                    "阶段": "ExecutionAgent 决策文本解析",
+                    "说明": "LLM 决策解析异常，本轮决策将降级为观望",
+                },
+            )
 
             return {
                 "parsed_decision": DecisionType.DO_NOTHING.value,
@@ -341,17 +340,16 @@ class ExecutionAgentWorkflow:
             error_msg = f"执行计划异常: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[ExecutionAgent] {error_msg}")
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{state['symbol']} ExecutionAgent 执行计划异常",
-                    error_message=str(e),
-                    context=(
-                        f"交易对: {state['symbol']}\n"
-                        f"异常类型: {type(e).__name__}\n"
-                        f"决策类型: {plan.get('decision', '未知')}\n"
-                        f"阶段: ExecutionAgent 执行计划"
-                    ),
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{state['symbol']} ExecutionAgent 执行计划异常",
+                context_details={
+                    "交易对": state["symbol"],
+                    "决策类型": plan.get("decision", "未知"),
+                    "阶段": "ExecutionAgent 执行计划",
+                },
+            )
 
             return {
                 "execution_result": f"❌ {error_msg}",

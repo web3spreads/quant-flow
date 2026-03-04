@@ -15,6 +15,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
+from src.agents.common.utils.helpers import send_error_notification
 from src.agent.external_info_agent import ExternalInfoAgent, ExternalInfoScheduler
 from src.agent.market_info_store import MarketInfoStore
 from src.agent.review_agent import ReviewAgent
@@ -889,17 +890,16 @@ class QuantFlowBot:
                 except Exception as e:
                     self.logger.print_error(f"{symbol} Agent 决策异常: {e}")
                     self.logger.logger.exception(e)
-                    if self.notifier:
-                        self.notifier.notify_error(
-                            title=f"{symbol} Agent 决策异常",
-                            error_message=str(e),
-                            context=(
-                                f"交易对: {symbol}\n"
-                                f"异常类型: {type(e).__name__}\n"
-                                f"阶段: 交易周期单币种决策\n"
-                                f"说明: 该币种本轮决策失败，其他币种不受影响"
-                            ),
-                        )
+                    send_error_notification(
+                        notifier=self.notifier,
+                        exception=e,
+                        title=f"{symbol} Agent 决策异常",
+                        context_details={
+                            "交易对": symbol,
+                            "阶段": "交易周期单币种决策",
+                            "说明": "该币种本轮决策失败，其他币种不受影响",
+                        },
+                    )
 
             # 第三步：处理现货定投推荐
             if spot_recommendations:

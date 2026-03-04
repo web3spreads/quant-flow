@@ -8,7 +8,7 @@
 from typing import Any
 
 from src.agents.common.tools.trading import TradingToolFactory
-from src.agents.common.utils.helpers import safe_float, safe_leverage
+from src.agents.common.utils.helpers import safe_float, safe_leverage, send_error_notification
 from src.agents.trading.state import create_initial_state
 from src.agents.trading.workflow import TradingAgentWorkflow
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
@@ -489,16 +489,15 @@ class TradingAgent:
         except Exception as e:
             self.logger.print_error(f"[{self.symbol}Agent] 决策异常: {e}")
             self.logger.logger.exception(e)
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{self.symbol} Agent 决策异常",
-                    error_message=str(e),
-                    context=(
-                        f"交易对: {self.symbol}\n"
-                        f"当前价: ${self.current_price}\n"
-                        f"异常类型: {type(e).__name__}\n"
-                        f"阶段: LangGraph 工作流决策\n"
-                        f"说明: 决策流程异常，本轮决策将降级为 ERROR"
-                    ),
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{self.symbol} Agent 决策异常",
+                context_details={
+                    "交易对": self.symbol,
+                    "当前价": f"${self.current_price}",
+                    "阶段": "LangGraph 工作流决策",
+                    "说明": "决策流程异常，本轮决策将降级为 ERROR",
+                },
+            )
             return "ERROR", {"error": str(e)}

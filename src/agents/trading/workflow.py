@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import create_react_agent
 
+from src.agents.common.utils.helpers import send_error_notification
 from src.agents.common.utils.llm import LLMConfig, create_llm
 from src.agents.trading.state import TradingAgentState
 from src.llm import LLMClientManager
@@ -174,12 +175,12 @@ class TradingAgentWorkflow:
             error_msg = f"Prompt 准备失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{state['symbol']} Prompt 准备失败",
-                    error_message=str(e),
-                    context=f"交易对: {state['symbol']}\n异常类型: {type(e).__name__}",
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{state['symbol']} Prompt 准备失败",
+                context_details={"交易对": state["symbol"]},
+            )
             return {
                 "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
@@ -247,17 +248,16 @@ class TradingAgentWorkflow:
             error_msg = f"市场分析失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{state['symbol']} LLM 市场分析失败",
-                    error_message=str(e),
-                    context=(
-                        f"交易对: {state['symbol']}\n"
-                        f"异常类型: {type(e).__name__}\n"
-                        f"阶段: ReAct Agent 市场分析\n"
-                        f"说明: LLM API 调用异常，本轮决策将降级为观望"
-                    ),
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{state['symbol']} LLM 市场分析失败",
+                context_details={
+                    "交易对": state["symbol"],
+                    "阶段": "ReAct Agent 市场分析",
+                    "说明": "LLM API 调用异常，本轮决策将降级为观望",
+                },
+            )
             return {
                 "errors": state.get("errors", []) + [error_msg],
                 "current_step": "error",
@@ -296,16 +296,15 @@ class TradingAgentWorkflow:
             error_msg = f"决策解析失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{state['symbol']} 决策解析失败",
-                    error_message=str(e),
-                    context=(
-                        f"交易对: {state['symbol']}\n"
-                        f"异常类型: {type(e).__name__}\n"
-                        f"阶段: 决策结果解析"
-                    ),
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{state['symbol']} 决策解析失败",
+                context_details={
+                    "交易对": state["symbol"],
+                    "阶段": "决策结果解析",
+                },
+            )
             return {
                 "decision_type": "ERROR",
                 "errors": state.get("errors", []) + [error_msg],
@@ -398,17 +397,16 @@ class TradingAgentWorkflow:
             error_msg = f"后备执行失败: {str(e)}"
             if self.logger:
                 self.logger.print_error(f"[{state['symbol']}] {error_msg}")
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{state['symbol']} 后备执行失败",
-                    error_message=str(e),
-                    context=(
-                        f"交易对: {state['symbol']}\n"
-                        f"异常类型: {type(e).__name__}\n"
-                        f"阶段: ExecutionAgent 后备执行\n"
-                        f"说明: LLM 决策执行异常，本轮决策将降级为观望"
-                    ),
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{state['symbol']} 后备执行失败",
+                context_details={
+                    "交易对": state["symbol"],
+                    "阶段": "ExecutionAgent 后备执行",
+                    "说明": "LLM 决策执行异常，本轮决策将降级为观望",
+                },
+            )
             return {
                 "decision_type": "ERROR",
                 "errors": state.get("errors", []) + [error_msg],

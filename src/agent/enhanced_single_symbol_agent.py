@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from src.agent.single_symbol_agent import SingleSymbolAgent
+from src.agents.common.utils.helpers import send_error_notification
 from src.data.signal_scorer import SignalQuality
 from src.fees import FeeRates
 from src.llm import LLMClientManager
@@ -181,18 +182,17 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
 
         except Exception as e:
             self.logger.print_warning(f"[{self.symbol}] 增强分析失败: {e}")
-            if self.notifier:
-                self.notifier.notify_error(
-                    title=f"{self.symbol} 增强分析失败",
-                    error_message=str(e),
-                    context=(
-                        f"交易对: {self.symbol}\n"
-                        f"当前价: ${current_price}\n"
-                        f"异常类型: {type(e).__name__}\n"
-                        f"阶段: 增强型交易引擎分析\n"
-                        f"说明: 增强分析异常，将回退到基础 LLM 决策"
-                    ),
-                )
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{self.symbol} 增强分析失败",
+                context_details={
+                    "交易对": self.symbol,
+                    "当前价": f"${current_price}",
+                    "阶段": "增强型交易引擎分析",
+                    "说明": "增强分析异常，将回退到基础 LLM 决策",
+                },
+            )
             return None
 
     def get_enhanced_prompt_injection(self) -> str:
