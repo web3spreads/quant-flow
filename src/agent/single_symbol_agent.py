@@ -990,8 +990,6 @@ class SingleSymbolAgent:
         Returns:
             (事件列表, agent 输出文本)
         """
-        last_exception = None
-
         for attempt in range(1, max_retries + 2):  # 首次 + 重试次数
             try:
                 all_events = []
@@ -1028,8 +1026,6 @@ class SingleSymbolAgent:
                 return all_events, agent_output
 
             except Exception as e:
-                last_exception = e
-
                 if attempt <= max_retries:
                     # 还有重试机会
                     self.logger.print_warning(
