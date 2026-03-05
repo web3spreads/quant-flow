@@ -3,6 +3,7 @@
 为每个交易对维护独立的上下文窗口和决策历史
 """
 
+import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -941,9 +942,7 @@ class SingleSymbolAgent:
             # recursion_limit 控制图的最大递归深度，防止无限循环
             config = {"recursion_limit": self.max_iterations * 2}
 
-            all_events, agent_output = self._invoke_agent_with_retry(
-                messages, config, prompt
-            )
+            all_events, agent_output = self._invoke_agent_with_retry(messages, config, prompt)
 
             # 解析结果
             decision_type = self._parse_decision_from_events(all_events)
@@ -991,8 +990,6 @@ class SingleSymbolAgent:
         Returns:
             (事件列表, agent 输出文本)
         """
-        import time
-
         last_exception = None
 
         for attempt in range(1, max_retries + 2):  # 首次 + 重试次数
@@ -1048,9 +1045,9 @@ class SingleSymbolAgent:
                     # 还有重试机会
                     self.logger.print_warning(
                         f"[{self.symbol}Agent] LLM API 调用失败（第 {attempt} 次），"
-                        f"{2 ** attempt}s 后重试: {e}"
+                        f"{2**attempt}s 后重试: {e}"
                     )
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                 else:
                     # 所有重试均失败，发送通知并抛出异常
                     self.logger.print_error(
