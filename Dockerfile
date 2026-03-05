@@ -25,8 +25,8 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# 安装 gosu（用于以指定 UID:GID 安全降权运行）
-RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+# 安装 gosu（用于以指定 UID:GID 安全降权运行）和 libgomp1（LightGBM OpenMP 依赖）
+RUN apt-get update && apt-get install -y --no-install-recommends gosu libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && gosu nobody true
 

@@ -260,14 +260,24 @@ class QLibModelTrainer:
         early_stopping_rounds = params.pop("early_stopping_rounds", 30)
         n_estimators = params.pop("n_estimators", 300)
 
-        model = xgb.XGBRegressor(n_estimators=n_estimators, **params)
+        # 新版 XGBoost (>=2.0) 要求 early_stopping_rounds 在构造器中传入
+        # 仅在有验证集且验证集样本充足时启用 early stopping
+        init_params = {"n_estimators": n_estimators}
+        if (
+            X_valid is not None
+            and y_valid is not None
+            and len(X_valid) >= self.MIN_VALID_FOR_EARLY_STOPPING
+            and early_stopping_rounds
+            and early_stopping_rounds > 0
+        ):
+            init_params["early_stopping_rounds"] = early_stopping_rounds
+
+        model = xgb.XGBRegressor(**init_params, **params)
 
         fit_params = {}
         if X_valid is not None and y_valid is not None:
             fit_params["eval_set"] = [(X_valid, y_valid)]
             fit_params["verbose"] = False
-            if early_stopping_rounds and early_stopping_rounds > 0:
-                fit_params["early_stopping_rounds"] = early_stopping_rounds
 
         model.fit(X_train, y_train, **fit_params)
         return model
