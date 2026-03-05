@@ -458,6 +458,49 @@ class TestQLibModelTrainer:
         pred_new = new_trainer.predict("linear", X.iloc[200:])
         pd.testing.assert_series_equal(pred_old, pred_new)
 
+    def test_train_xgboost_with_early_stopping(self, sample_features_and_labels, tmp_dir):
+        """测试 XGBoost 训练 - 验证集充足时 early stopping 正常生效"""
+        xgb = pytest.importorskip("xgboost")  # noqa: F841
+        X, y = sample_features_and_labels
+        trainer = QLibModelTrainer(model_dir=tmp_dir)
+
+        X_train, y_train = X.iloc[:200], y.iloc[:200]
+        X_valid, y_valid = X.iloc[200:], y.iloc[200:]
+
+        # 验证集 100 > MIN_VALID_FOR_EARLY_STOPPING (50)，应启用 early stopping
+        model = trainer.train("xgboost", X_train, y_train, X_valid, y_valid)
+        assert model is not None
+        assert "xgboost" in trainer.trained_models
+
+        # 模型应能正常预测
+        pred = trainer.predict("xgboost", X_valid)
+        assert isinstance(pred, pd.Series)
+        assert len(pred) == 100
+
+    def test_train_xgboost_small_valid_set(self, sample_features_and_labels, tmp_dir):
+        """测试 XGBoost 训练 - 验证集不足时跳过 early stopping 且不抛异常"""
+        xgb = pytest.importorskip("xgboost")  # noqa: F841
+        X, y = sample_features_and_labels
+        trainer = QLibModelTrainer(model_dir=tmp_dir)
+
+        X_train, y_train = X.iloc[:280], y.iloc[:280]
+        # 验证集仅 20 < MIN_VALID_FOR_EARLY_STOPPING (50)
+        X_valid, y_valid = X.iloc[280:], y.iloc[280:]
+
+        model = trainer.train("xgboost", X_train, y_train, X_valid, y_valid)
+        assert model is not None
+        assert "xgboost" in trainer.trained_models
+
+    def test_train_xgboost_no_valid_set(self, sample_features_and_labels, tmp_dir):
+        """测试 XGBoost 训练 - 无验证集时正常训练"""
+        xgb = pytest.importorskip("xgboost")  # noqa: F841
+        X, y = sample_features_and_labels
+        trainer = QLibModelTrainer(model_dir=tmp_dir)
+
+        model = trainer.train("xgboost", X.iloc[:200], y.iloc[:200])
+        assert model is not None
+        assert "xgboost" in trainer.trained_models
+
     def test_clean_data(self, tmp_dir):
         """测试数据清理"""
         trainer = QLibModelTrainer(model_dir=tmp_dir)

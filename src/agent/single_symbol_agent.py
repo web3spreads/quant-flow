@@ -1019,21 +1019,10 @@ class SingleSymbolAgent:
                                 )
                                 last_printed_content = content
 
-                # 调用成功，如果是重试成功则发送通知
+                # 调用成功，如果是重试成功则记录日志
                 if attempt > 1:
                     self.logger.print_info(
                         f"[{self.symbol}Agent] LLM API 重试成功（第 {attempt} 次尝试）"
-                    )
-                    send_error_notification(
-                        notifier=self.notifier,
-                        exception=last_exception,
-                        title=f"{self.symbol} LLM API 重试成功",
-                        context_details={
-                            "交易对": self.symbol,
-                            "当前价": f"${self.current_price}",
-                            "阶段": "LLM 决策分析",
-                            "说明": f"第 {attempt} 次尝试成功，首次失败原因见下方",
-                        },
                     )
 
                 return all_events, agent_output

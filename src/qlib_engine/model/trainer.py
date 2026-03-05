@@ -271,6 +271,11 @@ class QLibModelTrainer:
             and early_stopping_rounds > 0
         ):
             init_params["early_stopping_rounds"] = early_stopping_rounds
+        elif X_valid is not None and y_valid is not None:
+            logger.warning(
+                f"验证集样本不足 ({len(X_valid)} < {self.MIN_VALID_FOR_EARLY_STOPPING})，"
+                f"跳过 early stopping，使用全部 {n_estimators} 轮训练"
+            )
 
         model = xgb.XGBRegressor(**init_params, **params)
 
