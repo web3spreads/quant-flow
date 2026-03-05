@@ -234,7 +234,8 @@ class TradingAgent:
                     entry_price = float(position.get("entryPx", 0))
                     exit_price = self.current_price
                     size = abs(float(position.get("szi", 0)))
-                    pnl = result.get("pnl", 0)
+                    # 根据开仓价、平仓价和数量计算实际盈亏金额
+                    pnl = (exit_price - entry_price) * size
                     leverage = safe_leverage(position.get("leverage"), 1)
                     pnl_percent = (
                         (exit_price - entry_price) / entry_price * leverage * 100
@@ -361,7 +362,8 @@ class TradingAgent:
                     entry_price = float(position.get("entryPx", 0))
                     exit_price = self.current_price
                     size = abs(float(position.get("szi", 0)))
-                    pnl = result.get("pnl", 0)
+                    # 做空盈亏：价格下跌盈利，上涨亏损
+                    pnl = (entry_price - exit_price) * size
                     leverage = safe_leverage(position.get("leverage"), 1)
                     pnl_percent = (
                         (entry_price - exit_price) / entry_price * leverage * 100
