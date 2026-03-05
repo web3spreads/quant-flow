@@ -500,13 +500,17 @@ class OrderManager:
         """
         return self.client.get_positions()
 
-    def _get_latest_fill_hash(self) -> str | None:
+    def _get_latest_fill_info(self, symbol: str | None = None) -> dict[str, Any]:
         """
-        获取最近一笔成交的交易哈希
+        获取最近一笔成交的交易哈希和成交价
+
+        Args:
+            symbol: 交易对符号（可选，用于筛选匹配的 fill）
 
         Returns:
-            交易哈希，如果无法获取则返回 None
+            {"hash": str | None, "fill_price": float | None}
         """
+        result: dict[str, Any] = {"hash": None, "fill_price": None}
         try:
             import time
 
@@ -518,12 +522,25 @@ class OrderManager:
             fills = self.client.info.user_fills(user_address)
 
             if fills:
-                # 返回最新的fill的hash
-                return fills[0].get("hash")
-            return None
+                # 优先查找匹配 symbol 的最近 fill
+                target_fill = None
+                if symbol:
+                    target_fill = next(
+                        (f for f in fills if f.get("coin") == symbol), None
+                    )
+                # 回退到最新的 fill
+                if not target_fill:
+                    target_fill = fills[0]
+
+                result["hash"] = target_fill.get("hash")
+                px = target_fill.get("px")
+                if px is not None:
+                    result["fill_price"] = float(px)
+
         except Exception as e:
-            print(f"⚠️ 获取交易哈希失败: {e}")
-            return None
+            print(f"⚠️ 获取交易成交信息失败: {e}")
+
+        return result
 
     def calculate_position_size(
         self, symbol: str, usdt_amount: float, leverage: int | None = None
@@ -657,8 +674,8 @@ class OrderManager:
                 result["price"] = current_price
                 result["leverage"] = lev
                 # 获取交易哈希：下单后查询最近的fills
-                order_hash = self._get_latest_fill_hash()
-                result["hash"] = order_hash if order_hash else ""
+                fill_info = self._get_latest_fill_info(symbol)
+                result["hash"] = fill_info["hash"] or ""
 
             return result
 
@@ -759,8 +776,8 @@ class OrderManager:
                 result["price"] = current_price
                 result["leverage"] = lev
                 # 获取交易哈希：下单后查询最近的fills
-                order_hash = self._get_latest_fill_hash()
-                result["hash"] = order_hash if order_hash else ""
+                fill_info = self._get_latest_fill_info(symbol)
+                result["hash"] = fill_info["hash"] or ""
 
             return result
 
@@ -777,15 +794,17 @@ class OrderManager:
             size: 平仓数量（None=全平）
 
         Returns:
-            平仓结果（包含交易哈希）
+            平仓结果（包含交易哈希和实际成交价）
         """
         try:
             result = self.client.close_position(symbol, size)
 
-            # 如果平仓成功，获取交易哈希
+            # 如果平仓成功，获取交易哈希和实际成交价
             if result and result.get("status") == "ok":
-                order_hash = self._get_latest_fill_hash()
-                result["hash"] = order_hash if order_hash else ""
+                fill_info = self._get_latest_fill_info(symbol)
+                result["hash"] = fill_info["hash"] or ""
+                if fill_info["fill_price"] is not None:
+                    result["fill_price"] = fill_info["fill_price"]
 
             return result
         except Exception as e:
