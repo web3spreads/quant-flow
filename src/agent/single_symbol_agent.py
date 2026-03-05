@@ -3,6 +3,7 @@
 为每个交易对维护独立的上下文窗口和决策历史
 """
 
+import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -934,42 +935,14 @@ class SingleSymbolAgent:
             self.logger.print_section(f"[{self.symbol}Agent] 独立决策分析", style="bold magenta")
             self.logger.print_prompt(prompt)
 
-            # 调用 Agent
+            # 调用 Agent（含自动重试 1 次机制）
             messages = [self.system_message, HumanMessage(content=prompt)]
-
-            # 收集所有输出
-            all_events = []
-            agent_output = ""
-            last_printed_content = ""  # 记录上次打印的内容，避免重复打印
 
             # 使用 config 参数限制最大迭代次数
             # recursion_limit 控制图的最大递归深度，防止无限循环
             config = {"recursion_limit": self.max_iterations * 2}
 
-            for event in self.agent_executor.stream(
-                {"messages": messages}, stream_mode="values", config=config
-            ):
-                all_events.append(event)
-                if "messages" in event and len(event["messages"]) > 0:
-                    last_message = event["messages"][-1]
-                    if hasattr(last_message, "content"):
-                        content = last_message.content
-                        # 更新agent_output为最新的完整内容
-                        if content and content != prompt:
-                            agent_output = content
-
-                        # 只在内容长度增加时打印（支持流式输出，避免重复打印相同内容）
-                        # 这样可以处理逐步生成的内容，同时避免重复打印相同的完整响应
-                        if (
-                            content
-                            and content != prompt
-                            and len(content) > len(last_printed_content)
-                        ):
-                            # 使用新的 AI 响应渲染方法（支持 Markdown）
-                            self.logger.print_ai_response(
-                                content, f"🎯 {self.symbol} Agent 分析中..."
-                            )
-                            last_printed_content = content
+            all_events, agent_output = self._invoke_agent_with_retry(messages, config, prompt)
 
             # 解析结果
             decision_type = self._parse_decision_from_events(all_events)
@@ -997,6 +970,88 @@ class SingleSymbolAgent:
                 },
             )
             return "ERROR", {"error": str(e)}
+
+    def _invoke_agent_with_retry(
+        self,
+        messages: list,
+        config: dict,
+        prompt: str,
+        max_retries: int = 1,
+    ) -> tuple[list, str]:
+        """
+        调用 Agent 并在失败时自动重试，重试成功或失败均发送通知
+
+        Args:
+            messages: LLM 消息列表
+            config: LangGraph 配置
+            prompt: 原始 prompt（用于过滤输出）
+            max_retries: 最大重试次数（默认 1 次）
+
+        Returns:
+            (事件列表, agent 输出文本)
+        """
+        for attempt in range(1, max_retries + 2):  # 首次 + 重试次数
+            try:
+                all_events = []
+                agent_output = ""
+                last_printed_content = ""
+
+                for event in self.agent_executor.stream(
+                    {"messages": messages}, stream_mode="values", config=config
+                ):
+                    all_events.append(event)
+                    if "messages" in event and len(event["messages"]) > 0:
+                        last_message = event["messages"][-1]
+                        if hasattr(last_message, "content"):
+                            content = last_message.content
+                            if content and content != prompt:
+                                agent_output = content
+
+                            if (
+                                content
+                                and content != prompt
+                                and len(content) > len(last_printed_content)
+                            ):
+                                self.logger.print_ai_response(
+                                    content, f"🎯 {self.symbol} Agent 分析中..."
+                                )
+                                last_printed_content = content
+
+                # 调用成功，如果是重试成功则记录日志
+                if attempt > 1:
+                    self.logger.print_info(
+                        f"[{self.symbol}Agent] LLM API 重试成功（第 {attempt} 次尝试）"
+                    )
+
+                return all_events, agent_output
+
+            except Exception as e:
+                if attempt <= max_retries:
+                    # 还有重试机会
+                    self.logger.print_warning(
+                        f"[{self.symbol}Agent] LLM API 调用失败（第 {attempt} 次），"
+                        f"{2**attempt}s 后重试: {e}"
+                    )
+                    time.sleep(2**attempt)
+                else:
+                    # 所有重试均失败，发送通知并抛出异常
+                    self.logger.print_error(
+                        f"[{self.symbol}Agent] LLM API 调用失败，"
+                        f"已重试 {max_retries} 次仍未恢复: {e}"
+                    )
+                    send_error_notification(
+                        notifier=self.notifier,
+                        exception=e,
+                        title=f"{self.symbol} LLM API 重试失败",
+                        context_details={
+                            "交易对": self.symbol,
+                            "当前价": f"${self.current_price}",
+                            "阶段": "LLM 决策分析",
+                            "尝试次数": f"{attempt} 次（含首次 + {max_retries} 次重试）",
+                            "说明": "LLM API 调用重试后仍然失败",
+                        },
+                    )
+                    raise
 
     def _parse_decision_from_events(self, events: list) -> str:
         """
