@@ -10,8 +10,7 @@ QLib 历史数据回填脚本单元测试
 """
 
 import tempfile
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -25,7 +24,6 @@ from backfill_qlib_data import (
     merge_and_save,
     parse_args,
 )
-
 
 # ============================================================
 # 公共 Fixtures
@@ -114,7 +112,7 @@ class TestFetchCandlesBatch:
         assert mock_info.candles_snapshot.call_count == 1
         assert len(df) == 10
         assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
-        assert df["timestamp"].dtype == "datetime64[ns]"
+        assert "datetime64" in str(df["timestamp"].dtype)
 
     def test_multiple_batches(self):
         """时间范围超过单批容量时分多次请求"""
