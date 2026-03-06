@@ -305,7 +305,7 @@ class SpotAgent:
                         self.notifier.notify_spot_investment(
                             symbol=symbol,
                             quantity=result.get("amount", 0),
-                            price=result["price"],
+                            price=result.get("price") or 0,
                             amount=actual_amount,
                             order_hash=result.get("hash", ""),
                         )
@@ -314,7 +314,7 @@ class SpotAgent:
                         f"✅ 现货定投执行成功！\n"
                         f"  币种: {symbol}\n"
                         f"  投入: ${actual_amount:.2f}\n"
-                        f"  价格: ${result['price']:.2f}\n"
+                        f"  价格: ${result.get('price') or 0:.2f}\n"
                         f"  数量: {result.get('amount', 0):.6f}\n"
                         f"  📦 长期持有，无止盈止损"
                     )
