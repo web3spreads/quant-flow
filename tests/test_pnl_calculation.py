@@ -12,9 +12,7 @@ def calc_long_pnl(entry_price: float, exit_price: float, size: float, leverage: 
     """做多盈亏计算（与 agent 回调中的逻辑一致）"""
     pnl = (exit_price - entry_price) * size
     pnl_percent = (
-        (exit_price - entry_price) / entry_price * leverage * 100
-        if entry_price > 0
-        else 0
+        (exit_price - entry_price) / entry_price * leverage * 100 if entry_price > 0 else 0
     )
     return pnl, pnl_percent
 
@@ -23,9 +21,7 @@ def calc_short_pnl(entry_price: float, exit_price: float, size: float, leverage:
     """做空盈亏计算（与 agent 回调中的逻辑一致）"""
     pnl = (entry_price - exit_price) * size
     pnl_percent = (
-        (entry_price - exit_price) / entry_price * leverage * 100
-        if entry_price > 0
-        else 0
+        (entry_price - exit_price) / entry_price * leverage * 100 if entry_price > 0 else 0
     )
     return pnl, pnl_percent
 
@@ -38,33 +34,25 @@ class TestLongPnl:
 
     def test_long_profit(self):
         """做多盈利：价格上涨"""
-        pnl, pnl_pct = calc_long_pnl(
-            entry_price=2000.0, exit_price=2100.0, size=0.5
-        )
+        pnl, pnl_pct = calc_long_pnl(entry_price=2000.0, exit_price=2100.0, size=0.5)
         assert pnl == pytest.approx(50.0)  # (2100 - 2000) * 0.5 = 50
         assert pnl_pct == pytest.approx(5.0)  # +5%
 
     def test_long_loss(self):
         """做多亏损：价格下跌"""
-        pnl, pnl_pct = calc_long_pnl(
-            entry_price=2000.0, exit_price=1900.0, size=0.5
-        )
+        pnl, pnl_pct = calc_long_pnl(entry_price=2000.0, exit_price=1900.0, size=0.5)
         assert pnl == pytest.approx(-50.0)  # (1900 - 2000) * 0.5 = -50
         assert pnl_pct == pytest.approx(-5.0)  # -5%
 
     def test_long_breakeven(self):
         """做多持平：价格不变"""
-        pnl, pnl_pct = calc_long_pnl(
-            entry_price=2000.0, exit_price=2000.0, size=1.0
-        )
+        pnl, pnl_pct = calc_long_pnl(entry_price=2000.0, exit_price=2000.0, size=1.0)
         assert pnl == pytest.approx(0.0)
         assert pnl_pct == pytest.approx(0.0)
 
     def test_long_with_leverage(self):
         """做多带杠杆：收益率按杠杆放大"""
-        pnl, pnl_pct = calc_long_pnl(
-            entry_price=2000.0, exit_price=2100.0, size=0.5, leverage=10
-        )
+        pnl, pnl_pct = calc_long_pnl(entry_price=2000.0, exit_price=2100.0, size=0.5, leverage=10)
         # PnL 金额不受杠杆影响（已经体现在 size 中）
         assert pnl == pytest.approx(50.0)
         # 收益率按杠杆放大：5% * 10 = 50%
@@ -72,9 +60,7 @@ class TestLongPnl:
 
     def test_long_small_eth_position(self):
         """模拟用户实际场景：ETH 做多小仓位"""
-        pnl, pnl_pct = calc_long_pnl(
-            entry_price=2127.90, exit_price=2110.00, size=0.0282
-        )
+        pnl, pnl_pct = calc_long_pnl(entry_price=2127.90, exit_price=2110.00, size=0.0282)
         # 价格下跌，做多亏损
         assert pnl == pytest.approx(-0.5049, abs=0.01)
         assert pnl_pct < 0
@@ -88,41 +74,31 @@ class TestShortPnl:
 
     def test_short_profit(self):
         """做空盈利：价格下跌"""
-        pnl, pnl_pct = calc_short_pnl(
-            entry_price=2000.0, exit_price=1900.0, size=0.5
-        )
+        pnl, pnl_pct = calc_short_pnl(entry_price=2000.0, exit_price=1900.0, size=0.5)
         assert pnl == pytest.approx(50.0)  # (2000 - 1900) * 0.5 = 50
         assert pnl_pct == pytest.approx(5.0)  # +5%
 
     def test_short_loss(self):
         """做空亏损：价格上涨"""
-        pnl, pnl_pct = calc_short_pnl(
-            entry_price=2000.0, exit_price=2100.0, size=0.5
-        )
+        pnl, pnl_pct = calc_short_pnl(entry_price=2000.0, exit_price=2100.0, size=0.5)
         assert pnl == pytest.approx(-50.0)  # (2000 - 2100) * 0.5 = -50
         assert pnl_pct == pytest.approx(-5.0)  # -5%
 
     def test_short_breakeven(self):
         """做空持平：价格不变"""
-        pnl, pnl_pct = calc_short_pnl(
-            entry_price=2000.0, exit_price=2000.0, size=1.0
-        )
+        pnl, pnl_pct = calc_short_pnl(entry_price=2000.0, exit_price=2000.0, size=1.0)
         assert pnl == pytest.approx(0.0)
         assert pnl_pct == pytest.approx(0.0)
 
     def test_short_with_leverage(self):
         """做空带杠杆：收益率按杠杆放大"""
-        pnl, pnl_pct = calc_short_pnl(
-            entry_price=2000.0, exit_price=1900.0, size=0.5, leverage=10
-        )
+        pnl, pnl_pct = calc_short_pnl(entry_price=2000.0, exit_price=1900.0, size=0.5, leverage=10)
         assert pnl == pytest.approx(50.0)
         assert pnl_pct == pytest.approx(50.0)  # 5% * 10x
 
     def test_short_eth_actual_case(self):
         """模拟用户实际场景：ETH 做空 $2127.90 -> $2110.00"""
-        pnl, pnl_pct = calc_short_pnl(
-            entry_price=2127.90, exit_price=2110.00, size=0.0282
-        )
+        pnl, pnl_pct = calc_short_pnl(entry_price=2127.90, exit_price=2110.00, size=0.0282)
         # 做空盈利：(2127.90 - 2110.00) * 0.0282 = 0.5049
         assert pnl == pytest.approx(0.5049, abs=0.01)
         assert pnl_pct > 0

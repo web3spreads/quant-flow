@@ -525,9 +525,7 @@ class OrderManager:
                 # 优先查找匹配 symbol 的最近 fill
                 target_fill = None
                 if symbol:
-                    target_fill = next(
-                        (f for f in fills if f.get("coin") == symbol), None
-                    )
+                    target_fill = next((f for f in fills if f.get("coin") == symbol), None)
                 # 回退到最新的 fill
                 if not target_fill:
                     target_fill = fills[0]
