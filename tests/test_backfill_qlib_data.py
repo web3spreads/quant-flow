@@ -119,11 +119,25 @@ class TestFetchCandlesBatch:
         mock_info = MagicMock()
         # 每批返回 5 条
         batch1 = [
-            {"t": int(datetime(2026, 1, 1, i).timestamp() * 1000), "o": "70000", "h": "70100", "l": "69900", "c": "70050", "v": "100"}
+            {
+                "t": int(datetime(2026, 1, 1, i).timestamp() * 1000),
+                "o": "70000",
+                "h": "70100",
+                "l": "69900",
+                "c": "70050",
+                "v": "100",
+            }
             for i in range(5)
         ]
         batch2 = [
-            {"t": int(datetime(2026, 1, 22, i).timestamp() * 1000), "o": "71000", "h": "71100", "l": "70900", "c": "71050", "v": "200"}
+            {
+                "t": int(datetime(2026, 1, 22, i).timestamp() * 1000),
+                "o": "71000",
+                "h": "71100",
+                "l": "70900",
+                "c": "71050",
+                "v": "200",
+            }
             for i in range(5)
         ]
         mock_info.candles_snapshot.side_effect = [batch1, batch2]
@@ -184,8 +198,22 @@ class TestFetchCandlesBatch:
         base_ts = int(datetime(2026, 1, 1).timestamp() * 1000)
         candles_with_dup = [
             {"t": base_ts, "o": "70000", "h": "70100", "l": "69900", "c": "70050", "v": "100"},
-            {"t": base_ts, "o": "70001", "h": "70101", "l": "69901", "c": "70051", "v": "101"},  # 重复
-            {"t": base_ts + 3600_000, "o": "70010", "h": "70110", "l": "69910", "c": "70060", "v": "110"},
+            {
+                "t": base_ts,
+                "o": "70001",
+                "h": "70101",
+                "l": "69901",
+                "c": "70051",
+                "v": "101",
+            },  # 重复
+            {
+                "t": base_ts + 3600_000,
+                "o": "70010",
+                "h": "70110",
+                "l": "69910",
+                "c": "70060",
+                "v": "110",
+            },
         ]
         mock_info = MagicMock()
         mock_info.candles_snapshot.return_value = candles_with_dup
@@ -216,7 +244,14 @@ class TestFetchCandlesBatch:
         """验证批次间存在 API 调用间隔"""
         mock_info = MagicMock()
         batch = [
-            {"t": int(datetime(2026, 1, 1, i).timestamp() * 1000), "o": "70000", "h": "70100", "l": "69900", "c": "70050", "v": "100"}
+            {
+                "t": int(datetime(2026, 1, 1, i).timestamp() * 1000),
+                "o": "70000",
+                "h": "70100",
+                "l": "69900",
+                "c": "70050",
+                "v": "100",
+            }
             for i in range(3)
         ]
         mock_info.candles_snapshot.return_value = batch
@@ -334,6 +369,7 @@ class TestMergeAndSave:
         merge_and_save(sample_df, "BTC", "1h", tmp_data_dir)
 
         import os
+
         mtime_before = os.path.getmtime(tmp_data_dir / "BTC_1h.parquet")
 
         new_df = pd.DataFrame(
@@ -466,13 +502,20 @@ class TestMainFlow:
         ]
 
         with (
-            patch("sys.argv", [
-                "backfill_qlib_data.py",
-                "--symbols", "BTC",
-                "--days", "1",
-                "--data-dir", str(tmp_data_dir),
-                "--request-interval", "0",
-            ]),
+            patch(
+                "sys.argv",
+                [
+                    "backfill_qlib_data.py",
+                    "--symbols",
+                    "BTC",
+                    "--days",
+                    "1",
+                    "--data-dir",
+                    str(tmp_data_dir),
+                    "--request-interval",
+                    "0",
+                ],
+            ),
             patch("backfill_qlib_data.Info") as MockInfo,
             patch("backfill_qlib_data.time.sleep"),
         ):
@@ -480,6 +523,7 @@ class TestMainFlow:
             mock_instance.candles_snapshot.return_value = mock_candles
 
             from backfill_qlib_data import main
+
             main()
 
             assert (tmp_data_dir / "BTC_1h.parquet").exists()
@@ -504,13 +548,21 @@ class TestMainFlow:
             ]
 
         with (
-            patch("sys.argv", [
-                "backfill_qlib_data.py",
-                "--symbols", "BTC", "ETH",
-                "--days", "1",
-                "--data-dir", str(tmp_data_dir),
-                "--request-interval", "0",
-            ]),
+            patch(
+                "sys.argv",
+                [
+                    "backfill_qlib_data.py",
+                    "--symbols",
+                    "BTC",
+                    "ETH",
+                    "--days",
+                    "1",
+                    "--data-dir",
+                    str(tmp_data_dir),
+                    "--request-interval",
+                    "0",
+                ],
+            ),
             patch("backfill_qlib_data.Info") as MockInfo,
             patch("backfill_qlib_data.time.sleep"),
         ):
@@ -521,6 +573,7 @@ class TestMainFlow:
             ]
 
             from backfill_qlib_data import main
+
             main()
 
             assert (tmp_data_dir / "BTC_1h.parquet").exists()
@@ -529,14 +582,20 @@ class TestMainFlow:
     def test_start_date_before_end_date_validation(self):
         """开始日期晚于结束日期时退出"""
         with (
-            patch("sys.argv", [
-                "backfill_qlib_data.py",
-                "--start-date", "2026-06-01",
-                "--end-date", "2026-01-01",
-            ]),
+            patch(
+                "sys.argv",
+                [
+                    "backfill_qlib_data.py",
+                    "--start-date",
+                    "2026-06-01",
+                    "--end-date",
+                    "2026-01-01",
+                ],
+            ),
             pytest.raises(SystemExit) as exc_info,
         ):
             from backfill_qlib_data import main
+
             main()
 
         assert exc_info.value.code == 1
@@ -544,13 +603,20 @@ class TestMainFlow:
     def test_all_symbols_fail_exits_with_error(self, tmp_data_dir):
         """所有交易对数据获取失败时以非零退出"""
         with (
-            patch("sys.argv", [
-                "backfill_qlib_data.py",
-                "--symbols", "INVALID",
-                "--days", "1",
-                "--data-dir", str(tmp_data_dir),
-                "--request-interval", "0",
-            ]),
+            patch(
+                "sys.argv",
+                [
+                    "backfill_qlib_data.py",
+                    "--symbols",
+                    "INVALID",
+                    "--days",
+                    "1",
+                    "--data-dir",
+                    str(tmp_data_dir),
+                    "--request-interval",
+                    "0",
+                ],
+            ),
             patch("backfill_qlib_data.Info") as MockInfo,
             patch("backfill_qlib_data.time.sleep"),
             pytest.raises(SystemExit) as exc_info,
@@ -559,6 +625,7 @@ class TestMainFlow:
             mock_instance.candles_snapshot.return_value = []
 
             from backfill_qlib_data import main
+
             main()
 
         assert exc_info.value.code == 1
