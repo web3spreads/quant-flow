@@ -423,7 +423,9 @@ class MarketDataEnricher:
         # 资金费率格式化为科学计数法（防御 None 值）
         if "funding_rate" in formatted:
             rate = formatted["funding_rate"]
-            formatted["funding_rate_formatted"] = f"{rate:.6e}" if rate is not None else "0.000000e+00"
+            formatted["funding_rate_formatted"] = (
+                f"{rate:.6e}" if rate is not None else "0.000000e+00"
+            )
 
         return formatted
 

@@ -44,6 +44,13 @@ find /app/experiments -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/n
 
 echo -e "${GREEN}✅ 目录权限修复完成${NC}"
 
+# ========== 创建运行用户 ==========
+# supervisord 以 root 运行，通过 user 指令降权子进程
+# 回填模式通过 gosu 降权，也需要此用户
+groupadd -g "$PGID" appgroup 2>/dev/null || true
+useradd -u "$PUID" -g "$PGID" -M -s /bin/false -d /app appuser 2>/dev/null || true
+export APP_USER=appuser
+
 # ========== 解析运行模式 ==========
 RUN_MODE=${RUN_MODE:-main}
 
@@ -81,10 +88,6 @@ echo -e "${YELLOW}📋 运行模式: ${RUN_MODE}${NC}"
 if [ "$RUN_MODE" = "backfill" ]; then
     echo -e "${YELLOW}📋 回填参数: ${BACKFILL_ARGS:-默认（最近 90 天，BTC ETH SOL，1h）}${NC}"
 
-    # 创建运行用户
-    groupadd -g "$PGID" appgroup 2>/dev/null || true
-    useradd -u "$PUID" -g "$PGID" -M -s /bin/false -d /app appuser 2>/dev/null || true
-
     echo -e "${GREEN}🎯 开始历史数据回填...${NC}"
     echo ""
 
@@ -112,13 +115,6 @@ if [ "$ENABLE_GRID" = "true" ] && [ ! -f "/app/${GRID_CONFIG}" ]; then
 fi
 
 echo -e "${GREEN}✅ 配置文件检查完成${NC}"
-
-# ========== 创建运行用户 ==========
-# supervisord 以 root 运行，通过 user 指令降权子进程
-# 需要创建对应的系统用户供 supervisord 使用
-groupadd -g "$PGID" appgroup 2>/dev/null || true
-useradd -u "$PUID" -g "$PGID" -M -s /bin/false -d /app appuser 2>/dev/null || true
-export APP_USER=appuser
 
 # ========== 启动 supervisord ==========
 # supervisord 以 root 身份运行（PID 1），子进程通过 user 指令降权

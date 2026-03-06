@@ -169,24 +169,7 @@ def fetch_candles_batch(
             f"{end_dt.strftime('%Y-%m-%d %H:%M')}"
         )
 
-        try:
-            candles = info.candles_snapshot(
-                name=symbol,
-                interval=freq,
-                startTime=current_start,
-                endTime=current_end,
-            )
-
-            if candles:
-                all_candles.extend(candles)
-                logger.info(f"    获取 {len(candles)} 条 K 线")
-            else:
-                logger.warning(f"    该时间段无数据")
-
-        except Exception as e:
-            logger.error(f"    请求失败: {e}")
-            # 遇到错误等待更长时间后重试一次
-            time.sleep(request_interval * 3)
+        for attempt in range(2):  # 0: 首次尝试, 1: 重试
             try:
                 candles = info.candles_snapshot(
                     name=symbol,
@@ -196,9 +179,19 @@ def fetch_candles_batch(
                 )
                 if candles:
                     all_candles.extend(candles)
-                    logger.info(f"    重试成功，获取 {len(candles)} 条")
-            except Exception as retry_err:
-                logger.error(f"    重试也失败: {retry_err}，跳过此时间段")
+                    if attempt == 0:
+                        logger.info(f"    获取 {len(candles)} 条 K 线")
+                    else:
+                        logger.info(f"    重试成功，获取 {len(candles)} 条")
+                else:
+                    logger.warning("    该时间段无数据")
+                break  # 成功则跳出重试循环
+            except Exception as e:
+                if attempt == 0:
+                    logger.error(f"    请求失败: {e}，等待后重试...")
+                    time.sleep(request_interval * 3)
+                else:
+                    logger.error(f"    重试也失败: {e}，跳过此时间段")
 
         current_start = current_end
 

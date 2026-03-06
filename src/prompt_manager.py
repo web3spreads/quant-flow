@@ -509,6 +509,7 @@ class PromptManager:
         Returns:
             格式化后的 Prompt
         """
+
         # 提取市场数据（防御 None 值：get() 在 key 存在但值为 None 时仍返回 None）
         def _safe(val, default=0):
             """确保值不为 None，防止格式化和算术运算报错"""

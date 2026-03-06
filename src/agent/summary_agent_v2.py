@@ -405,27 +405,19 @@ class SummaryAgentV2:
                 for r in market_records
                 if _safe(r.get("market_data", {}).get("current_price"), 0) > 0
             ]
-            rsi_values = [
-                _safe(r.get("market_data", {}).get("rsi"), 50) for r in market_records
-            ]
-            volumes = [
-                _safe(r.get("market_data", {}).get("volume"), 0) for r in market_records
-            ]
+            rsi_values = [_safe(r.get("market_data", {}).get("rsi"), 50) for r in market_records]
+            volumes = [_safe(r.get("market_data", {}).get("volume"), 0) for r in market_records]
             volume_changes = [
-                _safe(r.get("market_data", {}).get("volume_change"), 0)
-                for r in market_records
+                _safe(r.get("market_data", {}).get("volume_change"), 0) for r in market_records
             ]
             atr_values = [
                 _safe(r.get("market_data", {}).get("atr_14"), 0)
                 for r in market_records
                 if _safe(r.get("market_data", {}).get("atr_14"), 0) > 0
             ]
-            macd_values = [
-                _safe(r.get("market_data", {}).get("macd"), 0) for r in market_records
-            ]
+            macd_values = [_safe(r.get("market_data", {}).get("macd"), 0) for r in market_records]
             macd_signals = [
-                _safe(r.get("market_data", {}).get("macd_signal"), 0)
-                for r in market_records
+                _safe(r.get("market_data", {}).get("macd_signal"), 0) for r in market_records
             ]
 
             if not prices:
