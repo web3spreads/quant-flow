@@ -64,6 +64,9 @@ services:
       # Prompts directory (read-only)
       - ./prompts:/app/prompts:ro
 
+      # 数据目录（读写，回填数据 + 模型训练数据持久化）
+      - ./data:/app/data
+
       # Logs directory (persistent, read-write)
       # 容器 entrypoint 会根据 PUID/PGID 自动修复权限，无需手动 chmod
       - ./logs:/app/logs
