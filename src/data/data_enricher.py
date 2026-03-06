@@ -65,10 +65,15 @@ class MarketDataEnricher:
             # 提供默认值
             enriched.update(self._get_empty_series())
 
-        # 3. 添加当前时刻指标
-        enriched["current_ema20"] = market_data.get("ema_20", market_data.get("current_price", 0))
-        enriched["current_rsi"] = market_data.get("rsi", 50)
-        enriched["current_macd"] = market_data.get("macd", 0)
+        # 3. 添加当前时刻指标（防御 None 值：指标不可用时可能为 None 而非缺失）
+        def _safe(val, default=0):
+            return val if val is not None else default
+
+        enriched["current_ema20"] = _safe(
+            market_data.get("ema_20"), _safe(market_data.get("current_price"), 0)
+        )
+        enriched["current_rsi"] = _safe(market_data.get("rsi"), 50)
+        enriched["current_macd"] = _safe(market_data.get("macd"), 0)
 
         # 4. 添加4小时时间框架数据
         if df_4h is not None and not df_4h.empty:
@@ -251,9 +256,9 @@ class MarketDataEnricher:
                 # 起始价格为0，无法计算趋势
                 analysis["price_trend_analysis"] = t("price_data_error_zero")
 
-        # 2. 分析MACD
-        current_macd = enriched.get("current_macd", 0)
-        macd_signal = df_15m.iloc[-1].get("macd_signal", 0) if not df_15m.empty else 0
+        # 2. 分析MACD（防御 None 值）
+        current_macd = enriched.get("current_macd") or 0
+        macd_signal = (df_15m.iloc[-1].get("macd_signal") if not df_15m.empty else None) or 0
 
         if current_macd > macd_signal and current_macd > 0:
             macd_status = t("macd_golden_cross_above_zero")
@@ -268,8 +273,8 @@ class MarketDataEnricher:
 
         analysis["macd_analysis"] = macd_status
 
-        # 3. 分析RSI
-        current_rsi = enriched.get("current_rsi", 50)
+        # 3. 分析RSI（防御 None 值）
+        current_rsi = enriched.get("current_rsi") or 50
 
         if current_rsi >= 70:
             rsi_status = f"{t('rsi_overbought')}({current_rsi:.1f})"
@@ -284,9 +289,9 @@ class MarketDataEnricher:
 
         analysis["rsi_analysis"] = rsi_status
 
-        # 4. 分析EMA关系（防止除零错误）
+        # 4. 分析EMA关系（防止除零和 None 值错误）
         current_price = df_15m.iloc[-1]["close"] if not df_15m.empty else 0
-        current_ema20 = enriched.get("current_ema20", current_price)
+        current_ema20 = enriched.get("current_ema20") or current_price
 
         # 检查EMA20是否为0
         if current_ema20 != 0 and current_price > 0:
@@ -355,9 +360,9 @@ class MarketDataEnricher:
 
         # 7. 综合分析
         signals = []
-        # 检查MACD信号（使用MACD数值而非语言关键词）
-        current_macd = enriched.get("current_macd", 0)
-        macd_signal = df_15m.iloc[-1].get("macd_signal", 0) if not df_15m.empty else 0
+        # 检查MACD信号（使用MACD数值而非语言关键词，防御 None 值）
+        current_macd = enriched.get("current_macd") or 0
+        macd_signal = (df_15m.iloc[-1].get("macd_signal") if not df_15m.empty else None) or 0
 
         if current_macd > macd_signal:
             signals.append(t("signal_macd_bullish"))
@@ -415,9 +420,10 @@ class MarketDataEnricher:
                 # 直接替换为逗号分隔字符串,更易读
                 formatted[field] = ", ".join(map(str, formatted[field]))
 
-        # 资金费率格式化为科学计数法
+        # 资金费率格式化为科学计数法（防御 None 值）
         if "funding_rate" in formatted:
-            formatted["funding_rate_formatted"] = f"{formatted['funding_rate']:.6e}"
+            rate = formatted["funding_rate"]
+            formatted["funding_rate_formatted"] = f"{rate:.6e}" if rate is not None else "0.000000e+00"
 
         return formatted
 

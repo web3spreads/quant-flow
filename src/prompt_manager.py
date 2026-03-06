@@ -509,20 +509,24 @@ class PromptManager:
         Returns:
             格式化后的 Prompt
         """
-        # 提取市场数据
-        current_price = market_data.get("current_price", 0)
-        rsi = market_data.get("rsi", 0)
-        macd = market_data.get("macd", 0)
-        macd_signal = market_data.get("macd_signal", 0)
-        macd_hist = market_data.get("macd_hist", 0)
-        ma_7 = market_data.get("ma_7", 0)
-        ma_25 = market_data.get("ma_25", 0)
-        ma_99 = market_data.get("ma_99", 0)
-        bb_upper = market_data.get("bb_upper", 0)
-        bb_middle = market_data.get("bb_middle", 0)
-        bb_lower = market_data.get("bb_lower", 0)
-        bb_position = market_data.get("bb_position", 0.5)
-        volume_change = market_data.get("volume_change", 0)
+        # 提取市场数据（防御 None 值：get() 在 key 存在但值为 None 时仍返回 None）
+        def _safe(val, default=0):
+            """确保值不为 None，防止格式化和算术运算报错"""
+            return val if val is not None else default
+
+        current_price = _safe(market_data.get("current_price"), 0)
+        rsi = _safe(market_data.get("rsi"), 0)
+        macd = _safe(market_data.get("macd"), 0)
+        macd_signal = _safe(market_data.get("macd_signal"), 0)
+        macd_hist = _safe(market_data.get("macd_hist"), 0)
+        ma_7 = _safe(market_data.get("ma_7"), 0)
+        ma_25 = _safe(market_data.get("ma_25"), 0)
+        ma_99 = _safe(market_data.get("ma_99"), 0)
+        bb_upper = _safe(market_data.get("bb_upper"), 0)
+        bb_middle = _safe(market_data.get("bb_middle"), 0)
+        bb_lower = _safe(market_data.get("bb_lower"), 0)
+        bb_position = _safe(market_data.get("bb_position"), 0.5)
+        volume_change = _safe(market_data.get("volume_change"), 0)
 
         # 获取详细持仓信息
         position_details = self.format_position_details(symbol, current_positions, current_price)

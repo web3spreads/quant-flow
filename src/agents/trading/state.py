@@ -119,7 +119,7 @@ def create_initial_state(
         symbol=symbol,
         timestamp=datetime.now().isoformat(),
         market_data=market_data,
-        current_price=market_data.get("current_price", 0.0),
+        current_price=market_data.get("current_price") or 0.0,
         multi_timeframe_trends=multi_timeframe_trends,
         enriched_data=enriched_data,
         current_positions=current_positions,

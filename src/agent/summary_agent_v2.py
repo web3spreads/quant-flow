@@ -322,14 +322,15 @@ class SummaryAgentV2:
 
         for record in decision_records:
             action_details = record.get("action_details", {})
-            pnl = action_details.get("pnl", 0) if action_details else 0
-            pnl_pct = action_details.get("pnl_pct", 0) if action_details else 0
+            # 防御 None 值：action_details 中的数值字段可能为 None
+            pnl = (action_details.get("pnl") if action_details else None) or 0
+            pnl_pct = (action_details.get("pnl_pct") if action_details else None) or 0
 
             # 如果没有 pnl 数据，尝试从其他字段推断
             if pnl == 0 and action_details:
                 # 检查是否有盈亏相关的字段
-                closed_pnl = action_details.get("closed_pnl", 0)
-                unrealized_pnl = action_details.get("unrealized_pnl", 0)
+                closed_pnl = action_details.get("closed_pnl") or 0
+                unrealized_pnl = action_details.get("unrealized_pnl") or 0
                 pnl = closed_pnl or unrealized_pnl
 
             if pnl > 0:
@@ -394,24 +395,38 @@ class SummaryAgentV2:
             )
 
         try:
-            # 提取关键市场数据
+            # 提取关键市场数据（防御 None 值：指标不可用时可能为 None）
+            def _safe(val, default=0):
+                """确保值不为 None，防止算术运算和格式化报错"""
+                return val if val is not None else default
+
             prices = [
-                r.get("market_data", {}).get("current_price", 0)
+                _safe(r.get("market_data", {}).get("current_price"), 0)
                 for r in market_records
-                if r.get("market_data", {}).get("current_price", 0) > 0
+                if _safe(r.get("market_data", {}).get("current_price"), 0) > 0
             ]
-            rsi_values = [r.get("market_data", {}).get("rsi", 50) for r in market_records]
-            volumes = [r.get("market_data", {}).get("volume", 0) for r in market_records]
+            rsi_values = [
+                _safe(r.get("market_data", {}).get("rsi"), 50) for r in market_records
+            ]
+            volumes = [
+                _safe(r.get("market_data", {}).get("volume"), 0) for r in market_records
+            ]
             volume_changes = [
-                r.get("market_data", {}).get("volume_change", 0) for r in market_records
+                _safe(r.get("market_data", {}).get("volume_change"), 0)
+                for r in market_records
             ]
             atr_values = [
-                r.get("market_data", {}).get("atr_14", 0)
+                _safe(r.get("market_data", {}).get("atr_14"), 0)
                 for r in market_records
-                if r.get("market_data", {}).get("atr_14", 0) > 0
+                if _safe(r.get("market_data", {}).get("atr_14"), 0) > 0
             ]
-            macd_values = [r.get("market_data", {}).get("macd", 0) for r in market_records]
-            macd_signals = [r.get("market_data", {}).get("macd_signal", 0) for r in market_records]
+            macd_values = [
+                _safe(r.get("market_data", {}).get("macd"), 0) for r in market_records
+            ]
+            macd_signals = [
+                _safe(r.get("market_data", {}).get("macd_signal"), 0)
+                for r in market_records
+            ]
 
             if not prices:
                 return MarketTrendSummary(
