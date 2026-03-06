@@ -690,7 +690,7 @@ class Notifier:
                 lines.append(f"  总交易次数: {statistics['total_trades']}")
             if "profitable_trades" in statistics:
                 lines.append(f"  盈利交易: {statistics['profitable_trades']}")
-            if "total_pnl" in statistics:
+            if "total_pnl" in statistics and statistics["total_pnl"] is not None:
                 lines.append(f"  总盈亏: ${statistics['total_pnl']:+.2f}")
 
         lines.append("")

@@ -441,7 +441,7 @@ class TradingAgent:
             self._executed_callbacks.clear()
 
             # 更新当前价格
-            self.current_price = market_data.get("current_price", 0)
+            self.current_price = market_data.get("current_price") or 0
 
             # 获取实时余额信息
             balance_info = self.order_manager.get_available_balance_info()

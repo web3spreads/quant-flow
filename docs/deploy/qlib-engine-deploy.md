@@ -313,6 +313,51 @@ experiments = exp_manager.list_experiments(experiment_type="train", limit=10)
 best = exp_manager.get_best_experiment(metric="ICIR")
 ```
 
+## 历史数据回填
+
+QLib 引擎依赖本地历史数据进行模型训练。首次部署前建议先回填足够的历史数据。
+
+> 完整的回填指南参见 [backfill-guide.md](./backfill-guide.md)
+
+### 本地运行
+
+```bash
+# 回填最近 90 天数据（默认）
+uv run python backfill_qlib_data.py
+
+# 回填 180 天，指定交易对
+uv run python backfill_qlib_data.py --days 180 --symbols BTC ETH SOL
+
+# 回填指定日期范围
+uv run python backfill_qlib_data.py --start-date 2025-09-01 --end-date 2026-03-06
+
+# 预览模式（不写入文件）
+uv run python backfill_qlib_data.py --dry-run
+```
+
+### Docker 运行
+
+```bash
+# 默认参数回填
+docker compose run --rm backfill
+
+# 自定义参数
+docker compose run --rm -e BACKFILL_ARGS="--days 180 --symbols BTC ETH SOL" backfill
+```
+
+### 首次部署推荐流程
+
+```bash
+# 1. 回填历史数据（建议 180 天以上）
+docker compose run --rm -e BACKFILL_ARGS="--days 180" backfill
+
+# 2. 确认数据文件
+ls -lh data/qlib/
+
+# 3. 启动交易服务（首次启动会自动训练模型）
+docker compose up -d quant-flow
+```
+
 ## 运维指南
 
 ### 模型生命周期

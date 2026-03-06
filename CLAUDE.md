@@ -60,11 +60,22 @@ uv add <package>              # 添加运行时依赖
 uv add --group dev <package>  # 添加开发依赖
 
 # Docker 部署（通过 RUN_MODE 环境变量选择运行模式）
-# RUN_MODE=main  仅主交易（默认）
-# RUN_MODE=grid  仅网格交易
-# RUN_MODE=all   同时运行主交易和网格交易
+# RUN_MODE=main     仅主交易（默认）
+# RUN_MODE=grid     仅网格交易
+# RUN_MODE=all      同时运行主交易和网格交易
+# RUN_MODE=backfill 历史数据回填（一次性任务，运行完退出）
 docker compose up -d
 docker compose logs -f
+
+# 历史数据回填（Docker 方式，运行完自动退出）
+docker compose run --rm backfill                                          # 默认参数
+docker compose run --rm -e BACKFILL_ARGS="--days 180" backfill            # 回填 180 天
+docker compose run --rm -e BACKFILL_ARGS="--symbols BTC ETH --freq 4h" backfill  # 指定交易对和频率
+
+# 本地直接运行回填
+uv run python backfill_qlib_data.py                                       # 默认：最近90天，BTC ETH SOL，1h
+uv run python backfill_qlib_data.py --days 180 --symbols BTC ETH SOL
+uv run python backfill_qlib_data.py --start-date 2025-09-01 --end-date 2026-03-06
 
 # 分别查看各程序日志（日志文件通过 tee 写入 logs/ 目录）
 tail -f logs/main.log          # 主交易日志

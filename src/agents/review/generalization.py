@@ -49,10 +49,11 @@ class MarketStateClassifier:
         Returns:
             MarketState 枚举值
         """
-        rsi = market_data.get("rsi", 50)
-        atr_percent = market_data.get("atr_percent", 2.0)  # ATR 占价格百分比
-        price_change = market_data.get("price_change", 0)
-        price_change_1h = market_data.get("price_change_1h", 0)
+        # 防御 None 值：指标不可用时 key 存在但值为 None
+        rsi = market_data.get("rsi") or 50
+        atr_percent = market_data.get("atr_percent") or 2.0  # ATR 占价格百分比
+        price_change = market_data.get("price_change") or 0
+        price_change_1h = market_data.get("price_change_1h") or 0
 
         # 波动率判断
         if atr_percent > 4.0:
@@ -360,8 +361,8 @@ class LessonGeneralizer:
             return True
 
         # RSI 区间匹配
-        lesson_rsi = lesson_context.get("rsi", 50)
-        market_rsi = market_data.get("rsi", 50)
+        lesson_rsi = lesson_context.get("rsi") or 50
+        market_rsi = market_data.get("rsi") or 50
 
         # 允许 ±15 的误差
         if abs(lesson_rsi - market_rsi) > 15:
@@ -369,7 +370,7 @@ class LessonGeneralizer:
 
         # 趋势方向匹配
         lesson_direction = lesson_context.get("trend_direction", "")
-        market_change = market_data.get("price_change", 0)
+        market_change = market_data.get("price_change") or 0
         market_direction = "up" if market_change > 0 else "down"
 
         return not (lesson_direction and lesson_direction != market_direction)

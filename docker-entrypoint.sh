@@ -44,6 +44,13 @@ find /app/experiments -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/n
 
 echo -e "${GREEN}✅ 目录权限修复完成${NC}"
 
+# ========== 创建运行用户 ==========
+# supervisord 以 root 运行，通过 user 指令降权子进程
+# 回填模式通过 gosu 降权，也需要此用户
+groupadd -g "$PGID" appgroup 2>/dev/null || true
+useradd -u "$PUID" -g "$PGID" -M -s /bin/false -d /app appuser 2>/dev/null || true
+export APP_USER=appuser
+
 # ========== 解析运行模式 ==========
 RUN_MODE=${RUN_MODE:-main}
 
@@ -60,8 +67,13 @@ case "$RUN_MODE" in
         ENABLE_MAIN=true
         ENABLE_GRID=true
         ;;
+    backfill)
+        # 历史数据回填模式：运行完即退出，不启动 supervisord
+        ENABLE_MAIN=false
+        ENABLE_GRID=false
+        ;;
     *)
-        echo -e "${RED}❌ 无效的 RUN_MODE: ${RUN_MODE}，支持: main / grid / all${NC}"
+        echo -e "${RED}❌ 无效的 RUN_MODE: ${RUN_MODE}，支持: main / grid / all / backfill${NC}"
         exit 1
         ;;
 esac
@@ -70,7 +82,21 @@ export ENABLE_MAIN ENABLE_GRID
 export MAIN_CONFIG=${MAIN_CONFIG:-config.yaml}
 export GRID_CONFIG=${GRID_CONFIG:-config.grid.yaml}
 
-echo -e "${YELLOW}📋 运行模式: ${RUN_MODE} (main=${ENABLE_MAIN}, grid=${ENABLE_GRID})${NC}"
+echo -e "${YELLOW}📋 运行模式: ${RUN_MODE}${NC}"
+
+# ========== 回填模式：直接运行脚本后退出 ==========
+if [ "$RUN_MODE" = "backfill" ]; then
+    echo -e "${YELLOW}📋 回填参数: ${BACKFILL_ARGS:-默认（最近 90 天，BTC ETH SOL，1h）}${NC}"
+
+    echo -e "${GREEN}🎯 开始历史数据回填...${NC}"
+    echo ""
+
+    # 以降权用户运行回填脚本，通过 BACKFILL_ARGS 传递参数
+    # shellcheck disable=SC2086
+    exec gosu "$PUID:$PGID" python backfill_qlib_data.py ${BACKFILL_ARGS:-}
+fi
+
+# ========== 交易模式配置 ==========
 echo -e "${YELLOW}📋 主交易配置: ${MAIN_CONFIG}, 网格配置: ${GRID_CONFIG}${NC}"
 
 # ========== 验证配置文件 ==========
@@ -89,13 +115,6 @@ if [ "$ENABLE_GRID" = "true" ] && [ ! -f "/app/${GRID_CONFIG}" ]; then
 fi
 
 echo -e "${GREEN}✅ 配置文件检查完成${NC}"
-
-# ========== 创建运行用户 ==========
-# supervisord 以 root 运行，通过 user 指令降权子进程
-# 需要创建对应的系统用户供 supervisord 使用
-groupadd -g "$PGID" appgroup 2>/dev/null || true
-useradd -u "$PUID" -g "$PGID" -M -s /bin/false -d /app appuser 2>/dev/null || true
-export APP_USER=appuser
 
 # ========== 启动 supervisord ==========
 # supervisord 以 root 身份运行（PID 1），子进程通过 user 指令降权
