@@ -186,11 +186,6 @@ class QuantFlowBot:
                 self.logger.print_info(f"复盘每日日志目录: {self.config.review_daily_log_dir}")
 
                 self.logger.print_info("初始化复盘 Agent...")
-                # 使用 review_model 如果存在，否则使用 openai_model
-                self.config.review_model if hasattr(
-                    self.config, "review_model"
-                ) and self.config.review_model else self.config.openai_model
-
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
                     prompt_manager=self.prompt_manager,

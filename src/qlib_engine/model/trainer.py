@@ -9,6 +9,8 @@ v2 改进：
 - 支持多模型类型确保充分竞争
 """
 
+import hashlib
+import hmac
 import logging
 import pickle
 import warnings
@@ -116,6 +118,11 @@ class QLibModelTrainer:
         # 训练集清洗参数（fit 后缓存，供 predict/transform 复用）
         self._train_medians: pd.Series | None = None
         self._dropped_columns: list[str] = []
+
+        # 模型文件签名密钥（基于模型目录路径派生，防止 pickle 反序列化攻击）
+        self._signing_key = hashlib.sha256(
+            f"quantflow-model-signing:{self.model_dir.resolve()}".encode()
+        ).digest()
 
     def train(
         self,
@@ -672,8 +679,13 @@ class QLibModelTrainer:
             "dropped_columns": self._dropped_columns,
             "train_samples": train_samples,
         }
+        payload = pickle.dumps(artifact)
+
+        # 使用 HMAC 签名防止模型文件被篡改
+        signature = hmac.new(self._signing_key, payload, hashlib.sha256).digest()
         with open(path, "wb") as f:
-            pickle.dump(artifact, f)
+            f.write(signature)
+            f.write(payload)
 
         logger.info(f"模型已保存（含清洗参数，训练样本={train_samples}）: {path}")
         return path
@@ -690,7 +702,24 @@ class QLibModelTrainer:
             加载的模型对象
         """
         with open(path, "rb") as f:
-            data = pickle.load(f)  # noqa: S301
+            raw = f.read()
+
+        # 验证 HMAC 签名（新格式：前 32 字节为签名）
+        if len(raw) > 32:
+            stored_sig = raw[:32]
+            payload = raw[32:]
+            expected_sig = hmac.new(self._signing_key, payload, hashlib.sha256).digest()
+            if hmac.compare_digest(stored_sig, expected_sig):
+                data = pickle.loads(payload)  # noqa: S301
+            else:
+                # 签名不匹配，尝试作为旧格式无签名文件加载
+                try:
+                    data = pickle.loads(raw)  # noqa: S301
+                    logger.warning(f"模型文件无有效签名，以旧格式加载: {path}")
+                except Exception:
+                    raise ValueError(f"模型文件签名验证失败且无法解析: {path}")
+        else:
+            raise ValueError(f"模型文件格式无效（文件过小）: {path}")
 
         if isinstance(data, dict) and "model" in data:
             model = data["model"]

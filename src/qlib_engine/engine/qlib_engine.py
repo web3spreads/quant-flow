@@ -603,8 +603,8 @@ class QuantFlowQLibEngine:
             for path in data_dir.glob(f"*_{freq}.parquet"):
                 df = pd.read_parquet(path)
                 total += len(df)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"统计本地数据量失败: {e}")
         return total
 
     def _get_dynamic_retrain_interval(self) -> float:
