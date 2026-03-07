@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from src.trading.order_manager import OrderManager
+from src.utils.grid_math import extract_order_id
 from src.utils.logger import TradingLogger
 
 
@@ -50,7 +51,7 @@ class GridManager:
         """
         action = ai_config.get("action")
         if action != "UPDATE_GRID":
-            # 去掉‘等待’状态：即使 AI 不更新网格，也进入保底挂单模式
+            # 去掉'等待'状态：即使 AI 不更新网格，也进入保底挂单模式
             self.logger.print_section(f"🛡️ 保底挂单模式 - {symbol}", style="bold yellow")
             self.logger.print_info("AI 未触发 UPDATE_GRID，本轮改为执行保底挂单（至少 4 单）")
             self._ensure_min_orders(symbol=symbol, min_orders=4, amount_per_order=10.0)
@@ -89,19 +90,29 @@ class GridManager:
             f"AI 新区间: ${new_lower} - ${new_upper} | TP: {tp_ratio} SL: {sl_ratio}"
         )
 
-        # 1. 彻底清理旧订单
-        self._cancel_all_orders(symbol)
+        # 1. 先获取当前价格（在取消旧订单前获取，避免取消过程中价格漂移）
+        current_price = self.order_manager.client.get_current_price(symbol)
+        if not current_price or current_price <= 0:
+            self.logger.print_error(f"   [Grid] ❌ 无法获取 {symbol} 当前价格，终止同步")
+            return
 
-        # 2. 计算新价格分布
+        # 2. 彻底清理旧订单；取消失败则终止，防止新旧订单并存且旧订单被遗忘
+        cancel_ok = self._cancel_all_orders(symbol)
+        if not cancel_ok:
+            self.logger.print_error(
+                "   [Grid] ❌ 旧订单取消未完全成功，本轮不重建网格，等待下次重试"
+            )
+            return
+
+        # 3. 计算新价格分布
         prices = self._calculate_grid_prices(
             new_lower, new_upper, new_num, ai_config.get("grid_type", "GEOMETRIC")
         )
-        current_price = self.order_manager.client.get_current_price(symbol)
 
         buy_orders = []
         sell_orders = []
 
-        # 3. 重新布置
+        # 4. 重新布置
         for i, p in enumerate(prices):
             if i > 0:
                 time.sleep(1.0)  # 防限流
@@ -112,31 +123,43 @@ class GridManager:
                         symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio
                     )
                     if res and res.get("success"):
-                        oid = self._extract_oid(res["limit_order"])
+                        oid = extract_order_id(res["limit_order"])
                         if oid:
                             buy_orders.append({"oid": oid, "px": p})
                             self.logger.print_info(f"   [Grid] ✅ 买单挂载: ${p}")
+                        else:
+                            self.logger.print_warning(
+                                f"   [Grid] ⚠️ 买单提交成功但无法提取 OID @ ${p}（可能已立即成交）"
+                            )
                     elif res and not res.get("success"):
                         self.logger.print_warning(
                             f"   [Grid] ⚠️ 买单跳过 @ ${p}: {res.get('message', 'unknown')}"
                         )
+                    else:
+                        self.logger.print_warning(f"   [Grid] ⚠️ 买单返回空结果 @ ${p}")
                 elif p > current_price:
                     res = self.order_manager.execute_short_limit(
                         symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio
                     )
                     if res and res.get("success"):
-                        oid = self._extract_oid(res["limit_order"])
+                        oid = extract_order_id(res["limit_order"])
                         if oid:
                             sell_orders.append({"oid": oid, "px": p})
                             self.logger.print_info(f"   [Grid] ✅ 卖单挂载: ${p}")
+                        else:
+                            self.logger.print_warning(
+                                f"   [Grid] ⚠️ 卖单提交成功但无法提取 OID @ ${p}（可能已立即成交）"
+                            )
                     elif res and not res.get("success"):
                         self.logger.print_warning(
                             f"   [Grid] ⚠️ 卖单跳过 @ ${p}: {res.get('message', 'unknown')}"
                         )
+                    else:
+                        self.logger.print_warning(f"   [Grid] ⚠️ 卖单返回空结果 @ ${p}")
             except Exception as e:
                 self.logger.print_error(f"   [Grid] 下单异常 @ ${p}: {e}")
 
-        # 4. 更新状态
+        # 5. 更新状态
         self.state["active_grids"][symbol] = {
             "config": ai_config,
             "buy_orders": buy_orders,
@@ -144,10 +167,9 @@ class GridManager:
             "last_sync": time.time(),
         }
         self._save_state()
-        self.logger.print_info(f"✅ {symbol} 网格调整完成。")
-
-        # 无论 AI 如何，确保至少挂 4 单（资金不足时会自动缩单/跳过）
-        self._ensure_min_orders(symbol=symbol, min_orders=4, amount_per_order=10.0)
+        self.logger.print_info(
+            f"✅ {symbol} 网格调整完成，买单 {len(buy_orders)} 个，卖单 {len(sell_orders)} 个。"
+        )
 
         # 发送通知
         if self.notifier:
@@ -163,15 +185,6 @@ class GridManager:
                 sell_count=len(sell_orders),
                 reason=ai_config.get("reason", "N/A"),
             )
-
-    def _extract_oid(self, limit_order_res: dict[str, Any]) -> int | None:
-        try:
-            # 兼容 SDK 原始返回格式
-            if "response" in limit_order_res:
-                return limit_order_res["response"]["data"]["statuses"][0]["resting"]["oid"]
-            return None
-        except (KeyError, IndexError, TypeError, AttributeError):
-            return None
 
     def _calculate_grid_prices(
         self, lower: float, upper: float, num: int, grid_type: str
@@ -201,16 +214,55 @@ class GridManager:
                 prices.append(round(lower * (ratio**i), 1))
         return prices
 
-    def _cancel_all_orders(self, symbol: str):
-        grid = self.state["active_grids"].get(symbol)
-        if not grid:
-            return
+    def _cancel_all_orders(self, symbol: str) -> bool:
+        """
+        取消该交易对在交易所的所有挂单（结合 state 记录和 API 真实挂单双重覆盖）。
 
-        oids = [o["oid"] for o in grid.get("buy_orders", []) if isinstance(o, dict)] + [
-            o["oid"] for o in grid.get("sell_orders", []) if isinstance(o, dict)
-        ]
+        Returns:
+            True 表示全部取消成功，False 表示有订单取消失败
+        """
+        # 1. 收集 state 中记录的 oid（可能包含已成交或已取消的，取消时会报错忽略）
+        grid = self.state["active_grids"].get(symbol)
+        state_oids: set[int] = set()
+        if grid:
+            for o in grid.get("buy_orders", []):
+                if isinstance(o, dict) and "oid" in o:
+                    state_oids.add(o["oid"])
+            for o in grid.get("sell_orders", []):
+                if isinstance(o, dict) and "oid" in o:
+                    state_oids.add(o["oid"])
+
+        # 2. 从交易所 API 获取真实挂单（防止 state 与实际不同步时留有遗漏）
+        api_oids: set[int] = set()
+        try:
+            open_orders = self.order_manager.client.get_open_orders()
+            for o in open_orders:
+                if o.get("coin") == symbol:
+                    oid = o.get("oid")
+                    if oid is not None:
+                        api_oids.add(oid)
+        except Exception as e:
+            self.logger.print_warning(f"   [Grid] ⚠️ 获取交易所挂单失败: {e}，仅依赖 state 记录")
+
+        # 只取消实际还在交易所挂着的订单（API 返回的），state 中有但 API 中没有的说明已成交/已取消，跳过
+        oids_to_cancel = api_oids
+        stale_oids = state_oids - api_oids
+        if stale_oids:
+            self.logger.print_info(
+                f"   [Grid] state 中 {len(stale_oids)} 个订单已不在交易所挂单中（已成交/已取消），跳过"
+            )
+
+        if not oids_to_cancel:
+            # 无需取消任何订单，直接清理 state
+            if symbol in self.state["active_grids"]:
+                del self.state["active_grids"][symbol]
+                self._save_state()
+            return True
+
+        self.logger.print_info(f"   [Grid] 准备取消 {symbol} 挂单 {len(oids_to_cancel)} 个")
+
         failed = []
-        for oid in oids:
+        for oid in oids_to_cancel:
             try:
                 self.order_manager.client.cancel_order(symbol, oid)
             except Exception as e:
@@ -218,16 +270,21 @@ class GridManager:
                 failed.append(oid)
 
         if failed:
-            self.logger.print_warning(f"   [Grid] ⚠️ {len(failed)} 个订单取消失败，保留状态以便重试")
-            return
+            self.logger.print_error(
+                f"   [Grid] ❌ {len(failed)} 个订单取消失败: {failed}，保留 state 以便下次重试"
+            )
+            return False
 
-        del self.state["active_grids"][symbol]
-        self._save_state()
+        # 全部取消成功，清除 state
+        if symbol in self.state["active_grids"]:
+            del self.state["active_grids"][symbol]
+            self._save_state()
+        return True
 
     def _ensure_min_orders(self, symbol: str, min_orders: int = 4, amount_per_order: float = 10.0):
         """确保至少有 min_orders 个挂单（用于主网/测试网在 AI 观望时也能铺基础档位）。
 
-        只基于本地 state 统计当前网格挂单数；如果不足，则在当前价上下补单。
+        通过交易所 API 查询真实挂单数，而非依赖本地 state，避免已成交/已取消订单被误计。
         """
         try:
             grid = self.state["active_grids"].get(symbol) or {
@@ -237,7 +294,15 @@ class GridManager:
             }
             buy_orders = list(grid.get("buy_orders", []))
             sell_orders = list(grid.get("sell_orders", []))
-            existing = len(buy_orders) + len(sell_orders)
+
+            # 从交易所 API 获取真实挂单数（防止 state 中的"僵尸"记录干扰判断）
+            try:
+                open_orders = self.order_manager.client.get_open_orders()
+                existing = sum(1 for o in open_orders if o.get("coin") == symbol)
+                self.logger.print_info(f"   [Grid] 交易所实际挂单数: {existing}")
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] ⚠️ 获取实际挂单数失败: {e}，回退到 state 统计")
+                existing = len(buy_orders) + len(sell_orders)
 
             if existing >= min_orders:
                 return
@@ -267,7 +332,7 @@ class GridManager:
                     if p < current_price:
                         res = self.order_manager.execute_long_limit(symbol, amount_per_order, p)
                         if res and res.get("success"):
-                            oid = self._extract_oid(res["limit_order"])
+                            oid = extract_order_id(res["limit_order"])
                             if oid:
                                 buy_orders.append({"oid": oid, "px": p})
                                 self.logger.print_info(f"   [Grid] ✅ 补买单: ${p}")
@@ -279,7 +344,7 @@ class GridManager:
                     elif p > current_price:
                         res = self.order_manager.execute_short_limit(symbol, amount_per_order, p)
                         if res and res.get("success"):
-                            oid = self._extract_oid(res["limit_order"])
+                            oid = extract_order_id(res["limit_order"])
                             if oid:
                                 sell_orders.append({"oid": oid, "px": p})
                                 self.logger.print_info(f"   [Grid] ✅ 补卖单: ${p}")

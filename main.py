@@ -15,7 +15,6 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
-from src.agents.common.utils.helpers import send_error_notification
 from src.agent.external_info_agent import ExternalInfoAgent, ExternalInfoScheduler
 from src.agent.market_info_store import MarketInfoStore
 from src.agent.review_agent import ReviewAgent
@@ -26,6 +25,7 @@ from src.agent.single_symbol_agent import SingleSymbolAgent
 # RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
+from src.agents.common.utils.helpers import send_error_notification
 from src.config import DEFAULT_PERP_FEE_RATES, get_config
 from src.data.data_enricher import MarketDataEnricher
 from src.data.indicators import TechnicalIndicators
@@ -99,9 +99,7 @@ class QuantFlowBot:
         # 0. 通知系统（优先初始化，以便其他组件可以使用）
         self.logger.print_info("初始化通知系统...")
         notifications_config = getattr(self.config, "notifications", {"enabled": False})
-        self.notifier = Notifier(
-            notifications_config, is_testnet=self.config.hyperliquid_testnet
-        )
+        self.notifier = Notifier(notifications_config, is_testnet=self.config.hyperliquid_testnet)
 
         # 1. 市场数据获取器
         self.logger.print_info("初始化市场数据获取器...")
@@ -112,9 +110,7 @@ class QuantFlowBot:
         # 从 prompt_manager 获取语言设置，如果没有则默认为中文
         language = self.prompt_manager.language if self.prompt_manager else "zh"
         self.data_enricher = MarketDataEnricher(
-            market_fetcher=self.market_fetcher,
-            start_time=self.start_time,
-            language=language
+            market_fetcher=self.market_fetcher, start_time=self.start_time, language=language
         )
 
         # 2. Hyperliquid 交易客户端
@@ -123,7 +119,7 @@ class QuantFlowBot:
             private_key=self.config.hyperliquid_private_key,
             account_address=self.config.hyperliquid_account_address or None,
             testnet=self.config.hyperliquid_testnet,
-            api_urls=getattr(self.config, 'hyperliquid_api_urls', None),
+            api_urls=getattr(self.config, "hyperliquid_api_urls", None),
         )
 
         # 2.5 动态手续费（基于 userFees）
@@ -142,16 +138,12 @@ class QuantFlowBot:
         self.logger.print_info("初始化 Prompt 管理器...")
         try:
             self.prompt_manager = PromptManager(
-                config_file=getattr(
-                    self.config, "prompt_config_file", "prompts/prompts.yaml"
-                ),
+                config_file=getattr(self.config, "prompt_config_file", "prompts/prompts.yaml"),
                 prompt_set=getattr(self.config, "prompt_set", "default"),
                 fee_rates_perp=self.fee_rates,
             )
         except Exception as e:
-            self.logger.print_warning(
-                f"Prompt 管理器初始化失败，将使用硬编码 Prompt: {e}"
-            )
+            self.logger.print_warning(f"Prompt 管理器初始化失败，将使用硬编码 Prompt: {e}")
             self.prompt_manager = None
 
         # 4. LLM 客户端管理器（单例）
@@ -191,14 +183,9 @@ class QuantFlowBot:
                     base_dir=self.config.review_daily_log_dir,
                     logger=self.logger,
                 )
-                self.logger.print_info(
-                    f"复盘每日日志目录: {self.config.review_daily_log_dir}"
-                )
+                self.logger.print_info(f"复盘每日日志目录: {self.config.review_daily_log_dir}")
 
                 self.logger.print_info("初始化复盘 Agent...")
-                # 使用 review_model 如果存在，否则使用 openai_model
-                self.config.review_model if hasattr(self.config, 'review_model') and self.config.review_model else self.config.openai_model
-
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
                     prompt_manager=self.prompt_manager,
@@ -228,28 +215,44 @@ class QuantFlowBot:
             self.logger.print_info("✅ 使用增强型交易分析系统")
             # 构建增强配置
             enhanced_config = {
-                'agent_temperature': self.config.agent_temperature,
-                'agent_max_iterations': self.config.agent_max_iterations,
-                'max_trade_amount': self.config.max_trade_amount,
-                'max_leverage': self.config.max_leverage,
-                'take_profit_ratio': self.config.take_profit_ratio,
-                'stop_loss_ratio': self.config.stop_loss_ratio,
-                'limit_order_enabled': self.config.limit_order_enabled,
-                'enhanced_analysis': {
-                    'enabled': True,
-                    'min_signal_quality': getattr(self.config, 'enhanced_min_signal_quality', 'fair'),
-                    'min_confidence': getattr(self.config, 'enhanced_min_confidence', 0.4),
-                    'enable_risk_filter': getattr(self.config, 'enhanced_enable_risk_filter', True),
-                    'enable_timing_filter': getattr(self.config, 'enhanced_enable_timing_filter', True),
-                    'risk': {
-                        'max_risk_per_trade': getattr(self.config, 'enhanced_max_risk_per_trade', 0.02),
-                        'max_total_exposure': getattr(self.config, 'enhanced_max_total_exposure', 0.5),
-                        'atr_sl_multiplier': getattr(self.config, 'enhanced_atr_sl_multiplier', 1.5),
-                        'atr_tp_multiplier': getattr(self.config, 'enhanced_atr_tp_multiplier', 3.0),
-                        'trailing_stop_enabled': getattr(self.config, 'enhanced_trailing_stop_enabled', True),
-                        'volatility_adjustment': getattr(self.config, 'enhanced_volatility_adjustment', True),
-                    }
-                }
+                "agent_temperature": self.config.agent_temperature,
+                "agent_max_iterations": self.config.agent_max_iterations,
+                "max_trade_amount": self.config.max_trade_amount,
+                "max_leverage": self.config.max_leverage,
+                "take_profit_ratio": self.config.take_profit_ratio,
+                "stop_loss_ratio": self.config.stop_loss_ratio,
+                "limit_order_enabled": self.config.limit_order_enabled,
+                "enhanced_analysis": {
+                    "enabled": True,
+                    "min_signal_quality": getattr(
+                        self.config, "enhanced_min_signal_quality", "fair"
+                    ),
+                    "min_confidence": getattr(self.config, "enhanced_min_confidence", 0.4),
+                    "enable_risk_filter": getattr(self.config, "enhanced_enable_risk_filter", True),
+                    "enable_timing_filter": getattr(
+                        self.config, "enhanced_enable_timing_filter", True
+                    ),
+                    "risk": {
+                        "max_risk_per_trade": getattr(
+                            self.config, "enhanced_max_risk_per_trade", 0.02
+                        ),
+                        "max_total_exposure": getattr(
+                            self.config, "enhanced_max_total_exposure", 0.5
+                        ),
+                        "atr_sl_multiplier": getattr(
+                            self.config, "enhanced_atr_sl_multiplier", 1.5
+                        ),
+                        "atr_tp_multiplier": getattr(
+                            self.config, "enhanced_atr_tp_multiplier", 3.0
+                        ),
+                        "trailing_stop_enabled": getattr(
+                            self.config, "enhanced_trailing_stop_enabled", True
+                        ),
+                        "volatility_adjustment": getattr(
+                            self.config, "enhanced_volatility_adjustment", True
+                        ),
+                    },
+                },
             }
 
             for symbol in self.config.symbols:
@@ -261,7 +264,7 @@ class QuantFlowBot:
                     config=enhanced_config,
                     notifier=self.notifier,
                     prompt_manager=self.prompt_manager,
-                    fee_rates=self.fee_rates
+                    fee_rates=self.fee_rates,
                 )
                 self.logger.print_info(f"  ✅ {symbol} 增强型 Agent 创建完成")
         else:
@@ -320,29 +323,21 @@ class QuantFlowBot:
                     exa_api_key=exa_api_key,
                     temperature=getattr(self.config, "external_info_temperature", 0.1),
                     symbols=self.config.symbols,
-                    store_dir=getattr(
-                        self.config, "external_info_store_dir", "data/market_info"
-                    ),
+                    store_dir=getattr(self.config, "external_info_store_dir", "data/market_info"),
                     prompt_manager=self.prompt_manager,
-                    interval_hours=getattr(
-                        self.config, "external_info_interval_hours", 3.0
-                    )
+                    interval_hours=getattr(self.config, "external_info_interval_hours", 3.0),
                 )
 
                 # 创建市场信息存储实例（用于读取）
                 self.market_info_store = MarketInfoStore(
-                    base_dir=getattr(
-                        self.config, "external_info_store_dir", "data/market_info"
-                    )
+                    base_dir=getattr(self.config, "external_info_store_dir", "data/market_info")
                 )
 
                 # 创建调度器
                 self.external_info_scheduler = ExternalInfoScheduler(
                     agent=self.external_info_agent,
-                    interval_hours=getattr(
-                        self.config, "external_info_interval_hours", 3.0
-                    ),
-                    logger=self.logger
+                    interval_hours=getattr(self.config, "external_info_interval_hours", 3.0),
+                    logger=self.logger,
                 )
 
                 self.logger.print_info("✅ 外部信息收集 Agent 初始化完成")
@@ -352,9 +347,7 @@ class QuantFlowBot:
                 self.external_info_scheduler = None
         else:
             # 即使未启用 Agent，也创建存储实例以便读取已有的报告
-            store_dir = getattr(
-                self.config, "external_info_store_dir", "data/market_info"
-            )
+            store_dir = getattr(self.config, "external_info_store_dir", "data/market_info")
             self.market_info_store = MarketInfoStore(base_dir=store_dir)
 
         # 11. QLib 量化引擎（可选）
@@ -388,7 +381,7 @@ class QuantFlowBot:
         try:
             fee_rates = self.hyperliquid_client.fetch_user_fee_rates()
             self.logger.print_info(
-                f"当前费率 (自动注入): taker {fee_rates.taker_rate*100:.3f}% / maker {fee_rates.maker_rate*100:.3f}%"
+                f"当前费率 (自动注入): taker {fee_rates.taker_rate * 100:.3f}% / maker {fee_rates.maker_rate * 100:.3f}%"
             )
             return fee_rates
         except Exception as e:
@@ -440,7 +433,7 @@ class QuantFlowBot:
 
             # 优先尝试加载已有模型，避免每次启动都重新训练
             model_ready = engine.load_trained_model()
-            if model_ready:
+            if model_ready and not engine.should_retrain():
                 self.logger.print_info(
                     f"✅ 已加载已有 QLib 模型，跳过训练 "
                     f"(类型={engine._best_model_type}, "
@@ -450,7 +443,7 @@ class QuantFlowBot:
                 # 无可用模型或已过期，执行首次训练
                 qlib_data_config = self.config.qlib_config.get("data", {})
                 freq = qlib_data_config.get("freq", "1h")
-                limit = qlib_data_config.get("limit", 500)
+                limit = qlib_data_config.get("candles_limit", 500)
 
                 self.logger.print_info(f"QLib 模型训练中... (freq={freq}, limit={limit})")
                 train_result = engine.prepare_and_train(
@@ -546,8 +539,7 @@ class QuantFlowBot:
         if not self._trading_lock.acquire(blocking=False):
             self._skipped_cycles += 1
             self.logger.print_warning(
-                f"⏭️ 上一个交易周期仍在运行，跳过本次调度 "
-                f"(累计跳过: {self._skipped_cycles} 次)"
+                f"⏭️ 上一个交易周期仍在运行，跳过本次调度 (累计跳过: {self._skipped_cycles} 次)"
             )
             return
 
@@ -591,9 +583,7 @@ class QuantFlowBot:
                     return
 
                 # 有持仓时继续执行，但禁止开新仓
-                self.logger.print_info(
-                    "✅ 检测到现有持仓，继续分析以管理持仓（止盈/止损）"
-                )
+                self.logger.print_info("✅ 检测到现有持仓，继续分析以管理持仓（止盈/止损）")
                 adjusted_amount = 0  # 设为 0 表示不能开新仓
             else:
                 # 余额充足，可以开新仓
@@ -614,9 +604,7 @@ class QuantFlowBot:
 
             for symbol in self.config.symbols:
                 try:
-                    self.logger.print_section(
-                        f"📊 {symbol} - 独立 Agent 分析", style="bold cyan"
-                    )
+                    self.logger.print_section(f"📊 {symbol} - 独立 Agent 分析", style="bold cyan")
 
                     # 获取市场数据
                     df = self.market_fetcher.fetch_ohlcv(
@@ -648,19 +636,14 @@ class QuantFlowBot:
                     market_data = TechnicalIndicators.get_latest_indicators(df)
 
                     # 获取多周期趋势
-                    multi_timeframe_trends = (
-                        TechnicalIndicators.get_multi_timeframe_trend(
-                            self.market_fetcher, symbol
-                        )
+                    multi_timeframe_trends = TechnicalIndicators.get_multi_timeframe_trend(
+                        self.market_fetcher, symbol
                     )
 
                     # 显示市场数据
                     self.logger.print_market_data(symbol, market_data)
                     trend_info = " | ".join(
-                        [
-                            f"{tf}: {trend}"
-                            for tf, trend in multi_timeframe_trends.items()
-                        ]
+                        [f"{tf}: {trend}" for tf, trend in multi_timeframe_trends.items()]
                     )
                     self.logger.print_info(f"多周期趋势: {trend_info}")
 
@@ -696,9 +679,7 @@ class QuantFlowBot:
                     # 增强账户数据
                     initial_balance = getattr(self.config, "initial_balance", 10000.0)
                     account_enriched = self.data_enricher.enrich_account_data(
-                        balance_info=(
-                            balance_info if balance_info["status"] == "ok" else None
-                        ),
+                        balance_info=(balance_info if balance_info["status"] == "ok" else None),
                         initial_balance=initial_balance,
                     )
                     enriched_data.update(account_enriched)
@@ -723,20 +704,14 @@ class QuantFlowBot:
                         self.logger.print_info(
                             f"生成 {symbol} 压缩汇总（共 {history_count} 条记录）..."
                         )
-                        recent_10 = self.decision_history.get_recent_decisions(
-                            symbol, 10
-                        )
-                        recent_10_20 = self.decision_history.get_decisions_range(
-                            symbol, 10, 20
-                        )
+                        recent_10 = self.decision_history.get_recent_decisions(symbol, 10)
+                        recent_10_20 = self.decision_history.get_decisions_range(symbol, 10, 20)
 
                         # 使用 V2 压缩方法
-                        historical_summary = (
-                            self.summary_agent.create_compressed_summary(
-                                symbol=symbol,
-                                recent_records=recent_10,
-                                older_records=recent_10_20,
-                            )
+                        historical_summary = self.summary_agent.create_compressed_summary(
+                            symbol=symbol,
+                            recent_records=recent_10,
+                            older_records=recent_10_20,
                         )
                     elif history_count >= 10:
                         # 只有 10-19 条记录，生成简单压缩汇总
@@ -746,10 +721,8 @@ class QuantFlowBot:
                         recent = self.decision_history.get_recent_decisions(symbol, 10)
 
                         # 使用 V2 压缩方法
-                        historical_summary = (
-                            self.summary_agent.create_compressed_summary(
-                                symbol=symbol, recent_records=recent, older_records=None
-                            )
+                        historical_summary = self.summary_agent.create_compressed_summary(
+                            symbol=symbol, recent_records=recent, older_records=None
                         )
                     else:
                         self.logger.print_info(
@@ -758,9 +731,7 @@ class QuantFlowBot:
 
                     # 追加复盘经验，帮助 Agent 复用历史经验（仅在复盘功能启用时）
                     if self.config.review_enabled and self.review_memory_store:
-                        lessons_text = self.review_memory_store.get_lessons_summary(
-                            symbol, limit=5
-                        )
+                        lessons_text = self.review_memory_store.get_lessons_summary(symbol, limit=5)
                         if lessons_text:
                             historical_summary = (
                                 f"{historical_summary}\n\n{lessons_text}"
@@ -769,13 +740,15 @@ class QuantFlowBot:
                             )
 
                     # 追加外部市场信息，帮助 Agent 基于市场环境做决策（仅在外部信息功能启用时）
-                    if getattr(self.config, "external_info_enabled", False) and self.market_info_store:
+                    if (
+                        getattr(self.config, "external_info_enabled", False)
+                        and self.market_info_store
+                    ):
                         max_summary_length = getattr(
                             self.config, "external_info_max_summary_length", 2000
                         )
                         market_info_summary = self.market_info_store.get_combined_summary(
-                            symbols=[symbol],
-                            max_length=max_summary_length
+                            symbols=[symbol], max_length=max_summary_length
                         )
                         if market_info_summary:
                             external_info_header = "\n\n## 📰 外部市场信息\n"
@@ -808,9 +781,7 @@ class QuantFlowBot:
                                 )
                         except Exception as e:
                             enriched_data["qlib_enabled"] = False
-                            self.logger.print_warning(
-                                f"⚠️ [{symbol}] QLib 信号获取失败: {e}"
-                            )
+                            self.logger.print_warning(f"⚠️ [{symbol}] QLib 信号获取失败: {e}")
                             self.logger.logger.exception(e)
                     else:
                         enriched_data["qlib_enabled"] = False
@@ -819,7 +790,10 @@ class QuantFlowBot:
                     agent = self.symbol_agents[symbol]
 
                     # 如果是增强型Agent，使用增强决策方法
-                    if isinstance(agent, EnhancedSingleSymbolAgent) and agent.enable_enhanced_analysis:
+                    if (
+                        isinstance(agent, EnhancedSingleSymbolAgent)
+                        and agent.enable_enhanced_analysis
+                    ):
                         decision, details = agent.make_decision_with_enhanced_analysis(
                             market_data=market_data,
                             multi_timeframe_trends=multi_timeframe_trends,
@@ -828,7 +802,7 @@ class QuantFlowBot:
                             historical_summary=historical_summary,
                             enriched_data=enriched_data,
                             df=df,  # 传入DataFrame用于增强分析
-                            account_balance=balance_info.get('available', 0)
+                            account_balance=balance_info.get("available", 0),
                         )
 
                         # 如果有增强决策信息，记录到日志
@@ -881,9 +855,7 @@ class QuantFlowBot:
                                 "market_data": market_data,
                                 "multi_timeframe_trends": multi_timeframe_trends,
                                 "reason": details.get("output", ""),
-                                "timestamp": datetime.now().strftime(
-                                    "%Y-%m-%d %H:%M:%S"
-                                ),
+                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             }
                         )
 
@@ -914,21 +886,15 @@ class QuantFlowBot:
                         self.logger.print_info(f"评估 {symbol} 的现货定投推荐...")
 
                         # 调用现货 Agent 评估
-                        spot_decision, spot_details = (
-                            self.spot_agent.evaluate_spot_recommendation(
-                                symbol=symbol,
-                                market_data=recommendation["market_data"],
-                                multi_timeframe_trends=recommendation[
-                                    "multi_timeframe_trends"
-                                ],
-                                recommendation=recommendation,
-                                current_spot_holdings=current_spot_holdings,
-                            )
+                        spot_decision, spot_details = self.spot_agent.evaluate_spot_recommendation(
+                            symbol=symbol,
+                            market_data=recommendation["market_data"],
+                            multi_timeframe_trends=recommendation["multi_timeframe_trends"],
+                            recommendation=recommendation,
+                            current_spot_holdings=current_spot_holdings,
                         )
 
-                        self.logger.print_info(
-                            f"[现货Agent] {symbol} 决策: {spot_decision}"
-                        )
+                        self.logger.print_info(f"[现货Agent] {symbol} 决策: {spot_decision}")
 
                         # 记录现货决策日志
                         self.logger.log_decision(
@@ -989,9 +955,7 @@ class QuantFlowBot:
 
             # 添加外部信息收集定时任务
             if self.external_info_agent:
-                interval_hours = getattr(
-                    self.config, "external_info_interval_hours", 3.0
-                )
+                interval_hours = getattr(self.config, "external_info_interval_hours", 3.0)
                 # 将小时转换为分钟
                 interval_minutes = int(interval_hours * 60)
 
@@ -1002,9 +966,7 @@ class QuantFlowBot:
                     name="外部信息收集任务",
                     replace_existing=True,
                 )
-                self.logger.print_info(
-                    f"📡 外部信息收集任务已添加，间隔: {interval_hours} 小时"
-                )
+                self.logger.print_info(f"📡 外部信息收集任务已添加，间隔: {interval_hours} 小时")
 
                 # 首次启动时立即执行一次外部信息收集
                 self.logger.print_info("立即执行首次外部信息收集...")
@@ -1012,9 +974,9 @@ class QuantFlowBot:
 
             # 添加 QLib 重训练检查定时任务（实际由 should_retrain 动态决定）
             if self.qlib_engine:
-                check_interval_hours = self.config.qlib_config.get(
-                    "online", {}
-                ).get("check_interval_hours", 4)
+                check_interval_hours = self.config.qlib_config.get("online", {}).get(
+                    "check_interval_hours", 4
+                )
                 check_interval_minutes = int(check_interval_hours * 60)
 
                 self.scheduler.add_job(
@@ -1037,9 +999,7 @@ class QuantFlowBot:
             # 显示下次执行时间
             next_run = datetime.now().replace(second=0, microsecond=0)
             next_run = next_run + timedelta(minutes=self.config.interval_minutes)
-            self.logger.print_info(
-                f"下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}"
-            )
+            self.logger.print_info(f"下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
             self.logger.print_info(f"执行间隔: {self.config.interval_minutes} 分钟")
 
             # 启动调度器
@@ -1076,10 +1036,7 @@ class QuantFlowBot:
             return
 
         try:
-            self.logger.print_section(
-                "📡 开始外部信息收集任务",
-                style="bold blue"
-            )
+            self.logger.print_section("📡 开始外部信息收集任务", style="bold blue")
 
             # 执行收集（使用配置的间隔时间）
             saved_file = self.external_info_agent.collect_and_save()
@@ -1092,14 +1049,12 @@ class QuantFlowBot:
                 if self.notifier and self.notifier.enabled:
                     # 获取报告摘要
                     summary = self.external_info_agent.get_latest_summary(
-                        symbols=self.config.symbols,
-                        max_length=2000
+                        symbols=self.config.symbols, max_length=2000
                     )
 
                     if summary:
                         self.notifier.notify_external_info_summary(
-                            summary=summary,
-                            file_path=saved_file
+                            summary=summary, file_path=saved_file
                         )
             else:
                 self.logger.print_warning("⚠️ 外部信息收集未生成任何报告")
@@ -1126,7 +1081,7 @@ class QuantFlowBot:
 
             qlib_data_config = self.config.qlib_config.get("data", {})
             freq = qlib_data_config.get("freq", "1h")
-            limit = qlib_data_config.get("limit", 500)
+            limit = qlib_data_config.get("candles_limit", 500)
 
             train_result = self.qlib_engine.prepare_and_train(
                 symbols=self.config.symbols,
@@ -1170,7 +1125,9 @@ class QuantFlowBot:
             # 安全转换（处理 np.float64 等）
             ic = float(ic) if not (isinstance(ic, float) and math.isnan(ic)) else 0.0
             icir = float(icir) if not (isinstance(icir, float) and math.isnan(icir)) else 0.0
-            rank_ic = float(rank_ic) if not (isinstance(rank_ic, float) and math.isnan(rank_ic)) else 0.0
+            rank_ic = (
+                float(rank_ic) if not (isinstance(rank_ic, float) and math.isnan(rank_ic)) else 0.0
+            )
 
             detail = f"  {name}{tag} | IC={ic:+.4f} RankIC={rank_ic:+.4f} ICIR={icir:+.3f}"
             detail += f" mono={float(mono):.2f} predStd={float(pred_std):.6f}"
@@ -1375,8 +1332,7 @@ class QuantFlowBot:
 
             # 过滤出该币种最近N小时的交易
             recent_fills = [
-                f for f in fills
-                if f.get("coin") == symbol and f.get("time", 0) >= cutoff_time
+                f for f in fills if f.get("coin") == symbol and f.get("time", 0) >= cutoff_time
             ]
 
             # 按时间排序（从旧到新）
@@ -1408,9 +1364,7 @@ class QuantFlowBot:
             # 统计交易信息
             total_trades = len(recent_fills)
             total_pnl = sum(float(f.get("closedPnl", 0)) for f in recent_fills)
-            profitable_trades = sum(
-                1 for f in recent_fills if float(f.get("closedPnl", 0)) > 0
-            )
+            profitable_trades = sum(1 for f in recent_fills if float(f.get("closedPnl", 0)) > 0)
 
             self.statistics["total_trades"] = total_trades
             self.statistics["total_pnl"] = total_pnl
@@ -1474,19 +1428,16 @@ def main():
 
   # 指定配置文件和环境变量文件
   python main.py --config config.yaml --env-file .env.testnet
-        """
+        """,
     )
     parser.add_argument(
-        '--config',
-        type=str,
-        default='config.yaml',
-        help='配置文件路径（默认: config.yaml）'
+        "--config", type=str, default="config.yaml", help="配置文件路径（默认: config.yaml）"
     )
     parser.add_argument(
-        '--env-file',
+        "--env-file",
         type=str,
         default=None,
-        help='环境变量文件路径（默认: .env，可通过环境变量 DOTENV_PATH 覆盖）'
+        help="环境变量文件路径（默认: .env，可通过环境变量 DOTENV_PATH 覆盖）",
     )
     args = parser.parse_args()
 

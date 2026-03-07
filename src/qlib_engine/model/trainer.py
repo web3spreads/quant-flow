@@ -9,6 +9,8 @@ v2 改进：
 - 支持多模型类型确保充分竞争
 """
 
+import hashlib
+import hmac
 import logging
 import pickle
 import warnings
@@ -116,6 +118,11 @@ class QLibModelTrainer:
         # 训练集清洗参数（fit 后缓存，供 predict/transform 复用）
         self._train_medians: pd.Series | None = None
         self._dropped_columns: list[str] = []
+
+        # 模型文件签名密钥（基于模型目录路径派生，防止 pickle 反序列化攻击）
+        self._signing_key = hashlib.sha256(
+            f"quantflow-model-signing:{self.model_dir.resolve()}".encode()
+        ).digest()
 
     def train(
         self,
@@ -647,13 +654,14 @@ class QLibModelTrainer:
             )
         return best_match
 
-    def save_model(self, model_type: str, tag: str = "") -> Path:
+    def save_model(self, model_type: str, tag: str = "", train_samples: int = 0) -> Path:
         """
         保存模型到磁盘
 
         Args:
             model_type: 模型类型
             tag: 模型标签
+            train_samples: 训练时的数据总量（用于后续数据增量检测）
 
         Returns:
             保存路径
@@ -669,11 +677,17 @@ class QLibModelTrainer:
             "model": self.trained_models[model_type],
             "train_medians": self._train_medians,
             "dropped_columns": self._dropped_columns,
+            "train_samples": train_samples,
         }
-        with open(path, "wb") as f:
-            pickle.dump(artifact, f)
+        payload = pickle.dumps(artifact)
 
-        logger.info(f"模型已保存（含清洗参数）: {path}")
+        # 使用 HMAC 签名防止模型文件被篡改
+        signature = hmac.new(self._signing_key, payload, hashlib.sha256).digest()
+        with open(path, "wb") as f:
+            f.write(signature)
+            f.write(payload)
+
+        logger.info(f"模型已保存（含清洗参数，训练样本={train_samples}）: {path}")
         return path
 
     def load_model(self, path: str | Path, model_type: str = "loaded") -> object:
@@ -688,17 +702,36 @@ class QLibModelTrainer:
             加载的模型对象
         """
         with open(path, "rb") as f:
-            data = pickle.load(f)  # noqa: S301
+            raw = f.read()
+
+        # 验证 HMAC 签名（新格式：前 32 字节为签名）
+        if len(raw) > 32:
+            stored_sig = raw[:32]
+            payload = raw[32:]
+            expected_sig = hmac.new(self._signing_key, payload, hashlib.sha256).digest()
+            if hmac.compare_digest(stored_sig, expected_sig):
+                data = pickle.loads(payload)  # noqa: S301
+            else:
+                # 签名不匹配，尝试作为旧格式无签名文件加载
+                try:
+                    data = pickle.loads(raw)  # noqa: S301
+                    logger.warning(f"模型文件无有效签名，以旧格式加载: {path}")
+                except Exception:
+                    raise ValueError(f"模型文件签名验证失败且无法解析: {path}")
+        else:
+            raise ValueError(f"模型文件格式无效（文件过小）: {path}")
 
         if isinstance(data, dict) and "model" in data:
             model = data["model"]
             self._train_medians = data.get("train_medians")
             self._dropped_columns = data.get("dropped_columns", [])
-            logger.info(f"模型已加载（含清洗参数）: {path}")
+            self._loaded_train_samples = data.get("train_samples", 0)
+            logger.info(f"模型已加载（含清洗参数，训练样本={self._loaded_train_samples}）: {path}")
         else:
             model = data
             self._train_medians = None
             self._dropped_columns = []
+            self._loaded_train_samples = 0
             logger.info(f"模型已加载（旧格式，无清洗参数）: {path}")
 
         self.trained_models[model_type] = model

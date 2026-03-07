@@ -184,12 +184,23 @@ class QuantFlowQLibEngine:
             self._best_model_type = model_type
             self._last_train_time = train_time
 
+            # 从模型 artifact 中恢复训练时的数据量基线
+            persisted_samples = getattr(self.trainer, "_loaded_train_samples", 0)
+            if persisted_samples > 0:
+                self._last_train_samples = persisted_samples
+            else:
+                # 旧格式模型无此字段，保持为 0，数据增量检测将被跳过
+                # 仍可通过时间间隔触发重训练，届时新模型会保存 train_samples
+                self._last_train_samples = 0
+                logger.info("旧格式模型缺少 train_samples，数据增量检测将在首次重训练后生效")
+
             self._last_evaluation = {"IC": 0.05, "ICIR": 0.5}
             self.predictor.update_model_metrics(self._last_evaluation)
 
             logger.info(
                 f"成功加载已有模型: 类型={model_type}, "
-                f"训练时间={train_time}, 剩余有效期={retrain_hours - elapsed_hours:.1f}h"
+                f"训练时间={train_time}, 剩余有效期={retrain_hours - elapsed_hours:.1f}h, "
+                f"数据基线={self._last_train_samples} 条"
             )
             return True
         except Exception as e:
@@ -348,7 +359,7 @@ class QuantFlowQLibEngine:
                 cv_results=cv_results if cv_results else None,
             )
 
-            self.trainer.save_model(self._best_model_type, tag="best")
+            self.trainer.save_model(self._best_model_type, tag="best", train_samples=len(raw_data))
 
             best_eval = evaluation_results.get(self._best_model_type, {})
             self._last_evaluation = best_eval
@@ -544,7 +555,12 @@ class QuantFlowQLibEngine:
 
     def should_retrain(self) -> bool:
         """
-        判断是否需要重新训练模型（动态间隔）
+        判断是否需要重新训练模型（动态间隔 + 数据增量检测）
+
+        触发条件（满足任一即触发）：
+        1. 模型未训练或无训练时间记录
+        2. 达到动态重训练时间间隔
+        3. 本地数据量相比上次训练增长超过 20%（回填新数据后触发）
 
         Returns:
             True 如果需要重训练
@@ -552,6 +568,7 @@ class QuantFlowQLibEngine:
         if not self.model_trained or self._last_train_time is None:
             return True
 
+        # 条件 1：时间间隔
         retrain_hours = self._get_dynamic_retrain_interval()
         elapsed = (datetime.now() - self._last_train_time).total_seconds() / 3600
 
@@ -560,7 +577,35 @@ class QuantFlowQLibEngine:
                 f"达到动态重训练间隔: 已过 {elapsed:.1f}h >= {retrain_hours}h "
                 f"(样本量={self._last_train_samples})"
             )
-        return elapsed >= retrain_hours
+            return True
+
+        # 条件 2：数据增量检测（回填新数据后及时触发重训练）
+        if self._last_train_samples > 0 and self.collector is not None:
+            current_samples = self._count_local_samples()
+            if current_samples > 0:
+                growth_ratio = current_samples / self._last_train_samples
+                if growth_ratio >= 1.2:
+                    logger.info(
+                        f"检测到数据增量: 当前 {current_samples} 条 vs "
+                        f"上次训练 {self._last_train_samples} 条 "
+                        f"(增长 {(growth_ratio - 1) * 100:.1f}%)，触发重训练"
+                    )
+                    return True
+
+        return False
+
+    def _count_local_samples(self) -> int:
+        """统计本地 parquet 文件中的数据总量"""
+        total = 0
+        try:
+            freq = self.config.get("data", {}).get("freq", "1h")
+            data_dir = self.collector.data_dir
+            for path in data_dir.glob(f"*_{freq}.parquet"):
+                df = pd.read_parquet(path)
+                total += len(df)
+        except Exception as e:
+            logger.warning(f"统计本地数据量失败: {e}")
+        return total
 
     def _get_dynamic_retrain_interval(self) -> float:
         """根据样本量计算动态重训练间隔（小时）"""

@@ -5,6 +5,30 @@
 from typing import Any
 
 
+def extract_order_id(limit_order_res: dict[str, Any]) -> int | None:
+    """
+    从下单响应中提取订单 ID，兼容 resting（挂单中）和 filled（立即成交）两种状态。
+
+    Args:
+        limit_order_res: place_limit_order 的返回结果
+
+    Returns:
+        订单 ID，提取失败时返回 None
+    """
+    try:
+        statuses = limit_order_res.get("response", {}).get("data", {}).get("statuses", [])
+        if not statuses:
+            return None
+        status = statuses[0]
+        if "resting" in status:
+            return status["resting"]["oid"]
+        if "filled" in status:
+            return status["filled"]["oid"]
+        return None
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None
+
+
 def calculate_grid_config(
     current_price: float,
     available_balance: float,
@@ -55,8 +79,18 @@ def calculate_grid_config(
         amount_per_grid = 15.5
 
     # 3. 计算止盈止损
-    tp_ratio = round((width_pct / grid_num) * 0.8, 4)
-    sl_ratio = 0.05
+    # 止盈：每格宽度的 80%，确保覆盖双边手续费（Hyperliquid 约 0.035% Maker）
+    # 最低保障：tp_ratio >= 双边手续费 / 杠杆 * 2（2 倍手续费作为最小利润缓冲）
+    fee_rate = 0.00035  # Hyperliquid Maker 手续费率（保守估计）
+    min_tp_ratio = fee_rate * 2 * 2  # 双边手续费 × 2 倍缓冲（tp_ratio 是价格百分比，与杠杆无关）
+    raw_tp_ratio = (width_pct / grid_num) * 0.8
+    tp_ratio = round(max(raw_tp_ratio, min_tp_ratio), 4)
+
+    # 止损：控制在止盈的 2 倍内，避免单次止损亏损过多
+    # 同时设置上限 2%（10x 杠杆下最多亏损 20% 本金），下限 0.5%
+    max_sl_ratio = 0.02
+    min_sl_ratio = 0.005
+    sl_ratio = round(min(max(tp_ratio * 2, min_sl_ratio), max_sl_ratio), 4)
 
     return {
         "action": "UPDATE_GRID",

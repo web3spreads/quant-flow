@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from src.trading.client import HyperliquidClient
+from src.utils.grid_math import extract_order_id
 
 
 class LimitOrderMonitor:
@@ -131,13 +132,12 @@ class LimitOrderMonitor:
         with self._lock:
             orders_to_check = list(self._pending_orders.items())
 
-        # 获取当前持仓
-        positions = self.client.get_positions()
-        position_map = {p["coin"]: p for p in positions}
-
         # 获取当前挂单
         open_orders = self.client.get_open_orders()
         open_order_ids = {o.get("oid") for o in open_orders}
+
+        # 批量获取持仓，减少 API 调用；设置 TPSL 后置空以触发刷新
+        position_map: dict[str, Any] | None = None
 
         for order_id, order_info in orders_to_check:
             symbol = order_info["symbol"]
@@ -155,20 +155,29 @@ class LimitOrderMonitor:
                 # 订单仍未成交，继续监控
                 continue
 
-            # 订单不在挂单中，检查是否有对应持仓
+            # 订单不在挂单中，说明已成交或已取消
+            # 用订单记录的原始 size（而非总持仓），避免多单同时成交时超额设置止盈止损
+            order_size = order_info["size"]
+            is_buy = order_info["is_buy"]
+
+            # 验证确实有对应方向的持仓（防止订单被取消后误操作）
+            # 在循环内获取最新持仓，确保数据准确（持仓可能因前一个订单的 TPSL 设置而变化）
+            if position_map is None:
+                positions = self.client.get_positions()
+                position_map = {p["coin"]: p for p in positions}
             position = position_map.get(symbol)
+
             if position:
                 position_size = float(position.get("szi", 0))
-                is_buy = order_info["is_buy"]
-
-                # 检查持仓方向是否匹配
                 if (is_buy and position_size > 0) or (not is_buy and position_size < 0):
-                    # 限价单成交，设置止盈止损
-                    print(f"✅ 限价单 {order_id} 已成交，正在设置止盈止损")
-                    self._set_tpsl_for_order(order_id, order_info, abs(position_size))
+                    # 限价单成交，用订单原始 size 设置止盈止损
+                    print(f"✅ 限价单 {order_id} 已成交，正在设置止盈止损 (size={order_size})")
+                    self._set_tpsl_for_order(order_id, order_info, order_size)
+                    # TPSL 设置可能影响持仓状态，下次循环需要刷新
+                    position_map = None
                 else:
-                    # 持仓方向不匹配，可能已被平仓
-                    print(f"⚠️ 限价单 {order_id} 持仓方向不匹配，可能已平仓")
+                    # 持仓方向不匹配，订单可能被取消
+                    print(f"⚠️ 限价单 {order_id} 持仓方向不匹配，可能已取消")
                     self.remove_order(order_id)
             else:
                 # 无持仓，订单可能被取消或已平仓
@@ -998,13 +1007,18 @@ class OrderManager:
 
             print(f"📈 限价开多 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
 
-            # 2. 设置杠杆
-            print(f"   设置杠杆: {lev}x (逐仓模式)")
-            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+            # 2. 仅在无持仓时设置杠杆（避免逐仓模式下有持仓时修改杠杆导致保证金问题）
+            current_positions = self.get_current_positions()
+            has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
-            if leverage_result.get("status") == "error":
-                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                return None
+            if has_position:
+                print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
+            else:
+                print(f"   设置杠杆: {lev}x (逐仓模式)")
+                leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+                if leverage_result.get("status") == "error":
+                    print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                    return None
 
             # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
             actual_tp_ratio = tp_ratio if tp_ratio is not None else self.take_profit_ratio
@@ -1016,8 +1030,8 @@ class OrderManager:
             tp_price = self.client.format_price(symbol, tp_price)
             sl_price = self.client.format_price(symbol, sl_price)
 
-            print(f"   止盈价: ${tp_price:.2f} (+{self.take_profit_ratio * 100}%)")
-            print(f"   止损价: ${sl_price:.2f} (-{self.stop_loss_ratio * 100}%)")
+            print(f"   止盈价: ${tp_price:.2f} (+{actual_tp_ratio * 100:.3f}%)")
+            print(f"   止损价: ${sl_price:.2f} (-{actual_sl_ratio * 100:.3f}%)")
 
             # 4. 下限价单
             limit_order = self.client.place_limit_order(
@@ -1035,6 +1049,23 @@ class OrderManager:
                     "stop_loss_price": sl_price,
                     "message": "限价单已提交，成交后将自动设置止盈止损",
                 }
+
+                # 5. 注册到 LimitOrderMonitor，成交后自动设置止盈止损
+                if self.limit_order_monitor:
+                    order_id = extract_order_id(limit_order)
+                    if order_id:
+                        self.limit_order_monitor.add_order(
+                            order_id=order_id,
+                            symbol=symbol,
+                            is_buy=True,
+                            size=size,
+                            entry_price=limit_price,
+                            take_profit_price=tp_price,
+                            stop_loss_price=sl_price,
+                        )
+                    else:
+                        print("⚠️ 无法提取订单 ID，限价单监控未注册（限价单可能已立即成交）")
+
                 return result
             else:
                 print(f"❌ 限价单失败: {limit_order.get('message')}")
@@ -1084,13 +1115,18 @@ class OrderManager:
 
             print(f"📉 限价开空 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
 
-            # 2. 设置杠杆
-            print(f"   设置杠杆: {lev}x (逐仓模式)")
-            leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+            # 2. 仅在无持仓时设置杠杆（避免逐仓模式下有持仓时修改杠杆导致保证金问题）
+            current_positions = self.get_current_positions()
+            has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
-            if leverage_result.get("status") == "error":
-                print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
-                return None
+            if has_position:
+                print(f"   ⚠️  检测到已有 {symbol} 持仓，跳过杠杆设置（使用现有杠杆）")
+            else:
+                print(f"   设置杠杆: {lev}x (逐仓模式)")
+                leverage_result = self.client.update_leverage(symbol, lev, is_cross=False)
+                if leverage_result.get("status") == "error":
+                    print(f"❌ 杠杆设置失败: {leverage_result.get('message')}")
+                    return None
 
             # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
             # 做空：止盈价 = 限价 * (1 - take_profit_ratio)，止损价 = 限价 * (1 + stop_loss_ratio)
@@ -1103,8 +1139,8 @@ class OrderManager:
             tp_price = self.client.format_price(symbol, tp_price)
             sl_price = self.client.format_price(symbol, sl_price)
 
-            print(f"   止盈价: ${tp_price:.2f} (-{self.take_profit_ratio * 100}%)")
-            print(f"   止损价: ${sl_price:.2f} (+{self.stop_loss_ratio * 100}%)")
+            print(f"   止盈价: ${tp_price:.2f} (-{actual_tp_ratio * 100:.3f}%)")
+            print(f"   止损价: ${sl_price:.2f} (+{actual_sl_ratio * 100:.3f}%)")
 
             # 4. 下限价单
             limit_order = self.client.place_limit_order(
@@ -1122,6 +1158,23 @@ class OrderManager:
                     "stop_loss_price": sl_price,
                     "message": "限价单已提交，成交后将自动设置止盈止损",
                 }
+
+                # 5. 注册到 LimitOrderMonitor，成交后自动设置止盈止损
+                if self.limit_order_monitor:
+                    order_id = extract_order_id(limit_order)
+                    if order_id:
+                        self.limit_order_monitor.add_order(
+                            order_id=order_id,
+                            symbol=symbol,
+                            is_buy=False,
+                            size=size,
+                            entry_price=limit_price,
+                            take_profit_price=tp_price,
+                            stop_loss_price=sl_price,
+                        )
+                    else:
+                        print("⚠️ 无法提取订单 ID，限价单监控未注册（限价单可能已立即成交）")
+
                 return result
             else:
                 print(f"❌ 限价单失败: {limit_order.get('message')}")

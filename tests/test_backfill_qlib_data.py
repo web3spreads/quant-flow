@@ -516,10 +516,10 @@ class TestMainFlow:
                     "0",
                 ],
             ),
-            patch("backfill_qlib_data.Info") as MockInfo,
+            patch("backfill_qlib_data.create_info") as MockCreateInfo,
             patch("backfill_qlib_data.time.sleep"),
         ):
-            mock_instance = MockInfo.return_value
+            mock_instance = MockCreateInfo.return_value
             mock_instance.candles_snapshot.return_value = mock_candles
 
             from backfill_qlib_data import main
@@ -563,10 +563,10 @@ class TestMainFlow:
                     "0",
                 ],
             ),
-            patch("backfill_qlib_data.Info") as MockInfo,
+            patch("backfill_qlib_data.create_info") as MockCreateInfo,
             patch("backfill_qlib_data.time.sleep"),
         ):
-            mock_instance = MockInfo.return_value
+            mock_instance = MockCreateInfo.return_value
             mock_instance.candles_snapshot.side_effect = [
                 make_candles(70000),
                 make_candles(3000),
@@ -617,11 +617,11 @@ class TestMainFlow:
                     "0",
                 ],
             ),
-            patch("backfill_qlib_data.Info") as MockInfo,
+            patch("backfill_qlib_data.create_info") as MockCreateInfo,
             patch("backfill_qlib_data.time.sleep"),
             pytest.raises(SystemExit) as exc_info,
         ):
-            mock_instance = MockInfo.return_value
+            mock_instance = MockCreateInfo.return_value
             mock_instance.candles_snapshot.return_value = []
 
             from backfill_qlib_data import main
