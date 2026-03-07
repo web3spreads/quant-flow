@@ -1103,16 +1103,12 @@ class QuantFlowBot:
             self._notify_qlib_retrain({"error": str(e)}, success=False)
 
     @staticmethod
-    def _format_train_summary(train_result: dict) -> str:
-        """格式化训练结果为精炼的日志摘要"""
+    @staticmethod
+    def _format_eval_lines(evaluation: dict, best: str, cv: dict) -> list[str]:
+        """格式化单组模型评估结果"""
         import math
 
-        best = train_result.get("best_model", "N/A")
-        evaluation = train_result.get("evaluation", {})
-        cv = train_result.get("cv_results", {})
-
-        lines = [f"  最优模型: {best}"]
-
+        lines = []
         for name, ev in evaluation.items():
             tag = " *" if name == best else ""
             ic = ev.get("IC", 0) or 0
@@ -1122,7 +1118,6 @@ class QuantFlowBot:
             overfit = ev.get("过拟合比率", None)
             mono = ev.get("分组单调性", 0) or 0
 
-            # 安全转换（处理 np.float64 等）
             ic = float(ic) if not (isinstance(ic, float) and math.isnan(ic)) else 0.0
             icir = float(icir) if not (isinstance(icir, float) and math.isnan(icir)) else 0.0
             rank_ic = (
@@ -1135,13 +1130,48 @@ class QuantFlowBot:
             if overfit is not None and not (isinstance(overfit, float) and math.isinf(overfit)):
                 detail += f" overfit={float(overfit):.1f}x"
 
-            # CV 结果
             cv_data = cv.get(name, {})
             cv_icir = cv_data.get("icir_cv", None)
             if cv_icir is not None and cv_icir != 0:
                 detail += f" cvICIR={float(cv_icir):+.3f}"
 
             lines.append(detail)
+        return lines
+
+    @staticmethod
+    def _format_train_summary(train_result: dict) -> str:
+        """格式化训练结果为精炼的日志摘要"""
+        lines = []
+
+        # 按币种独立训练模式
+        per_symbol = train_result.get("per_symbol_results", {})
+        if per_symbol:
+            for sym, sr in per_symbol.items():
+                ic = sr.get("IC", 0)
+                icir = sr.get("ICIR", 0)
+                overfit = sr.get("overfit", "-")
+                tr = sr.get("train_samples", 0)
+                te = sr.get("test_samples", 0)
+                feat = sr.get("feature_count", 0)
+                best_m = sr.get("best_model", "?")
+                time_range = f"{sr.get('data_time_start', '?')} ~ {sr.get('data_time_end', '?')}"
+                lines.append(
+                    f"  [{sym}] 最优={best_m} IC={float(ic):+.4f} ICIR={float(icir):+.3f} "
+                    f"overfit={overfit} 样本={tr}+{te} 特征={feat}"
+                )
+                lines.append(f"         数据范围: {time_range}")
+                feat_names = sr.get("feature_names", [])
+                if feat_names:
+                    lines.append(f"         特征: {', '.join(feat_names[:10])}")
+            return "\n".join(lines)
+
+        # 混合训练模式
+        best = train_result.get("best_model", "N/A")
+        evaluation = train_result.get("evaluation", {})
+        cv = train_result.get("cv_results", {})
+
+        lines.append(f"  最优模型: {best}")
+        lines.extend(QuantFlowBot._format_eval_lines(evaluation, best, cv))
 
         total = train_result.get("total_raw_samples", 0)
         tr = train_result.get("train_samples", 0)

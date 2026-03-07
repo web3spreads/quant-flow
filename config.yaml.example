@@ -307,17 +307,23 @@ qlib:
 
   # 数据层配置
   data:
-    # 数据频率（用于因子计算和模型训练）
-    freq: 1h
+    # 数据频率（用于因子计算和模型训练，建议 4h，1h 噪声过大）
+    freq: 4h
 
-    # 每个交易对获取的 K 线数量
+    # 每个交易对从 API 增量拉取的 K 线数量上限（不影响本地全量数据参与训练）
     candles_limit: 500
 
     # 是否包含永续合约特有因子（资金费率、未平仓量、溢价率）
     include_perpetual: true
 
-    # 标签预测期数（预测未来 N 期收益率）
-    label_periods: 5
+    # 标签预测期数（预测未来 N 期收益率，4h × 6 = 24小时）
+    label_periods: 6
+
+    # 特征选择：保留 IC 排名前 K 的特征（0=不做选择，建议 15~25）
+    feature_select_top_k: 20
+
+    # 按币种独立训练模型（每个币种独立的模型和特征选择，避免不同币种互相干扰）
+    per_symbol_training: true
 
     # 本地数据存储目录（用于数据累加，数据和模型分离）
     data_dir: data/qlib

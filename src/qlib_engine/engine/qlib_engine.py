@@ -73,6 +73,12 @@ class QuantFlowQLibEngine:
         self._last_evaluation: dict = {}
         self._last_cv_results: dict = {}
 
+        # 按币种独立训练的模型状态
+        self._per_symbol_training: bool = False
+        self._symbol_models: dict[str, dict] = {}
+        # 结构: { "BTC": { "trainer": QLibModelTrainer, "handler": CryptoAlpha158,
+        #                   "best_model_type": str, "evaluation": dict } }
+
     def initialize(
         self,
         testnet: bool = False,
@@ -147,12 +153,21 @@ class QuantFlowQLibEngine:
             qlib_weight=risk_config.get("qlib_signal_weight", 0.7),
         )
 
+        self._per_symbol_training = self.config.get("data", {}).get("per_symbol_training", False)
+
         self.initialized = True
-        logger.info("QLib 引擎 v2 初始化完成")
+        logger.info(
+            f"QLib 引擎 v2 初始化完成"
+            f"{'（按币种独立训练模式）' if self._per_symbol_training else ''}"
+        )
 
     def load_trained_model(self) -> bool:
         """
         尝试从磁盘加载最新的已训练模型
+
+        支持两种模式：
+        - 混合模式：加载 tag="best" 的全局模型
+        - 按币种独立模式：逐个加载 tag="best_{symbol}" 的模型
 
         Returns:
             是否成功加载
@@ -161,6 +176,12 @@ class QuantFlowQLibEngine:
             logger.warning("引擎未初始化，无法加载模型")
             return False
 
+        if self._per_symbol_training:
+            return self._load_per_symbol_models()
+        return self._load_single_model()
+
+    def _load_single_model(self) -> bool:
+        """加载混合训练的全局模型"""
         result = self.trainer.find_latest_model(tag="best")
         if result is None:
             logger.info("未找到已有模型，需要执行训练")
@@ -184,13 +205,10 @@ class QuantFlowQLibEngine:
             self._best_model_type = model_type
             self._last_train_time = train_time
 
-            # 从模型 artifact 中恢复训练时的数据量基线
             persisted_samples = getattr(self.trainer, "_loaded_train_samples", 0)
             if persisted_samples > 0:
                 self._last_train_samples = persisted_samples
             else:
-                # 旧格式模型无此字段，保持为 0，数据增量检测将被跳过
-                # 仍可通过时间间隔触发重训练，届时新模型会保存 train_samples
                 self._last_train_samples = 0
                 logger.info("旧格式模型缺少 train_samples，数据增量检测将在首次重训练后生效")
 
@@ -207,6 +225,95 @@ class QuantFlowQLibEngine:
             logger.warning(f"加载已有模型失败: {e}", exc_info=True)
             return False
 
+    def _create_per_symbol_components(self) -> tuple[CryptoAlpha158, QLibModelTrainer]:
+        """创建按币种独立训练所需的 handler 和 trainer 实例"""
+        data_config = self.config.get("data", {})
+        model_config = self.config.get("model", {})
+
+        handler = CryptoAlpha158(
+            include_perpetual=data_config.get("include_perpetual", True),
+            normalize=True,
+            fillna=True,
+            label_periods=data_config.get("label_periods", 3),
+            feature_select_top_k=data_config.get("feature_select_top_k", 0),
+            label_winsorize_quantile=data_config.get("label_winsorize_quantile", 0.01),
+        )
+
+        custom_params = {}
+        for mt in ["lightgbm", "xgboost", "linear", "elasticnet"]:
+            if mt in model_config:
+                custom_params[mt] = model_config[mt]
+
+        trainer = QLibModelTrainer(
+            model_dir=model_config.get("model_dir", "models"),
+            custom_params=custom_params,
+        )
+
+        return handler, trainer
+
+    def _load_per_symbol_models(self) -> bool:
+        """逐个加载按币种独立训练的模型"""
+        data_config = self.config.get("data", {})
+        retrain_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
+
+        loaded_count = 0
+        total_samples = 0
+
+        # 从本地 parquet 文件名推断可用币种
+        available_symbols = set()
+        freq = data_config.get("freq", "4h")
+        if self.collector:
+            for path in self.collector.data_dir.glob(f"*_{freq}.parquet"):
+                sym = path.stem.replace(f"_{freq}", "")
+                available_symbols.add(sym)
+
+        for symbol in available_symbols:
+            tag = f"best_{symbol}"
+            handler, trainer = self._create_per_symbol_components()
+
+            result = trainer.find_latest_model(tag=tag)
+            if result is None:
+                continue
+
+            model_path, model_type, train_time = result
+            elapsed_hours = (datetime.now() - train_time).total_seconds() / 3600
+            if elapsed_hours >= retrain_hours:
+                logger.info(f"{symbol}: 模型已过期（{elapsed_hours:.1f}h），需重训练")
+                continue
+
+            try:
+                trainer.load_model(model_path, model_type=model_type)
+
+                self._symbol_models[symbol] = {
+                    "trainer": trainer,
+                    "handler": handler,
+                    "best_model_type": model_type,
+                    "evaluation": {},
+                }
+
+                persisted = getattr(trainer, "_loaded_train_samples", 0)
+                total_samples += persisted
+                loaded_count += 1
+
+                logger.info(
+                    f"{symbol}: 加载模型成功 (类型={model_type}, "
+                    f"训练时间={train_time}, 样本={persisted})"
+                )
+            except Exception as e:
+                logger.warning(f"{symbol}: 加载模型失败: {e}")
+
+        if loaded_count > 0:
+            self.model_trained = True
+            self._last_train_time = datetime.now()
+            self._last_train_samples = total_samples
+            first_sym = next(iter(self._symbol_models))
+            self._best_model_type = self._symbol_models[first_sym]["best_model_type"]
+            logger.info(f"按币种模型加载完成: {loaded_count} 个币种")
+            return True
+
+        logger.info("未找到任何按币种模型，需要执行训练")
+        return False
+
     def prepare_and_train(
         self,
         symbols: list[str],
@@ -215,17 +322,11 @@ class QuantFlowQLibEngine:
         model_types: list[str] | None = None,
     ) -> dict:
         """
-        准备数据并训练模型（v2 增强版）
+        准备数据并训练模型
 
-        完整流程：
-        1. 收集历史数据（增大拉取量到 1000）
-        2. 计算因子（v2 精简特征 + 新增技术指标）
-        3. 特征选择（基于训练集 IC）
-        4. 数据标准化
-        5. 训练多个模型（确保充分竞争）
-        6. Purged K-Fold 交叉验证
-        7. 过拟合检测
-        8. 综合评分选择最优模型
+        支持两种模式：
+        - 混合训练（默认）：所有币种数据混合训练一个模型
+        - 按币种独立训练（per_symbol_training=True）：每个币种独立模型
 
         Args:
             symbols: 交易对列表
@@ -242,11 +343,20 @@ class QuantFlowQLibEngine:
         if model_types is None:
             model_types = self.config.get("model", {}).get("candidates", DEFAULT_MODEL_CANDIDATES)
 
-        logger.info(
-            f"开始准备数据和训练模型: 交易对={symbols}, 频率={freq}, 候选模型={model_types}"
-        )
+        if self._per_symbol_training:
+            return self._train_per_symbol(symbols, freq, limit, model_types)
+        return self._train_mixed(symbols, freq, limit, model_types)
 
-        # 1. 收集数据（使用全量本地累积数据）
+    def _train_mixed(
+        self,
+        symbols: list[str],
+        freq: str,
+        limit: int,
+        model_types: list[str],
+    ) -> dict:
+        """混合训练模式：所有币种数据混合训练一个模型"""
+        logger.info(f"开始混合训练: 交易对={symbols}, 频率={freq}, 候选模型={model_types}")
+
         raw_data = self.collector.collect_full_dataset(
             symbols, freq=freq, limit=limit, use_all_local=True
         )
@@ -254,13 +364,162 @@ class QuantFlowQLibEngine:
             logger.error("数据收集失败，无法训练模型")
             return {"error": "数据收集失败"}
 
-        # 2. 计算因子和标签
-        processed = self.handler.process_dataset(raw_data)
+        result = self._train_single_dataset(
+            raw_data, symbols, freq, model_types, self.handler, self.trainer, tag="best"
+        )
+
+        if "error" not in result:
+            self.model_trained = True
+            self._last_train_time = datetime.now()
+            self._last_train_samples = result["total_raw_samples"]
+            self._best_model_type = result["best_model"]
+            self._last_evaluation = result["evaluation"].get(result["best_model"], {})
+            self.predictor.update_model_metrics(self._last_evaluation)
+
+        return result
+
+    def _train_per_symbol(
+        self,
+        symbols: list[str],
+        freq: str,
+        limit: int,
+        model_types: list[str],
+    ) -> dict:
+        """按币种独立训练模式：每个币种独立的模型、handler、特征选择"""
+        logger.info(f"开始按币种独立训练: 交易对={symbols}, 频率={freq}, 候选模型={model_types}")
+
+        all_results = {}
+        total_samples = 0
+
+        for symbol in symbols:
+            logger.info(f"{'=' * 40}")
+            logger.info(f"训练 {symbol} 独立模型")
+            logger.info(f"{'=' * 40}")
+
+            # 收集单个币种数据
+            raw_data = self.collector.collect_full_dataset(
+                [symbol], freq=freq, limit=limit, use_all_local=True
+            )
+            if raw_data.empty:
+                logger.warning(f"{symbol}: 数据收集失败，跳过")
+                continue
+
+            # 每个币种独立的 handler 和 trainer
+            handler, trainer = self._create_per_symbol_components()
+
+            result = self._train_single_dataset(
+                raw_data,
+                [symbol],
+                freq,
+                model_types,
+                handler,
+                trainer,
+                tag=f"best_{symbol}",
+            )
+
+            if "error" not in result:
+                self._symbol_models[symbol] = {
+                    "trainer": trainer,
+                    "handler": handler,
+                    "best_model_type": result["best_model"],
+                    "evaluation": result["evaluation"].get(result["best_model"], {}),
+                }
+                total_samples += result["total_raw_samples"]
+                all_results[symbol] = result
+                logger.info(
+                    f"{symbol}: 最优模型={result['best_model']}, "
+                    f"IC={result['evaluation'].get(result['best_model'], {}).get('IC', 0):.4f}"
+                )
+            else:
+                logger.warning(f"{symbol}: 训练失败 - {result.get('error')}")
+
+        if all_results:
+            self.model_trained = True
+            self._last_train_time = datetime.now()
+            self._last_train_samples = total_samples
+
+            # 用第一个成功训练的币种作为默认（兼容旧接口）
+            first_sym = next(iter(all_results))
+            self._best_model_type = all_results[first_sym]["best_model"]
+            self._last_evaluation = all_results[first_sym]["evaluation"].get(
+                self._best_model_type, {}
+            )
+            self.predictor.update_model_metrics(self._last_evaluation)
+
+        # 汇总结果
+        summary = {
+            "mode": "per_symbol",
+            "symbols": symbols,
+            "freq": freq,
+            "candles_limit": limit,
+            "total_raw_samples": total_samples,
+            "per_symbol_results": {},
+        }
+        for sym, res in all_results.items():
+            best = res["best_model"]
+            ev = res["evaluation"].get(best, {})
+            summary["per_symbol_results"][sym] = {
+                "best_model": best,
+                "IC": ev.get("IC", 0),
+                "ICIR": ev.get("ICIR", 0),
+                "overfit": ev.get("过拟合比率", "-"),
+                "train_samples": res["train_samples"],
+                "test_samples": res["test_samples"],
+                "feature_count": res["feature_count"],
+                "feature_names": res.get("feature_names", []),
+                "data_time_start": res.get("data_time_start"),
+                "data_time_end": res.get("data_time_end"),
+            }
+        # 兼容旧字段
+        if all_results:
+            first_res = next(iter(all_results.values()))
+            summary.update(
+                {
+                    "best_model": first_res["best_model"],
+                    "evaluation": first_res["evaluation"],
+                    "models_trained": first_res["models_trained"],
+                    "train_samples": sum(r["train_samples"] for r in all_results.values()),
+                    "valid_samples": sum(r["valid_samples"] for r in all_results.values()),
+                    "test_samples": sum(r["test_samples"] for r in all_results.values()),
+                    "feature_count": first_res["feature_count"],
+                }
+            )
+
+        logger.info(f"按币种独立训练完成: 成功 {len(all_results)}/{len(symbols)} 个币种")
+        return summary
+
+    def _train_single_dataset(
+        self,
+        raw_data: pd.DataFrame,
+        symbols: list[str],
+        freq: str,
+        model_types: list[str],
+        handler: CryptoAlpha158,
+        trainer: QLibModelTrainer,
+        tag: str = "best",
+    ) -> dict:
+        """
+        训练单个数据集的内部方法（混合/独立训练共用）
+
+        Args:
+            raw_data: 原始 OHLCV 数据
+            symbols: 交易对列表
+            freq: 数据频率
+            model_types: 候选模型类型
+            handler: 数据处理器
+            trainer: 模型训练器
+            tag: 模型保存标签
+
+        Returns:
+            训练结果字典
+        """
+        # 1. 计算因子和标签
+        processed = handler.process_dataset(raw_data)
         features = processed["features"]
         label = processed["label"]
         feature_names = processed["feature_names"]
 
-        # 3. 数据分割（按时间顺序）
+        # 2. 数据分割（按时间顺序）
         timestamps = (
             features.index.get_level_values("datetime").unique().sort_values()
             if isinstance(features.index, pd.MultiIndex)
@@ -291,25 +550,25 @@ class QuantFlowQLibEngine:
         X_test = features[test_mask]
         y_test = label[test_mask]
 
-        # 4. 特征选择（在训练集上进行，基于 IC 排序）
-        top_k = self.handler.feature_select_top_k
+        # 3. 特征选择（在训练集上进行，基于 IC 排序）
+        top_k = handler.feature_select_top_k
         if top_k > 0:
-            selected = self.handler.select_features_by_ic(X_train, y_train, top_k=top_k)
-            X_train = self.handler.apply_feature_selection(X_train)
-            X_valid = self.handler.apply_feature_selection(X_valid)
-            X_test = self.handler.apply_feature_selection(X_test)
+            selected = handler.select_features_by_ic(X_train, y_train, top_k=top_k)
+            X_train = handler.apply_feature_selection(X_train)
+            X_valid = handler.apply_feature_selection(X_valid)
+            X_test = handler.apply_feature_selection(X_test)
             feature_names = selected
             logger.info(f"特征选择后保留 {len(feature_names)} 个特征")
 
-        # 5. 标准化
-        X_train = self.handler.fit_transform(X_train)
-        X_valid = self.handler.transform(X_valid)
-        X_test = self.handler.transform(X_test)
+        # 4. 标准化
+        X_train = handler.fit_transform(X_train)
+        X_valid = handler.transform(X_valid)
+        X_test = handler.transform(X_test)
 
         logger.info(f"数据分割: 训练={len(X_train)}, 验证={len(X_valid)}, 测试={len(X_test)}")
 
-        # 6. 训练模型
-        models = self.trainer.train_all(
+        # 5. 训练模型
+        models = trainer.train_all(
             X_train,
             y_train,
             X_valid,
@@ -317,11 +576,11 @@ class QuantFlowQLibEngine:
             model_types=model_types,
         )
 
-        # 7. 评估模型（含过拟合检测）
+        # 6. 评估模型（含过拟合检测）
         evaluation_results = {}
         for model_type, _model in models.items():
-            pred_test = self.trainer.predict(model_type, X_test)
-            pred_train = self.trainer.predict(model_type, X_train)
+            pred_test = trainer.predict(model_type, X_test)
+            pred_train = trainer.predict(model_type, X_train)
 
             eval_result = self.evaluator.evaluate(
                 pred_test,
@@ -338,34 +597,31 @@ class QuantFlowQLibEngine:
                 f"分组单调性={eval_result.get('分组单调性', 0):.3f}"
             )
 
-        # 8. Purged K-Fold 交叉验证（可选）
+        # 7. Purged K-Fold 交叉验证（可选）
         cv_results = {}
         enable_cv = self.config.get("model", {}).get("enable_cv", True)
         if enable_cv and n_total > 100:
             logger.info("执行 Purged K-Fold 交叉验证...")
-            cv_results = self.trainer.purged_kfold_train(
+            cv_results = trainer.purged_kfold_train(
                 features=X_train,
                 label=y_train,
                 model_types=model_types,
                 n_splits=3,
-                purge_gap=self.handler.label_periods + 1,
+                purge_gap=handler.label_periods + 1,
             )
             self._last_cv_results = cv_results
 
-        # 9. 选择最优模型（综合评分）
+        # 8. 选择最优模型（综合评分）
+        best_model_type = model_types[0] if model_types else "lightgbm"
         if evaluation_results:
-            self._best_model_type = self.evaluator.select_best_model(
+            best_model_type = self.evaluator.select_best_model(
                 evaluation_results,
                 cv_results=cv_results if cv_results else None,
             )
 
-            self.trainer.save_model(self._best_model_type, tag="best", train_samples=len(raw_data))
+            trainer.save_model(best_model_type, tag=tag, train_samples=len(raw_data))
 
-            best_eval = evaluation_results.get(self._best_model_type, {})
-            self._last_evaluation = best_eval
-            self.predictor.update_model_metrics(best_eval)
-
-            importance = self.trainer.get_feature_importance(self._best_model_type)
+            importance = trainer.get_feature_importance(best_model_type)
             if importance is not None:
                 logger.info(f"特征重要性 Top10:\n{importance.head(10).to_string()}")
 
@@ -377,10 +633,6 @@ class QuantFlowQLibEngine:
                 self._raw_data[symbol] = raw_data.xs(symbol, level="instrument")
                 if symbol in features.index.get_level_values("instrument"):
                     self._features[symbol] = features.xs(symbol, level="instrument")
-
-        self.model_trained = True
-        self._last_train_time = datetime.now()
-        self._last_train_samples = len(raw_data)
 
         # 收集训练数据详情
         data_time_start = timestamps[0]
@@ -396,9 +648,9 @@ class QuantFlowQLibEngine:
         else:
             per_symbol_samples[symbols[0] if symbols else "unknown"] = len(raw_data)
 
-        result = {
+        return {
             "models_trained": list(models.keys()),
-            "best_model": self._best_model_type,
+            "best_model": best_model_type,
             "evaluation": evaluation_results,
             "cv_results": {
                 k: {
@@ -421,12 +673,22 @@ class QuantFlowQLibEngine:
             "per_symbol_samples": per_symbol_samples,
             "symbols": symbols,
             "freq": freq,
-            "candles_limit": limit,
             "feature_names": feature_names[:20],
         }
 
-        logger.info(f"模型训练完成: 最优模型={self._best_model_type}")
-        return result
+    def _get_symbol_components(self, symbol: str) -> tuple:
+        """
+        获取指定币种的模型组件（handler, trainer, best_model_type）
+
+        按币种独立训练模式下返回该币种专属组件，否则返回共享组件。
+
+        Returns:
+            (handler, trainer, best_model_type)
+        """
+        if self._per_symbol_training and symbol in self._symbol_models:
+            sm = self._symbol_models[symbol]
+            return sm["handler"], sm["trainer"], sm["best_model_type"]
+        return self.handler, self.trainer, self._best_model_type
 
     def predict(self, symbol: str, latest_data: pd.DataFrame | None = None) -> dict:
         """
@@ -443,6 +705,12 @@ class QuantFlowQLibEngine:
             logger.warning("模型尚未训练，无法生成预测")
             return {"error": "模型未训练"}
 
+        handler, trainer, best_model_type = self._get_symbol_components(symbol)
+
+        if best_model_type not in trainer.trained_models:
+            logger.warning(f"{symbol}: 无对应模型（{best_model_type}），跳过预测")
+            return {"error": f"{symbol} 无对应模型"}
+
         if latest_data is None:
             freq = self.config.get("data", {}).get("freq", "1h")
             raw = self.collector.collect_ohlcv([symbol], freq=freq, limit=100)
@@ -452,15 +720,15 @@ class QuantFlowQLibEngine:
                 raw.xs(symbol, level="instrument") if isinstance(raw.index, pd.MultiIndex) else raw
             )
 
-        features = self.handler.calculate_features(latest_data)
-        features = self.handler.apply_feature_selection(features)
-        features = self.handler.transform(features)
+        features = handler.calculate_features(latest_data)
+        features = handler.apply_feature_selection(features)
+        features = handler.transform(features)
 
         signal = self.predictor.predict(
-            model=self.trainer.trained_models[self._best_model_type],
+            model=trainer.trained_models[best_model_type],
             features=features,
             symbol=symbol,
-            model_type=self._best_model_type,
+            model_type=best_model_type,
         )
 
         return signal.to_dict()
@@ -502,6 +770,22 @@ class QuantFlowQLibEngine:
                 reasoning=["QLib 模型尚未训练"],
             )
 
+        handler, trainer, best_model_type = self._get_symbol_components(symbol)
+
+        if best_model_type not in trainer.trained_models:
+            return TradeDecision(
+                symbol=symbol,
+                action="hold",
+                should_trade=False,
+                direction="neutral",
+                signal_strength=0,
+                confidence=0,
+                suggested_size_pct=0,
+                stop_loss_pct=0,
+                take_profit_pct=0,
+                reasoning=[f"{symbol} 无对应模型"],
+            )
+
         if latest_data is None:
             freq = self.config.get("data", {}).get("freq", "1h")
             raw = self.collector.collect_ohlcv([symbol], freq=freq, limit=100)
@@ -522,15 +806,15 @@ class QuantFlowQLibEngine:
                 raw.xs(symbol, level="instrument") if isinstance(raw.index, pd.MultiIndex) else raw
             )
 
-        features = self.handler.calculate_features(latest_data)
-        features = self.handler.apply_feature_selection(features)
-        features = self.handler.transform(features)
+        features = handler.calculate_features(latest_data)
+        features = handler.apply_feature_selection(features)
+        features = handler.transform(features)
 
         signal = self.predictor.predict(
-            model=self.trainer.trained_models[self._best_model_type],
+            model=trainer.trained_models[best_model_type],
             features=features,
             symbol=symbol,
-            model_type=self._best_model_type,
+            model_type=best_model_type,
         )
 
         decision = self.strategy.generate_decision(
@@ -616,7 +900,7 @@ class QuantFlowQLibEngine:
 
     def get_status(self) -> dict:
         """获取引擎状态"""
-        return {
+        status = {
             "initialized": self.initialized,
             "model_trained": self.model_trained,
             "best_model": self._best_model_type,
@@ -624,9 +908,19 @@ class QuantFlowQLibEngine:
             "cached_symbols": list(self._raw_data.keys()),
             "should_retrain": self.should_retrain(),
             "last_train_samples": self._last_train_samples,
+            "per_symbol_training": self._per_symbol_training,
             "last_evaluation": {
                 k: round(v, 4) if isinstance(v, float) else v
                 for k, v in self._last_evaluation.items()
                 if k in ["IC", "ICIR", "分组单调性", "过拟合比率"]
             },
         }
+        if self._per_symbol_training and self._symbol_models:
+            status["symbol_models"] = {
+                sym: {
+                    "model_type": info["best_model_type"],
+                    "IC": round(info["evaluation"].get("IC", 0), 4),
+                }
+                for sym, info in self._symbol_models.items()
+            }
+        return status
