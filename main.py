@@ -1195,62 +1195,107 @@ class QuantFlowBot:
             now_str = dt.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if success:
-                best_model = train_result.get("best_model", "N/A")
-                evaluation = train_result.get("evaluation", {})
-                cv = train_result.get("cv_results", {})
+                per_symbol = train_result.get("per_symbol_results", {})
                 symbols_list = train_result.get("symbols", self.config.symbols)
                 freq = train_result.get("freq", "N/A")
-                total_raw = train_result.get("total_raw_samples", 0)
-                train_samples = train_result.get("train_samples", 0)
-                valid_samples = train_result.get("valid_samples", 0)
-                test_samples = train_result.get("test_samples", 0)
-                feature_count = train_result.get("feature_count", 0)
-                data_start = train_result.get("data_time_start", "N/A")
-                data_end = train_result.get("data_time_end", "N/A")
 
-                # 各模型核心指标
-                model_lines = []
-                for name in train_result.get("models_trained", []):
-                    ev = evaluation.get(name, {})
-                    ic = float(ev.get("IC", 0) or 0)
-                    rank_ic = float(ev.get("Rank_IC", 0) or 0)
-                    icir = float(ev.get("ICIR", 0) or 0)
-                    pred_std = float(ev.get("预测标准差", 0) or 0)
-                    overfit = ev.get("过拟合比率", None)
-                    mono = float(ev.get("分组单调性", 0) or 0)
+                if per_symbol:
+                    # 按币种独立训练模式的通知
+                    title = "QLib 模型训练完成（按币种独立）"
+                    symbol_lines = []
+                    for sym, sr in per_symbol.items():
+                        ic = float(sr.get("IC", 0) or 0)
+                        icir = float(sr.get("ICIR", 0) or 0)
+                        ic = ic if not math.isnan(ic) else 0.0
+                        icir = icir if not math.isnan(icir) else 0.0
+                        overfit = sr.get("overfit", "-")
+                        best_m = sr.get("best_model", "?")
+                        tr = sr.get("train_samples", 0)
+                        te = sr.get("test_samples", 0)
+                        feat = sr.get("feature_count", 0)
+                        time_start = sr.get("data_time_start", "N/A")
+                        time_end = sr.get("data_time_end", "N/A")
+                        feat_names = sr.get("feature_names", [])
 
-                    # 安全转换 NaN
-                    ic = ic if not math.isnan(ic) else 0.0
-                    rank_ic = rank_ic if not math.isnan(rank_ic) else 0.0
-                    icir = icir if not math.isnan(icir) else 0.0
+                        overfit_str = ""
+                        if overfit and overfit != "-":
+                            ov = float(overfit)
+                            if not math.isinf(ov):
+                                overfit_str = f" | overfit={ov:.1f}x"
 
-                    tag = " [BEST]" if name == best_model else ""
-                    line = f"  {name}{tag}: IC={ic:+.4f} | RankIC={rank_ic:+.4f} | ICIR={icir:+.3f}"
-                    line += f" | mono={mono:.2f}"
+                        quality = "有效" if ic > 0.03 else "弱" if ic > 0 else "无效"
+                        line = (
+                            f"\n[{sym}] 模型={best_m} | 质量={quality}\n"
+                            f"  IC={ic:+.4f} | ICIR={icir:+.3f}{overfit_str}\n"
+                            f"  样本: {tr}+{te} | 特征: {feat}个\n"
+                            f"  数据: {time_start} ~ {time_end}"
+                        )
+                        if feat_names:
+                            line += f"\n  Top特征: {', '.join(feat_names[:8])}"
+                        symbol_lines.append(line)
 
-                    if pred_std == 0:
-                        line += " | (常数预测)"
-                    elif overfit and not (isinstance(overfit, float) and math.isinf(overfit)):
-                        line += f" | overfit={float(overfit):.1f}x"
+                    total_raw = train_result.get("total_raw_samples", 0)
+                    message = (
+                        f"时间: {now_str}\n"
+                        f"交易对: {', '.join(symbols_list)} | 频率: {freq}\n"
+                        f"总样本: {total_raw}条\n"
+                        + "\n".join(symbol_lines)
+                        + "\n\n(IC>0.03有效, ICIR>0.5稳定)"
+                    )
+                else:
+                    # 混合训练模式的通知
+                    best_model = train_result.get("best_model", "N/A")
+                    evaluation = train_result.get("evaluation", {})
+                    cv = train_result.get("cv_results", {})
+                    total_raw = train_result.get("total_raw_samples", 0)
+                    train_samples = train_result.get("train_samples", 0)
+                    valid_samples = train_result.get("valid_samples", 0)
+                    test_samples = train_result.get("test_samples", 0)
+                    feature_count = train_result.get("feature_count", 0)
+                    data_start = train_result.get("data_time_start", "N/A")
+                    data_end = train_result.get("data_time_end", "N/A")
 
-                    cv_icir = cv.get(name, {}).get("icir_cv", None)
-                    if cv_icir is not None and cv_icir != 0:
-                        line += f" | cvICIR={float(cv_icir):+.3f}"
+                    model_lines = []
+                    for name in train_result.get("models_trained", []):
+                        ev = evaluation.get(name, {})
+                        ic = float(ev.get("IC", 0) or 0)
+                        rank_ic = float(ev.get("Rank_IC", 0) or 0)
+                        icir = float(ev.get("ICIR", 0) or 0)
+                        pred_std = float(ev.get("预测标准差", 0) or 0)
+                        overfit = ev.get("过拟合比率", None)
+                        mono = float(ev.get("分组单调性", 0) or 0)
 
-                    model_lines.append(line)
+                        ic = ic if not math.isnan(ic) else 0.0
+                        rank_ic = rank_ic if not math.isnan(rank_ic) else 0.0
+                        icir = icir if not math.isnan(icir) else 0.0
 
-                title = "QLib 模型训练完成"
-                message = (
-                    f"时间: {now_str}\n"
-                    f"交易对: {', '.join(symbols_list)} | 频率: {freq}\n"
-                    f"数据范围: {data_start} ~ {data_end}\n"
-                    f"样本: {total_raw}条 (train={train_samples}/valid={valid_samples}/test={test_samples})"
-                    f" | 特征: {feature_count}个\n"
-                    f"\n模型评估:\n"
-                    + "\n".join(model_lines)
-                    + f"\n\n选定模型: {best_model}"
-                    + "\n(IC>0.03有效, ICIR>0.5稳定)"
-                )
+                        tag = " [BEST]" if name == best_model else ""
+                        line = f"  {name}{tag}: IC={ic:+.4f} | RankIC={rank_ic:+.4f} | ICIR={icir:+.3f}"
+                        line += f" | mono={mono:.2f}"
+
+                        if pred_std == 0:
+                            line += " | (常数预测)"
+                        elif overfit and not (isinstance(overfit, float) and math.isinf(overfit)):
+                            line += f" | overfit={float(overfit):.1f}x"
+
+                        cv_icir = cv.get(name, {}).get("icir_cv", None)
+                        if cv_icir is not None and cv_icir != 0:
+                            line += f" | cvICIR={float(cv_icir):+.3f}"
+
+                        model_lines.append(line)
+
+                    title = "QLib 模型训练完成"
+                    message = (
+                        f"时间: {now_str}\n"
+                        f"交易对: {', '.join(symbols_list)} | 频率: {freq}\n"
+                        f"数据范围: {data_start} ~ {data_end}\n"
+                        f"样本: {total_raw}条 (train={train_samples}/valid={valid_samples}/test={test_samples})"
+                        f" | 特征: {feature_count}个\n"
+                        f"\n模型评估:\n"
+                        + "\n".join(model_lines)
+                        + f"\n\n选定模型: {best_model}"
+                        + "\n(IC>0.03有效, ICIR>0.5稳定)"
+                    )
             else:
                 title = "QLib 模型训练失败"
                 error = train_result.get("error", "未知错误")
