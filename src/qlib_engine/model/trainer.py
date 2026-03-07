@@ -12,7 +12,9 @@ v2 改进：
 import hashlib
 import hmac
 import logging
+import os
 import pickle
+import secrets
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -119,10 +121,32 @@ class QLibModelTrainer:
         self._train_medians: pd.Series | None = None
         self._dropped_columns: list[str] = []
 
-        # 模型文件签名密钥（基于模型目录路径派生，防止 pickle 反序列化攻击）
-        self._signing_key = hashlib.sha256(
-            f"quantflow-model-signing:{self.model_dir.resolve()}".encode()
-        ).digest()
+        # 模型文件签名密钥（优先从环境变量读取，否则生成随机密钥并持久化）
+        self._signing_key = self._load_or_create_signing_key()
+
+    def _load_or_create_signing_key(self) -> bytes:
+        """
+        加载或创建模型签名密钥
+
+        优先级：
+        1. 环境变量 QLIB_MODEL_SIGNING_KEY（hex 编码）
+        2. 模型目录下的 .signing_key 文件（自动生成的随机密钥）
+        """
+        # 优先从环境变量读取
+        env_key = os.environ.get("QLIB_MODEL_SIGNING_KEY")
+        if env_key:
+            return bytes.fromhex(env_key)
+
+        # 从文件加载或生成随机密钥
+        key_file = self.model_dir / ".signing_key"
+        if key_file.exists():
+            return key_file.read_bytes()
+
+        # 生成 32 字节随机密钥并持久化
+        key = secrets.token_bytes(32)
+        key_file.write_bytes(key)
+        logger.info(f"已生成模型签名密钥: {key_file}")
+        return key
 
     def train(
         self,

@@ -225,10 +225,35 @@ class QuantFlowQLibEngine:
             logger.warning(f"加载已有模型失败: {e}", exc_info=True)
             return False
 
+    def _create_per_symbol_components(self) -> tuple[CryptoAlpha158, QLibModelTrainer]:
+        """创建按币种独立训练所需的 handler 和 trainer 实例"""
+        data_config = self.config.get("data", {})
+        model_config = self.config.get("model", {})
+
+        handler = CryptoAlpha158(
+            include_perpetual=data_config.get("include_perpetual", True),
+            normalize=True,
+            fillna=True,
+            label_periods=data_config.get("label_periods", 3),
+            feature_select_top_k=data_config.get("feature_select_top_k", 0),
+            label_winsorize_quantile=data_config.get("label_winsorize_quantile", 0.01),
+        )
+
+        custom_params = {}
+        for mt in ["lightgbm", "xgboost", "linear", "elasticnet"]:
+            if mt in model_config:
+                custom_params[mt] = model_config[mt]
+
+        trainer = QLibModelTrainer(
+            model_dir=model_config.get("model_dir", "models"),
+            custom_params=custom_params,
+        )
+
+        return handler, trainer
+
     def _load_per_symbol_models(self) -> bool:
         """逐个加载按币种独立训练的模型"""
         data_config = self.config.get("data", {})
-        model_config = self.config.get("model", {})
         retrain_hours = self.config.get("online", {}).get("retrain_interval_hours", 168)
 
         loaded_count = 0
@@ -244,16 +269,7 @@ class QuantFlowQLibEngine:
 
         for symbol in available_symbols:
             tag = f"best_{symbol}"
-
-            custom_params = {}
-            for mt in ["lightgbm", "xgboost", "linear", "elasticnet"]:
-                if mt in model_config:
-                    custom_params[mt] = model_config[mt]
-
-            trainer = QLibModelTrainer(
-                model_dir=model_config.get("model_dir", "models"),
-                custom_params=custom_params,
-            )
+            handler, trainer = self._create_per_symbol_components()
 
             result = trainer.find_latest_model(tag=tag)
             if result is None:
@@ -267,15 +283,6 @@ class QuantFlowQLibEngine:
 
             try:
                 trainer.load_model(model_path, model_type=model_type)
-
-                handler = CryptoAlpha158(
-                    include_perpetual=data_config.get("include_perpetual", True),
-                    normalize=True,
-                    fillna=True,
-                    label_periods=data_config.get("label_periods", 3),
-                    feature_select_top_k=data_config.get("feature_select_top_k", 0),
-                    label_winsorize_quantile=data_config.get("label_winsorize_quantile", 0.01),
-                )
 
                 self._symbol_models[symbol] = {
                     "trainer": trainer,
@@ -381,8 +388,6 @@ class QuantFlowQLibEngine:
         """按币种独立训练模式：每个币种独立的模型、handler、特征选择"""
         logger.info(f"开始按币种独立训练: 交易对={symbols}, 频率={freq}, 候选模型={model_types}")
 
-        data_config = self.config.get("data", {})
-        model_config = self.config.get("model", {})
         all_results = {}
         total_samples = 0
 
@@ -400,24 +405,7 @@ class QuantFlowQLibEngine:
                 continue
 
             # 每个币种独立的 handler 和 trainer
-            handler = CryptoAlpha158(
-                include_perpetual=data_config.get("include_perpetual", True),
-                normalize=True,
-                fillna=True,
-                label_periods=data_config.get("label_periods", 3),
-                feature_select_top_k=data_config.get("feature_select_top_k", 0),
-                label_winsorize_quantile=data_config.get("label_winsorize_quantile", 0.01),
-            )
-
-            custom_params = {}
-            for mt in ["lightgbm", "xgboost", "linear", "elasticnet"]:
-                if mt in model_config:
-                    custom_params[mt] = model_config[mt]
-
-            trainer = QLibModelTrainer(
-                model_dir=model_config.get("model_dir", "models"),
-                custom_params=custom_params,
-            )
+            handler, trainer = self._create_per_symbol_components()
 
             result = self._train_single_dataset(
                 raw_data,

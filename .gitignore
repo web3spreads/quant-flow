@@ -76,3 +76,6 @@ backtest_results/
 .env.backtest
 .env.mainnet
 .env.grid
+
+# 模型签名密钥
+.signing_key
