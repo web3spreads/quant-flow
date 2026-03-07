@@ -185,12 +185,14 @@ class QuantFlowQLibEngine:
             self._last_train_time = train_time
 
             # 从模型 artifact 中恢复训练时的数据量基线
-            # 若旧模型无此字段则回退到当前本地数据量
             persisted_samples = getattr(self.trainer, "_loaded_train_samples", 0)
             if persisted_samples > 0:
                 self._last_train_samples = persisted_samples
             else:
-                self._last_train_samples = self._count_local_samples()
+                # 旧格式模型无此字段，保持为 0，数据增量检测将被跳过
+                # 仍可通过时间间隔触发重训练，届时新模型会保存 train_samples
+                self._last_train_samples = 0
+                logger.info("旧格式模型缺少 train_samples，数据增量检测将在首次重训练后生效")
 
             self._last_evaluation = {"IC": 0.05, "ICIR": 0.5}
             self.predictor.update_model_metrics(self._last_evaluation)
