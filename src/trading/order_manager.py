@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from src.trading.client import HyperliquidClient
+from src.utils.grid_math import extract_order_id
 
 
 class LimitOrderMonitor:
@@ -135,6 +136,9 @@ class LimitOrderMonitor:
         open_orders = self.client.get_open_orders()
         open_order_ids = {o.get("oid") for o in open_orders}
 
+        # 批量获取持仓，减少 API 调用；设置 TPSL 后置空以触发刷新
+        position_map: dict[str, Any] | None = None
+
         for order_id, order_info in orders_to_check:
             symbol = order_info["symbol"]
             created_at = order_info["created_at"]
@@ -157,8 +161,10 @@ class LimitOrderMonitor:
             is_buy = order_info["is_buy"]
 
             # 验证确实有对应方向的持仓（防止订单被取消后误操作）
-            positions = self.client.get_positions()
-            position_map = {p["coin"]: p for p in positions}
+            # 在循环内获取最新持仓，确保数据准确（持仓可能因前一个订单的 TPSL 设置而变化）
+            if position_map is None:
+                positions = self.client.get_positions()
+                position_map = {p["coin"]: p for p in positions}
             position = position_map.get(symbol)
 
             if position:
@@ -167,6 +173,8 @@ class LimitOrderMonitor:
                     # 限价单成交，用订单原始 size 设置止盈止损
                     print(f"✅ 限价单 {order_id} 已成交，正在设置止盈止损 (size={order_size})")
                     self._set_tpsl_for_order(order_id, order_info, order_size)
+                    # TPSL 设置可能影响持仓状态，下次循环需要刷新
+                    position_map = None
                 else:
                     # 持仓方向不匹配，订单可能被取消
                     print(f"⚠️ 限价单 {order_id} 持仓方向不匹配，可能已取消")
@@ -1044,7 +1052,7 @@ class OrderManager:
 
                 # 5. 注册到 LimitOrderMonitor，成交后自动设置止盈止损
                 if self.limit_order_monitor:
-                    order_id = self._extract_order_id(limit_order)
+                    order_id = extract_order_id(limit_order)
                     if order_id:
                         self.limit_order_monitor.add_order(
                             order_id=order_id,
@@ -1056,7 +1064,7 @@ class OrderManager:
                             stop_loss_price=sl_price,
                         )
                     else:
-                        print(f"⚠️ 无法提取订单 ID，限价单监控未注册（限价单可能已立即成交）")
+                        print("⚠️ 无法提取订单 ID，限价单监控未注册（限价单可能已立即成交）")
 
                 return result
             else:
@@ -1153,7 +1161,7 @@ class OrderManager:
 
                 # 5. 注册到 LimitOrderMonitor，成交后自动设置止盈止损
                 if self.limit_order_monitor:
-                    order_id = self._extract_order_id(limit_order)
+                    order_id = extract_order_id(limit_order)
                     if order_id:
                         self.limit_order_monitor.add_order(
                             order_id=order_id,
@@ -1165,7 +1173,7 @@ class OrderManager:
                             stop_loss_price=sl_price,
                         )
                     else:
-                        print(f"⚠️ 无法提取订单 ID，限价单监控未注册（限价单可能已立即成交）")
+                        print("⚠️ 无法提取订单 ID，限价单监控未注册（限价单可能已立即成交）")
 
                 return result
             else:
@@ -1281,28 +1289,3 @@ class OrderManager:
             error_msg = f"取消限价单异常: {str(e)}"
             print(f"❌ {error_msg}")
             return {"success": False, "message": error_msg, "order_id": order_id, "symbol": symbol}
-
-    def _extract_order_id(self, limit_order_res: dict[str, Any]) -> int | None:
-        """
-        从下单响应中提取订单 ID，兼容 resting（挂单中）和 filled（立即成交）两种状态。
-
-        Args:
-            limit_order_res: place_limit_order 的返回结果
-
-        Returns:
-            订单 ID，提取失败时返回 None
-        """
-        try:
-            statuses = limit_order_res.get("response", {}).get("data", {}).get("statuses", [])
-            if not statuses:
-                return None
-            status = statuses[0]
-            # 挂单中：{"resting": {"oid": ...}}
-            if "resting" in status:
-                return status["resting"]["oid"]
-            # 立即成交：{"filled": {"oid": ...}}
-            if "filled" in status:
-                return status["filled"]["oid"]
-            return None
-        except (KeyError, IndexError, TypeError, AttributeError):
-            return None

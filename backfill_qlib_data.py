@@ -39,6 +39,8 @@ import pandas as pd
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 
+from src.utils.hyperliquid import create_info
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -331,7 +333,7 @@ def main():
 
     # 初始化 API
     base_url = constants.TESTNET_API_URL if args.testnet else constants.MAINNET_API_URL
-    info = Info(base_url, skip_ws=True)
+    info = create_info(base_url, skip_ws=True)
 
     start_ms = int(start_time.timestamp() * 1000)
     end_ms = int(end_time.timestamp() * 1000)
