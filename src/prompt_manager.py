@@ -875,8 +875,21 @@ class PromptManager:
         else:
             strength_text = "弱"
 
+        # 提取预测时间范围信息
+        prediction_horizon = qlib_signal.get("prediction_horizon", "未知")
+        freq = qlib_signal.get("freq", "未知")
+        label_periods = qlib_signal.get("label_periods", "未知")
+
         context["qlib_signal_text"] = f"""
 ## 🧠 QLib 量化模型信号
+
+**⏱️ 预测时间范围: 未来 {prediction_horizon}**（{freq} × {label_periods} 期）
+
+> ⚠️ **重要**: 该模型预测的是未来 **{prediction_horizon}** 内的价格变动方向。
+> 你的交易决策（开仓、平仓）应以此时间范围为基准：
+> - 不要因为短期波动（远小于 {prediction_horizon}）而频繁开关仓
+> - 开仓后应给予至少接近 {prediction_horizon} 的持仓时间让行情发展
+> - 避免在一个预测周期内反复开单关单，这会产生大量手续费亏损
 
 **模型预测（{model_type} 模型）:**
 - 信号方向: {direction_emoji} **{direction}**
@@ -886,11 +899,10 @@ class PromptManager:
 - 历史分位数: {percentile:.0%}
 - 是否可执行: {"是" if is_actionable else "否（强度不足）"}
 
-**QLib 信号解读:**
-- 该信号来自基于历史数据训练的机器学习模型，预测未来价格趋势方向
-- 信号强度 > 40% 且方向明确时，应作为重要参考
-- 信号与技术指标方向一致时，增加决策信心
-- 信号与技术指标矛盾时，建议保守或观望
+**交易节奏指导（基于 {prediction_horizon} 预测周期）:**
+- 开仓后，除非触发止损/止盈，否则应持仓至少 {prediction_horizon} 再重新评估
+- 如果当前已有持仓且方向与信号一致，不要平仓后重新开仓
+- 如果信号方向与当前持仓矛盾，先评估信号强度是否足够，弱信号不应触发反向操作
 
 **结合技术指标的建议:**
 - ✅ QLib 信号 + 技术指标一致 → 可增大仓位/杠杆

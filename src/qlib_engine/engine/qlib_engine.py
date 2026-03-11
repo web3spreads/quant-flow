@@ -731,7 +731,19 @@ class QuantFlowQLibEngine:
             model_type=best_model_type,
         )
 
-        return signal.to_dict()
+        result = signal.to_dict()
+
+        # 注入预测时间范围信息，供 LLM 提示词使用
+        data_config = self.config.get("data", {})
+        freq = data_config.get("freq", "1h")
+        label_periods = handler.label_periods
+        result["prediction_horizon"] = self._format_prediction_horizon(
+            freq, label_periods
+        )
+        result["freq"] = freq
+        result["label_periods"] = label_periods
+
+        return result
 
     def generate_trade_decision(
         self,
@@ -890,6 +902,44 @@ class QuantFlowQLibEngine:
         except Exception as e:
             logger.warning(f"统计本地数据量失败: {e}")
         return total
+
+    @staticmethod
+    def _format_prediction_horizon(freq: str, label_periods: int) -> str:
+        """
+        将频率和标签期数转换为人类可读的预测时间范围
+
+        Args:
+            freq: K线频率（如 "1h", "4h", "15m"）
+            label_periods: 标签预测期数
+
+        Returns:
+            可读的时间范围描述（如 "24小时"）
+        """
+        # 解析频率为分钟数
+        freq_str = freq.lower().strip()
+        if freq_str.endswith("h"):
+            minutes = int(freq_str[:-1]) * 60
+        elif freq_str.endswith("m"):
+            minutes = int(freq_str[:-1])
+        elif freq_str.endswith("d"):
+            minutes = int(freq_str[:-1]) * 1440
+        else:
+            minutes = 60  # 默认 1 小时
+
+        total_minutes = minutes * label_periods
+
+        if total_minutes >= 1440:
+            days = total_minutes / 1440
+            if days == int(days):
+                return f"{int(days)}天"
+            return f"{days:.1f}天"
+        elif total_minutes >= 60:
+            hours = total_minutes / 60
+            if hours == int(hours):
+                return f"{int(hours)}小时"
+            return f"{hours:.1f}小时"
+        else:
+            return f"{total_minutes}分钟"
 
     def _get_dynamic_retrain_interval(self) -> float:
         """根据样本量计算动态重训练间隔（小时）"""

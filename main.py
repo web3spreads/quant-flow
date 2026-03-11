@@ -431,35 +431,19 @@ class QuantFlowBot:
                 trading_lock=self._trading_lock,
             )
 
-            # 优先尝试加载已有模型，避免每次启动都重新训练
+            # 仅加载本地已训练好的模型（训练在本地完成后提交到仓库）
             model_ready = engine.load_trained_model()
-            if model_ready and not engine.should_retrain():
+            if model_ready:
                 self.logger.print_info(
-                    f"✅ 已加载已有 QLib 模型，跳过训练 "
+                    f"✅ 已加载本地 QLib 模型 "
                     f"(类型={engine._best_model_type}, "
                     f"训练时间={engine._last_train_time})"
                 )
             else:
-                # 无可用模型或已过期，执行首次训练
-                qlib_data_config = self.config.qlib_config.get("data", {})
-                freq = qlib_data_config.get("freq", "1h")
-                limit = qlib_data_config.get("candles_limit", 500)
-
-                self.logger.print_info(f"QLib 模型训练中... (freq={freq}, limit={limit})")
-                train_result = engine.prepare_and_train(
-                    symbols=self.config.symbols,
-                    freq=freq,
-                    limit=limit,
+                self.logger.print_warning(
+                    "⚠️ 未找到已训练的 QLib 模型，回退到 LLM Agent 模式。"
+                    "请在本地运行模型训练后提交模型文件到仓库。"
                 )
-
-                model_ready = engine.model_trained
-                if model_ready:
-                    self.logger.print_info("✅ QLib 模型训练完成")
-                    self.logger.print_info(self._format_train_summary(train_result))
-                    self._notify_qlib_retrain(train_result, success=True)
-                else:
-                    self.logger.print_warning("⚠️ QLib 模型训练失败，回退到 LLM Agent 模式")
-                    self._notify_qlib_retrain(train_result, success=False)
 
             if model_ready:
                 self.qlib_engine = engine
@@ -972,23 +956,10 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
-            # 添加 QLib 重训练检查定时任务（实际由 should_retrain 动态决定）
+            # QLib 模型训练已转移到本地，服务端不再执行自动重训练
             if self.qlib_engine:
-                check_interval_hours = self.config.qlib_config.get("online", {}).get(
-                    "check_interval_hours", 4
-                )
-                check_interval_minutes = int(check_interval_hours * 60)
-
-                self.scheduler.add_job(
-                    self._run_qlib_retrain,
-                    trigger=IntervalTrigger(minutes=check_interval_minutes),
-                    id="qlib_retrain",
-                    name="QLib 模型重训练检查任务",
-                    replace_existing=True,
-                )
                 self.logger.print_info(
-                    f"🧠 QLib 重训练检查任务已添加，检查间隔: {check_interval_hours} 小时 "
-                    f"(实际重训练间隔由样本量动态决定)"
+                    "🧠 QLib 引擎已就绪（仅加载模式，训练在本地完成）"
                 )
 
             # 如果配置了立即执行，先执行一次
@@ -1068,39 +1039,16 @@ class QuantFlowBot:
             self.logger.logger.exception(e)
 
     def _run_qlib_retrain(self):
-        """执行 QLib 模型重训练任务"""
-        if not self.qlib_engine:
-            return
+        """
+        QLib 模型重训练（已废弃）
 
-        try:
-            if not self.qlib_engine.should_retrain():
-                self.logger.print_info("QLib 模型尚未达到重训练条件，跳过")
-                return
-
-            self.logger.print_section("🧠 开始 QLib 模型重训练", style="bold blue")
-
-            qlib_data_config = self.config.qlib_config.get("data", {})
-            freq = qlib_data_config.get("freq", "1h")
-            limit = qlib_data_config.get("candles_limit", 500)
-
-            train_result = self.qlib_engine.prepare_and_train(
-                symbols=self.config.symbols,
-                freq=freq,
-                limit=limit,
-            )
-
-            if self.qlib_engine.model_trained:
-                self.logger.print_info("✅ QLib 模型重训练完成")
-                self.logger.print_info(self._format_train_summary(train_result))
-                self._notify_qlib_retrain(train_result, success=True)
-            else:
-                self.logger.print_warning("⚠️ QLib 模型重训练失败，继续使用旧模型")
-                self._notify_qlib_retrain(train_result, success=False)
-
-        except Exception as e:
-            self.logger.print_error(f"QLib 重训练任务异常: {e}")
-            self.logger.logger.exception(e)
-            self._notify_qlib_retrain({"error": str(e)}, success=False)
+        模型训练已转移到本地完成，服务端不再执行自动重训练。
+        请在本地使用 backfill_qlib_data.py 回填数据后手动训练模型，
+        将训练好的模型文件提交到仓库。
+        """
+        self.logger.print_info(
+            "QLib 模型训练已转移到本地，服务端不再执行自动重训练"
+        )
 
     @staticmethod
     @staticmethod
