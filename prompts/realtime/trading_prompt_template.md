@@ -88,6 +88,10 @@
 - 价格位置: {{ bb_position }} (0=下轨, 1=上轨)
 - 成交量变化: {{ volume_change }}%
 
+**永续合约情绪信号:**
+- 资金费率信号: {{ funding_rate_signal }}
+- 市场恐惧贪婪: {{ fear_greed_sentiment }}
+
 ⚠️ **重要提醒 - 指标滞后性**:
 - 所有技术指标都是基于历史价格计算的，具有滞后性
 - RSI、MACD、均线等指标反映的是过去的价格行为，而非未来
@@ -198,7 +202,7 @@
 - 信号越强，仓位越大；信号越弱，仓位越小
 - 不确定时可以小仓位试探，不必完全放弃机会
 
-{{ qlib_signal_text }}
+{{ verbal_finetuning_section }}
 
 {{ historical_summary }}
 

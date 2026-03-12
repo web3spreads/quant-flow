@@ -94,6 +94,10 @@ ETH 波动性高，是激进交易者的理想标的：
 - 价格位置: {{ bb_position }} (0=下轨, 1=上轨)
 - 成交量变化: {{ volume_change }}%
 
+**永续合约情绪信号:**
+- 资金费率信号: {{ funding_rate_signal }}
+- 市场恐惧贪婪: {{ fear_greed_sentiment }}
+
 **多时间周期趋势分析:**
 {{ multi_timeframe_trends }}
 
@@ -148,7 +152,7 @@ ETH 波动性高，是激进交易者的理想标的：
     - 弱信号（3个条件满足）: 50-65% 金额, 50-65% 杠杆
     - 只在信号完全混乱或相互矛盾时选择 do_nothing
 
-{{ qlib_signal_text }}
+{{ verbal_finetuning_section }}
 
 {{ historical_summary }}
 

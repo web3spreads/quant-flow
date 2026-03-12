@@ -632,14 +632,20 @@ class QuantFlowBot:
                             f"{symbol} 历史记录不足（{history_count} < 10），跳过汇总"
                         )
 
-                    # 追加复盘经验，帮助 Agent 复用历史经验（仅在复盘功能启用时）
+                    # 注入 Verbal Fine-tuning 段落（高优先级，独立于历史汇总）
+                    # 参考 arXiv:2510.08068，将复盘经验以结构化方式注入决策上下文
                     if self.config.review_enabled and self.review_memory_store:
-                        lessons_text = self.review_memory_store.get_lessons_summary(symbol, limit=5)
-                        if lessons_text:
+                        vft_section = self.review_memory_store.get_verbal_finetuning_section(
+                            symbol, limit=5
+                        )
+                        if vft_section and enriched_data is not None:
+                            enriched_data["verbal_finetuning_section"] = vft_section
+                        elif vft_section:
+                            # 降级：enriched_data 不可用时追加到历史汇总
                             historical_summary = (
-                                f"{historical_summary}\n\n{lessons_text}"
+                                f"{historical_summary}\n\n{vft_section}"
                                 if historical_summary
-                                else lessons_text
+                                else vft_section
                             )
 
                     # 追加外部市场信息，帮助 Agent 基于市场环境做决策（仅在外部信息功能启用时）

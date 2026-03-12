@@ -92,6 +92,10 @@ ETH 作为第二大市值币种，在保守策略中同样占有重要地位：
 - 价格位置: {{ bb_position }} (0=下轨, 1=上轨)
 - 成交量变化: {{ volume_change }}%
 
+**永续合约情绪信号:**
+- 资金费率信号: {{ funding_rate_signal }}
+- 市场恐惧贪婪: {{ fear_greed_sentiment }}
+
 **多时间周期趋势分析:**
 {{ multi_timeframe_trends }}
 
@@ -175,7 +179,7 @@ ETH 作为第二大市值币种，在保守策略中同样占有重要地位：
     - 任何不确定时都选择 do_nothing
     - 默认倾向：使用较小金额和较低杠杆
 
-{{ qlib_signal_text }}
+{{ verbal_finetuning_section }}
 
 {{ historical_summary }}
 

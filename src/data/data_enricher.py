@@ -4,12 +4,17 @@
 包括历史序列、4小时数据、持仓量、资金费率等
 """
 
+import json
+import logging
+import urllib.request
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
 from src.i18n import get_text
+
+logger = logging.getLogger(__name__)
 
 
 class MarketDataEnricher:
@@ -82,9 +87,13 @@ class MarketDataEnricher:
         else:
             enriched.update(self._get_empty_4h_data())
 
-        # 5. 添加持仓量和资金费率
+        # 5. 添加持仓量和资金费率（含极值逆向信号）
         oi_and_funding = self._get_oi_and_funding(symbol)
         enriched.update(oi_and_funding)
+
+        # 5.5 添加恐惧贪婪指数（链上情绪数据）
+        fear_greed = self._get_fear_greed_index()
+        enriched.update(fear_greed)
 
         # 6. 添加指标分析文本(帮助AI理解数据)
         if df_15m is not None and not df_15m.empty:
@@ -199,23 +208,92 @@ class MarketDataEnricher:
         }
 
     def _get_oi_and_funding(self, symbol: str) -> dict[str, Any]:
-        """获取持仓量和资金费率"""
+        """获取持仓量和资金费率，并计算极值逆向信号"""
         try:
             # 获取资金费率
             funding_rate = self.market_fetcher.get_funding_rate(symbol)
+            rate = funding_rate if funding_rate else 0
 
-            # 持仓量暂时使用占位符,需要从API获取
-            # TODO: 从Hyperliquid API获取实际持仓量数据
+            # 资金费率极值逆向信号（基于 arXiv:2212.06888 策略）
+            # 极端正费率 → 多头过于拥挤 → 逆向看空；极端负费率 → 逆向看多
+            if rate > 0.001:
+                signal = "极端多头情绪（空头挤仓风险）⚠️ 逆向看空信号"
+                signal_strength = "bearish_contrarian"
+            elif rate > 0.0005:
+                signal = "偏多情绪，多头占优"
+                signal_strength = "mild_bullish"
+            elif rate < -0.001:
+                signal = "极端空头情绪（多头挤仓风险）⚠️ 逆向看多信号"
+                signal_strength = "bullish_contrarian"
+            elif rate < -0.0005:
+                signal = "偏空情绪，空头占优"
+                signal_strength = "mild_bearish"
+            else:
+                signal = "资金费率中性"
+                signal_strength = "neutral"
+
             return {
-                "oi_latest": 0,  # 需要API支持
-                "oi_average": 0,  # 需要API支持
-                "funding_rate": funding_rate if funding_rate else 0,
+                "oi_latest": 0,
+                "oi_average": 0,
+                "funding_rate": rate,
+                "funding_rate_signal": signal,
+                "funding_rate_signal_strength": signal_strength,
             }
         except Exception:
             return {
                 "oi_latest": 0,
                 "oi_average": 0,
                 "funding_rate": 0,
+                "funding_rate_signal": "数据获取失败",
+                "funding_rate_signal_strength": "unknown",
+            }
+
+    def _get_fear_greed_index(self) -> dict[str, Any]:
+        """
+        从 alternative.me 获取加密市场恐惧贪婪指数（免费，无需API密钥）
+        基于 arXiv:2411.06327 对链上情绪数据的研究
+        """
+        try:
+            req = urllib.request.Request(
+                "https://api.alternative.me/fng/?limit=1",
+                headers={"User-Agent": "quant-flow/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+            item = data["data"][0]
+            value = int(item["value"])
+            classification = item["value_classification"]
+
+            # 映射为交易信号
+            if value <= 24:
+                sentiment = f"极度恐惧({value}) ⚠️ 历史上往往是买入信号"
+                signal_bias = "bullish_contrarian"
+            elif value <= 49:
+                sentiment = f"恐惧({value})，市场情绪偏悲观"
+                signal_bias = "mild_bullish"
+            elif value >= 75:
+                sentiment = f"极度贪婪({value}) ⚠️ 历史上往往是卖出信号"
+                signal_bias = "bearish_contrarian"
+            elif value >= 50:
+                sentiment = f"贪婪({value})，市场情绪偏乐观"
+                signal_bias = "mild_bearish"
+            else:
+                sentiment = f"中性({value})"
+                signal_bias = "neutral"
+
+            return {
+                "fear_greed_value": value,
+                "fear_greed_label": classification,
+                "fear_greed_sentiment": sentiment,
+                "fear_greed_signal_bias": signal_bias,
+            }
+        except Exception as e:
+            logger.debug("恐惧贪婪指数获取失败: %s", e)
+            return {
+                "fear_greed_value": -1,
+                "fear_greed_label": "N/A",
+                "fear_greed_sentiment": "数据不可用",
+                "fear_greed_signal_bias": "unknown",
             }
 
     def _analyze_indicators(

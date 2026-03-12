@@ -88,6 +88,10 @@
 - 价格位置: {{ bb_position }} (0=下轨, 1=上轨)
 - 成交量变化: {{ volume_change }}%
 
+**永续合约情绪信号:**
+- 资金费率信号: {{ funding_rate_signal }}
+- 市场恐惧贪婪: {{ fear_greed_sentiment }}
+
 **多时间周期趋势分析:**
 {{ multi_timeframe_trends }}
 
@@ -167,7 +171,7 @@
 - 不确定时选择 do_nothing，耐心等待高质量机会
 - 手续费必须能被预期盈利覆盖 3-5 倍以上
 
-{{ qlib_signal_text }}
+{{ verbal_finetuning_section }}
 
 {{ historical_summary }}
 
