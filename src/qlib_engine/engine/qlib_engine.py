@@ -225,18 +225,69 @@ class QuantFlowQLibEngine:
             logger.warning(f"加载已有模型失败: {e}", exc_info=True)
             return False
 
-    def _create_per_symbol_components(self) -> tuple[CryptoAlpha158, QLibModelTrainer]:
-        """创建按币种独立训练所需的 handler 和 trainer 实例"""
+    def _get_symbol_config(self, symbol: str) -> dict:
+        """
+        获取指定币种的配置（合并全局配置和币种覆盖）
+
+        Args:
+            symbol: 币种名称
+
+        Returns:
+            合并后的数据配置字典，包含 freq, label_periods, feature_select_top_k 等
+        """
         data_config = self.config.get("data", {})
+        # 基础配置
+        result = {
+            "freq": data_config.get("freq", "4h"),
+            "label_periods": data_config.get("label_periods", 3),
+            "feature_select_top_k": data_config.get("feature_select_top_k", 0),
+            "include_perpetual": data_config.get("include_perpetual", True),
+            "label_winsorize_quantile": data_config.get("label_winsorize_quantile", 0.01),
+        }
+
+        # 按币种覆盖配置
+        symbol_overrides = data_config.get("symbol_overrides", {})
+        if symbol in symbol_overrides:
+            override = symbol_overrides[symbol]
+            for key in ["freq", "label_periods", "feature_select_top_k"]:
+                if key in override:
+                    result[key] = override[key]
+            logger.info(
+                f"{symbol}: 使用币种专属配置 freq={result['freq']}, "
+                f"label_periods={result['label_periods']}, top_k={result['feature_select_top_k']}"
+            )
+
+        return result
+
+    def _create_per_symbol_components(
+        self, symbol: str | None = None
+    ) -> tuple[CryptoAlpha158, QLibModelTrainer]:
+        """
+        创建按币种独立训练所需的 handler 和 trainer 实例
+
+        Args:
+            symbol: 币种名称（用于获取币种专属配置，None 则使用全局配置）
+        """
+        if symbol:
+            sym_config = self._get_symbol_config(symbol)
+        else:
+            data_config = self.config.get("data", {})
+            sym_config = {
+                "include_perpetual": data_config.get("include_perpetual", True),
+                "label_periods": data_config.get("label_periods", 3),
+                "feature_select_top_k": data_config.get("feature_select_top_k", 0),
+                "label_winsorize_quantile": data_config.get("label_winsorize_quantile", 0.01),
+            }
+
         model_config = self.config.get("model", {})
 
         handler = CryptoAlpha158(
-            include_perpetual=data_config.get("include_perpetual", True),
+            include_perpetual=sym_config.get("include_perpetual", True),
             normalize=True,
             fillna=True,
-            label_periods=data_config.get("label_periods", 3),
-            feature_select_top_k=data_config.get("feature_select_top_k", 0),
-            label_winsorize_quantile=data_config.get("label_winsorize_quantile", 0.01),
+            label_periods=sym_config.get("label_periods", 3),
+            feature_select_top_k=sym_config.get("feature_select_top_k", 0),
+            label_winsorize_quantile=sym_config.get("label_winsorize_quantile", 0.01),
         )
 
         custom_params = {}
@@ -259,17 +310,21 @@ class QuantFlowQLibEngine:
         loaded_count = 0
         total_samples = 0
 
-        # 从本地 parquet 文件名推断可用币种
+        # 从本地 parquet 文件名推断可用币种（支持不同频率）
         available_symbols = set()
-        freq = data_config.get("freq", "4h")
         if self.collector:
-            for path in self.collector.data_dir.glob(f"*_{freq}.parquet"):
-                sym = path.stem.replace(f"_{freq}", "")
-                available_symbols.add(sym)
+            for path in self.collector.data_dir.glob("*_*.parquet"):
+                # 提取币种名（去掉频率后缀）
+                stem = path.stem
+                for freq_suffix in ["_1h", "_4h", "_1d"]:
+                    if stem.endswith(freq_suffix):
+                        sym = stem[: -len(freq_suffix)]
+                        available_symbols.add(sym)
+                        break
 
         for symbol in available_symbols:
             tag = f"best_{symbol}"
-            handler, trainer = self._create_per_symbol_components()
+            handler, trainer = self._create_per_symbol_components(symbol)
 
             result = trainer.find_latest_model(tag=tag)
             if result is None:
@@ -284,11 +339,13 @@ class QuantFlowQLibEngine:
             try:
                 trainer.load_model(model_path, model_type=model_type)
 
+                sym_config = self._get_symbol_config(symbol)
                 self._symbol_models[symbol] = {
                     "trainer": trainer,
                     "handler": handler,
                     "best_model_type": model_type,
                     "evaluation": {},
+                    "config": sym_config,
                 }
 
                 persisted = getattr(trainer, "_loaded_train_samples", 0)
@@ -396,21 +453,25 @@ class QuantFlowQLibEngine:
             logger.info(f"训练 {symbol} 独立模型")
             logger.info(f"{'=' * 40}")
 
-            # 收集单个币种数据
+            # 获取币种专属配置（可能有不同的 freq）
+            sym_config = self._get_symbol_config(symbol)
+            sym_freq = sym_config.get("freq", freq)
+
+            # 收集单个币种数据（使用币种专属频率）
             raw_data = self.collector.collect_full_dataset(
-                [symbol], freq=freq, limit=limit, use_all_local=True
+                [symbol], freq=sym_freq, limit=limit, use_all_local=True
             )
             if raw_data.empty:
                 logger.warning(f"{symbol}: 数据收集失败，跳过")
                 continue
 
-            # 每个币种独立的 handler 和 trainer
-            handler, trainer = self._create_per_symbol_components()
+            # 每个币种独立的 handler 和 trainer（使用币种专属配置）
+            handler, trainer = self._create_per_symbol_components(symbol)
 
             result = self._train_single_dataset(
                 raw_data,
                 [symbol],
-                freq,
+                sym_freq,
                 model_types,
                 handler,
                 trainer,
@@ -423,6 +484,7 @@ class QuantFlowQLibEngine:
                     "handler": handler,
                     "best_model_type": result["best_model"],
                     "evaluation": result["evaluation"].get(result["best_model"], {}),
+                    "config": sym_config,
                 }
                 total_samples += result["total_raw_samples"]
                 all_results[symbol] = result
@@ -711,9 +773,12 @@ class QuantFlowQLibEngine:
             logger.warning(f"{symbol}: 无对应模型（{best_model_type}），跳过预测")
             return {"error": f"{symbol} 无对应模型"}
 
+        # 获取币种专属配置
+        sym_config = self._get_symbol_config(symbol)
+        sym_freq = sym_config.get("freq", self.config.get("data", {}).get("freq", "1h"))
+
         if latest_data is None:
-            freq = self.config.get("data", {}).get("freq", "1h")
-            raw = self.collector.collect_ohlcv([symbol], freq=freq, limit=100)
+            raw = self.collector.collect_ohlcv([symbol], freq=sym_freq, limit=100)
             if raw.empty:
                 return {"error": "数据获取失败"}
             latest_data = (
@@ -734,8 +799,7 @@ class QuantFlowQLibEngine:
         result = signal.to_dict()
 
         # 注入预测时间范围信息，供 LLM 提示词使用
-        data_config = self.config.get("data", {})
-        freq = data_config.get("freq", "1h")
+        freq = sym_freq
         label_periods = handler.label_periods
         result["prediction_horizon"] = self._format_prediction_horizon(
             freq, label_periods
