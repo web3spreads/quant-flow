@@ -38,9 +38,6 @@ from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
 from src.utils.logger import get_logger
 
-# QLib 量化引擎（延迟导入，仅在启用时使用）
-# from src.qlib_engine import QuantFlowQLibEngine, QLibDecisionExecutor
-
 
 class QuantFlowBot:
     """Quant Flow 交易机器人 - 多 Agent 架构"""
@@ -350,13 +347,6 @@ class QuantFlowBot:
             store_dir = getattr(self.config, "external_info_store_dir", "data/market_info")
             self.market_info_store = MarketInfoStore(base_dir=store_dir)
 
-        # 11. QLib 量化引擎（可选）
-        self.qlib_engine = None
-        self.qlib_executor = None
-
-        if getattr(self.config, "qlib_enabled", False):
-            self._initialize_qlib_engine()
-
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info("  - 1 个汇总 Agent")
@@ -365,8 +355,6 @@ class QuantFlowBot:
             self.logger.print_info("  - 1 个复盘 Agent")
         if self.external_info_agent:
             self.logger.print_info("  - 1 个外部信息收集 Agent")
-        if self.qlib_engine:
-            self.logger.print_info("  - 1 个 QLib 量化引擎（主决策源）")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -389,75 +377,6 @@ class QuantFlowBot:
                 f"获取动态费率失败，使用默认值: {DEFAULT_PERP_FEE_RATES}，原因: {e}"
             )
             return DEFAULT_PERP_FEE_RATES
-
-    def _initialize_qlib_engine(self):
-        """初始化 QLib 量化引擎"""
-        self.logger.print_section("🧠 初始化 QLib 量化引擎...", style="bold blue")
-        try:
-            from src.qlib_engine import QLibDecisionExecutor, QuantFlowQLibEngine
-
-            # 创建 QLib 引擎
-            engine = QuantFlowQLibEngine(config=self.config.qlib_config)
-
-            # 从已有的 EnhancedSingleSymbolAgent 提取共享风控模块
-            decision_validator = None
-            position_sizer = None
-            risk_manager = None
-            account_protector = None
-
-            first_agent = next(iter(self.symbol_agents.values()), None)
-            if first_agent and isinstance(first_agent, EnhancedSingleSymbolAgent):
-                decision_validator = getattr(first_agent, "decision_validator", None)
-                enhanced_engine = getattr(first_agent, "enhanced_engine", None)
-                if enhanced_engine:
-                    position_sizer = getattr(enhanced_engine, "position_sizer", None)
-                    risk_manager = getattr(enhanced_engine, "risk_manager", None)
-                    account_protector = getattr(enhanced_engine, "account_protector", None)
-
-            # 初始化引擎（传入风控模块）
-            engine.initialize(
-                testnet=self.config.hyperliquid_testnet,
-                decision_validator=decision_validator,
-                position_sizer=position_sizer,
-                risk_manager=risk_manager,
-                account_protector=account_protector,
-            )
-
-            # 创建决策执行器
-            executor = QLibDecisionExecutor(
-                order_manager=self.order_manager,
-                max_trade_amount=self.config.max_trade_amount,
-                max_leverage=self.config.max_leverage,
-                trading_lock=self._trading_lock,
-            )
-
-            # 仅加载本地已训练好的模型（训练在本地完成后提交到仓库）
-            model_ready = engine.load_trained_model()
-            if model_ready:
-                self.logger.print_info(
-                    f"✅ 已加载本地 QLib 模型 "
-                    f"(类型={engine._best_model_type}, "
-                    f"训练时间={engine._last_train_time})"
-                )
-            else:
-                self.logger.print_warning(
-                    "⚠️ 未找到已训练的 QLib 模型，回退到 LLM Agent 模式。"
-                    "请在本地运行模型训练后提交模型文件到仓库。"
-                )
-
-            if model_ready:
-                self.qlib_engine = engine
-                self.qlib_executor = executor
-            else:
-                self.qlib_engine = None
-                self.qlib_executor = None
-
-        except Exception as e:
-            self.logger.print_warning(f"⚠️ QLib 引擎初始化失败，回退到 LLM Agent 模式: {e}")
-            self.logger.logger.exception(e)
-            self.qlib_engine = None
-            self.qlib_executor = None
-            self._notify_qlib_retrain({"error": str(e)}, success=False)
 
     def _check_and_display_balance(self):
         """检查并显示账户余额信息"""
@@ -742,35 +661,7 @@ class QuantFlowBot:
                                 else f"{external_info_header}{market_info_summary}"
                             )
 
-                    # QLib 信号作为参考注入 LLM 决策
-                    if self.qlib_engine and self.qlib_engine.model_trained:
-                        try:
-                            # 获取 QLib 预测信号
-                            qlib_signal = self.qlib_engine.predict(symbol)
-
-                            if "error" not in qlib_signal:
-                                # 将 QLib 信号注入 enriched_data，供 LLM 提示词模板引用
-                                enriched_data["qlib_signal"] = qlib_signal
-                                enriched_data["qlib_enabled"] = True
-                                self.logger.print_info(
-                                    f"[{symbol}] QLib 信号: "
-                                    f"方向={qlib_signal.get('direction', '未知')}, "
-                                    f"强度={qlib_signal.get('strength', 0):.3f}, "
-                                    f"置信度={qlib_signal.get('confidence', 0):.3f}"
-                                )
-                            else:
-                                enriched_data["qlib_enabled"] = False
-                                self.logger.print_warning(
-                                    f"[{symbol}] QLib 预测失败: {qlib_signal['error']}"
-                                )
-                        except Exception as e:
-                            enriched_data["qlib_enabled"] = False
-                            self.logger.print_warning(f"⚠️ [{symbol}] QLib 信号获取失败: {e}")
-                            self.logger.logger.exception(e)
-                    else:
-                        enriched_data["qlib_enabled"] = False
-
-                    # 调用单币 Agent 决策（LLM 主决策，参考 QLib 信号）
+                    # 调用单币 Agent 决策（LLM 决策）
                     agent = self.symbol_agents[symbol]
 
                     # 如果是增强型Agent，使用增强决策方法
@@ -956,12 +847,6 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
-            # QLib 模型训练已转移到本地，服务端不再执行自动重训练
-            if self.qlib_engine:
-                self.logger.print_info(
-                    "🧠 QLib 引擎已就绪（仅加载模式，训练在本地完成）"
-                )
-
             # 如果配置了立即执行，先执行一次
             if self.config.run_immediately:
                 self.logger.print_info("立即执行第一次交易循环...")
@@ -1037,226 +922,6 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"外部信息收集任务异常: {e}")
             self.logger.logger.exception(e)
-
-    def _run_qlib_retrain(self):
-        """
-        QLib 模型重训练（已废弃）
-
-        模型训练已转移到本地完成，服务端不再执行自动重训练。
-        请在本地使用 backfill_qlib_data.py 回填数据后手动训练模型，
-        将训练好的模型文件提交到仓库。
-        """
-        self.logger.print_info(
-            "QLib 模型训练已转移到本地，服务端不再执行自动重训练"
-        )
-
-    @staticmethod
-    @staticmethod
-    def _format_eval_lines(evaluation: dict, best: str, cv: dict) -> list[str]:
-        """格式化单组模型评估结果"""
-        import math
-
-        lines = []
-        for name, ev in evaluation.items():
-            tag = " *" if name == best else ""
-            ic = ev.get("IC", 0) or 0
-            icir = ev.get("ICIR", 0) or 0
-            rank_ic = ev.get("Rank_IC", 0) or 0
-            pred_std = ev.get("预测标准差", 0) or 0
-            overfit = ev.get("过拟合比率", None)
-            mono = ev.get("分组单调性", 0) or 0
-
-            ic = float(ic) if not (isinstance(ic, float) and math.isnan(ic)) else 0.0
-            icir = float(icir) if not (isinstance(icir, float) and math.isnan(icir)) else 0.0
-            rank_ic = (
-                float(rank_ic) if not (isinstance(rank_ic, float) and math.isnan(rank_ic)) else 0.0
-            )
-
-            detail = f"  {name}{tag} | IC={ic:+.4f} RankIC={rank_ic:+.4f} ICIR={icir:+.3f}"
-            detail += f" mono={float(mono):.2f} predStd={float(pred_std):.6f}"
-
-            if overfit is not None and not (isinstance(overfit, float) and math.isinf(overfit)):
-                detail += f" overfit={float(overfit):.1f}x"
-
-            cv_data = cv.get(name, {})
-            cv_icir = cv_data.get("icir_cv", None)
-            if cv_icir is not None and cv_icir != 0:
-                detail += f" cvICIR={float(cv_icir):+.3f}"
-
-            lines.append(detail)
-        return lines
-
-    @staticmethod
-    def _format_train_summary(train_result: dict) -> str:
-        """格式化训练结果为精炼的日志摘要"""
-        lines = []
-
-        # 按币种独立训练模式
-        per_symbol = train_result.get("per_symbol_results", {})
-        if per_symbol:
-            for sym, sr in per_symbol.items():
-                ic = sr.get("IC", 0)
-                icir = sr.get("ICIR", 0)
-                overfit = sr.get("overfit", "-")
-                tr = sr.get("train_samples", 0)
-                te = sr.get("test_samples", 0)
-                feat = sr.get("feature_count", 0)
-                best_m = sr.get("best_model", "?")
-                time_range = f"{sr.get('data_time_start', '?')} ~ {sr.get('data_time_end', '?')}"
-                lines.append(
-                    f"  [{sym}] 最优={best_m} IC={float(ic):+.4f} ICIR={float(icir):+.3f} "
-                    f"overfit={overfit} 样本={tr}+{te} 特征={feat}"
-                )
-                lines.append(f"         数据范围: {time_range}")
-                feat_names = sr.get("feature_names", [])
-                if feat_names:
-                    lines.append(f"         特征: {', '.join(feat_names[:10])}")
-            return "\n".join(lines)
-
-        # 混合训练模式
-        best = train_result.get("best_model", "N/A")
-        evaluation = train_result.get("evaluation", {})
-        cv = train_result.get("cv_results", {})
-
-        lines.append(f"  最优模型: {best}")
-        lines.extend(QuantFlowBot._format_eval_lines(evaluation, best, cv))
-
-        total = train_result.get("total_raw_samples", 0)
-        tr = train_result.get("train_samples", 0)
-        va = train_result.get("valid_samples", 0)
-        te = train_result.get("test_samples", 0)
-        feat = train_result.get("feature_count", 0)
-        lines.append(f"  数据: {total}条 (train={tr}/valid={va}/test={te}), {feat}特征")
-
-        return "\n".join(lines)
-
-    def _notify_qlib_retrain(self, train_result: dict, success: bool):
-        """发送 QLib 重训练结果通知"""
-        if not self.notifier or not self.notifier.enabled:
-            return
-        try:
-            import math
-            from datetime import datetime as dt
-
-            from src.notification.notifier import NotificationEvent
-
-            now_str = dt.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            if success:
-                per_symbol = train_result.get("per_symbol_results", {})
-                symbols_list = train_result.get("symbols", self.config.symbols)
-                freq = train_result.get("freq", "N/A")
-
-                if per_symbol:
-                    # 按币种独立训练模式的通知
-                    title = "QLib 模型训练完成（按币种独立）"
-                    symbol_lines = []
-                    for sym, sr in per_symbol.items():
-                        ic = float(sr.get("IC", 0) or 0)
-                        icir = float(sr.get("ICIR", 0) or 0)
-                        ic = ic if not math.isnan(ic) else 0.0
-                        icir = icir if not math.isnan(icir) else 0.0
-                        overfit = sr.get("overfit", "-")
-                        best_m = sr.get("best_model", "?")
-                        tr = sr.get("train_samples", 0)
-                        te = sr.get("test_samples", 0)
-                        feat = sr.get("feature_count", 0)
-                        time_start = sr.get("data_time_start", "N/A")
-                        time_end = sr.get("data_time_end", "N/A")
-                        feat_names = sr.get("feature_names", [])
-
-                        overfit_str = ""
-                        if overfit and overfit != "-":
-                            ov = float(overfit)
-                            if not math.isinf(ov):
-                                overfit_str = f" | overfit={ov:.1f}x"
-
-                        quality = "有效" if ic > 0.03 else "弱" if ic > 0 else "无效"
-                        line = (
-                            f"\n[{sym}] 模型={best_m} | 质量={quality}\n"
-                            f"  IC={ic:+.4f} | ICIR={icir:+.3f}{overfit_str}\n"
-                            f"  样本: {tr}+{te} | 特征: {feat}个\n"
-                            f"  数据: {time_start} ~ {time_end}"
-                        )
-                        if feat_names:
-                            line += f"\n  Top特征: {', '.join(feat_names[:8])}"
-                        symbol_lines.append(line)
-
-                    total_raw = train_result.get("total_raw_samples", 0)
-                    message = (
-                        f"时间: {now_str}\n"
-                        f"交易对: {', '.join(symbols_list)} | 频率: {freq}\n"
-                        f"总样本: {total_raw}条\n"
-                        + "\n".join(symbol_lines)
-                        + "\n\n(IC>0.03有效, ICIR>0.5稳定)"
-                    )
-                else:
-                    # 混合训练模式的通知
-                    best_model = train_result.get("best_model", "N/A")
-                    evaluation = train_result.get("evaluation", {})
-                    cv = train_result.get("cv_results", {})
-                    total_raw = train_result.get("total_raw_samples", 0)
-                    train_samples = train_result.get("train_samples", 0)
-                    valid_samples = train_result.get("valid_samples", 0)
-                    test_samples = train_result.get("test_samples", 0)
-                    feature_count = train_result.get("feature_count", 0)
-                    data_start = train_result.get("data_time_start", "N/A")
-                    data_end = train_result.get("data_time_end", "N/A")
-
-                    model_lines = []
-                    for name in train_result.get("models_trained", []):
-                        ev = evaluation.get(name, {})
-                        ic = float(ev.get("IC", 0) or 0)
-                        rank_ic = float(ev.get("Rank_IC", 0) or 0)
-                        icir = float(ev.get("ICIR", 0) or 0)
-                        pred_std = float(ev.get("预测标准差", 0) or 0)
-                        overfit = ev.get("过拟合比率", None)
-                        mono = float(ev.get("分组单调性", 0) or 0)
-
-                        ic = ic if not math.isnan(ic) else 0.0
-                        rank_ic = rank_ic if not math.isnan(rank_ic) else 0.0
-                        icir = icir if not math.isnan(icir) else 0.0
-
-                        tag = " [BEST]" if name == best_model else ""
-                        line = f"  {name}{tag}: IC={ic:+.4f} | RankIC={rank_ic:+.4f} | ICIR={icir:+.3f}"
-                        line += f" | mono={mono:.2f}"
-
-                        if pred_std == 0:
-                            line += " | (常数预测)"
-                        elif overfit and not (isinstance(overfit, float) and math.isinf(overfit)):
-                            line += f" | overfit={float(overfit):.1f}x"
-
-                        cv_icir = cv.get(name, {}).get("icir_cv", None)
-                        if cv_icir is not None and cv_icir != 0:
-                            line += f" | cvICIR={float(cv_icir):+.3f}"
-
-                        model_lines.append(line)
-
-                    title = "QLib 模型训练完成"
-                    message = (
-                        f"时间: {now_str}\n"
-                        f"交易对: {', '.join(symbols_list)} | 频率: {freq}\n"
-                        f"数据范围: {data_start} ~ {data_end}\n"
-                        f"样本: {total_raw}条 (train={train_samples}/valid={valid_samples}/test={test_samples})"
-                        f" | 特征: {feature_count}个\n"
-                        f"\n模型评估:\n"
-                        + "\n".join(model_lines)
-                        + f"\n\n选定模型: {best_model}"
-                        + "\n(IC>0.03有效, ICIR>0.5稳定)"
-                    )
-            else:
-                title = "QLib 模型训练失败"
-                error = train_result.get("error", "未知错误")
-                message = (
-                    f"时间: {now_str}\n"
-                    f"交易对: {', '.join(self.config.symbols)}\n"
-                    f"状态: 训练失败，继续使用旧模型\n"
-                    f"错误: {error}"
-                )
-
-            self.notifier.notify(NotificationEvent.SYSTEM_STARTUP, title, message)
-        except Exception as e:
-            self.logger.print_warning(f"发送 QLib 训练通知失败: {e}")
 
     def _maybe_run_review_cycle(self):
         """根据配置触发复盘 Agent"""

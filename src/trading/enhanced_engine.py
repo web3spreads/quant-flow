@@ -19,7 +19,6 @@ import pandas as pd
 
 from src.data.market_state import MarketAnalysisResult, MarketState, MarketStateAnalyzer
 from src.data.signal_scorer import SignalQuality, SignalScorer, SignalType, TradingSignal
-from src.qlib_engine.model.predictor import SignalDirection
 from src.trading.risk_manager import (
     PositionSizeResult,
     RiskAssessment,
@@ -75,33 +74,7 @@ class EnhancedDecision:
 class EnhancedTradingEngine:
     """增强型交易引擎"""
 
-    # QLib 强信号判定阈值
-    QLIB_STRONG_STRENGTH_THRESHOLD = 0.5
-    QLIB_STRONG_CONFIDENCE_THRESHOLD = 0.3
-
-    # QLib 方向分类（基于 SignalDirection 枚举值）
-    QLIB_LONG_DIRECTIONS = frozenset(
-        {
-            SignalDirection.STRONG_LONG.value,
-            SignalDirection.LONG.value,
-            SignalDirection.WEAK_LONG.value,
-        }
-    )
-    QLIB_SHORT_DIRECTIONS = frozenset(
-        {
-            SignalDirection.STRONG_SHORT.value,
-            SignalDirection.SHORT.value,
-            SignalDirection.WEAK_SHORT.value,
-        }
-    )
-
-    # 综合置信度权重（有 QLib 信号时）
-    CONFIDENCE_WEIGHT_QLIB = 0.40
-    CONFIDENCE_WEIGHT_SIGNAL_WITH_QLIB = 0.30
-    CONFIDENCE_WEIGHT_RISK_WITH_QLIB = 0.20
-    CONFIDENCE_WEIGHT_MTF_WITH_QLIB = 0.10
-
-    # 综合置信度权重（无 QLib 信号时）
+    # 综合置信度权重
     CONFIDENCE_WEIGHT_SIGNAL = 0.50
     CONFIDENCE_WEIGHT_RISK = 0.30
     CONFIDENCE_WEIGHT_MTF = 0.20
@@ -147,7 +120,6 @@ class EnhancedTradingEngine:
         current_positions: list[dict[str, Any]],
         multi_timeframe_trends: dict[str, str] | None = None,
         leverage: int = 3,
-        qlib_signal: dict | None = None,
     ) -> EnhancedDecision:
         """
         执行完整的分析和决策流程
@@ -242,7 +214,6 @@ class EnhancedTradingEngine:
             risk_assessment=risk_assessment,
             market_analysis=market_analysis,
             current_position=current_position,
-            qlib_signal=qlib_signal,
         )
 
         blockers.extend(filter_blockers)
@@ -252,7 +223,6 @@ class EnhancedTradingEngine:
             signal_confidence=trading_signal.confidence,
             risk_assessment=risk_assessment,
             market_analysis=market_analysis,
-            qlib_signal=qlib_signal,
         )
 
         decision_quality = self._determine_decision_quality(
@@ -316,30 +286,16 @@ class EnhancedTradingEngine:
         risk_assessment: RiskAssessment,
         market_analysis: MarketAnalysisResult,
         current_position: dict[str, Any] | None,
-        qlib_signal: dict | None = None,
     ) -> tuple[bool, str, list[str]]:
         """
-        应用过滤器决定是否交易（融合 QLib 信号）
+        应用过滤器决定是否交易
 
         Returns:
             (should_trade, action, blockers)
         """
         blockers = []
 
-        # 解析 QLib 信号
-        qlib_strength = 0.0
-        qlib_confidence = 0.0
-        qlib_direction = None
-        if qlib_signal:
-            qlib_strength = qlib_signal.get("strength", 0)
-            qlib_confidence = qlib_signal.get("confidence", 0)
-            qlib_direction = qlib_signal.get("direction", "")
-        qlib_is_strong = (
-            qlib_strength > self.QLIB_STRONG_STRENGTH_THRESHOLD
-            and qlib_confidence > self.QLIB_STRONG_CONFIDENCE_THRESHOLD
-        )
-
-        # 检查是否应该平仓（优先级最高，高于 QLib）
+        # 检查是否应该平仓（优先级最高）
         if current_position:
             size = float(current_position.get("szi", 0))
             if size > 0 and trading_signal.signal_type == SignalType.LONG_EXIT:
@@ -347,40 +303,10 @@ class EnhancedTradingEngine:
             elif size < 0 and trading_signal.signal_type == SignalType.SHORT_EXIT:
                 return True, "buy_to_cover", []
 
-        # 检查信号类型 —— QLib 可覆盖 NO_SIGNAL
+        # 检查信号类型
         if trading_signal.signal_type == SignalType.NO_SIGNAL:
-            if qlib_is_strong:
-                # QLib 强信号覆盖 NO_SIGNAL（使用枚举值精确匹配）
-                if qlib_direction in self.QLIB_LONG_DIRECTIONS:
-                    action = "buy"
-                    logger.info(
-                        f"QLib 信号覆盖 NO_SIGNAL → 做多 "
-                        f"(方向={qlib_direction}, 强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
-                    )
-                elif qlib_direction in self.QLIB_SHORT_DIRECTIONS:
-                    action = "sell_short"
-                    logger.info(
-                        f"QLib 信号覆盖 NO_SIGNAL → 做空 "
-                        f"(方向={qlib_direction}, 强度={qlib_strength:.3f}, 置信度={qlib_confidence:.3f})"
-                    )
-                else:
-                    blockers.append(f"QLib 方向不明确: {qlib_direction}")
-                    return False, "hold", blockers
-
-                # QLib 覆盖后仍检查风险
-                if self.enable_risk_filter:
-                    if not risk_assessment.can_trade:
-                        blockers.append("风险评估不通过")
-                    if risk_assessment.risk_level.value >= 6:
-                        blockers.append(f"风险过高: {risk_assessment.risk_level.name}")
-
-                should_trade = len(blockers) == 0
-                if not should_trade:
-                    action = "hold"
-                return should_trade, action, blockers
-            else:
-                blockers.append("无有效交易信号")
-                return False, "hold", blockers
+            blockers.append("无有效交易信号")
+            return False, "hold", blockers
 
         # 映射信号类型到操作
         signal_to_action = {
@@ -404,21 +330,15 @@ class EnhancedTradingEngine:
         min_quality_index = quality_order.index(self.min_signal_quality)
 
         if signal_quality_index < min_quality_index:
-            if qlib_is_strong:
-                logger.info("QLib 强信号放松信号质量过滤")
-            else:
-                blockers.append(
-                    f"信号质量不足: {trading_signal.quality.value} < {self.min_signal_quality.value}"
-                )
+            blockers.append(
+                f"信号质量不足: {trading_signal.quality.value} < {self.min_signal_quality.value}"
+            )
 
         # 过滤2: 置信度检查
         if trading_signal.confidence < self.min_confidence:
-            if qlib_is_strong:
-                logger.info("QLib 强信号放松置信度过滤")
-            else:
-                blockers.append(
-                    f"置信度不足: {trading_signal.confidence:.0%} < {self.min_confidence:.0%}"
-                )
+            blockers.append(
+                f"置信度不足: {trading_signal.confidence:.0%} < {self.min_confidence:.0%}"
+            )
 
         # 过滤3: 风险检查
         if self.enable_risk_filter:
@@ -453,29 +373,16 @@ class EnhancedTradingEngine:
         signal_confidence: float,
         risk_assessment: RiskAssessment,
         market_analysis: MarketAnalysisResult,
-        qlib_signal: dict | None = None,
     ) -> float:
-        """计算综合置信度（融合 QLib 信号）"""
+        """计算综合置信度"""
         risk_factor = 1 - (risk_assessment.risk_score / 100) * 0.5
         mtf_factor = market_analysis.multi_timeframe_alignment
 
-        if qlib_signal and qlib_signal.get("confidence", 0) > 0:
-            # 有 QLib 信号时融合置信度
-            qlib_conf = qlib_signal.get("confidence", 0)
-            qlib_str = qlib_signal.get("strength", 0)
-            confidence = (
-                (qlib_conf * qlib_str) * self.CONFIDENCE_WEIGHT_QLIB
-                + signal_confidence * self.CONFIDENCE_WEIGHT_SIGNAL_WITH_QLIB
-                + risk_factor * self.CONFIDENCE_WEIGHT_RISK_WITH_QLIB
-                + mtf_factor * self.CONFIDENCE_WEIGHT_MTF_WITH_QLIB
-            )
-        else:
-            # 无 QLib 信号时保持原有权重
-            confidence = (
-                signal_confidence * self.CONFIDENCE_WEIGHT_SIGNAL
-                + risk_factor * self.CONFIDENCE_WEIGHT_RISK
-                + mtf_factor * self.CONFIDENCE_WEIGHT_MTF
-            )
+        confidence = (
+            signal_confidence * self.CONFIDENCE_WEIGHT_SIGNAL
+            + risk_factor * self.CONFIDENCE_WEIGHT_RISK
+            + mtf_factor * self.CONFIDENCE_WEIGHT_MTF
+        )
 
         return max(0, min(1, confidence))
 

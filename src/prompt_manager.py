@@ -15,7 +15,6 @@ from jinja2 import Environment, FileSystemLoader, Template
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
 from src.i18n import get_text
-from src.qlib_engine.model.predictor import SignalDirection
 
 
 class PromptManager:
@@ -785,9 +784,6 @@ class PromptManager:
         # 确保关键字段有默认值（无论 enriched_data 是否存在）
         self._set_enriched_defaults(context, current_price, rsi, balance_info, current_positions)
 
-        # QLib 量化信号（如果可用）
-        self._set_qlib_signal_text(context, enriched_data)
-
         # 使用 Jinja2 渲染模板
         prompt = self.trading_prompt_template.render(context)
 
@@ -830,111 +826,6 @@ class PromptManager:
         context.setdefault("sharpe_ratio", 0)
         context.setdefault("current_positions", str(current_positions))
         context.setdefault("recent_trades_text", "")
-
-    # QLib 模型各币种信号可靠性评级（基于 Walk-Forward 回测方向准确率）
-    # 方向准确率 >52%: 较可靠, 51-52%: 有参考价值, <51%: 仅供参考
-    QLIB_SIGNAL_RELIABILITY = {
-        "BTC": {"accuracy": 0.521, "level": "中等", "note": "方向准确率 52.1%，预测 12h 走势，有一定参考价值"},
-        "ETH": {"accuracy": 0.515, "level": "中等", "note": "方向准确率 51.5%，预测 24h 走势，略优于随机"},
-        "SOL": {"accuracy": 0.524, "level": "较好", "note": "方向准确率 52.4%，预测 20h 走势，三币种中最可靠"},
-    }
-
-    @classmethod
-    def _set_qlib_signal_text(
-        cls,
-        context: dict,
-        enriched_data: dict | None,
-    ) -> None:
-        """根据 enriched_data 中的 QLib 信号生成提示词文本"""
-        qlib_enabled = (enriched_data or {}).get("qlib_enabled", False)
-        qlib_signal = (enriched_data or {}).get("qlib_signal", {})
-        context["qlib_enabled"] = qlib_enabled
-        context["qlib_signal"] = qlib_signal
-
-        if not (qlib_enabled and qlib_signal):
-            context["qlib_signal_text"] = ""
-            return
-
-        # 格式化 QLib 信号文本
-        direction = qlib_signal.get("direction", "中性")
-        strength = qlib_signal.get("strength", 0)
-        confidence = qlib_signal.get("confidence", 0)
-        raw_score = qlib_signal.get("raw_score", 0)
-        normalized_score = qlib_signal.get("normalized_score", 0)
-        percentile = qlib_signal.get("percentile", 0.5)
-        model_type = qlib_signal.get("model_type", "未知")
-        is_actionable = qlib_signal.get("is_actionable", False)
-
-        # 根据方向生成建议（使用 SignalDirection 枚举）
-        direction_emoji = {
-            SignalDirection.STRONG_LONG.value: "🟢🟢",
-            SignalDirection.LONG.value: "🟢",
-            SignalDirection.WEAK_LONG.value: "🟡↑",
-            SignalDirection.NEUTRAL.value: "⚪",
-            SignalDirection.WEAK_SHORT.value: "🟡↓",
-            SignalDirection.SHORT.value: "🔴",
-            SignalDirection.STRONG_SHORT.value: "🔴🔴",
-        }.get(direction, "⚪")
-
-        # 信号强度等级（使用与 predictor 一致的阈值）
-        if strength >= 0.7:
-            strength_text = "强"
-        elif strength >= 0.4:
-            strength_text = "中等"
-        else:
-            strength_text = "弱"
-
-        # 提取预测时间范围信息
-        prediction_horizon = qlib_signal.get("prediction_horizon", "未知")
-        freq = qlib_signal.get("freq", "未知")
-        label_periods = qlib_signal.get("label_periods", "未知")
-
-        # 获取币种信号可靠性评级
-        symbol = context.get("symbol", "")
-        reliability = cls.QLIB_SIGNAL_RELIABILITY.get(symbol, {})
-        reliability_level = reliability.get("level", "未知")
-        reliability_note = reliability.get("note", "该币种缺乏回测验证数据")
-        reliability_accuracy = reliability.get("accuracy", 0)
-
-        # 根据可靠性生成权重建议
-        if reliability_accuracy >= 0.52:
-            weight_advice = "可以作为重要参考因素，与技术指标同等权重"
-        elif reliability_accuracy >= 0.51:
-            weight_advice = "作为辅助参考，权重低于技术指标"
-        else:
-            weight_advice = "仅供参考，不应作为决策依据"
-
-        context["qlib_signal_text"] = f"""
-## 🧠 QLib 量化模型信号
-
-**⏱️ 预测时间范围: 未来 {prediction_horizon}**（{freq} × {label_periods} 期）
-**📊 信号可靠性: {reliability_level}** — {reliability_note}
-
-> ⚠️ **重要**: 该模型预测的是未来 **{prediction_horizon}** 内的价格变动方向。
-> 信号建议权重: {weight_advice}。
-> 你的交易决策（开仓、平仓）应以此时间范围为基准：
-> - 不要因为短期波动（远小于 {prediction_horizon}）而频繁开关仓
-> - 开仓后应给予至少接近 {prediction_horizon} 的持仓时间让行情发展
-> - 避免在一个预测周期内反复开单关单，这会产生大量手续费亏损
-
-**模型预测（{model_type} 模型）:**
-- 信号方向: {direction_emoji} **{direction}**
-- 信号强度: {strength:.1%}（{strength_text}）
-- 模型置信度: {confidence:.1%}
-- 标准化分数: {normalized_score:+.4f}（原始: {raw_score:+.6f}）
-- 历史分位数: {percentile:.0%}
-- 是否可执行: {"是" if is_actionable else "否（强度不足）"}
-
-**交易节奏指导（基于 {prediction_horizon} 预测周期）:**
-- 开仓后，除非触发止损/止盈，否则应持仓至少 {prediction_horizon} 再重新评估
-- 如果当前已有持仓且方向与信号一致，不要平仓后重新开仓
-- 如果信号方向与当前持仓矛盾，先评估信号强度是否足够，弱信号不应触发反向操作
-
-**结合技术指标的建议:**
-- ✅ QLib 信号 + 技术指标一致 → 可增大仓位/杠杆
-- ⚠️ QLib 信号 + 技术指标矛盾 → 建议观望或小仓位试探
-- ❌ QLib 信号弱或中性 → 主要依据技术指标判断
-"""
 
     def format_review_prompt(
         self,
