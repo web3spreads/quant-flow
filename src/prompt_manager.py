@@ -831,8 +831,17 @@ class PromptManager:
         context.setdefault("current_positions", str(current_positions))
         context.setdefault("recent_trades_text", "")
 
-    @staticmethod
+    # QLib 模型各币种信号可靠性评级（基于 Walk-Forward 回测方向准确率）
+    # 方向准确率 >52%: 较可靠, 51-52%: 有参考价值, <51%: 仅供参考
+    QLIB_SIGNAL_RELIABILITY = {
+        "BTC": {"accuracy": 0.521, "level": "中等", "note": "方向准确率 52.1%，预测 12h 走势，有一定参考价值"},
+        "ETH": {"accuracy": 0.515, "level": "中等", "note": "方向准确率 51.5%，预测 24h 走势，略优于随机"},
+        "SOL": {"accuracy": 0.524, "level": "较好", "note": "方向准确率 52.4%，预测 20h 走势，三币种中最可靠"},
+    }
+
+    @classmethod
     def _set_qlib_signal_text(
+        cls,
         context: dict,
         enriched_data: dict | None,
     ) -> None:
@@ -880,12 +889,29 @@ class PromptManager:
         freq = qlib_signal.get("freq", "未知")
         label_periods = qlib_signal.get("label_periods", "未知")
 
+        # 获取币种信号可靠性评级
+        symbol = context.get("symbol", "")
+        reliability = cls.QLIB_SIGNAL_RELIABILITY.get(symbol, {})
+        reliability_level = reliability.get("level", "未知")
+        reliability_note = reliability.get("note", "该币种缺乏回测验证数据")
+        reliability_accuracy = reliability.get("accuracy", 0)
+
+        # 根据可靠性生成权重建议
+        if reliability_accuracy >= 0.52:
+            weight_advice = "可以作为重要参考因素，与技术指标同等权重"
+        elif reliability_accuracy >= 0.51:
+            weight_advice = "作为辅助参考，权重低于技术指标"
+        else:
+            weight_advice = "仅供参考，不应作为决策依据"
+
         context["qlib_signal_text"] = f"""
 ## 🧠 QLib 量化模型信号
 
 **⏱️ 预测时间范围: 未来 {prediction_horizon}**（{freq} × {label_periods} 期）
+**📊 信号可靠性: {reliability_level}** — {reliability_note}
 
 > ⚠️ **重要**: 该模型预测的是未来 **{prediction_horizon}** 内的价格变动方向。
+> 信号建议权重: {weight_advice}。
 > 你的交易决策（开仓、平仓）应以此时间范围为基准：
 > - 不要因为短期波动（远小于 {prediction_horizon}）而频繁开关仓
 > - 开仓后应给予至少接近 {prediction_horizon} 的持仓时间让行情发展
