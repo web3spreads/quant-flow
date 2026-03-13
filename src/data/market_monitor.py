@@ -10,8 +10,7 @@
 """
 
 import threading
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
@@ -66,9 +65,6 @@ class MonitorConfig:
     cooldown_minutes: int = 5  # 触发后冷却时间（分钟）
     # 价格基准窗口
     reference_window_minutes: int = 10  # 价格基准窗口（分钟），取窗口内的第一个价格作为基准
-    # 自适应阈值（基于 ATR）
-    adaptive_threshold: bool = False  # 是否启用自适应阈值
-    atr_multiplier: float = 2.0  # ATR 乘数（用于计算动态阈值）
 
 
 class MarketMonitor:
@@ -109,11 +105,14 @@ class MarketMonitor:
 
         # 价格历史记录（每个 symbol 保存最近 N 个快照）
         self._price_history: dict[str, list[PriceSnapshot]] = {s: [] for s in symbols}
+        # 保护 _price_history 的线程锁（监控线程写入，主线程读取）
+        self._history_lock = threading.Lock()
 
         # 冷却状态（每个 symbol 独立冷却）
-        self._cooldown_until: dict[str, datetime] = {
-            s: datetime.min for s in symbols
-        }
+        self._cooldown_until: dict[str, datetime] = dict.fromkeys(symbols, datetime.min)
+
+        # ELEVATED 级别的最近日志时间（防止日志洪泛，每个 symbol 独立节流）
+        self._last_elevated_log: dict[str, datetime] = dict.fromkeys(symbols, datetime.min)
 
         # 最近一次常规决策周期的时间（用于判断是否需要监控）
         self._last_cycle_time: datetime = datetime.now()
@@ -123,12 +122,13 @@ class MarketMonitor:
         self._stop_event = threading.Event()
         self._is_running = False
 
-        # 统计信息
+        # 统计信息（使用锁保护，避免线程间计数丢失）
+        self._stats_lock = threading.Lock()
         self.stats = {
             "total_checks": 0,
             "total_alerts": 0,
-            "alerts_by_symbol": {s: 0 for s in symbols},
-            "alerts_by_level": {level.value: 0 for level in AlertLevel},
+            "alerts_by_symbol": dict.fromkeys(symbols, 0),
+            "alerts_by_level": dict.fromkeys([level.value for level in AlertLevel], 0),
         }
 
     def start(self):
@@ -184,11 +184,12 @@ class MarketMonitor:
 
     def get_latest_alert(self, symbol: str) -> VolatilityAlert | None:
         """获取某个交易对最近的告警信息（用于注入决策上下文）"""
-        history = self._price_history.get(symbol, [])
+        with self._history_lock:
+            history = list(self._price_history.get(symbol, []))
         if len(history) < 2:
             return None
 
-        reference = self._get_reference_price(symbol)
+        reference = self._get_reference_price_from(history)
         if reference is None:
             return None
 
@@ -198,11 +199,12 @@ class MarketMonitor:
         if change_pct >= self.config.elevated_threshold_pct:
             level = self._classify_alert_level(change_pct)
             duration = (latest.timestamp - reference.timestamp).total_seconds()
+            signed_change = change_pct if latest.price > reference.price else -change_pct
             direction = "上涨" if latest.price > reference.price else "下跌"
             return VolatilityAlert(
                 symbol=symbol,
                 level=level,
-                change_pct=change_pct if latest.price > reference.price else -change_pct,
+                change_pct=signed_change,
                 current_price=latest.price,
                 reference_price=reference.price,
                 duration_seconds=duration,
@@ -238,7 +240,8 @@ class MarketMonitor:
         while not self._stop_event.is_set():
             try:
                 self._check_prices()
-                self.stats["total_checks"] += 1
+                with self._stats_lock:
+                    self.stats["total_checks"] += 1
             except Exception as e:
                 self._log_warning(f"价格检查异常: {e}")
 
@@ -251,6 +254,10 @@ class MarketMonitor:
             all_mids = self.info.all_mids()
         except Exception as e:
             self._log_warning(f"获取价格失败: {e}")
+            return
+
+        if not all_mids:
+            self._log_warning("获取价格数据失败：API 返回空数据")
             return
 
         now = datetime.now()
@@ -266,15 +273,18 @@ class MarketMonitor:
                 timestamp=now,
             )
 
-            # 记录价格快照
-            self._price_history[symbol].append(snapshot)
+            # 记录价格快照（线程安全）
+            with self._history_lock:
+                self._price_history[symbol].append(snapshot)
 
             # 检查波动
             self._check_volatility(symbol, snapshot)
 
     def _check_volatility(self, symbol: str, current: PriceSnapshot):
         """检查单个交易对的价格波动"""
-        reference = self._get_reference_price(symbol)
+        with self._history_lock:
+            history_copy = list(self._price_history.get(symbol, []))
+        reference = self._get_reference_price_from(history_copy)
         if reference is None:
             return
 
@@ -312,13 +322,18 @@ class MarketMonitor:
             message=f"{symbol} {int(duration)}秒内{direction} {change_pct:.2f}%",
         )
 
-        # 更新统计
-        self.stats["total_alerts"] += 1
-        self.stats["alerts_by_symbol"][symbol] += 1
-        self.stats["alerts_by_level"][level.value] += 1
+        # 更新统计（线程安全）
+        with self._stats_lock:
+            self.stats["total_alerts"] += 1
+            self.stats["alerts_by_symbol"][symbol] += 1
+            self.stats["alerts_by_level"][level.value] += 1
 
         if level == AlertLevel.ELEVATED:
-            self._log_info(f"📈 轻微波动: {alert.message}")
+            # 节流 ELEVATED 级别日志，每个 symbol 至少间隔 60 秒
+            last_log = self._last_elevated_log.get(symbol, datetime.min)
+            if (current.timestamp - last_log).total_seconds() >= 60:
+                self._log_info(f"📈 轻微波动: {alert.message}")
+                self._last_elevated_log[symbol] = current.timestamp
             return
 
         # HIGH 或 EXTREME 级别 → 触发决策
@@ -336,12 +351,14 @@ class MarketMonitor:
             except Exception as e:
                 self._log_warning(f"告警回调执行失败: {e}")
 
-    def _get_reference_price(self, symbol: str) -> PriceSnapshot | None:
+    def _get_reference_price_from(self, history: list[PriceSnapshot]) -> PriceSnapshot | None:
         """
-        获取参考基准价格。
+        从给定的历史快照列表中获取参考基准价格。
         取参考窗口内最早的价格快照作为基准。
+
+        注意：如果窗口内无数据（监控刚启动的预热期），返回 None 而非
+        使用过期数据，避免基准不稳定导致误触发。
         """
-        history = self._price_history.get(symbol, [])
         if not history:
             return None
 
@@ -353,8 +370,8 @@ class MarketMonitor:
             if snapshot.timestamp >= window_start:
                 return snapshot
 
-        # 如果窗口内没有数据，用最早的记录
-        return history[0] if history else None
+        # 窗口内没有数据（预热期），不使用过期数据
+        return None
 
     def _classify_alert_level(self, change_pct: float) -> AlertLevel:
         """根据变动百分比分类告警等级"""
@@ -372,10 +389,11 @@ class MarketMonitor:
         cutoff = datetime.now() - timedelta(
             minutes=self.config.reference_window_minutes * 2
         )
-        for symbol in self.symbols:
-            self._price_history[symbol] = [
-                s for s in self._price_history[symbol] if s.timestamp >= cutoff
-            ]
+        with self._history_lock:
+            for symbol in self.symbols:
+                self._price_history[symbol] = [
+                    s for s in self._price_history[symbol] if s.timestamp >= cutoff
+                ]
 
     def _log_info(self, message: str):
         """记录信息日志"""

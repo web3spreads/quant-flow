@@ -4,6 +4,7 @@
 """
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -157,8 +158,6 @@ class ReviewMemoryStore:
             return ""
 
         # 综合评分 = 置信度 * log(1 + 证据数)，平衡置信度和可重复性
-        import math
-
         def score(lesson: dict) -> float:
             conf = lesson.get("confidence", 0)
             support = lesson.get("support_count", 1)

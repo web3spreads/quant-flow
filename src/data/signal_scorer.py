@@ -335,7 +335,7 @@ class SignalScorer:
             )
         )
 
-        # 7-9. 增强数据因子（额外加分，不影响原有 6 因子的满分比例）
+        # 7-9. 增强数据因子（独立加分，计入总分前与基础因子一起做权重归一化）
         if enriched_data:
             cex_factor = self._score_cex_funding(enriched_data)
             if cex_factor:
@@ -350,7 +350,12 @@ class SignalScorer:
                 factors.append(funding_factor)
 
         # 计算原始得分 (-100 到 100)
-        raw_score = sum(f.contribution for f in factors) * 100
+        # 将所有因子的贡献按总权重归一化，确保得分范围稳定
+        total_weight = sum(f.weight for f in factors)
+        if total_weight > 0 and total_weight != 1.0:
+            raw_score = sum(f.contribution for f in factors) / total_weight * 100
+        else:
+            raw_score = sum(f.contribution for f in factors) * 100
 
         # 确定信号类型和方向
         signal_type, direction = self._determine_signal_type(

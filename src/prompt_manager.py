@@ -816,6 +816,7 @@ class PromptManager:
         context.setdefault("cex_funding_signal", "")
         context.setdefault("onchain_summary", "")
         context.setdefault("regime_hint", "")
+        context.setdefault("volatility_alert", "")
         context.setdefault("ema_20_4h", current_price)
         context.setdefault("ema_50_4h", current_price)
         context.setdefault("atr_3_4h", 0)

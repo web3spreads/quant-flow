@@ -355,28 +355,16 @@ class QuantFlowBot:
         self._pending_alerts: dict[str, VolatilityAlert] = {}  # 待处理的波动告警
         self._alert_lock = threading.Lock()
 
-        if getattr(self.config, "market_monitor_enabled", False):
+        if self.config.market_monitor_enabled:
             self.logger.print_info("初始化市场主动监控器...")
             monitor_config = MonitorConfig(
                 enabled=True,
-                check_interval_seconds=getattr(
-                    self.config, "market_monitor_check_interval_seconds", 30
-                ),
-                alert_threshold_pct=getattr(
-                    self.config, "market_monitor_alert_threshold_pct", 3.0
-                ),
-                elevated_threshold_pct=getattr(
-                    self.config, "market_monitor_elevated_threshold_pct", 1.5
-                ),
-                extreme_threshold_pct=getattr(
-                    self.config, "market_monitor_extreme_threshold_pct", 5.0
-                ),
-                cooldown_minutes=getattr(
-                    self.config, "market_monitor_cooldown_minutes", 5
-                ),
-                reference_window_minutes=getattr(
-                    self.config, "market_monitor_reference_window_minutes", 10
-                ),
+                check_interval_seconds=self.config.market_monitor_check_interval_seconds,
+                alert_threshold_pct=self.config.market_monitor_alert_threshold_pct,
+                elevated_threshold_pct=self.config.market_monitor_elevated_threshold_pct,
+                extreme_threshold_pct=self.config.market_monitor_extreme_threshold_pct,
+                cooldown_minutes=self.config.market_monitor_cooldown_minutes,
+                reference_window_minutes=self.config.market_monitor_reference_window_minutes,
             )
             self.market_monitor = MarketMonitor(
                 symbols=self.config.symbols,
@@ -522,8 +510,10 @@ class QuantFlowBot:
         # 尝试获取锁，如果正在执行则跳过
         if not self._trading_lock.acquire(blocking=False):
             self._skipped_cycles += 1
+            trigger_info = "（由异常波动触发）" if triggered_by_alert else ""
             self.logger.print_warning(
-                f"⏭️ 上一个交易周期仍在运行，跳过本次调度 (累计跳过: {self._skipped_cycles} 次)"
+                f"⏭️ 上一个交易周期仍在运行，跳过本次调度{trigger_info} "
+                f"(累计跳过: {self._skipped_cycles} 次)"
             )
             return
 

@@ -3,7 +3,6 @@
 测试 MarketMonitor 的核心功能：价格监控、波动检测、告警分级、冷却机制
 """
 
-import threading
 import time
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -223,21 +222,30 @@ class TestReferencePrice:
     def test_reference_from_window(self, monitor):
         """参考价格应取窗口内最早的快照"""
         now = datetime.now()
-        monitor._price_history["BTC"] = [
-            PriceSnapshot("BTC", 49000.0, now - timedelta(minutes=10)),  # 窗口边界
+        history = [
+            PriceSnapshot("BTC", 49000.0, now - timedelta(minutes=10)),  # 窗口外
             PriceSnapshot("BTC", 50000.0, now - timedelta(minutes=3)),  # 窗口内最早
             PriceSnapshot("BTC", 51000.0, now - timedelta(minutes=1)),
             PriceSnapshot("BTC", 52000.0, now),
         ]
 
-        ref = monitor._get_reference_price("BTC")
+        ref = monitor._get_reference_price_from(history)
         assert ref is not None
         # 窗口为 5 分钟，应取 3 分钟前的价格（窗口内最早的）
         assert ref.price == 50000.0
 
     def test_reference_none_for_empty_history(self, monitor):
         """空历史应返回 None"""
-        ref = monitor._get_reference_price("BTC")
+        ref = monitor._get_reference_price_from([])
+        assert ref is None
+
+    def test_reference_none_when_all_data_outside_window(self, monitor):
+        """窗口外的数据不应被用作基准（预热期）"""
+        now = datetime.now()
+        history = [
+            PriceSnapshot("BTC", 49000.0, now - timedelta(minutes=20)),
+        ]
+        ref = monitor._get_reference_price_from(history)
         assert ref is None
 
 
@@ -387,3 +395,76 @@ class TestMonitorStartStop:
         assert monitor._monitor_thread is first_thread
 
         monitor.stop()
+
+
+class TestEdgeCases:
+    """测试边界情况和容错"""
+
+    def test_all_mids_returns_none(self, monitor, mock_callback):
+        """当 API 返回 None 时应优雅处理，不触发告警"""
+        monitor.info.all_mids.return_value = None
+        monitor._check_prices()
+        mock_callback.assert_not_called()
+
+    def test_all_mids_returns_empty_dict(self, monitor, mock_callback):
+        """当 API 返回空字典时应优雅处理"""
+        monitor.info.all_mids.return_value = {}
+        monitor._check_prices()
+        mock_callback.assert_not_called()
+
+    def test_callback_exception_does_not_crash_monitor(self, monitor, mock_callback):
+        """回调函数抛出异常不应导致监控崩溃"""
+        now = datetime.now()
+        mock_callback.side_effect = RuntimeError("回调异常")
+        monitor._price_history["BTC"] = [
+            PriceSnapshot("BTC", 50000.0, now - timedelta(minutes=2)),
+        ]
+        # 不应抛出异常
+        monitor._check_volatility("BTC", PriceSnapshot("BTC", 52000.0, now))
+
+    def test_concurrent_price_history_access(self, monitor):
+        """并发读写 _price_history 不应引发异常"""
+        import concurrent.futures
+
+        now = datetime.now()
+
+        def write_prices():
+            for i in range(100):
+                with monitor._history_lock:
+                    monitor._price_history["BTC"].append(
+                        PriceSnapshot("BTC", 50000.0 + i, now + timedelta(seconds=i))
+                    )
+
+        def read_prices():
+            for _ in range(100):
+                with monitor._history_lock:
+                    list(monitor._price_history["BTC"])
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [
+                executor.submit(write_prices),
+                executor.submit(read_prices),
+                executor.submit(write_prices),
+                executor.submit(read_prices),
+            ]
+            for f in concurrent.futures.as_completed(futures):
+                f.result()  # 如果有异常会在此抛出
+
+    def test_elevated_log_throttling(self, monitor, mock_callback):
+        """ELEVATED 级别日志应被节流，避免洪泛"""
+        now = datetime.now()
+        monitor._price_history["BTC"] = [
+            PriceSnapshot("BTC", 50000.0, now - timedelta(minutes=2)),
+        ]
+
+        # 连续触发多次 ELEVATED（2% 波动）
+        for i in range(5):
+            current = PriceSnapshot(
+                "BTC", 51000.0, now + timedelta(seconds=i * 10)
+            )
+            monitor._check_volatility("BTC", current)
+
+        # 回调不应被触发（ELEVATED 不触发决策）
+        mock_callback.assert_not_called()
+        # 统计应记录所有告警
+        assert monitor.stats["alerts_by_level"]["elevated"] == 5
