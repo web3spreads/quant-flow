@@ -29,8 +29,8 @@ class InstantReflector:
         context_extractor,
         logger_instance=None,
         similarity_threshold: float = 0.6,
-        profit_confidence_boost: float = 1.05,
-        loss_confidence_decay: float = 0.95,
+        min_support_for_update: int = 3,
+        confidence_upper_bound: float = 0.85,
     ):
         """
         初始化即时反思器
@@ -41,16 +41,16 @@ class InstantReflector:
             context_extractor: ContextExtractor 实例
             logger_instance: TradingLogger 实例（可选）
             similarity_threshold: 经验匹配的最小相似度阈值
-            profit_confidence_boost: 盈利时置信度提升因子
-            loss_confidence_decay: 亏损时置信度衰减因子
+            min_support_for_update: 经验最少需要多少次验证后才允许调整置信度
+            confidence_upper_bound: 置信度上限，防止过度自信
         """
         self.memory_store = memory_store
         self.similarity_scorer = similarity_scorer
         self.context_extractor = context_extractor
         self._logger = logger_instance
         self.similarity_threshold = similarity_threshold
-        self.profit_confidence_boost = profit_confidence_boost
-        self.loss_confidence_decay = loss_confidence_decay
+        self.min_support_for_update = min_support_for_update
+        self.confidence_upper_bound = confidence_upper_bound
 
     def reflect_on_close(
         self,
@@ -199,18 +199,22 @@ class InstantReflector:
                 continue
 
             # 更新 support_count
-            lesson["support_count"] = lesson.get("support_count", 1) + 1
+            support_count = lesson.get("support_count", 1)
+            lesson["support_count"] = support_count + 1
 
-            # 根据交易结果微调 confidence
-            current_confidence = lesson.get("confidence", 0.5)
-            if trade_profitable:
-                lesson["confidence"] = min(1.0, round(
-                    current_confidence * self.profit_confidence_boost, 3
-                ))
-            else:
-                lesson["confidence"] = max(0.1, round(
-                    current_confidence * self.loss_confidence_decay, 3
-                ))
+            # 贝叶斯更新置信度：新证据与历史按样本量加权平均
+            # 仅当积累足够样本后才调整，避免单笔交易噪声驱动置信度漂移
+            if support_count >= self.min_support_for_update:
+                current_confidence = lesson.get("confidence", 0.5)
+                # 单笔结果信号：盈利 +1，亏损 -1，映射到 [0, 1]
+                event_signal = 1.0 if trade_profitable else 0.0
+                # 贝叶斯加权：历史权重 = support_count / (support_count + 1)
+                new_confidence = (
+                    support_count * current_confidence + event_signal
+                ) / (support_count + 1)
+                lesson["confidence"] = round(
+                    max(0.1, min(self.confidence_upper_bound, new_confidence)), 3
+                )
 
             lesson["last_seen"] = datetime.utcnow().isoformat(timespec="seconds")
             updated_count += 1

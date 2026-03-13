@@ -127,11 +127,14 @@ class ReviewMemoryStore:
         for lesson in lessons:
             sim = scorer.compute(context_features, lesson.get("context_features", {}))
 
-            # 改进2: Regime 感知 — Regime 不匹配时降权
+            # 改进2: Regime 感知 — Regime 不匹配时按兼容性矩阵降权
             if current_regime:
                 lesson_regime = lesson.get("source_regime", "unknown")
                 if lesson_regime != "unknown" and lesson_regime != current_regime:
-                    sim *= regime_mismatch_factor
+                    compatibility = self._regime_compatibility(
+                        lesson_regime, current_regime, regime_mismatch_factor
+                    )
+                    sim *= compatibility
 
             if sim < similarity_threshold:
                 continue
@@ -202,10 +205,18 @@ class ReviewMemoryStore:
         def score(lesson: dict) -> float:
             conf = lesson.get("confidence", 0)
             support = lesson.get("support_count", 1)
+
+            # 低样本量惩罚：仅验证 1 次的经验降权，避免噪声经验排序过高
+            if support <= 1:
+                conf *= 0.7
+            elif support <= 2:
+                conf *= 0.85
+
             base_score = conf * math.log1p(support)
 
             # 改进4: 根据当前 Regime 调整事实/主观权重
-            if current_regime:
+            # 但 negative 经验不做 regime boost，避免错误强化"避免"型经验
+            if current_regime and lesson.get("lesson_type") != "negative":
                 source_type = lesson.get("source_type", "mixed")
                 if current_regime == "trending" and source_type == "subjective":
                     base_score *= trending_subjective_boost
@@ -266,6 +277,32 @@ class ReviewMemoryStore:
             parts.append(type_labels[source_type])
 
         return "".join(parts) if parts else ""
+
+    @staticmethod
+    def _regime_compatibility(
+        source_regime: str, current_regime: str, default_factor: float = 0.4
+    ) -> float:
+        """
+        计算两个 Regime 之间的兼容性因子
+
+        不同 Regime 组合的经验外推风险不同：
+        - trending ↔ ranging：中等风险（部分策略可复用）
+        - trending ↔ volatile：高风险（趋势策略在高波动中容易止损）
+        - ranging ↔ volatile：较高风险
+        """
+        # 兼容性矩阵：(source, current) → 因子
+        # 值越低 = 越不兼容 = 降权越大
+        compatibility_matrix = {
+            ("trending", "ranging"): 0.4,
+            ("ranging", "trending"): 0.4,
+            ("trending", "volatile"): 0.2,
+            ("volatile", "trending"): 0.2,
+            ("ranging", "volatile"): 0.3,
+            ("volatile", "ranging"): 0.3,
+        }
+        return compatibility_matrix.get(
+            (source_regime, current_regime), default_factor
+        )
 
     def get_lesson_type_stats(self, symbol: str) -> dict[str, Any]:
         """
@@ -422,33 +459,36 @@ class ReviewMemoryStore:
         """
         淘汰超限经验，同时保护 negative 经验不被过度淘汰（改进3）
 
-        策略：如果 negative 比例低于 (1 - max_positive_ratio)，
-        优先淘汰 positive 中置信度最低的经验。
+        淘汰策略综合考量：
+        1. 样本量（support_count）：多次验证的经验更值得保留
+        2. 置信度：高置信度优先保留
+        3. 时效性：最近使用的经验优先保留
+        4. 类型保护：当 negative 比例不足时，优先淘汰 positive 中低分经验
         """
         if len(bucket) <= self.max_lessons:
             return bucket
 
-        # 统计类型分布
+        # 统计类型分布（基于淘汰后目标容量判断，而非当前总量）
         negative_count = sum(1 for l in bucket if l.get("lesson_type") == "negative")
-        total = len(bucket)
         min_negative_ratio = 1.0 - max_positive_ratio
+        min_negative_needed = max(1, int(self.max_lessons * min_negative_ratio))
+        # 如果淘汰可能导致 negative 低于最低保留数，触发保护
+        protect_negative = negative_count <= min_negative_needed or (
+            negative_count > 0 and negative_count / len(bucket) < min_negative_ratio + 0.1
+        )
 
-        # 需要淘汰的数量
-        to_remove = total - self.max_lessons
+        def eviction_score(lesson: dict) -> float:
+            """综合评分：高分的经验优先保留（后排的先被淘汰）"""
+            conf = lesson.get("confidence", 0)
+            support = lesson.get("support_count", 1)
+            # 样本量贡献：log1p(support) 平滑，避免单次验证经验得分过高
+            support_score = math.log1p(support) * 0.1
+            # 综合分 = 置信度 + 样本量贡献
+            score = conf + support_score
+            # 当 negative 比例不足时，positive 经验的淘汰优先级更高（分数不加保护）
+            if protect_negative and lesson.get("lesson_type") == "negative":
+                score += 0.15  # 保护分，但低于旧版 0.2，因为现在有 support_score 补充
+            return score
 
-        if negative_count / total < min_negative_ratio:
-            # negative 比例不足，优先淘汰 positive 中低置信度经验
-            # 按淘汰优先级排序：negative 经验给额外保护分
-            def eviction_score(lesson: dict) -> float:
-                conf = lesson.get("confidence", 0)
-                # negative 经验加 0.2 保护分，使其更不容易被淘汰
-                protection = 0.2 if lesson.get("lesson_type") == "negative" else 0
-                recency_bonus = 0.1 if lesson.get("last_seen", "") else 0
-                return conf + protection + recency_bonus
-
-            bucket.sort(key=eviction_score, reverse=True)
-        else:
-            # 正常按时间排序淘汰
-            bucket.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
-
+        bucket.sort(key=eviction_score, reverse=True)
         return bucket[: self.max_lessons]

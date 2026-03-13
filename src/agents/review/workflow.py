@@ -409,9 +409,8 @@ class ReviewAgentWorkflow:
         }
 
     def _environment_match_factor(self, similarity_score: float) -> float:
-        """计算环境匹配因子"""
-        penalty = (1 - similarity_score) * self.confidence_decay_factor
-        return max(0.2, 1 - penalty)
+        """计算环境匹配因子（二次衰减，低相似度惩罚更严格）"""
+        return max(0.1, similarity_score ** 2)
 
     def _calculate_confidence_interval(
         self,
@@ -420,13 +419,15 @@ class ReviewAgentWorkflow:
         support_count: int,
         similarity_score: float,
     ) -> list[float]:
-        """计算置信区间"""
+        """计算置信区间（含小样本修正）"""
         support = max(1, support_count)
         base_confidence = max(0.0, min(base_confidence, 1.0))
         variance = base_confidence * (1 - base_confidence)
         std_error = (variance / support) ** 0.5
+        # 小样本修正：样本不足 5 时放宽区间
+        small_sample_factor = 1.0 + max(0, (5 - support)) * 0.15
         widen = 1 + (1 - similarity_score)
-        margin = std_error * widen
+        margin = std_error * widen * small_sample_factor
         lower = max(0.0, adjusted_confidence - margin)
         upper = min(1.0, adjusted_confidence + margin)
         return [round(lower, 3), round(upper, 3)]

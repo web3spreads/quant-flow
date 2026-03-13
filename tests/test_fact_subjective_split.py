@@ -35,8 +35,8 @@ class TestFactSubjectiveSplit:
         """测试推断主观型经验"""
         assert ReviewAgent._infer_source_type("市场情绪极度贪婪", "减仓") == "subjective"
         assert ReviewAgent._infer_source_type("新闻利好", "观望") == "subjective"
-        assert ReviewAgent._infer_source_type("恐惧指数极低", "逆向做多") == "subjective"
-        assert ReviewAgent._infer_source_type("资金费率极端", "谨慎") == "subjective"
+        assert ReviewAgent._infer_source_type("舆论一致看多", "逆向做空") == "subjective"
+        assert ReviewAgent._infer_source_type("市场氛围恐慌", "谨慎") == "subjective"
 
     def test_infer_mixed(self):
         """测试推断混合型经验"""

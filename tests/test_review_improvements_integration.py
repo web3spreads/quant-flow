@@ -440,8 +440,7 @@ class TestInstantReflectionMemoryUpdate:
             similarity_scorer=scorer,
             context_extractor=context_extractor,
             similarity_threshold=0.3,
-            profit_confidence_boost=1.05,
-            loss_confidence_decay=0.95,
+            min_support_for_update=1,  # 允许少量样本即更新（测试用）
         )
 
         original_conf = store_with_context.get_lessons("BTC")[0]["confidence"]
@@ -482,8 +481,7 @@ class TestInstantReflectionMemoryUpdate:
             similarity_scorer=scorer,
             context_extractor=context_extractor,
             similarity_threshold=0.3,
-            profit_confidence_boost=1.05,
-            loss_confidence_decay=0.90,
+            min_support_for_update=1,  # 允许少量样本即更新（测试用）
         )
 
         original_conf = store_with_context.get_lessons("BTC")[0]["confidence"]

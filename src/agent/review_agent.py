@@ -286,8 +286,13 @@ class LessonValidator:
         else:
             result["effectiveness_score"] = 0.5  # 无数据时保持中性
 
-        # 确定建议
-        if result["effectiveness_score"] >= 0.7:
+        # 确定建议（需要最少 5 个匹配样本才有统计意义）
+        min_samples = 5
+        if total_applications < min_samples:
+            # 样本不足，不做调整，避免少量噪声驱动的过拟合
+            result["recommendation"] = "maintain"
+            result["insufficient_samples"] = True
+        elif result["effectiveness_score"] >= 0.7:
             result["recommendation"] = "boost"
             result["is_valid"] = True
         elif result["effectiveness_score"] >= 0.4:
@@ -572,7 +577,8 @@ class ReviewAgent:
             if max_consecutive_losses >= 5:
                 effect_factor *= 0.9  # 连续亏损过多时更谨慎
 
-            adjusted_lesson["confidence"] = min(1.0, max(0.1, original_confidence * effect_factor))
+            # 置信度上限 0.85 防止过度自信（全量测试需大量样本才能接近 1.0）
+            adjusted_lesson["confidence"] = min(0.85, max(0.1, original_confidence * effect_factor))
             adjusted_lesson["effect_adjustment_factor"] = effect_factor
 
             adjusted.append(adjusted_lesson)
@@ -580,41 +586,47 @@ class ReviewAgent:
         return adjusted
 
     def _apply_time_decay(self, lessons: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """应用时间衰减到经验置信度"""
+        """
+        应用指数时间衰减到经验置信度
+
+        使用半衰期模型：每过 time_decay_days 天，置信度衰减到原来的一半。
+        比线性衰减更符合信息老化规律 — 近期变化影响大，远期衰减趋于稳定。
+        最低保留 30% 权重（旧版 50% 过于宽松）。
+        """
         if not lessons or self.time_decay_days <= 0:
             return lessons
 
         now = datetime.now()
-        decayed = []
+        # 指数衰减系数：半衰期 = time_decay_days → λ = ln(2) / half_life
+        import math
+        decay_lambda = math.log(2) / self.time_decay_days
 
+        decayed = []
         for lesson in lessons:
             decayed_lesson = lesson.copy()
 
-            # 尝试获取经验创建时间
-            created_at = lesson.get("created_at")
-            if created_at:
+            # 优先使用 last_seen（最近被验证的时间），回退到 created_at
+            time_ref = lesson.get("last_seen") or lesson.get("created_at")
+            if time_ref:
                 try:
-                    if isinstance(created_at, str):
-                        created_time = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    elif isinstance(created_at, datetime):
-                        created_time = created_at
+                    if isinstance(time_ref, str):
+                        ref_time = datetime.fromisoformat(time_ref.replace("Z", "+00:00"))
+                    elif isinstance(time_ref, datetime):
+                        ref_time = time_ref
                     else:
-                        created_time = now
+                        ref_time = now
 
-                    # 计算经过的天数
-                    days_elapsed = (now - created_time).days
-
-                    # 应用衰减：超过 time_decay_days 后开始衰减
-                    if days_elapsed > self.time_decay_days:
-                        decay_factor = max(
-                            0.5,  # 最低保留 50%
-                            1.0 - (days_elapsed - self.time_decay_days) * 0.01,
-                        )
+                    days_elapsed = (now - ref_time).days
+                    if days_elapsed > 0:
+                        # 指数衰减：e^(-λt)，最低保留 30%
+                        decay_factor = max(0.3, math.exp(-decay_lambda * days_elapsed))
                         original_confidence = decayed_lesson.get("confidence", 0.5)
-                        decayed_lesson["confidence"] = original_confidence * decay_factor
+                        decayed_lesson["confidence"] = round(
+                            original_confidence * decay_factor, 3
+                        )
                         decayed_lesson["time_decay_applied"] = True
-                        decayed_lesson["decay_factor"] = decay_factor
-                except Exception:
+                        decayed_lesson["decay_factor"] = round(decay_factor, 3)
+                except (ValueError, TypeError, OverflowError):
                     pass  # 时间解析失败时不应用衰减
 
             decayed.append(decayed_lesson)
@@ -778,16 +790,18 @@ class ReviewAgent:
         """
         改进4: 从 rule + action 文本推断信号来源类型
 
-        factual 关键词: RSI, MACD, EMA, ATR, 成交量, 布林带, 支撑位, 阻力位, 链上, MVRV, K线, 均线
-        subjective 关键词: 情绪, 新闻, 恐惧, 贪婪, 资金费率, 市场氛围, 叙事, 舆论, 辩论
+        factual: 可量化的技术指标和链上数据（RSI, MACD, 资金费率, MVRV 等）
+        subjective: 主观判断和情绪类信号（市场情绪, 新闻, 舆论, 辩论等）
         """
         text = f"{rule} {action}"
         factual_keywords = [
             "RSI", "MACD", "EMA", "ATR", "成交量", "布林带", "支撑位", "阻力位",
-            "链上", "MVRV", "K线", "均线", "MA", "BB", "rsi", "macd",
+            "链上", "MVRV", "SOPR", "K线", "均线", "MA", "BB", "rsi", "macd",
+            "资金费率", "持仓量", "OI", "换手率", "清算",
         ]
         subjective_keywords = [
-            "情绪", "新闻", "恐惧", "贪婪", "资金费率", "市场氛围", "叙事", "舆论", "辩论",
+            "情绪", "新闻", "市场氛围", "叙事", "舆论", "辩论",
+            "恐慌", "FOMO", "狂热", "共识", "预期",
         ]
 
         has_factual = any(kw in text for kw in factual_keywords)
@@ -805,10 +819,11 @@ class ReviewAgent:
         """
         根据相似度计算环境匹配度，低相似度时衰减置信度
 
-        逻辑：相似度越低，惩罚越大，但保留最低 0.2 的权重
+        使用二次衰减而非线性，使高相似度区域更敏感（0.9 vs 0.8 差异更大），
+        同时低相似度区域惩罚更严格，降低环境外推风险。
+        最低保留 0.1 权重（而非 0.2），进一步限制不匹配环境的影响。
         """
-        penalty = (1 - similarity_score) * self.confidence_decay_factor
-        return max(0.2, 1 - penalty)
+        return max(0.1, similarity_score ** 2)
 
     def _calculate_confidence_interval(
         self,
@@ -818,14 +833,18 @@ class ReviewAgent:
         similarity_score: float,
     ) -> list[float]:
         """
-        简易置信区间估算：方差基于原始置信度，相似度只影响区间宽度一次
+        简易置信区间估算：方差基于原始置信度，含小样本修正和相似度宽度调整
+
+        小样本修正：support < 5 时额外放宽区间（模拟 t 分布比正态分布更宽的尾部）
         """
         support = max(1, support_count)
         base_confidence = max(0.0, min(base_confidence, 1.0))
         variance = base_confidence * (1 - base_confidence)
         std_error = (variance / support) ** 0.5
+        # 小样本修正：样本不足 5 时放宽区间
+        small_sample_factor = 1.0 + max(0, (5 - support)) * 0.15
         widen = 1 + (1 - similarity_score)  # 相似度低时放宽
-        margin = std_error * widen
+        margin = std_error * widen * small_sample_factor
         lower = max(0.0, adjusted_confidence - margin)
         upper = min(1.0, adjusted_confidence + margin)
         return [round(lower, 3), round(upper, 3)]
