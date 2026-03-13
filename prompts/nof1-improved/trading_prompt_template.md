@@ -13,7 +13,9 @@
 ```
 资金费率: {{ funding_rate }}  →  {{ funding_rate_signal }}
 恐惧贪婪指数: {{ fear_greed_sentiment }}
+CEX领先信号: {{ cex_funding_signal }}
 持仓量: {{ oi_latest }} (平均: {{ oi_average }})
+链上数据: {{ onchain_summary }}
 ```
 
 ### 日内序列 (最旧→最新)
@@ -61,6 +63,10 @@ EMA: {{ ema_analysis }}  |  量能: {{ volume_analysis }}  |  4H: {{ h4_trend_an
 
 {{ verbal_finetuning_section }}
 
+{{ regime_hint }}
+
+{{ debate_summary }}
+
 {{ historical_summary }}
 
 ---
@@ -101,8 +107,11 @@ EMA: {{ ema_analysis }}  |  量能: {{ volume_analysis }}  |  4H: {{ h4_trend_an
 
 **检查是否有逆向信号抵消步骤 2 的结论：**
 - 资金费率信号：{{ funding_rate_signal }} → 是否与步骤 2 方向矛盾？
+- CEX领先信号：{{ cex_funding_signal }} → CEX资金费率是否暗示趋势传导方向？
 - 恐惧贪婪指数：{{ fear_greed_sentiment }} → 是否暗示反转风险？
-- 如果存在逆向信号，信号强度降一级（强→中，中→弱）
+- 链上数据：{{ onchain_summary }} → 链上活动是否支持当前方向？
+- 多空辩论（如有）：综合多头和空头研究员的论点，哪方更有说服力？双方置信度差距如何？
+- 如果存在逆向信号或多空辩论双方置信度接近（差<0.2），信号强度降一级（强→中，中→弱）
 
 **结论格式：** `情绪校验=[确认|中性|逆向警告]，调整后强度=[...]`
 

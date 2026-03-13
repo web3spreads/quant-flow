@@ -69,7 +69,7 @@ class QuantFlowBot:
         # 打印启动信息
         print_startup_banner(config=self.config, console=self.logger.console)
 
-        # 交易周期锁（防止并发执行，需在组件初始化前创建，QLib 执行器会引用）
+        # 交易周期锁（防止并发执行）
         self._trading_lock = threading.Lock()
 
         # 初始化组件
@@ -250,6 +250,8 @@ class QuantFlowBot:
                         ),
                     },
                 },
+                "debate": self.config.config_data.get("debate", {}),
+                "regime_adaptive": self.config.config_data.get("regime_adaptive", {}),
             }
 
             for symbol in self.config.symbols:

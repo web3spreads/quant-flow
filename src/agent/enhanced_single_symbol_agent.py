@@ -16,8 +16,10 @@ from typing import Any
 
 import pandas as pd
 
+from src.agent.debate import run_bull_bear_debate
 from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agents.common.utils.helpers import send_error_notification
+from src.data.regime_adapter import format_regime_hint, get_regime_params
 from src.data.signal_scorer import SignalQuality
 from src.fees import FeeRates
 from src.llm import LLMClientManager
@@ -55,6 +57,9 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
         enable_risk_filter: bool = True,
         enable_timing_filter: bool = True,
         risk_params: RiskParameters | None = None,
+        enable_debate: bool = False,
+        enable_regime_adaptive: bool = False,
+        regime_config: dict | None = None,
     ):
         """
         初始化增强型单币种交易 Agent
@@ -66,6 +71,9 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
             enable_risk_filter: 是否启用风险过滤
             enable_timing_filter: 是否启用时机过滤
             risk_params: 风险参数配置
+            enable_debate: 是否启用多空辩论
+            enable_regime_adaptive: 是否启用 Regime 自适应
+            regime_config: Regime 自适应配置覆盖
         """
         # 调用父类初始化
         super().__init__(
@@ -87,6 +95,9 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
 
         # 增强分析配置
         self.enable_enhanced_analysis = enable_enhanced_analysis
+        self.enable_debate = enable_debate
+        self.enable_regime_adaptive = enable_regime_adaptive
+        self.regime_config = regime_config
 
         # 创建风险参数
         if risk_params is None:
@@ -374,6 +385,43 @@ class EnhancedSingleSymbolAgent(SingleSymbolAgent):
                     )
                     # 仍然调用 LLM 但会在结果中包含增强分析的警告
 
+        # 执行多空辩论（如果启用）
+        if self.enable_debate:
+            try:
+                debate_summary = run_bull_bear_debate(
+                    llm=self.llm,
+                    symbol=self.symbol,
+                    market_data=market_data,
+                    enriched_data=enriched_data,
+                    multi_timeframe_trends=multi_timeframe_trends,
+                )
+                if debate_summary:
+                    if enriched_data is None:
+                        enriched_data = {}
+                    enriched_data["debate_summary"] = debate_summary
+                    self.logger.print_info(f"[{self.symbol}] 多空辩论完成")
+            except Exception as e:
+                self.logger.print_warning(f"[{self.symbol}] 多空辩论失败: {e}")
+
+        # Regime 自适应参数注入（如果启用且有增强分析结果）
+        if self.enable_regime_adaptive and self._last_enhanced_decision:
+            market_state = self._last_enhanced_decision.market_analysis.state
+            regime_params = get_regime_params(market_state, self.regime_config)
+            if enriched_data is None:
+                enriched_data = {}
+            enriched_data["regime_hint"] = format_regime_hint(market_state, regime_params)
+            enriched_data["regime_params"] = {
+                "regime": regime_params.regime,
+                "signal_threshold": regime_params.signal_threshold,
+                "min_confidence": regime_params.min_confidence,
+                "max_leverage": regime_params.max_leverage,
+                "position_pct": regime_params.position_pct,
+            }
+            self.logger.print_info(
+                f"[{self.symbol}] Regime: {regime_params.regime} "
+                f"(阈值={regime_params.signal_threshold}, 杠杆≤{regime_params.max_leverage}x)"
+            )
+
         # 调用原有的决策逻辑
         decision, details = self.make_decision(
             market_data=market_data,
@@ -497,6 +545,15 @@ def create_enhanced_agent(
     stop_loss_ratio = config.get("stop_loss_ratio", 0.02)
     limit_order_enabled = config.get("limit_order_enabled", False)
 
+    # 辩论配置
+    debate_config = config.get("debate", {})
+    enable_debate = debate_config.get("enabled", False)
+
+    # Regime 自适应配置
+    regime_adaptive_config = config.get("regime_adaptive", {})
+    enable_regime_adaptive = regime_adaptive_config.get("enabled", False)
+    regime_overrides = {k: v for k, v in regime_adaptive_config.items() if k != "enabled"}
+
     # 增强配置
     enhanced_config = config.get("enhanced_analysis", {})
     enable_enhanced = enhanced_config.get("enabled", True)
@@ -539,4 +596,7 @@ def create_enhanced_agent(
         enable_risk_filter=enable_risk_filter,
         enable_timing_filter=enable_timing_filter,
         risk_params=risk_params,
+        enable_debate=enable_debate,
+        enable_regime_adaptive=enable_regime_adaptive,
+        regime_config=regime_overrides if regime_overrides else None,
     )

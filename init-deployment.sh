@@ -70,13 +70,11 @@ echo ""
 # 创建 logs 目录结构（无需 777 权限，容器 entrypoint 会自动 chown）
 echo -e "${YELLOW}📁 创建目录结构...${NC}"
 
-mkdir -p logs/decisions logs/trades models/qlib data/qlib data/market_info experiments
+mkdir -p logs/decisions logs/trades data/market_info experiments
 
 echo -e "${GREEN}✅ 目录结构已创建${NC}"
 echo -e "${BLUE}   logs/decisions/     - 决策日志${NC}"
 echo -e "${BLUE}   logs/trades/        - 交易日志${NC}"
-echo -e "${BLUE}   models/qlib/        - QLib 模型${NC}"
-echo -e "${BLUE}   data/qlib/          - QLib 数据缓存${NC}"
 echo -e "${BLUE}   data/market_info/   - 市场信息存储${NC}"
 echo ""
 

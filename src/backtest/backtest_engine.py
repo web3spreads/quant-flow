@@ -35,6 +35,9 @@ class BacktestEngine:
         config: Any = None,
         logger: TradingLogger | None = None,
         prompt_manager: PromptManager | None = None,
+        # 增强版 Agent 参数
+        use_enhanced_agent: bool = False,
+        enhanced_config: dict | None = None,
     ):
         """
         初始化回测引擎
@@ -46,6 +49,8 @@ class BacktestEngine:
             config: 配置对象
             logger: 日志记录器
             prompt_manager: Prompt管理器
+            use_enhanced_agent: 是否使用增强版 Agent（支持 debate/regime/enriched_data）
+            enhanced_config: 增强版 Agent 配置字典，含 debate、regime_adaptive 等配置
         """
         self.symbol = symbol
         self.historical_data = historical_data.copy()
@@ -54,6 +59,8 @@ class BacktestEngine:
         self.config = config
         self.logger = logger or TradingLogger()
         self.prompt_manager = prompt_manager
+        self.use_enhanced_agent = use_enhanced_agent
+        self.enhanced_config = enhanced_config or {}
 
         # 初始化模拟客户端和订单管理器
         self.client = MockHyperliquidClient(historical_data, initial_balance)
@@ -66,25 +73,28 @@ class BacktestEngine:
 
         # 初始化Agent（需要配置信息）
         if config:
-            self.agent = SingleSymbolAgent(
-                symbol=symbol,
-                order_manager=self.order_manager,
-                logger=self.logger,
-                openai_api_base=config.openai_api_base,
-                openai_api_key=config.openai_api_key,
-                openai_model=config.openai_model,
-                temperature=config.agent_temperature,
-                max_iterations=config.agent_max_iterations,
-                trade_amount=config.max_trade_amount,
-                max_leverage=config.max_leverage,
-                take_profit_ratio=config.take_profit_ratio,
-                stop_loss_ratio=config.stop_loss_ratio,
-                notifier=None,  # 回测不需要通知
-                prompt_manager=prompt_manager,
-                limit_order_enabled=config.limit_order_enabled
-                if hasattr(config, "limit_order_enabled")
-                else False,
-            )
+            if use_enhanced_agent:
+                self.agent = self._create_enhanced_agent(config, prompt_manager)
+            else:
+                self.agent = SingleSymbolAgent(
+                    symbol=symbol,
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    openai_api_base=config.openai_api_base,
+                    openai_api_key=config.openai_api_key,
+                    openai_model=config.openai_model,
+                    temperature=config.agent_temperature,
+                    max_iterations=config.agent_max_iterations,
+                    trade_amount=config.max_trade_amount,
+                    max_leverage=config.max_leverage,
+                    take_profit_ratio=config.take_profit_ratio,
+                    stop_loss_ratio=config.stop_loss_ratio,
+                    notifier=None,  # 回测不需要通知
+                    prompt_manager=prompt_manager,
+                    limit_order_enabled=config.limit_order_enabled
+                    if hasattr(config, "limit_order_enabled")
+                    else False,
+                )
         else:
             self.agent = None
 
@@ -162,6 +172,51 @@ class BacktestEngine:
         print(f"   交易对: {symbol}")
         print(f"   初始余额: ${initial_balance:.2f}")
         print(f"   数据点数: {len(historical_data)}")
+        if use_enhanced_agent:
+            print("   模式: 增强版 Agent (EnhancedSingleSymbolAgent)")
+
+    def _create_enhanced_agent(self, config, prompt_manager):
+        """
+        创建增强版 Agent 实例
+
+        使用 create_enhanced_agent 工厂函数，需要 LLMClientManager 实例。
+        将 enhanced_config 与 config 对象中的基础配置合并后传入。
+
+        Args:
+            config: 配置对象
+            prompt_manager: Prompt 管理器
+
+        Returns:
+            EnhancedSingleSymbolAgent 实例
+        """
+        from src.agent.enhanced_single_symbol_agent import create_enhanced_agent
+        from src.llm.llm_client import LLMClientManager
+
+        # 获取 LLMClientManager 单例
+        llm_manager = LLMClientManager.get_instance()
+
+        # 构建配置字典：基础配置 + 增强配置覆盖
+        agent_config = {
+            "agent_temperature": getattr(config, "agent_temperature", 0.1),
+            "agent_max_iterations": getattr(config, "agent_max_iterations", 5),
+            "max_trade_amount": getattr(config, "max_trade_amount", 100.0),
+            "max_leverage": getattr(config, "max_leverage", 10),
+            "take_profit_ratio": getattr(config, "take_profit_ratio", 0.05),
+            "stop_loss_ratio": getattr(config, "stop_loss_ratio", 0.02),
+            "limit_order_enabled": getattr(config, "limit_order_enabled", False),
+        }
+        # 合并增强配置（debate、regime_adaptive、enhanced_analysis 等）
+        agent_config.update(self.enhanced_config)
+
+        return create_enhanced_agent(
+            symbol=self.symbol,
+            order_manager=self.order_manager,
+            logger=self.logger,
+            llm_manager=llm_manager,
+            config=agent_config,
+            notifier=None,  # 回测不需要通知
+            prompt_manager=prompt_manager,
+        )
 
     def _restore_from_live_report(
         self, resume_info: dict[str, Any], decision_timestamps: list[datetime]
@@ -526,14 +581,34 @@ class BacktestEngine:
                 )
 
                 # 调用Agent做出决策
-                decision, details = self.agent.make_decision(
-                    market_data=market_data,
-                    multi_timeframe_trends=multi_timeframe_trends,
-                    current_positions=current_positions,
-                    max_positions=self.config.max_positions if self.config else 2,
-                    historical_summary=historical_summary,
-                    enriched_data=enriched_data,
-                )
+                if self.use_enhanced_agent:
+                    # 增强版 Agent：使用增强分析决策，传入 df 和 account_balance
+                    # 截取到当前时间点的历史数据子集
+                    current_df = df.loc[df["timestamp"] <= timestamp].copy()
+                    current_balance = (
+                        balance_info.get("total", self.initial_balance)
+                        if balance_info
+                        else self.initial_balance
+                    )
+                    decision, details = self.agent.make_decision_with_enhanced_analysis(
+                        market_data=market_data,
+                        multi_timeframe_trends=multi_timeframe_trends,
+                        current_positions=current_positions,
+                        max_positions=self.config.max_positions if self.config else 2,
+                        historical_summary=historical_summary,
+                        enriched_data=enriched_data,
+                        df=current_df,
+                        account_balance=current_balance,
+                    )
+                else:
+                    decision, details = self.agent.make_decision(
+                        market_data=market_data,
+                        multi_timeframe_trends=multi_timeframe_trends,
+                        current_positions=current_positions,
+                        max_positions=self.config.max_positions if self.config else 2,
+                        historical_summary=historical_summary,
+                        enriched_data=enriched_data,
+                    )
 
                 # 记录决策历史
                 self.decision_history.add_decision(
@@ -1402,7 +1477,33 @@ class BacktestEngine:
                 }
             )
 
-        # 9. 格式化数据为模板友好的字符串格式
+        # 9. 增强版 Agent 额外数据：CEX/链上数据模拟默认值
+        # 回测环境无法调用实时 API，提供合理的默认值确保 prompt 模板变量不为空
+        if self.use_enhanced_agent:
+            current_price = market_data.get("current_price", 0)
+            enriched.setdefault("cex_spot_price", current_price)
+            enriched.setdefault("cex_futures_price", current_price)
+            enriched.setdefault("cex_spot_futures_spread", 0.0)
+            enriched.setdefault("cex_order_book_imbalance", 0.0)
+            enriched.setdefault("cex_top_bid", current_price * 0.999)
+            enriched.setdefault("cex_top_ask", current_price * 1.001)
+            enriched.setdefault("cex_24h_volume", 0)
+            enriched.setdefault("onchain_whale_flow", "无数据（回测模式）")
+            enriched.setdefault("onchain_exchange_netflow", 0.0)
+            enriched.setdefault("onchain_active_addresses", 0)
+            enriched.setdefault("onchain_nvt_ratio", 0.0)
+            enriched.setdefault("fear_greed_index", 50)
+            enriched.setdefault("fear_greed_label", "中性")
+            enriched.setdefault("social_sentiment", "中性")
+            enriched.setdefault("news_summary", "无实时新闻（回测模式）")
+            # debate 和 regime 相关默认值
+            enriched.setdefault("regime_label", "未知")
+            enriched.setdefault("regime_confidence", 0.0)
+            enriched.setdefault("debate_bull_score", 0.0)
+            enriched.setdefault("debate_bear_score", 0.0)
+            enriched.setdefault("debate_consensus", "无辩论数据（回测模式）")
+
+        # 10. 格式化数据为模板友好的字符串格式
         enriched = self._format_enriched_data(enriched)
 
         return enriched

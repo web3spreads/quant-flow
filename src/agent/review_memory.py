@@ -166,8 +166,8 @@ class ReviewMemoryStore:
 
         lessons_sorted = sorted(lessons, key=score, reverse=True)[:limit]
 
-        high_conf = [l for l in lessons_sorted if l.get("confidence", 0) >= 0.6]
-        low_conf = [l for l in lessons_sorted if l.get("confidence", 0) < 0.6]
+        high_conf = [lesson for lesson in lessons_sorted if lesson.get("confidence", 0) >= 0.6]
+        low_conf = [lesson for lesson in lessons_sorted if lesson.get("confidence", 0) < 0.6]
 
         lines = [f"## 🧠 {symbol} 复盘经验（优先参考，在做决策前必须逐条对照）\n"]
 

@@ -63,19 +63,13 @@ uv add --group dev <package>  # 添加开发依赖
 # RUN_MODE=main     仅主交易（默认）
 # RUN_MODE=grid     仅网格交易
 # RUN_MODE=all      同时运行主交易和网格交易
-# RUN_MODE=backfill 历史数据回填（一次性任务，运行完退出）
 docker compose up -d
 docker compose logs -f
 
-# 历史数据回填（Docker 方式，运行完自动退出）
-docker compose run --rm backfill                                          # 默认参数
-docker compose run --rm -e BACKFILL_ARGS="--days 180" backfill            # 回填 180 天
-docker compose run --rm -e BACKFILL_ARGS="--symbols BTC ETH --freq 4h" backfill  # 指定交易对和频率
-
-# 本地直接运行回填
-uv run python backfill_qlib_data.py                                       # 默认：最近90天，BTC ETH SOL，1h
-uv run python backfill_qlib_data.py --days 180 --symbols BTC ETH SOL
-uv run python backfill_qlib_data.py --start-date 2025-09-01 --end-date 2026-03-06
+# A/B 回测对比（对比不同功能配置的效果差异）
+uv run python backtest_comparison.py --symbol BTC --compare all
+uv run python backtest_comparison.py --symbol BTC --compare debate
+uv run python backtest_comparison.py --symbol BTC --compare regime
 
 # 分别查看各程序日志（日志文件通过 tee 写入 logs/ 目录）
 tail -f logs/main.log          # 主交易日志
@@ -131,9 +125,10 @@ tail -f logs/grid.log          # 网格交易日志
 
 ```
 src/
-├── agent/                    # Agent 实现 (旧版)
+├── agent/                    # Agent 实现
 │   ├── single_symbol_agent.py      # 单币种交易决策
-│   ├── enhanced_single_symbol_agent.py  # 增强版 Agent (集成风控)
+│   ├── enhanced_single_symbol_agent.py  # 增强版 Agent (集成风控+辩论+Regime)
+│   ├── debate.py                   # 多空辩论引擎 🆕
 │   ├── summary_agent_v2.py         # 历史压缩
 │   ├── spot_agent.py               # 现货定投
 │   ├── review_agent.py             # 复盘学习
@@ -146,24 +141,152 @@ src/
 ├── trading/                  # 交易核心模块
 │   ├── client.py                   # Hyperliquid SDK 封装
 │   ├── order_manager.py            # 订单管理
-│   ├── decision_validator.py       # 决策多维度验证 ⭐
-│   ├── position_sizer.py           # 凯利公式仓位计算 ⭐
-│   ├── risk_manager.py             # ATR动态止盈止损 ⭐
-│   ├── account_protector.py        # 账户保护 (回撤/超时) ⭐
-│   └── enhanced_engine.py          # 增强交易引擎 ⭐
+│   ├── decision_validator.py       # 决策多维度验证
+│   ├── position_sizer.py           # 凯利公式仓位计算
+│   ├── risk_manager.py             # ATR动态止盈止损
+│   ├── account_protector.py        # 账户保护 (回撤/超时)
+│   └── enhanced_engine.py          # 增强交易引擎 (Regime 参数覆盖)
 ├── data/                     # 数据模块
 │   ├── market_data.py              # K线和市场数据
 │   ├── indicators.py               # 技术指标 (MA, RSI, MACD, Bollinger)
-│   ├── data_enricher.py            # 数据增强
-│   ├── market_state.py             # 市场状态分析 ⭐
-│   └── signal_scorer.py            # 信号质量评分 ⭐
+│   ├── data_enricher.py            # 数据增强 (CEX费率/链上数据/恐惧贪婪) 🆕
+│   ├── market_state.py             # 市场状态分析 (11种状态枚举)
+│   ├── signal_scorer.py            # 多因子信号评分 (Regime自适应权重) 🆕
+│   └── regime_adapter.py           # 市场Regime自适应参数切换 🆕
 ├── llm/                      # LLM 客户端
 │   └── llm_client.py               # 多供应商支持 (OpenAI/Cloudflare/Google/LiteLLM/NVIDIA)
 ├── backtest/                 # 回测模块
 └── notification/             # 通知模块
 ```
 
-**⭐ 标记的是最近新增的风险管理模块**
+## LLM 决策增强功能
+
+项目实现了四项基于论文的 LLM 决策增强功能，**全部通过 `config.yaml` 独立开关控制，默认不影响现有流程**：
+
+### 1. FinCoT 结构化推理链
+
+**论文依据**: [FinCoT (arXiv:2506.16123)](https://arxiv.org/abs/2506.16123) — 准确率 +17.3pp，token 消耗 -8.9x
+
+将 Prompt 决策框架从「条件罗列」改为「6步强制推理链」，强制 LLM 按固定步骤分析：
+
+```
+步骤1 趋势确认 → 多周期趋势是否一致？
+步骤2 入场信号 → 哪些技术指标触发？（列出具体数值）
+步骤3 情绪校验 → 资金费率/恐惧贪婪/多空辩论是否有逆向信号？
+步骤4 复盘比对 → 当前情况匹配哪条历史经验？
+步骤5 风险计算 → 止损/止盈距离、盈亏比、手续费覆盖率
+步骤6 最终决策 → 综合以上 5 步，给出决策和置信度
+```
+
+**使用方式**: 选择带 FinCoT 的 Prompt 集（推荐 `nof1-improved`）：
+
+```yaml
+# config.yaml
+prompt:
+  set: nof1-improved   # 已集成 FinCoT 的增强 Prompt
+```
+
+**已同步模板**: default, aggressive, conservative, realtime（全部 8 套模板均已集成）
+
+### 2. 多空辩论 Agent
+
+**论文依据**: [TradingAgents (arXiv:2412.20138)](https://arxiv.org/abs/2412.20138) — 多 Agent 全面超越单 Agent 基线
+
+两个独立 Agent 分别从看多/看空角度分析，消除单 Agent 确认偏见：
+
+```
+数据 → BullAgent（强制看多，输出 3 条论点 + 置信度）
+     → BearAgent（强制看空，输出 3 条论点 + 置信度）
+     → 综合双方论点 → 注入主决策 Prompt
+```
+
+**使用方式**:
+
+```yaml
+# config.yaml
+debate:
+  enabled: true   # 开启后每次决策额外 2 次 LLM 调用
+```
+
+**核心代码**: `src/agent/debate.py` — `run_bull_bear_debate()` 函数
+
+### 3. CEX 领先信号 + 链上数据
+
+**论文依据**:
+- [MDPI Mathematics 2026](https://www.mdpi.com/2227-7390/14/2/346) — CEX 价格发现能力比 DEX 高 61%
+- [ScienceDirect 2025](https://www.sciencedirect.com/science/article/pii/S266682702500057X) — MVRV/SOPR 被验证为强方向信号
+
+新增 3 个外部数据源（自动优雅降级，API 不可用不影响主流程）：
+
+| 数据源 | API | 信号逻辑 |
+|--------|-----|----------|
+| Binance CEX 资金费率 | 公开 API | CEX 费率急变但 HL 未跟随 → 领先预警 |
+| 恐惧贪婪指数 | alternative.me | 极端恐惧/贪婪 → 逆向信号 |
+| 链上 MVRV/SOPR | blockchain.info | MVRV>3.5 过热，<1.0 低估 |
+
+**使用方式**: 数据增强默认启用（通过 `enhanced_analysis.enabled`），数据自动采集注入 Prompt：
+
+```yaml
+# config.yaml
+enhanced_analysis:
+  enabled: true   # 启用后自动采集 CEX 费率、链上数据
+```
+
+**核心代码**: `src/data/data_enricher.py` — `MarketDataEnricher` 类
+
+### 4. 市场 Regime 自适应策略切换
+
+**论文依据**: [Springer Digital Finance 2025](https://link.springer.com/article/10.1007/s42521-024-00123-2) — Regime 感知策略显著优于静态策略
+
+根据市场状态（趋势/震荡/高波动）动态调整交易参数：
+
+```python
+# 11 种 MarketState → 3 种 Regime
+"trending"  → 信号阈值放宽 (0.5)，允许高杠杆 (10x)，大仓位 (80%)
+"ranging"   → 信号阈值收严 (0.75)，限制杠杆 (5x)，小仓位 (40%)
+"volatile"  → 极严阈值 (0.85)，低杠杆 (3x)，极小仓位 (30%)
+```
+
+**使用方式**:
+
+```yaml
+# config.yaml
+regime_adaptive:
+  enabled: true   # 启用 Regime 自适应（依赖 enhanced_analysis）
+  # 可选：覆盖默认参数
+  # trending:
+  #   signal_threshold: 0.5
+  #   min_confidence: 0.35
+  #   max_leverage: 10
+```
+
+**核心代码**:
+- `src/data/regime_adapter.py` — Regime 映射和参数查表
+- `src/data/signal_scorer.py` — Regime 自适应因子权重
+- `src/trading/enhanced_engine.py` — `_apply_filters()` 动态阈值覆盖
+
+### 功能依赖关系
+
+```
+enhanced_analysis.enabled: true     ← 基础开关，启用增强分析和数据采集
+  ├── debate.enabled: true          ← 可选，独立开关
+  └── regime_adaptive.enabled: true ← 可选，依赖 enhanced_analysis
+```
+
+### A/B 回测对比
+
+使用 `backtest_comparison.py` 对比不同功能配置的效果：
+
+```bash
+# 对比所有功能
+uv run python backtest_comparison.py --symbol BTC --compare all
+
+# 对比特定功能
+uv run python backtest_comparison.py --symbol BTC --compare fincot    # FinCoT
+uv run python backtest_comparison.py --symbol BTC --compare debate    # 辩论
+uv run python backtest_comparison.py --symbol BTC --compare onchain   # 链上数据
+uv run python backtest_comparison.py --symbol BTC --compare regime    # Regime
+```
 
 ## 关键模块详解
 
@@ -238,17 +361,19 @@ if require_stop_loss and not stop_loss_success:
 
 ## Prompt 策略系统
 
-项目支持多套 Prompt 策略，位于 `prompts/` 目录：
+项目支持多套 Prompt 策略，位于 `prompts/` 目录，全部已集成 FinCoT 6 步推理链：
 
 | 策略 | 说明 |
 |------|------|
-| `default` | 默认策略 |
-| `conservative` | 保守策略 |
-| `aggressive` | 激进策略 |
-| `nof1` / `nof1-improved` | 增强版策略 |
-| `realtime` / `realtime-eng` | 实时策略 |
+| `default` | 默认策略（标准 FinCoT） |
+| `conservative` | 保守策略（趋势分歧即 HOLD，盈亏比 ≥ 2.0） |
+| `aggressive` | 激进策略（3 条件即可入场，盈亏比 ≥ 1.2） |
+| `nof1` / `nof1-improved` | 增强版策略（推荐，完整 FinCoT + 增强数据集成） |
+| `realtime` / `realtime-eng` | 实时策略（价格行为优先于滞后指标） |
 
 通过 `config.yaml` 中的 `prompt.set` 切换策略。`PromptManager` 负责加载和渲染 Jinja2 模板。
+
+模板支持的动态变量包括：`{{ debate_summary }}`（辩论结果）、`{{ regime_hint }}`（Regime 策略提示）、`{{ cex_funding_signal }}`（CEX 领先信号）、`{{ onchain_summary }}`（链上数据摘要）等。
 
 ## 配置结构
 
@@ -270,24 +395,35 @@ HYPERLIQUID_TESTNET=true/false   # 测试网/主网切换
 
 ```yaml
 llm:
-  client_type: openai           # openai/cloudflare/google/litellm/nvidia
+  client_type: langchain_nvidia  # openai/cloudflare/google/litellm/nvidia
+  temperature: 0.2               # 交易决策建议低温度
 
 trading:
-  symbols: [BTC, ETH, SOL]      # 交易对（简单符号，非交易对格式）
-  max_trade_amount: 100         # 单笔上限（美元）
-  max_leverage: 10              # 最大杠杆
+  symbols: [BTC, ETH]            # 交易对（简单符号，非交易对格式）
+  max_trade_amount: 100           # 单笔上限（美元）
+  max_leverage: 10                # 最大杠杆
 
-# 增强分析配置 (新增)
+prompt:
+  set: nof1-improved              # Prompt 集（推荐 nof1-improved）
+
+# 增强分析（启用后自动采集 CEX/链上数据）
 enhanced_analysis:
   enabled: true
-  signal_threshold: 0.6         # 信号阈值
-  require_trend_alignment: true # 要求趋势共振
 
-# 账户保护配置 (新增)
+# 多空辩论（每次决策额外 2 次 LLM 调用）
+debate:
+  enabled: false
+
+# Regime 自适应策略（根据市场状态动态调整参数）
+regime_adaptive:
+  enabled: false
+
+# 账户保护
 account_protection:
-  max_drawdown_pct: 10.0        # 最大回撤 10%
-  max_position_hours: 24        # 最大持仓时间
-  daily_loss_limit: 5.0         # 单日亏损上限 5%
+  enabled: true
+  max_drawdown_pct: 0.10          # 最大回撤 10%
+  max_daily_loss_pct: 0.05        # 单日亏损 5%
+  max_position_hours: 48          # 最大持仓时间
 ```
 
 ## 设计模式
@@ -297,6 +433,7 @@ account_protection:
 3. **单例模式**: `LLMClientManager` 和 `Config` 使用单例确保全局一致性
 4. **结构化输出**: `ExecutionAgent` 使用 Pydantic 模型 (`ExecutionPlan`) 确保决策格式正确
 5. **防御性编程**: 风险管理模块默认值初始化防止空值异常
+6. **功能开关模式**: 所有增强功能通过 `config.yaml` 独立开关控制，默认关闭
 
 ## 测试
 
@@ -316,6 +453,12 @@ uv run pytest tests/ --cov=src
 主要测试文件：
 - `test_agents_langgraph.py`: Agent 架构测试
 - `test_decision_validator.py`: 决策验证器测试
+- `test_debate.py`: 多空辩论引擎测试
+- `test_signal_scorer_regime.py`: 信号评分 Regime 自适应测试
+- `test_enhanced_engine_regime.py`: 增强引擎 Regime 集成测试
+- `test_regime_adapter.py`: Regime 适配器测试
+- `test_data_enricher_extended.py`: 数据增强扩展测试
+- `test_review_memory_vft.py`: 复盘记忆测试
 - `test_external_info_agent.py`: 外部信息收集测试
 - `test_review_daily_logger.py`: 复盘日志测试
 
@@ -326,6 +469,7 @@ uv run pytest tests/ --cov=src
 - 新增代码需要删除未使用的导入和变量
 - 异常处理的 except 块需要命名异常变量（如 `except Exception as e`）
 - 安全机制需要包含重试逻辑
+- 所有新功能必须通过 config 开关控制，默认关闭
 
 ### Hyperliquid 特性
 - 使用简单符号格式（`BTC`, `ETH`），不是交易对格式（不是 `BTC/USDT`）

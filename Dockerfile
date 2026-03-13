@@ -25,14 +25,14 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# 安装 gosu（用于以指定 UID:GID 安全降权运行）和 libgomp1（LightGBM OpenMP 依赖）
-RUN apt-get update && apt-get install -y --no-install-recommends gosu libgomp1 \
+# 安装 gosu（用于以指定 UID:GID 安全降权运行）
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/* \
     && gosu nobody true
 
 # 预创建可写目录（entrypoint 会根据 PUID/PGID 修复权限）
-RUN mkdir -p /app/logs/decisions /app/logs/trades /app/models/qlib \
-    /app/data/qlib /app/data/market_info /app/experiments
+RUN mkdir -p /app/logs/decisions /app/logs/trades \
+    /app/data/market_info /app/experiments
 
 # Copy uv binary and virtual environment from builder
 COPY --from=builder /bin/uv /bin/uv

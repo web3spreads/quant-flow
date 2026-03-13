@@ -87,6 +87,7 @@ class EnhancedTradingEngine:
         min_confidence: float = 0.4,
         enable_risk_filter: bool = True,
         enable_timing_filter: bool = True,
+        regime_config: dict | None = None,
     ):
         """
         初始化增强型交易引擎
@@ -98,6 +99,7 @@ class EnhancedTradingEngine:
             min_confidence: 最低置信度要求
             enable_risk_filter: 是否启用风险过滤
             enable_timing_filter: 是否启用时机过滤
+            regime_config: Regime 自适应配置，包含 enabled 和 params 字段
         """
         self.market_analyzer = MarketStateAnalyzer()
         self.signal_scorer = SignalScorer(weights=signal_weights)
@@ -107,6 +109,10 @@ class EnhancedTradingEngine:
         self.min_confidence = min_confidence
         self.enable_risk_filter = enable_risk_filter
         self.enable_timing_filter = enable_timing_filter
+
+        # Regime 自适应配置
+        self.regime_config = regime_config or {}
+        self.enable_regime_adaptive = bool(regime_config and regime_config.get("enabled", False))
 
         self._decision_counter = 0
         self._decision_history: list[EnhancedDecision] = []
@@ -120,6 +126,7 @@ class EnhancedTradingEngine:
         current_positions: list[dict[str, Any]],
         multi_timeframe_trends: dict[str, str] | None = None,
         leverage: int = 3,
+        enriched_data: dict[str, Any] | None = None,
     ) -> EnhancedDecision:
         """
         执行完整的分析和决策流程
@@ -132,6 +139,7 @@ class EnhancedTradingEngine:
             current_positions: 当前持仓列表
             multi_timeframe_trends: 多周期趋势
             leverage: 杠杆倍数
+            enriched_data: 增强数据（含 CEX funding、恐贪指数等），用于辅助信号评分
 
         Returns:
             EnhancedDecision: 增强型交易决策
@@ -150,6 +158,21 @@ class EnhancedTradingEngine:
         )
         reasoning.append(f"市场状态: {market_analysis.state.value}")
 
+        # Regime 自适应参数（仅在启用时计算）
+        regime_params = None
+        if self.enable_regime_adaptive:
+            from src.data.regime_adapter import get_regime_params
+
+            regime_params = get_regime_params(
+                market_analysis.state,
+                config_overrides=self.regime_config.get("params", {}),
+            )
+            reasoning.append(
+                f"Regime 识别: {regime_params.regime} "
+                f"(置信度阈值={regime_params.min_confidence}, "
+                f"信号阈值={regime_params.signal_threshold})"
+            )
+
         # 第二步：风险评估
         current_position = self._find_position(symbol, current_positions)
         risk_assessment = self.risk_manager.assess_risk(
@@ -161,7 +184,12 @@ class EnhancedTradingEngine:
         if risk_assessment.risk_level.value >= 5:  # VERY_HIGH or EXTREME
             warnings.append(f"风险级别较高: {risk_assessment.risk_level.name}")
 
-        # 第三步：信号评分
+        # 第三步：信号评分（传入 regime 和 enriched_data 启用自适应权重和辅助因子）
+        score_kwargs = {}
+        if regime_params is not None:
+            score_kwargs["regime"] = regime_params.regime
+        if enriched_data is not None:
+            score_kwargs["enriched_data"] = enriched_data
         trading_signal = self.signal_scorer.score_signal(
             symbol=symbol,
             market_data={"current_price": current_price},
@@ -172,6 +200,7 @@ class EnhancedTradingEngine:
             support_resistance=market_analysis.support_resistance,
             multi_timeframe_trends=multi_timeframe_trends,
             current_position=current_position,
+            **score_kwargs,
         )
 
         reasoning.append(f"信号质量: {trading_signal.quality.value}")
@@ -214,6 +243,7 @@ class EnhancedTradingEngine:
             risk_assessment=risk_assessment,
             market_analysis=market_analysis,
             current_position=current_position,
+            regime_params=regime_params,
         )
 
         blockers.extend(filter_blockers)
@@ -286,9 +316,17 @@ class EnhancedTradingEngine:
         risk_assessment: RiskAssessment,
         market_analysis: MarketAnalysisResult,
         current_position: dict[str, Any] | None,
+        regime_params=None,
     ) -> tuple[bool, str, list[str]]:
         """
         应用过滤器决定是否交易
+
+        Args:
+            trading_signal: 交易信号
+            risk_assessment: 风险评估
+            market_analysis: 市场分析结果
+            current_position: 当前持仓
+            regime_params: Regime 自适应参数（可选，来自 regime_adapter）
 
         Returns:
             (should_trade, action, blockers)
@@ -334,10 +372,14 @@ class EnhancedTradingEngine:
                 f"信号质量不足: {trading_signal.quality.value} < {self.min_signal_quality.value}"
             )
 
-        # 过滤2: 置信度检查
-        if trading_signal.confidence < self.min_confidence:
+        # 过滤2: 置信度检查（Regime 自适应覆盖）
+        effective_min_confidence = self.min_confidence
+        if regime_params is not None:
+            effective_min_confidence = regime_params.min_confidence
+
+        if trading_signal.confidence < effective_min_confidence:
             blockers.append(
-                f"置信度不足: {trading_signal.confidence:.0%} < {self.min_confidence:.0%}"
+                f"置信度不足: {trading_signal.confidence:.0%} < {effective_min_confidence:.0%}"
             )
 
         # 过滤3: 风险检查
@@ -361,6 +403,27 @@ class EnhancedTradingEngine:
         dangerous_states = [MarketState.UNKNOWN]
         if market_analysis.state in dangerous_states:
             blockers.append(f"市场状态不确定: {market_analysis.state.value}")
+
+        # 过滤7: Regime 自适应杠杆检查
+        if regime_params is not None:
+            # 杠杆超限提示（仅在 debug 级别记录，供执行阶段参考）
+            logger.debug(
+                "Regime [%s] 杠杆上限为 %dx，仓位上限 %.0f%%",
+                regime_params.regime,
+                regime_params.max_leverage,
+                regime_params.position_pct * 100,
+            )
+
+        # 过滤8: Regime 自适应信号质量阈值检查
+        # signal_threshold 对应标准化信号分数（0-100），不是置信度（0-1）
+        if regime_params is not None:
+            normalized = trading_signal.normalized_score
+            threshold_score = regime_params.signal_threshold * 100  # 0.5→50, 0.75→75, 0.85→85
+            if normalized < threshold_score:
+                blockers.append(
+                    f"Regime [{regime_params.regime}] 信号分数不足: "
+                    f"{normalized:.1f} < {threshold_score:.1f}"
+                )
 
         should_trade = len(blockers) == 0
         if not should_trade:
@@ -579,6 +642,9 @@ def create_enhanced_engine_from_config(config: dict[str, Any]) -> EnhancedTradin
     }
     min_quality = quality_map.get(min_quality_str.lower(), SignalQuality.FAIR)
 
+    # 解析 Regime 自适应配置
+    regime_config = config.get("regime_adaptive")
+
     return EnhancedTradingEngine(
         risk_params=risk_params,
         signal_weights=signal_weights,
@@ -586,4 +652,5 @@ def create_enhanced_engine_from_config(config: dict[str, Any]) -> EnhancedTradin
         min_confidence=filter_config.get("min_confidence", 0.4),
         enable_risk_filter=filter_config.get("enable_risk_filter", True),
         enable_timing_filter=filter_config.get("enable_timing_filter", True),
+        regime_config=regime_config,
     )

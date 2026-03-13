@@ -91,6 +91,8 @@ As a non-mainstream coin, {{ symbol }} requires a more conservative trading stra
 **Perpetual Contract Sentiment:**
 - Funding Rate Signal: {{ funding_rate_signal }}
 - Fear & Greed: {{ fear_greed_sentiment }}
+- CEX Leading Signal: {{ cex_funding_signal }}
+- On-chain Data: {{ onchain_summary }}
 
 ⚠️ **Important Reminder - Indicator Lag**:
 - All technical indicators are calculated based on historical prices and have lag.
@@ -203,6 +205,10 @@ Assuming max amount and leverage
 - When uncertain, probe with small positions; do not need to completely abandon opportunities.
 
 {{ verbal_finetuning_section }}
+
+{{ regime_hint }}
+
+{{ debate_summary }}
 
 {{ historical_summary }}
 

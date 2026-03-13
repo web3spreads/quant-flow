@@ -1,45 +1,52 @@
 [project]
 name = "quant-flow"
-version = "0.4.0"
+version = "0.5.0"
 description = "基于 LangChain Agent 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "langchain>=1.1.2",
-    "langchain-core>=1.1.1",
+    # LangChain 核心（langchain 主包不直接使用，通过子包导入）
+    "langchain-core>=1.2.0",
+    "langgraph>=1.0.4",
+
+    # LLM 供应商（全部通过 llm_client.py 条件导入，按需加载）
     "langchain-openai>=1.1.0",
-    "langchain-community>=0.4.1",
-    "langchain-exa>=1.0.0",
     "langchain-cloudflare>=0.1.11",
     "langchain-google-genai>=4.1.2",
     "langchain-litellm>=0.3.5",
     "langchain-nvidia-ai-endpoints>=1.0.0",
-    "langgraph>=1.0.4",
-    "openai>=2.9.0",
+
+    # 外部信息搜索
+    "langchain-exa>=1.0.0",
+
+    # 交易所 SDK
     "hyperliquid-python-sdk>=0.21.0",
     "eth-account>=0.13.7",
-    "pandas>=2.3.3",
-    "numpy>=2.3.5",
-    "pyyaml>=6.0.3",
-    "python-dotenv>=1.2.1",
-    "apscheduler>=3.11.1",
-    "colorama>=0.4.6",
-    "rich>=14.2.0",
-    "apprise>=1.9.5",
-    "jinja2>=3.1.6",
-    # QLib 量化引擎依赖
-    "lightgbm>=4.0.0",
-    "scikit-learn>=1.4.0",
-    "xgboost>=2.0.0",
-    "pyarrow>=15.0.0",
-    # 容器内多进程管理
+
+    # 数据处理
+    "pandas>=2.3.0",
+    "numpy>=2.0.0",
+
+    # 配置和环境
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    "jinja2>=3.1.0",
+
+    # 调度和通知
+    "apscheduler>=3.11.0",
+    "apprise>=1.9.0",
+
+    # 终端 UI
+    "rich>=14.0.0",
+
+    # 容器内多进程管理（Docker 部署需要，supervisord 通过 PATH 调用）
     "supervisor>=4.2.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8.0.0",
-    "pytest-cov>=4.1.0",
+    "pytest-cov>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "pre-commit>=3.6.0",
     "ruff>=0.8.0",
@@ -117,9 +124,4 @@ ignore_missing_imports = true
 exclude = [
     "tests/",
     ".venv/",
-]
-
-[dependency-groups]
-dev = [
-    "pytest-cov>=7.0.0",
 ]
