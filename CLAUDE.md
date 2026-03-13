@@ -89,6 +89,13 @@ tail -f logs/grid.log          # 网格交易日志
 │  MarketData  │───→│  EnhancedSingleSymbolAgent / Agent  │───→│ ExecutionAgent │
 │  (K线/指标)   │    │  (每个交易对独立决策上下文)            │    │ (结构化输出)    │
 └──────────────┘    └──────────────────┬──────────────────┘    └───────┬────────┘
+                                       ↑                               │
+                    ┌──────────────────┘ (异常波动触发)                 │
+                    │                                                   │
+              ┌─────────────┐                                          │
+              │MarketMonitor│  (独立线程，持续监控价格波动)              │
+              │(波动检测)    │                                          │
+              └─────────────┘                                          │
                                        │                               │
                     ┌──────────────────┼──────────────────┐           │
                     ↓                  ↓                  ↓           ↓
@@ -150,6 +157,7 @@ src/
 │   ├── market_data.py              # K线和市场数据
 │   ├── indicators.py               # 技术指标 (MA, RSI, MACD, Bollinger)
 │   ├── data_enricher.py            # 数据增强 (CEX费率/链上数据/恐惧贪婪) 🆕
+│   ├── market_monitor.py           # 市场主动监控 (异常波动触发决策) 🆕
 │   ├── market_state.py             # 市场状态分析 (11种状态枚举)
 │   ├── signal_scorer.py            # 多因子信号评分 (Regime自适应权重) 🆕
 │   └── regime_adapter.py           # 市场Regime自适应参数切换 🆕
@@ -161,7 +169,7 @@ src/
 
 ## LLM 决策增强功能
 
-项目实现了四项基于论文的 LLM 决策增强功能，**全部通过 `config.yaml` 独立开关控制，默认不影响现有流程**：
+项目实现了五项 LLM 决策增强功能，**全部通过 `config.yaml` 独立开关控制，默认不影响现有流程**：
 
 ### 1. FinCoT 结构化推理链
 
@@ -265,12 +273,58 @@ regime_adaptive:
 - `src/data/signal_scorer.py` — Regime 自适应因子权重
 - `src/trading/enhanced_engine.py` — `_apply_filters()` 动态阈值覆盖
 
+### 5. 市场主动监控（异常波动触发决策）
+
+在常规决策周期间隔内，独立线程持续轻量级监控市场价格。检测到异常波动时主动触发决策循环，无需等待下一个定时周期。
+
+```
+监控线程 (30s 间隔) → all_mids() 获取最新价格
+  → 与参考窗口内基准价格对比
+  → 波动超阈值 → 生成 VolatilityAlert
+  → 回调触发 trading_cycle(triggered_by_alert=True)
+  → 告警上下文通过 {{ volatility_alert }} 注入 LLM Prompt
+```
+
+**告警等级**:
+
+| 等级 | 阈值 | 行为 |
+|------|------|------|
+| NORMAL | < 1.5% | 忽略 |
+| ELEVATED | ≥ 1.5% | 记录日志（节流 60s），不触发决策 |
+| HIGH | ≥ 3.0% | 触发决策循环 + 进入冷却期 |
+| EXTREME | ≥ 5.0% | 触发决策循环 + 进入冷却期 + 额外告警 |
+
+**线程安全机制**:
+- `_history_lock`: 保护 `_price_history`（监控线程写入，主线程读取）
+- `_stats_lock`: 保护统计计数器
+- `_alert_lock`: 保护待处理告警队列（`main.py` 中）
+- 冷却期按交易对独立管理，避免频繁触发
+
+**使用方式**:
+
+```yaml
+# config.yaml
+market_monitor:
+  enabled: true                    # 启用市场主动监控
+  check_interval_seconds: 30       # 检查间隔（秒）
+  alert_threshold_pct: 3.0         # HIGH 告警阈值（%）
+  elevated_threshold_pct: 1.5      # ELEVATED 阈值（%）
+  extreme_threshold_pct: 5.0       # EXTREME 阈值（%）
+  cooldown_minutes: 5              # 触发后冷却时间（分钟）
+  reference_window_minutes: 10     # 价格基准窗口（分钟）
+```
+
+**核心代码**:
+- `src/data/market_monitor.py` — `MarketMonitor` 类，独立线程监控
+- `main.py` — `_on_market_alert()` 回调，`_consume_pending_alert()` 消费告警
+
 ### 功能依赖关系
 
 ```
-enhanced_analysis.enabled: true     ← 基础开关，启用增强分析和数据采集
-  ├── debate.enabled: true          ← 可选，独立开关
-  └── regime_adaptive.enabled: true ← 可选，依赖 enhanced_analysis
+enhanced_analysis.enabled: true       ← 基础开关，启用增强分析和数据采集
+  ├── debate.enabled: true            ← 可选，独立开关
+  └── regime_adaptive.enabled: true   ← 可选，依赖 enhanced_analysis
+market_monitor.enabled: true          ← 独立开关，不依赖其他功能
 ```
 
 ### A/B 回测对比
@@ -373,7 +427,7 @@ if require_stop_loss and not stop_loss_success:
 
 通过 `config.yaml` 中的 `prompt.set` 切换策略。`PromptManager` 负责加载和渲染 Jinja2 模板。
 
-模板支持的动态变量包括：`{{ debate_summary }}`（辩论结果）、`{{ regime_hint }}`（Regime 策略提示）、`{{ cex_funding_signal }}`（CEX 领先信号）、`{{ onchain_summary }}`（链上数据摘要）等。
+模板支持的动态变量包括：`{{ debate_summary }}`（辩论结果）、`{{ volatility_alert }}`（异常波动告警）、`{{ regime_hint }}`（Regime 策略提示）、`{{ cex_funding_signal }}`（CEX 领先信号）、`{{ onchain_summary }}`（链上数据摘要）等。
 
 ## 配置结构
 
@@ -424,6 +478,16 @@ account_protection:
   max_drawdown_pct: 0.10          # 最大回撤 10%
   max_daily_loss_pct: 0.05        # 单日亏损 5%
   max_position_hours: 48          # 最大持仓时间
+
+# 市场主动监控（异常波动触发决策循环）
+market_monitor:
+  enabled: false
+  check_interval_seconds: 30      # 检查间隔（秒）
+  alert_threshold_pct: 3.0        # HIGH 告警阈值（%）
+  elevated_threshold_pct: 1.5     # ELEVATED 阈值（%）
+  extreme_threshold_pct: 5.0      # EXTREME 阈值（%）
+  cooldown_minutes: 5             # 触发后冷却时间（分钟）
+  reference_window_minutes: 10    # 价格基准窗口（分钟）
 ```
 
 ## 设计模式
@@ -461,6 +525,7 @@ uv run pytest tests/ --cov=src
 - `test_review_memory_vft.py`: 复盘记忆测试
 - `test_external_info_agent.py`: 外部信息收集测试
 - `test_review_daily_logger.py`: 复盘日志测试
+- `test_market_monitor.py`: 市场主动监控测试
 
 ## 注意事项
 
