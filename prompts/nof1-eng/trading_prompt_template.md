@@ -21,6 +21,10 @@ Below is various state data, price data, and prediction signals for you to ident
 **Perpetual Contract Data:**
 - Open Interest: Latest: {{ oi_latest }} | Average: {{ oi_average }}
 - Funding Rate: {{ funding_rate }}
+- Funding Rate Signal: {{ funding_rate_signal }}
+- Market Sentiment (Fear & Greed): {{ fear_greed_sentiment }}
+- CEX Leading Signal: {{ cex_funding_signal }}
+- On-chain Data: {{ onchain_summary }}
 
 **Intraday Sequence (minute by minute, Oldest → Newest):**
 
@@ -72,7 +76,11 @@ RSI Indicators (14-period, 4-Hour): {{ rsi_14_4h_indicators }}
 
 ---
 
-{{ qlib_signal_text }}
+{{ verbal_finetuning_section }}
+
+{{ regime_hint }}
+
+{{ debate_summary }}
 
 {{ historical_summary }}
 

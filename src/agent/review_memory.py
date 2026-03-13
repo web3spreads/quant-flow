@@ -127,7 +127,6 @@ class ReviewMemoryStore:
 
         Returns:
             格式化的文本字符串，包含标题和编号列表。
-            格式: "### ♻️ 复盘经验\n1. rule => action (置信度 x.xx, 证据 n)"
             如果没有经验，返回空字符串。
         """
         lessons = self.get_lessons(symbol)[:limit]
@@ -140,6 +139,55 @@ class ReviewMemoryStore:
             for idx, lesson in enumerate(lessons)
         ]
         return "### ♻️ 复盘经验\n" + "\n".join(lines)
+
+    def get_verbal_finetuning_section(self, symbol: str, limit: int = 5) -> str:
+        """
+        生成结构化的 Verbal Fine-tuning 注入段落（参考 arXiv:2510.08068）。
+
+        与 get_lessons_summary 的区别：
+        - 高优先级标记，要求 LLM 优先参考
+        - 按置信度+证据数量综合排序，突出最可靠规则
+        - 区分「高置信」和「待验证」规则，减少噪声干扰
+
+        Returns:
+            格式化的 Markdown 文本，用于直接注入 Prompt 决策上下文。
+        """
+        lessons = self.get_lessons(symbol)
+        if not lessons:
+            return ""
+
+        # 综合评分 = 置信度 * log(1 + 证据数)，平衡置信度和可重复性
+        import math
+
+        def score(lesson: dict) -> float:
+            conf = lesson.get("confidence", 0)
+            support = lesson.get("support_count", 1)
+            return conf * math.log1p(support)
+
+        lessons_sorted = sorted(lessons, key=score, reverse=True)[:limit]
+
+        high_conf = [lesson for lesson in lessons_sorted if lesson.get("confidence", 0) >= 0.6]
+        low_conf = [lesson for lesson in lessons_sorted if lesson.get("confidence", 0) < 0.6]
+
+        lines = [f"## 🧠 {symbol} 复盘经验（优先参考，在做决策前必须逐条对照）\n"]
+
+        if high_conf:
+            lines.append("**高置信规则（已被多次验证）：**")
+            for idx, lesson in enumerate(high_conf):
+                lines.append(
+                    f"  {idx + 1}. 当 {lesson.get('rule')} → 应 {lesson.get('action')} "
+                    f"（置信度 {lesson.get('confidence', 0):.2f}，验证 {lesson.get('support_count', 1)} 次）"
+                )
+
+        if low_conf:
+            lines.append("\n**待验证规则（参考但不强制）：**")
+            for idx, lesson in enumerate(low_conf):
+                lines.append(
+                    f"  {idx + 1}. 当 {lesson.get('rule')} → 应 {lesson.get('action')} "
+                    f"（置信度 {lesson.get('confidence', 0):.2f}）"
+                )
+
+        return "\n".join(lines)
 
     def add_lessons(
         self, symbol: str, lessons: list[dict[str, Any]], min_confidence: float = 0.35

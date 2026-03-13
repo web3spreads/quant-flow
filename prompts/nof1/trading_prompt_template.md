@@ -21,6 +21,10 @@
 **永续合约数据:**
 - 持仓量 (Open Interest): 最新: {{ oi_latest }} | 平均: {{ oi_average }}
 - 资金费率 (Funding Rate): {{ funding_rate }}
+- 资金费率信号: {{ funding_rate_signal }}
+- 市场情绪 (恐惧贪婪指数): {{ fear_greed_sentiment }}
+- CEX领先信号: {{ cex_funding_signal }}
+- 链上数据: {{ onchain_summary }}
 
 **日内序列 (按分钟, 最旧 → 最新):**
 
@@ -75,7 +79,11 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 {% if recent_trades_text %}
 {{ recent_trades_text }}
 {% endif %}
-{{ qlib_signal_text }}
+{{ verbal_finetuning_section }}
+
+{{ regime_hint }}
+
+{{ debate_summary }}
 
 {{ historical_summary }}
 

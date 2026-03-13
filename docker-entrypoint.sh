@@ -12,10 +12,7 @@ WRITABLE_DIRS=(
     "/app/logs"
     "/app/logs/decisions"
     "/app/logs/trades"
-    "/app/models"
-    "/app/models/qlib"
     "/app/data"
-    "/app/data/qlib"
     "/app/data/market_info"
     "/app/experiments"
 )
@@ -38,7 +35,6 @@ done
 
 # 修复已有文件的归属（仅修改属主不匹配的文件，避免大量无效操作）
 find /app/logs -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
-find /app/models -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
 find /app/data -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
 find /app/experiments -not -user "$PUID" -exec chown "$PUID:$PGID" {} + 2>/dev/null || true
 
@@ -67,13 +63,8 @@ case "$RUN_MODE" in
         ENABLE_MAIN=true
         ENABLE_GRID=true
         ;;
-    backfill)
-        # 历史数据回填模式：运行完即退出，不启动 supervisord
-        ENABLE_MAIN=false
-        ENABLE_GRID=false
-        ;;
     *)
-        echo -e "${RED}❌ 无效的 RUN_MODE: ${RUN_MODE}，支持: main / grid / all / backfill${NC}"
+        echo -e "${RED}❌ 无效的 RUN_MODE: ${RUN_MODE}，支持: main / grid / all${NC}"
         exit 1
         ;;
 esac
@@ -83,18 +74,6 @@ export MAIN_CONFIG=${MAIN_CONFIG:-config.yaml}
 export GRID_CONFIG=${GRID_CONFIG:-config.grid.yaml}
 
 echo -e "${YELLOW}📋 运行模式: ${RUN_MODE}${NC}"
-
-# ========== 回填模式：直接运行脚本后退出 ==========
-if [ "$RUN_MODE" = "backfill" ]; then
-    echo -e "${YELLOW}📋 回填参数: ${BACKFILL_ARGS:-默认（最近 90 天，BTC ETH SOL，1h）}${NC}"
-
-    echo -e "${GREEN}🎯 开始历史数据回填...${NC}"
-    echo ""
-
-    # 以降权用户运行回填脚本，通过 BACKFILL_ARGS 传递参数
-    # shellcheck disable=SC2086
-    exec gosu "$PUID:$PGID" python backfill_qlib_data.py ${BACKFILL_ARGS:-}
-fi
 
 # ========== 交易模式配置 ==========
 echo -e "${YELLOW}📋 主交易配置: ${MAIN_CONFIG}, 网格配置: ${GRID_CONFIG}${NC}"

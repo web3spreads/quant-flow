@@ -103,11 +103,6 @@ services:
 
     # Health check 由 Dockerfile 中的 HEALTHCHECK 指令定义，此处不重复配置
 
-  # ========== 历史数据回填 ==========
-  # 已移除 Docker 服务，改为本地手动执行，避免与主程序容器数据目录冲突
-  # 使用方式:
-  #   uv run python backfill_qlib_data.py --days 180 --symbols BTC ETH SOL --freq 4h
-
 networks:
   quant-network:
     driver: bridge

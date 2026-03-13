@@ -136,6 +136,35 @@ class SignalScorer:
         "multi_timeframe": 0.15,  # 多周期一致性
     }
 
+    # Regime 自适应权重配置
+    # 根据市场状态动态调整各因子权重，使评分更贴合当前市场环境
+    REGIME_WEIGHTS = {
+        "trending": {
+            "trend": 0.30,  # 趋势市上调趋势因子
+            "momentum": 0.25,  # 趋势市上调动量因子
+            "volume": 0.15,
+            "volatility": 0.05,  # 趋势市降低波动性权重
+            "price_action": 0.10,
+            "multi_timeframe": 0.15,
+        },
+        "ranging": {
+            "trend": 0.15,  # 震荡市降低趋势权重
+            "momentum": 0.15,
+            "volume": 0.20,  # 震荡市上调成交量权重
+            "volatility": 0.10,
+            "price_action": 0.20,  # 震荡市上调价格行为权重
+            "multi_timeframe": 0.20,
+        },
+        "volatile": {
+            "trend": 0.20,
+            "momentum": 0.10,  # 高波动市降低动量权重
+            "volume": 0.15,
+            "volatility": 0.20,  # 高波动市上调波动性权重
+            "price_action": 0.20,  # 高波动市上调价格行为权重
+            "multi_timeframe": 0.15,
+        },
+    }
+
     def __init__(
         self,
         weights: dict[str, float] | None = None,
@@ -162,6 +191,20 @@ class SignalScorer:
         self._signal_counter = 0
         self._signal_history: list[TradingSignal] = []
 
+    def get_weights_for_regime(self, regime: str | None) -> dict[str, float]:
+        """
+        获取指定 regime 的因子权重
+
+        Args:
+            regime: regime 名称（trending/ranging/volatile），None 则返回默认权重
+
+        Returns:
+            因子权重字典
+        """
+        if regime and regime in self.REGIME_WEIGHTS:
+            return self.REGIME_WEIGHTS[regime]
+        return self.weights
+
     def score_signal(
         self,
         symbol: str,
@@ -173,6 +216,8 @@ class SignalScorer:
         support_resistance: Any,
         multi_timeframe_trends: dict[str, str] | None = None,
         current_position: dict[str, Any] | None = None,
+        regime: str | None = None,
+        enriched_data: dict[str, Any] | None = None,
     ) -> TradingSignal:
         """
         计算综合交易信号
@@ -187,11 +232,19 @@ class SignalScorer:
             support_resistance: 支撑阻力分析
             multi_timeframe_trends: 多周期趋势
             current_position: 当前持仓
+            regime: 市场 Regime（"trending"/"ranging"/"volatile"），为 None 时使用默认权重
+            enriched_data: 增强数据（含 CEX funding、恐贪指数等），为 None 时不计算额外因子
 
         Returns:
             TradingSignal: 完整的交易信号
         """
         current_price = market_data.get("current_price", 0)
+
+        # 根据 regime 选择因子权重，未指定时使用实例默认权重
+        if regime and regime in self.REGIME_WEIGHTS:
+            active_weights = self.REGIME_WEIGHTS[regime]
+        else:
+            active_weights = self.weights
 
         # 计算各因子得分
         factors = []
@@ -203,8 +256,8 @@ class SignalScorer:
                 name="trend",
                 value=trend_analysis.strength if hasattr(trend_analysis, "strength") else 0,
                 score=trend_score,
-                weight=self.weights["trend"],
-                contribution=trend_score * self.weights["trend"],
+                weight=active_weights["trend"],
+                contribution=trend_score * active_weights["trend"],
                 description=trend_desc,
             )
         )
@@ -218,8 +271,8 @@ class SignalScorer:
                 if hasattr(momentum_analysis, "rsi_value")
                 else 50,
                 score=momentum_score,
-                weight=self.weights["momentum"],
-                contribution=momentum_score * self.weights["momentum"],
+                weight=active_weights["momentum"],
+                contribution=momentum_score * active_weights["momentum"],
                 description=momentum_desc,
             )
         )
@@ -233,8 +286,8 @@ class SignalScorer:
                 if hasattr(volume_analysis, "volume_ratio")
                 else 1,
                 score=volume_score,
-                weight=self.weights["volume"],
-                contribution=volume_score * self.weights["volume"],
+                weight=active_weights["volume"],
+                contribution=volume_score * active_weights["volume"],
                 description=volume_desc,
             )
         )
@@ -248,8 +301,8 @@ class SignalScorer:
                 if hasattr(volatility_analysis, "atr_percentile")
                 else 50,
                 score=vol_score,
-                weight=self.weights["volatility"],
-                contribution=vol_score * self.weights["volatility"],
+                weight=active_weights["volatility"],
+                contribution=vol_score * active_weights["volatility"],
                 description=vol_desc,
             )
         )
@@ -263,8 +316,8 @@ class SignalScorer:
                 name="price_action",
                 value=current_price,
                 score=pa_score,
-                weight=self.weights["price_action"],
-                contribution=pa_score * self.weights["price_action"],
+                weight=active_weights["price_action"],
+                contribution=pa_score * active_weights["price_action"],
                 description=pa_desc,
             )
         )
@@ -276,11 +329,25 @@ class SignalScorer:
                 name="multi_timeframe",
                 value=mtf_score,
                 score=mtf_score,
-                weight=self.weights["multi_timeframe"],
-                contribution=mtf_score * self.weights["multi_timeframe"],
+                weight=active_weights["multi_timeframe"],
+                contribution=mtf_score * active_weights["multi_timeframe"],
                 description=mtf_desc,
             )
         )
+
+        # 7-9. 增强数据因子（额外加分，不影响原有 6 因子的满分比例）
+        if enriched_data:
+            cex_factor = self._score_cex_funding(enriched_data)
+            if cex_factor:
+                factors.append(cex_factor)
+
+            fg_factor = self._score_fear_greed(enriched_data)
+            if fg_factor:
+                factors.append(fg_factor)
+
+            funding_factor = self._score_funding_extreme(enriched_data)
+            if funding_factor:
+                factors.append(funding_factor)
 
         # 计算原始得分 (-100 到 100)
         raw_score = sum(f.contribution for f in factors) * 100
@@ -619,6 +686,131 @@ class SignalScorer:
             desc = "多周期分歧"
 
         return score, desc
+
+    def _score_cex_funding(self, enriched_data: dict[str, Any]) -> SignalFactor:
+        """
+        评分 CEX funding rate 因子
+
+        基于 CEX 与 DEX 的 funding rate 差异判断市场偏向。
+        CEX 领先看涨/看跌信号作为辅助参考。
+
+        Args:
+            enriched_data: 增强数据字典
+
+        Returns:
+            SignalFactor 或 None（数据不可用时）
+        """
+        if not enriched_data:
+            enriched_data = {}
+        signal_type = enriched_data.get("cex_funding_signal_type", "unknown")
+
+        score_map = {
+            "cex_leading_bullish": 0.6,
+            "cex_leading_bearish": -0.6,
+        }
+        desc_map = {
+            "cex_leading_bullish": "CEX funding 领先看涨",
+            "cex_leading_bearish": "CEX funding 领先看跌",
+        }
+
+        score = score_map.get(signal_type, 0.0)
+        description = desc_map.get(signal_type, "CEX funding 中性")
+        weight = 0.1
+
+        return SignalFactor(
+            name="cex_funding",
+            value=score,
+            score=score,
+            weight=weight,
+            contribution=score * weight,
+            description=description,
+        )
+
+    def _score_fear_greed(self, enriched_data: dict[str, Any]) -> SignalFactor:
+        """
+        评分恐贪指数因子
+
+        基于市场恐贪指数的逆向信号进行评分。
+        极度恐惧视为看涨（逆向），极度贪婪视为看跌（逆向）。
+
+        Args:
+            enriched_data: 增强数据字典
+
+        Returns:
+            SignalFactor 或 None（数据不可用时）
+        """
+        if not enriched_data:
+            enriched_data = {}
+        signal_bias = enriched_data.get("fear_greed_signal_bias", "unknown")
+
+        score_map = {
+            "bullish_contrarian": 0.5,  # 极度恐惧 → 逆向看涨
+            "bearish_contrarian": -0.5,  # 极度贪婪 → 逆向看跌
+            "mild_bullish": 0.2,
+            "mild_bearish": -0.2,
+        }
+        desc_map = {
+            "bullish_contrarian": "恐贪指数极度恐惧（逆向看涨）",
+            "bearish_contrarian": "恐贪指数极度贪婪（逆向看跌）",
+            "mild_bullish": "恐贪指数偏恐惧（温和看涨）",
+            "mild_bearish": "恐贪指数偏贪婪（温和看跌）",
+        }
+
+        score = score_map.get(signal_bias, 0.0)
+        description = desc_map.get(signal_bias, "恐贪指数中性")
+        weight = 0.08
+
+        return SignalFactor(
+            name="fear_greed",
+            value=score,
+            score=score,
+            weight=weight,
+            contribution=score * weight,
+            description=description,
+        )
+
+    def _score_funding_extreme(self, enriched_data: dict[str, Any]) -> SignalFactor:
+        """
+        评分 funding rate 极端值因子
+
+        当 funding rate 出现极端偏离时，产生逆向交易信号。
+        极端正 funding → 多头拥挤，逆向看跌；极端负 funding → 空头拥挤，逆向看涨。
+
+        Args:
+            enriched_data: 增强数据字典
+
+        Returns:
+            SignalFactor 或 None（数据不可用时）
+        """
+        if not enriched_data:
+            enriched_data = {}
+        signal_strength = enriched_data.get("funding_rate_signal_strength", "neutral")
+
+        score_map = {
+            "bullish_contrarian": 0.5,  # 极端负 funding → 逆向看涨
+            "bearish_contrarian": -0.5,  # 极端正 funding → 逆向看跌
+            "mild_bullish": 0.3,
+            "mild_bearish": -0.3,
+        }
+        desc_map = {
+            "bullish_contrarian": "Funding rate 极端负值（逆向看涨）",
+            "bearish_contrarian": "Funding rate 极端正值（逆向看跌）",
+            "mild_bullish": "Funding rate 偏负（温和看涨）",
+            "mild_bearish": "Funding rate 偏正（温和看跌）",
+        }
+
+        score = score_map.get(signal_strength, 0.0)
+        description = desc_map.get(signal_strength, "Funding rate 中性")
+        weight = 0.07
+
+        return SignalFactor(
+            name="funding_extreme",
+            value=score,
+            score=score,
+            weight=weight,
+            contribution=score * weight,
+            description=description,
+        )
 
     def _determine_signal_type(
         self, raw_score: float, current_position: dict | None, trend
