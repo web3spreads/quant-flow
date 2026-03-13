@@ -40,12 +40,8 @@ class TestFactSubjectiveSplit:
 
     def test_infer_mixed(self):
         """测试推断混合型经验"""
-        assert ReviewAgent._infer_source_type(
-            "RSI > 70 且市场情绪贪婪", "减仓"
-        ) == "mixed"
-        assert ReviewAgent._infer_source_type(
-            "MACD 金叉但新闻利空", "观望"
-        ) == "mixed"
+        assert ReviewAgent._infer_source_type("RSI > 70 且市场情绪贪婪", "减仓") == "mixed"
+        assert ReviewAgent._infer_source_type("MACD 金叉但新闻利空", "观望") == "mixed"
 
     def test_infer_default_mixed(self):
         """测试无关键词时默认为 mixed"""

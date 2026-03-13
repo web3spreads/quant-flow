@@ -599,6 +599,7 @@ class ReviewAgent:
         now = datetime.now()
         # 指数衰减系数：半衰期 = time_decay_days → λ = ln(2) / half_life
         import math
+
         decay_lambda = math.log(2) / self.time_decay_days
 
         decayed = []
@@ -621,9 +622,7 @@ class ReviewAgent:
                         # 指数衰减：e^(-λt)，最低保留 30%
                         decay_factor = max(0.3, math.exp(-decay_lambda * days_elapsed))
                         original_confidence = decayed_lesson.get("confidence", 0.5)
-                        decayed_lesson["confidence"] = round(
-                            original_confidence * decay_factor, 3
-                        )
+                        decayed_lesson["confidence"] = round(original_confidence * decay_factor, 3)
                         decayed_lesson["time_decay_applied"] = True
                         decayed_lesson["decay_factor"] = round(decay_factor, 3)
                 except (ValueError, TypeError, OverflowError):
@@ -742,9 +741,9 @@ class ReviewAgent:
 
             # 改进3: negative 经验置信度加成
             if lesson_type == "negative":
-                adjusted_confidence = min(1.0, round(
-                    adjusted_confidence * negative_confidence_boost, 3
-                ))
+                adjusted_confidence = min(
+                    1.0, round(adjusted_confidence * negative_confidence_boost, 3)
+                )
 
             # 改进4: 推断 source_type（如果 LLM 未返回）
             source_type = lesson.get("source_type", "mixed")
@@ -795,13 +794,41 @@ class ReviewAgent:
         """
         text = f"{rule} {action}"
         factual_keywords = [
-            "RSI", "MACD", "EMA", "ATR", "成交量", "布林带", "支撑位", "阻力位",
-            "链上", "MVRV", "SOPR", "K线", "均线", "MA", "BB", "rsi", "macd",
-            "资金费率", "持仓量", "OI", "换手率", "清算",
+            "RSI",
+            "MACD",
+            "EMA",
+            "ATR",
+            "成交量",
+            "布林带",
+            "支撑位",
+            "阻力位",
+            "链上",
+            "MVRV",
+            "SOPR",
+            "K线",
+            "均线",
+            "MA",
+            "BB",
+            "rsi",
+            "macd",
+            "资金费率",
+            "持仓量",
+            "OI",
+            "换手率",
+            "清算",
         ]
         subjective_keywords = [
-            "情绪", "新闻", "市场氛围", "叙事", "舆论", "辩论",
-            "恐慌", "FOMO", "狂热", "共识", "预期",
+            "情绪",
+            "新闻",
+            "市场氛围",
+            "叙事",
+            "舆论",
+            "辩论",
+            "恐慌",
+            "FOMO",
+            "狂热",
+            "共识",
+            "预期",
         ]
 
         has_factual = any(kw in text for kw in factual_keywords)
@@ -823,7 +850,7 @@ class ReviewAgent:
         同时低相似度区域惩罚更严格，降低环境外推风险。
         最低保留 0.1 权重（而非 0.2），进一步限制不匹配环境的影响。
         """
-        return max(0.1, similarity_score ** 2)
+        return max(0.1, similarity_score**2)
 
     def _calculate_confidence_interval(
         self,

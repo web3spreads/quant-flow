@@ -101,8 +101,7 @@ class InstantReflector:
         if self._logger:
             direction = "盈利" if trade_profitable else "亏损"
             self._logger.print_info(
-                f"[{symbol}] 即时反思完成 | {direction} ${pnl:+.2f} | "
-                f"更新 {updated_count} 条经验"
+                f"[{symbol}] 即时反思完成 | {direction} ${pnl:+.2f} | 更新 {updated_count} 条经验"
             )
 
         return reflection
@@ -128,9 +127,7 @@ class InstantReflector:
         }
 
         # 实际盈亏
-        actual_pnl = float(
-            trade_result.get("pnl", 0) or trade_result.get("closed_pnl", 0) or 0
-        )
+        actual_pnl = float(trade_result.get("pnl", 0) or trade_result.get("closed_pnl", 0) or 0)
         deviation["actual_pnl"] = actual_pnl
 
         # 预期盈亏（从决策记录中提取，如果有的话）
@@ -209,9 +206,9 @@ class InstantReflector:
                 # 单笔结果信号：盈利 +1，亏损 -1，映射到 [0, 1]
                 event_signal = 1.0 if trade_profitable else 0.0
                 # 贝叶斯加权：历史权重 = support_count / (support_count + 1)
-                new_confidence = (
-                    support_count * current_confidence + event_signal
-                ) / (support_count + 1)
+                new_confidence = (support_count * current_confidence + event_signal) / (
+                    support_count + 1
+                )
                 lesson["confidence"] = round(
                     max(0.1, min(self.confidence_upper_bound, new_confidence)), 3
                 )

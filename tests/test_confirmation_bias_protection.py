@@ -27,9 +27,27 @@ class TestConfirmationBiasProtection:
         data = {
             "lessons": {
                 "BTC": [
-                    {"rule": "r1", "action": "做多", "lesson_type": "positive", "confidence": 0.7, "last_seen": "2026-03-12"},
-                    {"rule": "r2", "action": "做多", "lesson_type": "positive", "confidence": 0.8, "last_seen": "2026-03-12"},
-                    {"rule": "r3", "action": "避免追高", "lesson_type": "negative", "confidence": 0.75, "last_seen": "2026-03-12"},
+                    {
+                        "rule": "r1",
+                        "action": "做多",
+                        "lesson_type": "positive",
+                        "confidence": 0.7,
+                        "last_seen": "2026-03-12",
+                    },
+                    {
+                        "rule": "r2",
+                        "action": "做多",
+                        "lesson_type": "positive",
+                        "confidence": 0.8,
+                        "last_seen": "2026-03-12",
+                    },
+                    {
+                        "rule": "r3",
+                        "action": "避免追高",
+                        "lesson_type": "negative",
+                        "confidence": 0.75,
+                        "last_seen": "2026-03-12",
+                    },
                 ]
             }
         }
@@ -61,31 +79,35 @@ class TestConfirmationBiasProtection:
         # 创建超过上限的经验，大部分是 positive
         lessons_data = []
         for i in range(10):
-            lessons_data.append({
-                "rule": f"positive 规则 {i}",
-                "action": f"做多 {i}",
-                "confidence": 0.5 + i * 0.01,
-                "support_count": 1,
-                "last_seen": f"2026-03-{10 + i:02d}",
-                "lesson_type": "positive",
-                "source_regime": "unknown",
-                "source_type": "mixed",
-                "context_features": {},
-            })
+            lessons_data.append(
+                {
+                    "rule": f"positive 规则 {i}",
+                    "action": f"做多 {i}",
+                    "confidence": 0.5 + i * 0.01,
+                    "support_count": 1,
+                    "last_seen": f"2026-03-{10 + i:02d}",
+                    "lesson_type": "positive",
+                    "source_regime": "unknown",
+                    "source_type": "mixed",
+                    "context_features": {},
+                }
+            )
 
         # 添加 2 条 negative
         for i in range(2):
-            lessons_data.append({
-                "rule": f"negative 规则 {i}",
-                "action": f"避免 {i}",
-                "confidence": 0.5,
-                "support_count": 1,
-                "last_seen": f"2026-03-{20 + i:02d}",
-                "lesson_type": "negative",
-                "source_regime": "unknown",
-                "source_type": "mixed",
-                "context_features": {},
-            })
+            lessons_data.append(
+                {
+                    "rule": f"negative 规则 {i}",
+                    "action": f"避免 {i}",
+                    "confidence": 0.5,
+                    "support_count": 1,
+                    "last_seen": f"2026-03-{20 + i:02d}",
+                    "lesson_type": "negative",
+                    "source_regime": "unknown",
+                    "source_type": "mixed",
+                    "context_features": {},
+                }
+            )
 
         data = {"lessons": {"BTC": lessons_data}}
         with open(tmp_path, "w") as f:

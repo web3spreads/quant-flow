@@ -244,17 +244,13 @@ class Config:
         self.review_instant_reflection_enabled: bool = review.get(
             "instant_reflection_enabled", False
         )
-        self.review_weekly_reflection_enabled: bool = review.get(
-            "weekly_reflection_enabled", False
-        )
+        self.review_weekly_reflection_enabled: bool = review.get("weekly_reflection_enabled", False)
         self.review_weekly_reflection_day: int = int(review.get("weekly_reflection_day", 0))
         self.review_weekly_reflection_hour: int = int(review.get("weekly_reflection_hour", 8))
 
         # 改进2: Regime 感知记忆
         self.review_regime_aware_enabled: bool = review.get("regime_aware_enabled", False)
-        self.review_regime_mismatch_factor: float = float(
-            review.get("regime_mismatch_factor", 0.4)
-        )
+        self.review_regime_mismatch_factor: float = float(review.get("regime_mismatch_factor", 0.4))
 
         # 改进3: 确认偏差防护
         self.review_bias_protection_enabled: bool = review.get("bias_protection_enabled", False)
@@ -270,9 +266,7 @@ class Config:
         self.review_trending_subjective_boost: float = float(
             review.get("trending_subjective_boost", 1.3)
         )
-        self.review_ranging_factual_boost: float = float(
-            review.get("ranging_factual_boost", 1.3)
-        )
+        self.review_ranging_factual_boost: float = float(review.get("ranging_factual_boost", 1.3))
 
         # 改进5: Prompt 自优化
         self.review_prompt_meta_reflection_enabled: bool = review.get(
@@ -372,9 +366,7 @@ class Config:
         self.market_monitor_extreme_threshold_pct: float = float(
             monitor.get("extreme_threshold_pct", 5.0)
         )
-        self.market_monitor_cooldown_minutes: int = int(
-            monitor.get("cooldown_minutes", 5)
-        )
+        self.market_monitor_cooldown_minutes: int = int(monitor.get("cooldown_minutes", 5))
         self.market_monitor_reference_window_minutes: int = int(
             monitor.get("reference_window_minutes", 10)
         )
@@ -472,7 +464,7 @@ class Config:
         止损比例: {self.stop_loss_ratio * 100}%
         决策间隔: {self.interval_minutes} 分钟
         K线周期: {self.timeframe}
-        市场监控: {'启用 (波动阈值 ' + str(self.market_monitor_alert_threshold_pct) + '%)' if self.market_monitor_enabled else '未启用'}
+        市场监控: {"启用 (波动阈值 " + str(self.market_monitor_alert_threshold_pct) + "%)" if self.market_monitor_enabled else "未启用"}
         """
 
 

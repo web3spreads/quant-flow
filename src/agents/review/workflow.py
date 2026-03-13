@@ -245,9 +245,7 @@ class ReviewAgentWorkflow:
 
         lessons = state.get("lessons", [])
         context_features = state.get("context_features", {})
-        negative_confidence_boost = getattr(
-            self, "_negative_confidence_boost", 1.15
-        )
+        negative_confidence_boost = getattr(self, "_negative_confidence_boost", 1.15)
 
         if not lessons:
             return {"lessons": [], "current_step": "enrich_lessons"}
@@ -295,9 +293,9 @@ class ReviewAgentWorkflow:
 
             # 改进3: negative 经验置信度加成
             if lesson_type == "negative":
-                adjusted_confidence = min(1.0, round(
-                    adjusted_confidence * negative_confidence_boost, 3
-                ))
+                adjusted_confidence = min(
+                    1.0, round(adjusted_confidence * negative_confidence_boost, 3)
+                )
 
             # 改进4: 推断 source_type（复用 ReviewAgent 的静态方法）
             source_type = lesson.get("source_type", "mixed")
@@ -410,7 +408,7 @@ class ReviewAgentWorkflow:
 
     def _environment_match_factor(self, similarity_score: float) -> float:
         """计算环境匹配因子（二次衰减，低相似度惩罚更严格）"""
-        return max(0.1, similarity_score ** 2)
+        return max(0.1, similarity_score**2)
 
     def _calculate_confidence_interval(
         self,

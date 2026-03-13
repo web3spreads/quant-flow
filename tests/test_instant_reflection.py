@@ -198,9 +198,7 @@ class TestInstantReflector:
             "timestamp": "2026-03-12T12:00:00",
         }
 
-        result = reflector.reflect_on_close(
-            "BTC", decision_record, trade_result, {"rsi": 50}
-        )
+        result = reflector.reflect_on_close("BTC", decision_record, trade_result, {"rsi": 50})
 
         deviation = result["deviation"]
         assert deviation["actual_pnl"] == 3.0

@@ -274,8 +274,7 @@ class MarketMonitor:
             if current.timestamp < self._cooldown_until[symbol]:
                 remaining = (self._cooldown_until[symbol] - current.timestamp).total_seconds()
                 self._log_info(
-                    f"{symbol} 波动 {change_pct:.2f}% 但仍在冷却期中"
-                    f"（剩余 {remaining:.0f}s）"
+                    f"{symbol} 波动 {change_pct:.2f}% 但仍在冷却期中（剩余 {remaining:.0f}s）"
                 )
                 return
 
@@ -357,9 +356,7 @@ class MarketMonitor:
 
     def _cleanup_price_history(self):
         """清理过旧的价格历史数据"""
-        cutoff = datetime.now() - timedelta(
-            minutes=self.config.reference_window_minutes * 2
-        )
+        cutoff = datetime.now() - timedelta(minutes=self.config.reference_window_minutes * 2)
         with self._history_lock:
             for symbol in self.symbols:
                 self._price_history[symbol] = [

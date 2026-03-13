@@ -156,7 +156,9 @@ class WeeklyReflector:
             system_prompt = self.prompt_manager.get_weekly_review_system_prompt()
             messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
             response = self.llm.invoke(messages)
-            raw_text = response.content if isinstance(response.content, str) else str(response.content)
+            raw_text = (
+                response.content if isinstance(response.content, str) else str(response.content)
+            )
 
             # 解析响应
             try:
@@ -230,8 +232,7 @@ class WeeklyReflector:
 
         decisions = Counter(r.get("decision", "UNKNOWN") for r in records)
         total_pnl = sum(
-            float((r.get("action_details", {}) or {}).get("pnl", 0) or 0)
-            for r in records
+            float((r.get("action_details", {}) or {}).get("pnl", 0) or 0) for r in records
         )
 
         return {
@@ -268,15 +269,18 @@ class WeeklyReflector:
             prev_decision = d
 
         if max_consecutive >= 4:
-            biases.append({
-                "type": "directional_bias",
-                "description": f"连续 {max_consecutive} 次 {dominant_decision} 决策",
-                "severity": "high" if max_consecutive >= 6 else "medium",
-            })
+            biases.append(
+                {
+                    "type": "directional_bias",
+                    "description": f"连续 {max_consecutive} 次 {dominant_decision} 决策",
+                    "severity": "high" if max_consecutive >= 6 else "medium",
+                }
+            )
 
         # 2. 检测决策分布偏差
         decision_counts = Counter(
-            r.get("decision", "UNKNOWN") for r in records
+            r.get("decision", "UNKNOWN")
+            for r in records
             if r.get("decision") not in ("DO_NOTHING", "HOLD")
         )
         total_active = sum(decision_counts.values())
@@ -284,11 +288,13 @@ class WeeklyReflector:
             for decision, count in decision_counts.items():
                 ratio = count / total_active
                 if ratio > 0.7:
-                    biases.append({
-                        "type": "decision_distribution_bias",
-                        "description": f"{decision} 占比 {ratio:.0%}，过于单一",
-                        "severity": "medium",
-                    })
+                    biases.append(
+                        {
+                            "type": "decision_distribution_bias",
+                            "description": f"{decision} 占比 {ratio:.0%}，过于单一",
+                            "severity": "medium",
+                        }
+                    )
 
         # 3. 检测按交易对分组的持续亏损
         symbol_pnl = defaultdict(float)
@@ -299,11 +305,13 @@ class WeeklyReflector:
 
         for symbol, pnl in symbol_pnl.items():
             if pnl < -50:  # 超过 $50 亏损
-                biases.append({
-                    "type": "symbol_persistent_loss",
-                    "description": f"{symbol} 本周累计亏损 ${pnl:.2f}",
-                    "severity": "high" if pnl < -100 else "medium",
-                })
+                biases.append(
+                    {
+                        "type": "symbol_persistent_loss",
+                        "description": f"{symbol} 本周累计亏损 ${pnl:.2f}",
+                        "severity": "high" if pnl < -100 else "medium",
+                    }
+                )
 
         return biases
 
@@ -343,12 +351,14 @@ class WeeklyReflector:
 
         for condition, stats in condition_losses.items():
             if stats["count"] >= 3:
-                errors.append({
-                    "condition": condition,
-                    "count": stats["count"],
-                    "total_loss": round(stats["total_loss"], 2),
-                    "suggestion": f"在 {condition} 条件下已反复亏损 {stats['count']} 次，建议调整策略",
-                })
+                errors.append(
+                    {
+                        "condition": condition,
+                        "count": stats["count"],
+                        "total_loss": round(stats["total_loss"], 2),
+                        "suggestion": f"在 {condition} 条件下已反复亏损 {stats['count']} 次，建议调整策略",
+                    }
+                )
 
         return errors
 

@@ -201,18 +201,14 @@ class TestCooldownMechanism:
         monitor._price_history["BTC"] = [
             PriceSnapshot("BTC", 50000.0, now - timedelta(minutes=2)),
         ]
-        monitor._check_volatility(
-            "BTC", PriceSnapshot("BTC", 52000.0, now)
-        )
+        monitor._check_volatility("BTC", PriceSnapshot("BTC", 52000.0, now))
         assert mock_callback.call_count == 1
 
         # ETH 应该仍然可以触发（独立冷却）
         monitor._price_history["ETH"] = [
             PriceSnapshot("ETH", 3000.0, now - timedelta(minutes=2)),
         ]
-        monitor._check_volatility(
-            "ETH", PriceSnapshot("ETH", 3200.0, now)
-        )
+        monitor._check_volatility("ETH", PriceSnapshot("ETH", 3200.0, now))
         assert mock_callback.call_count == 2
 
 
@@ -323,9 +319,7 @@ class TestMonitorStats:
             PriceSnapshot("BTC", 50000.0, now - timedelta(minutes=2)),
         ]
 
-        monitor._check_volatility(
-            "BTC", PriceSnapshot("BTC", 52000.0, now)
-        )
+        monitor._check_volatility("BTC", PriceSnapshot("BTC", 52000.0, now))
 
         assert monitor.stats["total_alerts"] == 1
         assert monitor.stats["alerts_by_symbol"]["BTC"] == 1
@@ -432,9 +426,7 @@ class TestEdgeCases:
 
         # 连续触发多次 ELEVATED（2% 波动）
         for i in range(5):
-            current = PriceSnapshot(
-                "BTC", 51000.0, now + timedelta(seconds=i * 10)
-            )
+            current = PriceSnapshot("BTC", 51000.0, now + timedelta(seconds=i * 10))
             monitor._check_volatility("BTC", current)
 
         # 回调不应被触发（ELEVATED 不触发决策）

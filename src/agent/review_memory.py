@@ -51,6 +51,7 @@ class ReviewMemoryStore:
             except (json.JSONDecodeError, OSError) as e:
                 # 若解析失败，重置为空以避免阻塞主流程
                 import logging
+
                 logging.getLogger(__name__).warning(f"加载经验文件失败: {e}")
                 self.lessons = {}
 
@@ -300,9 +301,7 @@ class ReviewMemoryStore:
             ("ranging", "volatile"): 0.3,
             ("volatile", "ranging"): 0.3,
         }
-        return compatibility_matrix.get(
-            (source_regime, current_regime), default_factor
-        )
+        return compatibility_matrix.get((source_regime, current_regime), default_factor)
 
     def get_lesson_type_stats(self, symbol: str) -> dict[str, Any]:
         """
@@ -317,8 +316,14 @@ class ReviewMemoryStore:
         lessons = self.get_lessons(symbol)
         total = len(lessons)
         if total == 0:
-            return {"total": 0, "positive": 0, "negative": 0, "unknown": 0,
-                    "positive_ratio": 0.0, "negative_ratio": 0.0}
+            return {
+                "total": 0,
+                "positive": 0,
+                "negative": 0,
+                "unknown": 0,
+                "positive_ratio": 0.0,
+                "negative_ratio": 0.0,
+            }
 
         positive = sum(1 for ls in lessons if ls.get("lesson_type") == "positive")
         negative = sum(1 for ls in lessons if ls.get("lesson_type") == "negative")
@@ -358,7 +363,9 @@ class ReviewMemoryStore:
             return []
 
         with self._lock:
-            return self._add_lessons_locked(symbol, lessons, min_confidence, current_regime, max_positive_ratio)
+            return self._add_lessons_locked(
+                symbol, lessons, min_confidence, current_regime, max_positive_ratio
+            )
 
     def _add_lessons_locked(
         self,

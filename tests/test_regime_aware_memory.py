@@ -118,9 +118,7 @@ class TestRegimeAwareMemory:
     def test_add_lessons_with_regime(self, tmp_path):
         """测试添加经验时附带 Regime"""
         store = ReviewMemoryStore(path=tmp_path, max_lessons=30)
-        lessons = [
-            {"rule": "测试规则", "action": "测试动作", "confidence": 0.7}
-        ]
+        lessons = [{"rule": "测试规则", "action": "测试动作", "confidence": 0.7}]
         added = store.add_lessons("BTC", lessons, current_regime="volatile")
 
         assert len(added) == 1

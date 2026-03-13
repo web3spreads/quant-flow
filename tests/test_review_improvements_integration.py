@@ -119,10 +119,15 @@ class TestThreadSafety:
         store = ReviewMemoryStore(memory_path, max_lessons=100)
         # 预填充一些数据
         for i in range(10):
-            store.add_lessons("ETH", [_make_lesson(
-                rule=f"预填充规则{i}",
-                action=f"预填充动作{i}",
-            )])
+            store.add_lessons(
+                "ETH",
+                [
+                    _make_lesson(
+                        rule=f"预填充规则{i}",
+                        action=f"预填充动作{i}",
+                    )
+                ],
+            )
 
         errors = []
         barrier = threading.Barrier(8)
@@ -141,10 +146,15 @@ class TestThreadSafety:
             try:
                 barrier.wait(timeout=5)
                 for i in range(10):
-                    store.add_lessons("ETH", [_make_lesson(
-                        rule=f"并发规则_{tid}_{i}",
-                        action=f"并发动作_{tid}_{i}",
-                    )])
+                    store.add_lessons(
+                        "ETH",
+                        [
+                            _make_lesson(
+                                rule=f"并发规则_{tid}_{i}",
+                                action=f"并发动作_{tid}_{i}",
+                            )
+                        ],
+                    )
             except Exception as e:
                 errors.append(e)
 
@@ -170,10 +180,15 @@ class TestThreadSafety:
         def save_worker():
             try:
                 for i in range(20):
-                    store.add_lessons("BTC", [_make_lesson(
-                        rule=f"保存测试规则{i}",
-                        action=f"保存测试动作{i}",
-                    )])
+                    store.add_lessons(
+                        "BTC",
+                        [
+                            _make_lesson(
+                                rule=f"保存测试规则{i}",
+                                action=f"保存测试动作{i}",
+                            )
+                        ],
+                    )
             except Exception as e:
                 errors.append(e)
 
@@ -236,9 +251,7 @@ class TestRegimeBiasProtection:
             )
             for i in range(10)
         ]
-        store.add_lessons(
-            "BTC", positive_lessons, current_regime="ranging", max_positive_ratio=0.7
-        )
+        store.add_lessons("BTC", positive_lessons, current_regime="ranging", max_positive_ratio=0.7)
 
         # 验证淘汰后总量不超限
         lessons = store.get_lessons("BTC")
@@ -256,15 +269,19 @@ class TestRegimeBiasProtection:
 
         # 添加 trending regime 的经验
         ctx = {"rsi": 60.0, "trend_direction": "up", "volatility_level": "medium"}
-        store.add_lessons("BTC", [
-            _make_lesson(
-                rule="趋势突破追多",
-                action="开多",
-                confidence=0.8,
-                source_regime="trending",
-                context_features=ctx,
-            )
-        ], current_regime="trending")
+        store.add_lessons(
+            "BTC",
+            [
+                _make_lesson(
+                    rule="趋势突破追多",
+                    action="开多",
+                    confidence=0.8,
+                    source_regime="trending",
+                    context_features=ctx,
+                )
+            ],
+            current_regime="trending",
+        )
 
         # 在 ranging regime 下查询相似经验
         similar = store.get_similar_lessons(
@@ -338,9 +355,7 @@ class TestFactualRegimeWeight:
 
         pos_factual = vft.find("RSI > 70")
         pos_subjective = vft.find("市场情绪恐惧")
-        assert pos_factual < pos_subjective, (
-            "ranging regime 下 factual 经验应排在 subjective 前面"
-        )
+        assert pos_factual < pos_subjective, "ranging regime 下 factual 经验应排在 subjective 前面"
 
     def test_trending_regime_subjective_boost(self, memory_path):
         """在 trending regime 下，subjective 经验应获得权重提升"""
@@ -383,9 +398,7 @@ class TestFactualRegimeWeight:
 
         pos_factual = vft.find("MACD 金叉确认")
         pos_subjective = vft.find("市场氛围极度乐观")
-        assert pos_subjective < pos_factual, (
-            "trending regime 下 subjective 经验应排在 factual 前面"
-        )
+        assert pos_subjective < pos_factual, "trending regime 下 subjective 经验应排在 factual 前面"
 
 
 # ========== 4. 即时反思 + 记忆更新链路 ==========
@@ -469,9 +482,7 @@ class TestInstantReflectionMemoryUpdate:
             f"盈利后 confidence 应提升: {original_conf} -> {updated_conf}"
         )
 
-    def test_losing_trade_decays_confidence(
-        self, store_with_context, scorer, context_extractor
-    ):
+    def test_losing_trade_decays_confidence(self, store_with_context, scorer, context_extractor):
         """亏损交易后，匹配经验的 confidence 应下降"""
         reflector = InstantReflector(
             memory_store=store_with_context,
@@ -508,9 +519,7 @@ class TestInstantReflectionMemoryUpdate:
             f"亏损后 confidence 应下降: {original_conf} -> {updated_conf}"
         )
 
-    def test_support_count_incremented(
-        self, store_with_context, scorer, context_extractor
-    ):
+    def test_support_count_incremented(self, store_with_context, scorer, context_extractor):
         """反思后匹配经验的 support_count 应增加"""
         reflector = InstantReflector(
             memory_store=store_with_context,
@@ -682,9 +691,7 @@ class TestEmptyAndAbnormalInputs:
         )
         assert result == []
 
-    def test_instant_reflection_empty_market_data(
-        self, empty_store, scorer, context_extractor
-    ):
+    def test_instant_reflection_empty_market_data(self, empty_store, scorer, context_extractor):
         """空 market_data 不应导致即时反思崩溃"""
         reflector = InstantReflector(
             memory_store=empty_store,
@@ -703,9 +710,7 @@ class TestEmptyAndAbnormalInputs:
         assert result["symbol"] == "BTC"
         assert result["updated_lessons_count"] == 0
 
-    def test_instant_reflection_none_trade_result(
-        self, empty_store, scorer, context_extractor
-    ):
+    def test_instant_reflection_none_trade_result(self, empty_store, scorer, context_extractor):
         """trade_result 中 pnl 为 None 时不崩溃"""
         reflector = InstantReflector(
             memory_store=empty_store,

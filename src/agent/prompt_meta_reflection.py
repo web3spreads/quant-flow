@@ -239,7 +239,9 @@ class PromptMetaReflector:
         low_win_rate = low_conf_wins / low_conf_total if low_conf_total > 0 else 0
 
         # 校准度 = 高置信胜率 - 低置信胜率（应该为正）
-        calibration = high_win_rate - low_win_rate if high_conf_total > 0 and low_conf_total > 0 else 0
+        calibration = (
+            high_win_rate - low_win_rate if high_conf_total > 0 and low_conf_total > 0 else 0
+        )
         # 归一化到 [0, 1]
         score = max(0, min(1, 0.5 + calibration))
 
@@ -251,9 +253,7 @@ class PromptMetaReflector:
             "low_confidence_total": low_conf_total,
         }
 
-    def generate_optimization_suggestions(
-        self, report: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    def generate_optimization_suggestions(self, report: dict[str, Any]) -> list[dict[str, Any]]:
         """
         调用 LLM 生成 Prompt 微调建议
 
@@ -279,14 +279,21 @@ class PromptMetaReflector:
 
             messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
             response = self.llm.invoke(messages)
-            raw_text = response.content if isinstance(response.content, str) else str(response.content)
+            raw_text = (
+                response.content if isinstance(response.content, str) else str(response.content)
+            )
 
             try:
                 data = json.loads(raw_text)
                 return data.get("suggestions", [])
             except json.JSONDecodeError:
-                return [{"target_step": "解析", "problem": "LLM 输出格式异常",
-                         "suggestion": raw_text[:200]}]
+                return [
+                    {
+                        "target_step": "解析",
+                        "problem": "LLM 输出格式异常",
+                        "suggestion": raw_text[:200],
+                    }
+                ]
 
         except Exception as e:
             if self._logger:
@@ -320,12 +327,14 @@ class PromptMetaReflector:
                 with open(f, encoding="utf-8") as fp:
                     data = json.load(fp)
                     report = data.get("report", {})
-                    scores.append({
-                        "week": f.stem.replace("_report", ""),
-                        "overall_score": report.get("overall_score", 0),
-                        "fincot": report.get("fincot_completion", {}).get("score", 0),
-                        "citation": report.get("lesson_citation_rate", {}).get("score", 0),
-                    })
+                    scores.append(
+                        {
+                            "week": f.stem.replace("_report", ""),
+                            "overall_score": report.get("overall_score", 0),
+                            "fincot": report.get("fincot_completion", {}).get("score", 0),
+                            "citation": report.get("lesson_citation_rate", {}).get("score", 0),
+                        }
+                    )
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning(f"读取历史评分文件失败: {e}")
                 continue
