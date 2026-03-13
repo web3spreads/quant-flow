@@ -292,33 +292,6 @@ class TestAlertFormatting:
         assert "6.00%" in context
 
 
-class TestGetLatestAlert:
-    """测试获取最新告警"""
-
-    def test_get_latest_alert_with_significant_change(self, monitor):
-        """有显著波动时应返回告警"""
-        now = datetime.now()
-        monitor._price_history["BTC"] = [
-            PriceSnapshot("BTC", 50000.0, now - timedelta(minutes=2)),
-            PriceSnapshot("BTC", 52000.0, now),
-        ]
-
-        alert = monitor.get_latest_alert("BTC")
-        assert alert is not None
-        assert alert.level == AlertLevel.HIGH
-
-    def test_get_latest_alert_no_change(self, monitor):
-        """无显著波动时应返回 None"""
-        now = datetime.now()
-        monitor._price_history["BTC"] = [
-            PriceSnapshot("BTC", 50000.0, now - timedelta(minutes=2)),
-            PriceSnapshot("BTC", 50100.0, now),  # +0.2%，低于 elevated 阈值
-        ]
-
-        alert = monitor.get_latest_alert("BTC")
-        assert alert is None
-
-
 class TestNotifyCycleCompleted:
     """测试决策周期完成通知"""
 
@@ -468,3 +441,14 @@ class TestEdgeCases:
         mock_callback.assert_not_called()
         # 统计应记录所有告警
         assert monitor.stats["alerts_by_level"]["elevated"] == 5
+
+    def test_zero_reference_price_no_crash(self, monitor, mock_callback):
+        """参考价格为 0 时不应抛出 ZeroDivisionError"""
+        now = datetime.now()
+        monitor._price_history["BTC"] = [
+            PriceSnapshot("BTC", 0.0, now - timedelta(minutes=2)),
+        ]
+        current = PriceSnapshot("BTC", 50000.0, now)
+        # 不应抛出异常
+        monitor._check_volatility("BTC", current)
+        mock_callback.assert_not_called()

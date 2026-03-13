@@ -182,37 +182,6 @@ class MarketMonitor:
         # 清理过旧的价格历史，只保留参考窗口内的数据
         self._cleanup_price_history()
 
-    def get_latest_alert(self, symbol: str) -> VolatilityAlert | None:
-        """获取某个交易对最近的告警信息（用于注入决策上下文）"""
-        with self._history_lock:
-            history = list(self._price_history.get(symbol, []))
-        if len(history) < 2:
-            return None
-
-        reference = self._get_reference_price_from(history)
-        if reference is None:
-            return None
-
-        latest = history[-1]
-        change_pct = abs(latest.price - reference.price) / reference.price * 100
-
-        if change_pct >= self.config.elevated_threshold_pct:
-            level = self._classify_alert_level(change_pct)
-            duration = (latest.timestamp - reference.timestamp).total_seconds()
-            signed_change = change_pct if latest.price > reference.price else -change_pct
-            direction = "上涨" if latest.price > reference.price else "下跌"
-            return VolatilityAlert(
-                symbol=symbol,
-                level=level,
-                change_pct=signed_change,
-                current_price=latest.price,
-                reference_price=reference.price,
-                duration_seconds=duration,
-                timestamp=latest.timestamp,
-                message=f"{symbol} {int(duration)}秒内{direction} {change_pct:.2f}%",
-            )
-        return None
-
     def format_alert_context(self, alert: VolatilityAlert) -> str:
         """
         将告警格式化为可注入 LLM 决策 Prompt 的上下文文本。
@@ -289,6 +258,8 @@ class MarketMonitor:
             return
 
         # 计算价格变动百分比
+        if reference.price == 0:
+            return
         change_pct = abs(current.price - reference.price) / reference.price * 100
         duration = (current.timestamp - reference.timestamp).total_seconds()
 
