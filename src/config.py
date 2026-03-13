@@ -240,6 +240,48 @@ class Config:
         )
         self.review_similarity_method: str = review.get("similarity_method", "cosine")
 
+        # 改进1: 双粒度反思
+        self.review_instant_reflection_enabled: bool = review.get(
+            "instant_reflection_enabled", False
+        )
+        self.review_weekly_reflection_enabled: bool = review.get(
+            "weekly_reflection_enabled", False
+        )
+        self.review_weekly_reflection_day: int = int(review.get("weekly_reflection_day", 0))
+        self.review_weekly_reflection_hour: int = int(review.get("weekly_reflection_hour", 8))
+
+        # 改进2: Regime 感知记忆
+        self.review_regime_aware_enabled: bool = review.get("regime_aware_enabled", False)
+        self.review_regime_mismatch_factor: float = float(
+            review.get("regime_mismatch_factor", 0.4)
+        )
+
+        # 改进3: 确认偏差防护
+        self.review_bias_protection_enabled: bool = review.get("bias_protection_enabled", False)
+        self.review_max_positive_ratio: float = float(review.get("max_positive_ratio", 0.7))
+        self.review_negative_confidence_boost: float = float(
+            review.get("negative_confidence_boost", 1.15)
+        )
+
+        # 改进4: 事实-主观分离
+        self.review_fact_subjective_split_enabled: bool = review.get(
+            "fact_subjective_split_enabled", False
+        )
+        self.review_trending_subjective_boost: float = float(
+            review.get("trending_subjective_boost", 1.3)
+        )
+        self.review_ranging_factual_boost: float = float(
+            review.get("ranging_factual_boost", 1.3)
+        )
+
+        # 改进5: Prompt 自优化
+        self.review_prompt_meta_reflection_enabled: bool = review.get(
+            "prompt_meta_reflection_enabled", False
+        )
+        self.review_prompt_optimization_dir: str = review.get(
+            "prompt_optimization_dir", "logs/prompt_optimization"
+        )
+
     def _init_external_info_agent_config(self):
         """初始化外部信息收集 Agent 配置"""
         external_info = self.config_data.get("external_info_agent", {})

@@ -681,9 +681,12 @@ class ReviewAgent:
         }
 
     def _enrich_lessons(
-        self, lessons: list[dict[str, Any]], context_features: dict[str, Any]
+        self,
+        lessons: list[dict[str, Any]],
+        context_features: dict[str, Any],
+        negative_confidence_boost: float = 1.15,
     ) -> list[dict[str, Any]]:
-        """为经验打上相似度、置信区间并按阈值过滤"""
+        """为经验打上相似度、置信区间并按阈值过滤，同时推断 lesson_type 和 source_type"""
         if not lessons:
             return []
 
@@ -720,6 +723,22 @@ class ReviewAgent:
             if similarity_score < self.similarity_threshold:
                 continue
 
+            # 改进3: 推断 lesson_type（如果 LLM 未返回）
+            lesson_type = lesson.get("lesson_type", "unknown")
+            if lesson_type == "unknown" or not lesson_type:
+                lesson_type = self._infer_lesson_type(action)
+
+            # 改进3: negative 经验置信度加成
+            if lesson_type == "negative":
+                adjusted_confidence = min(1.0, round(
+                    adjusted_confidence * negative_confidence_boost, 3
+                ))
+
+            # 改进4: 推断 source_type（如果 LLM 未返回）
+            source_type = lesson.get("source_type", "mixed")
+            if source_type == "mixed" or not source_type:
+                source_type = self._infer_source_type(rule, action)
+
             enriched.append(
                 {
                     **lesson,
@@ -733,11 +752,54 @@ class ReviewAgent:
                     "confidence_interval": [ci_low, ci_high],
                     "context_features": lesson_context,
                     "support_count": support_count,
+                    "lesson_type": lesson_type,
+                    "source_type": source_type,
                 }
             )
 
         enriched.sort(key=lambda item: item.get("confidence", 0), reverse=True)
         return enriched
+
+    @staticmethod
+    def _infer_lesson_type(action: str) -> str:
+        """
+        改进3: 从 action 文本推断经验类型
+
+        negative 关键词: 避免/不要/谨慎/不宜/禁止
+        """
+        negative_keywords = ["避免", "不要", "谨慎", "不宜", "禁止", "警惕", "减少"]
+        for kw in negative_keywords:
+            if kw in action:
+                return "negative"
+        return "positive"
+
+    @staticmethod
+    def _infer_source_type(rule: str, action: str) -> str:
+        """
+        改进4: 从 rule + action 文本推断信号来源类型
+
+        factual 关键词: RSI, MACD, EMA, ATR, 成交量, 布林带, 支撑位, 阻力位, 链上, MVRV, K线, 均线
+        subjective 关键词: 情绪, 新闻, 恐惧, 贪婪, 资金费率, 市场氛围, 叙事, 舆论, 辩论
+        """
+        text = f"{rule} {action}"
+        factual_keywords = [
+            "RSI", "MACD", "EMA", "ATR", "成交量", "布林带", "支撑位", "阻力位",
+            "链上", "MVRV", "K线", "均线", "MA", "BB", "rsi", "macd",
+        ]
+        subjective_keywords = [
+            "情绪", "新闻", "恐惧", "贪婪", "资金费率", "市场氛围", "叙事", "舆论", "辩论",
+        ]
+
+        has_factual = any(kw in text for kw in factual_keywords)
+        has_subjective = any(kw in text for kw in subjective_keywords)
+
+        if has_factual and has_subjective:
+            return "mixed"
+        if has_factual:
+            return "factual"
+        if has_subjective:
+            return "subjective"
+        return "mixed"
 
     def _environment_match_factor(self, similarity_score: float) -> float:
         """

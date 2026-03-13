@@ -15,6 +15,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 
+from src.agent.review_agent import ReviewAgent
 from src.agents.common.utils.helpers import extract_json_from_text, shorten_text
 from src.agents.common.utils.llm import LLMConfig, create_json_llm
 from src.agents.review.state import ReviewAgentState, create_initial_state
@@ -244,6 +245,9 @@ class ReviewAgentWorkflow:
 
         lessons = state.get("lessons", [])
         context_features = state.get("context_features", {})
+        negative_confidence_boost = getattr(
+            self, "_negative_confidence_boost", 1.15
+        )
 
         if not lessons:
             return {"lessons": [], "current_step": "enrich_lessons"}
@@ -284,6 +288,22 @@ class ReviewAgentWorkflow:
             if similarity_score < self.similarity_threshold:
                 continue
 
+            # 改进3: 推断 lesson_type（复用 ReviewAgent 的静态方法）
+            lesson_type = lesson.get("lesson_type", "unknown")
+            if lesson_type == "unknown" or not lesson_type:
+                lesson_type = ReviewAgent._infer_lesson_type(action)
+
+            # 改进3: negative 经验置信度加成
+            if lesson_type == "negative":
+                adjusted_confidence = min(1.0, round(
+                    adjusted_confidence * negative_confidence_boost, 3
+                ))
+
+            # 改进4: 推断 source_type（复用 ReviewAgent 的静态方法）
+            source_type = lesson.get("source_type", "mixed")
+            if source_type == "mixed" or not source_type:
+                source_type = ReviewAgent._infer_source_type(rule, action)
+
             enriched.append(
                 {
                     **lesson,
@@ -297,6 +317,8 @@ class ReviewAgentWorkflow:
                     "confidence_interval": [ci_low, ci_high],
                     "context_features": lesson_context,
                     "support_count": support_count,
+                    "lesson_type": lesson_type,
+                    "source_type": source_type,
                 }
             )
 

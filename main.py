@@ -22,6 +22,8 @@ from src.agent.review_daily_logger import ReviewDailyLogger
 from src.agent.review_memory import ReviewMemoryStore
 from src.agent.single_symbol_agent import SingleSymbolAgent
 
+# 改进1: 双粒度反思（延迟导入在初始化时使用）
+
 # RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
 from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
@@ -201,6 +203,63 @@ class QuantFlowBot:
                 )
         else:
             self.review_agent = None
+
+        # 7.5 改进1: 双粒度反思组件初始化
+        self.instant_reflector = None
+        self.weekly_reflector = None
+        self.prompt_meta_reflector = None
+        self._weekly_reflection_last_run = None
+
+        if getattr(self.config, "review_instant_reflection_enabled", False):
+            try:
+                from src.agent.context_extractor import ContextExtractor
+                from src.agent.instant_reflection import InstantReflector
+                from src.agent.similarity_scorer import SimilarityScorer
+
+                self.instant_reflector = InstantReflector(
+                    memory_store=self.review_memory_store,
+                    similarity_scorer=SimilarityScorer(
+                        weights=self.config.review_similarity_weights,
+                        method=self.config.review_similarity_method,
+                    ),
+                    context_extractor=ContextExtractor(),
+                    logger_instance=self.logger,
+                )
+                self.logger.print_info("✅ 即时反思器初始化完成")
+            except Exception as e:
+                self.logger.print_warning(f"即时反思器初始化失败: {e}")
+
+        if getattr(self.config, "review_weekly_reflection_enabled", False) and self.prompt_manager:
+            try:
+                from src.agent.weekly_reflection import WeeklyReflector
+
+                self.weekly_reflector = WeeklyReflector(
+                    llm_manager=self.llm_manager,
+                    prompt_manager=self.prompt_manager,
+                    memory_store=self.review_memory_store,
+                    logger_instance=self.logger,
+                    notifier=self.notifier,
+                    weekly_day=self.config.review_weekly_reflection_day,
+                    weekly_hour=self.config.review_weekly_reflection_hour,
+                )
+                self.logger.print_info("✅ 每周反思器初始化完成")
+            except Exception as e:
+                self.logger.print_warning(f"每周反思器初始化失败: {e}")
+
+        if getattr(self.config, "review_prompt_meta_reflection_enabled", False) and self.prompt_manager:
+            try:
+                from src.agent.prompt_meta_reflection import PromptMetaReflector
+
+                self.prompt_meta_reflector = PromptMetaReflector(
+                    llm_manager=self.llm_manager,
+                    prompt_manager=self.prompt_manager,
+                    memory_store=self.review_memory_store,
+                    logger_instance=self.logger,
+                    output_dir=self.config.review_prompt_optimization_dir,
+                )
+                self.logger.print_info("✅ Prompt 元反思器初始化完成")
+            except Exception as e:
+                self.logger.print_warning(f"Prompt 元反思器初始化失败: {e}")
 
         # 8. 为每个交易对创建独立的单币 Agent
         self.logger.print_info("为每个交易对创建独立 Agent...")
@@ -716,8 +775,21 @@ class QuantFlowBot:
                     # 注入 Verbal Fine-tuning 段落（高优先级，独立于历史汇总）
                     # 参考 arXiv:2510.08068，将复盘经验以结构化方式注入决策上下文
                     if self.config.review_enabled and self.review_memory_store:
+                        # 改进2: 获取当前 Regime 用于 VFT 注入
+                        current_regime = None
+                        if getattr(self.config, "review_regime_aware_enabled", False):
+                            current_regime = self._get_current_regime(enriched_data)
+
                         vft_section = self.review_memory_store.get_verbal_finetuning_section(
-                            symbol, limit=5
+                            symbol,
+                            limit=5,
+                            current_regime=current_regime,
+                            trending_subjective_boost=getattr(
+                                self.config, "review_trending_subjective_boost", 1.3
+                            ),
+                            ranging_factual_boost=getattr(
+                                self.config, "review_ranging_factual_boost", 1.3
+                            ),
                         )
                         if vft_section and enriched_data is not None:
                             enriched_data["verbal_finetuning_section"] = vft_section
@@ -808,6 +880,33 @@ class QuantFlowBot:
                         action_details=details,
                         status="SUCCESS",
                     )
+
+                    # 改进1a: 即时反思（平仓类型时触发）
+                    if (
+                        self.instant_reflector
+                        and decision in ("SELL", "BUY_TO_COVER")
+                    ):
+                        try:
+                            decision_record = {
+                                "decision": decision,
+                                "timestamp": datetime.now().isoformat(),
+                                "market_data": market_data,
+                                "action_details": details,
+                                "reason": details.get("output", ""),
+                            }
+                            trade_result = {
+                                "pnl": details.get("pnl", 0) or details.get("closed_pnl", 0),
+                                "status": details.get("status", ""),
+                                "timestamp": datetime.now().isoformat(),
+                            }
+                            self.instant_reflector.reflect_on_close(
+                                symbol=symbol,
+                                decision_record=decision_record,
+                                trade_result=trade_result,
+                                market_data=market_data,
+                            )
+                        except Exception as e:
+                            self.logger.print_warning(f"[{symbol}] 即时反思失败: {e}")
 
                     # 如果是现货定投推荐，收集起来
                     if decision == "BUY_SPOT_RECOMMEND":
@@ -1075,10 +1174,19 @@ class QuantFlowBot:
 
             added = []
             if self.review_memory_store:
+                # 改进2: 传递 current_regime
+                current_regime = None
+                if getattr(self.config, "review_regime_aware_enabled", False):
+                    current_regime = self._get_current_regime(None)
+
                 added = self.review_memory_store.add_lessons(
                     symbol=symbol,
                     lessons=lessons,
                     min_confidence=self.config.review_min_confidence,
+                    current_regime=current_regime,
+                    max_positive_ratio=getattr(
+                        self.config, "review_max_positive_ratio", 0.7
+                    ),
                 )
 
             if not added:
@@ -1099,6 +1207,75 @@ class QuantFlowBot:
                 },
                 status="SUCCESS",
             )
+
+        # 改进1b: 每周反思（在复盘周期末尾触发）
+        self._maybe_run_weekly_reflection()
+
+    def _maybe_run_weekly_reflection(self):
+        """改进1b: 触发每周策略级反思"""
+        if not getattr(self, "weekly_reflector", None):
+            return
+
+        if not self.weekly_reflector.should_run(self._weekly_reflection_last_run):
+            return
+
+        try:
+            report = self.weekly_reflector.run_weekly_reflection(
+                symbols=self.config.symbols,
+                decision_history=self.decision_history,
+            )
+
+            if report.get("status") == "completed":
+                self._weekly_reflection_last_run = datetime.now()
+                self.logger.print_info("每周策略级复盘完成")
+
+                # 改进5: Prompt 元反思（在每周反思后触发）
+                if getattr(self, "prompt_meta_reflector", None):
+                    try:
+                        # 聚合本周所有记录
+                        all_records = []
+                        for symbol in self.config.symbols:
+                            records = self.decision_history.get_recent_decisions(symbol, limit=100)
+                            all_records.extend(records)
+
+                        all_lessons = []
+                        if self.review_memory_store:
+                            for symbol in self.config.symbols:
+                                all_lessons.extend(self.review_memory_store.get_lessons(symbol))
+
+                        effectiveness_report = self.prompt_meta_reflector.evaluate_prompt_effectiveness(
+                            all_records, all_lessons
+                        )
+                        suggestions = self.prompt_meta_reflector.generate_optimization_suggestions(
+                            effectiveness_report
+                        )
+                        self.prompt_meta_reflector.save_report(effectiveness_report, suggestions)
+                        self.logger.print_info(
+                            f"Prompt 效果评估完成 | 综合评分: {effectiveness_report.get('overall_score', 0):.1%} | "
+                            f"优化建议: {len(suggestions)} 条"
+                        )
+                    except Exception as e:
+                        self.logger.print_warning(f"Prompt 元反思失败: {e}")
+
+        except Exception as e:
+            self.logger.print_warning(f"每周反思失败: {e}")
+
+    def _get_current_regime(self, enriched_data: dict[str, Any] | None) -> str | None:
+        """
+        改进2: 获取当前市场 Regime
+
+        从 enriched_data 中提取 regime_hint 或从 market_state 推导
+        """
+        if enriched_data:
+            regime_hint = enriched_data.get("regime_hint", "")
+            if "趋势" in str(regime_hint) or "trending" in str(regime_hint).lower():
+                return "trending"
+            if "震荡" in str(regime_hint) or "ranging" in str(regime_hint).lower():
+                return "ranging"
+            if "波动" in str(regime_hint) or "volatile" in str(regime_hint).lower():
+                return "volatile"
+
+        return None
 
     def _get_recent_fills_for_symbol(self, symbol: str, hours: int = 1) -> list[dict[str, Any]]:
         """

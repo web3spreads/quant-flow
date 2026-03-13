@@ -139,6 +139,9 @@ src/
 │   ├── summary_agent_v2.py         # 历史压缩
 │   ├── spot_agent.py               # 现货定投
 │   ├── review_agent.py             # 复盘学习
+│   ├── instant_reflection.py       # 即时反思（每笔平仓后）
+│   ├── weekly_reflection.py        # 每周策略级反思
+│   ├── prompt_meta_reflection.py   # Prompt 自优化元反思
 │   └── execution_agent.py          # 执行计划生成
 ├── agents/                   # Agent 实现 (新版 LangGraph)
 │   ├── trading/                    # 交易 Agent workflow
@@ -318,6 +321,85 @@ market_monitor:
 - `src/data/market_monitor.py` — `MarketMonitor` 类，独立线程监控
 - `main.py` — `_on_market_alert()` 回调，`_consume_pending_alert()` 消费告警
 
+### 6. 复盘系统增强（5 项改进）
+
+基于学术论文验证的 5 项复盘/反思系统增量改进，全部通过 `config.yaml` 独立开关控制，默认关闭。
+
+#### 6a. 双粒度反思
+
+**论文依据**: [Adaptive Multi-Agent Bitcoin Trading (arXiv:2510.08068)](https://arxiv.org/abs/2510.08068) — 双粒度反思
+
+- **即时反思**（每笔平仓后）：纯规则、无 LLM 调用，更新匹配经验的置信度（盈利 ×1.05、亏损 ×0.95）
+- **每周反思**（周策略级）：调用 LLM 生成策略级调整建议，检测系统性偏差和反复错误
+
+**核心代码**:
+- `src/agent/instant_reflection.py` — `InstantReflector` 类
+- `src/agent/weekly_reflection.py` — `WeeklyReflector` 类
+
+#### 6b. Regime 感知记忆
+
+**论文依据**: [Adaptive Memory for Bitcoin Regime Detection (engrXiv 2025)](https://engrxiv.org/)
+
+经验存储附带 `source_regime` 字段（trending/ranging/volatile/unknown），Regime 不匹配时相似度降权（默认 ×0.4），VFT 段落标注 `[趋势市经验]`/`[震荡市经验]` 等。
+
+**核心代码**: `src/agent/review_memory.py` — `get_similar_lessons()` 和 `get_verbal_finetuning_section()` 增强
+
+#### 6c. 记忆确认偏差防护
+
+**论文依据**: [FinCon (arXiv:2407.06567)](https://arxiv.org/abs/2407.06567) + Selective Memory Equilibrium
+
+经验存储附带 `lesson_type` 字段（positive/negative/unknown），淘汰经验时保护 negative 经验不被过度淘汰，negative 经验的置信度给予加成（默认 ×1.15），VFT 段落中 negative 经验使用 `[避免]` 前缀。
+
+**核心代码**:
+- `src/agent/review_memory.py` — `_evict_with_bias_protection()` 和 `get_lesson_type_stats()`
+- `src/agent/review_agent.py` — `_infer_lesson_type()` 静态方法
+
+#### 6d. 事实-主观分离反思
+
+**论文依据**: [FS-ReasoningAgent (arXiv:2410.12464, ICLR 2025)](https://arxiv.org/abs/2410.12464)
+
+经验存储附带 `source_type` 字段（factual/subjective/mixed），趋势市中主观经验权重提升（默认 ×1.3），震荡/高波动市中事实经验权重提升（默认 ×1.3），VFT 段落标注 `[事实型]`/`[主观型]`。
+
+**核心代码**: `src/agent/review_agent.py` — `_infer_source_type()` 静态方法
+
+#### 6e. Prompt 自优化（元反思）
+
+**论文依据**: [ATLAS Adaptive-OPRO (arXiv:2510.15949)](https://arxiv.org/abs/2510.15949)
+
+4 个评估维度：FinCoT 6步完成度、经验引用率、决策一致性、置信度校准。在每周反思后触发，生成 Prompt 微调建议（需人工审核后手动应用）。
+
+**核心代码**: `src/agent/prompt_meta_reflection.py` — `PromptMetaReflector` 类
+
+**使用方式**:
+
+```yaml
+# config.yaml
+review_agent:
+  # 6a: 双粒度反思
+  instant_reflection_enabled: false     # 即时反思
+  weekly_reflection_enabled: false      # 每周反思
+  weekly_reflection_day: 0              # 0=周一
+  weekly_reflection_hour: 8
+
+  # 6b: Regime 感知记忆
+  regime_aware_enabled: false
+  regime_mismatch_factor: 0.4           # Regime 不匹配时降权因子
+
+  # 6c: 确认偏差防护
+  bias_protection_enabled: false
+  max_positive_ratio: 0.7               # 最大正面经验比例
+  negative_confidence_boost: 1.15       # negative 经验置信度加成
+
+  # 6d: 事实-主观分离
+  fact_subjective_split_enabled: false
+  trending_subjective_boost: 1.3        # 趋势市主观经验权重提升
+  ranging_factual_boost: 1.3            # 震荡市事实经验权重提升
+
+  # 6e: Prompt 自优化
+  prompt_meta_reflection_enabled: false
+  prompt_optimization_dir: "logs/prompt_optimization"
+```
+
 ### 功能依赖关系
 
 ```
@@ -325,6 +407,13 @@ enhanced_analysis.enabled: true       ← 基础开关，启用增强分析和�
   ├── debate.enabled: true            ← 可选，独立开关
   └── regime_adaptive.enabled: true   ← 可选，依赖 enhanced_analysis
 market_monitor.enabled: true          ← 独立开关，不依赖其他功能
+review_agent:                         ← 复盘系统增强（全部独立开关）
+  ├── instant_reflection_enabled      ← 即时反思
+  ├── weekly_reflection_enabled       ← 每周反思
+  ├── regime_aware_enabled            ← Regime 感知（依赖 enhanced_analysis 获取 regime）
+  ├── bias_protection_enabled         ← 确认偏差防护
+  ├── fact_subjective_split_enabled   ← 事实-主观分离
+  └── prompt_meta_reflection_enabled  ← Prompt 自优化（依赖 weekly_reflection）
 ```
 
 ### A/B 回测对比
@@ -488,6 +577,15 @@ market_monitor:
   extreme_threshold_pct: 5.0      # EXTREME 阈值（%）
   cooldown_minutes: 5             # 触发后冷却时间（分钟）
   reference_window_minutes: 10    # 价格基准窗口（分钟）
+
+# 复盘系统增强（5 项改进，全部默认关闭）
+review_agent:
+  instant_reflection_enabled: false     # 即时反思
+  weekly_reflection_enabled: false      # 每周反思
+  regime_aware_enabled: false           # Regime 感知记忆
+  bias_protection_enabled: false        # 确认偏差防护
+  fact_subjective_split_enabled: false  # 事实-主观分离
+  prompt_meta_reflection_enabled: false # Prompt 自优化
 ```
 
 ## 设计模式
@@ -526,6 +624,12 @@ uv run pytest tests/ --cov=src
 - `test_external_info_agent.py`: 外部信息收集测试
 - `test_review_daily_logger.py`: 复盘日志测试
 - `test_market_monitor.py`: 市场主动监控测试
+- `test_instant_reflection.py`: 即时反思测试（改进6a）
+- `test_weekly_reflection.py`: 每周反思测试（改进6a）
+- `test_regime_aware_memory.py`: Regime 感知记忆测试（改进6b）
+- `test_confirmation_bias_protection.py`: 确认偏差防护测试（改进6c）
+- `test_fact_subjective_split.py`: 事实-主观分离测试（改进6d）
+- `test_prompt_meta_reflection.py`: Prompt 自优化测试（改进6e）
 
 ## 注意事项
 
