@@ -546,6 +546,14 @@ trading:
   max_trade_amount: 100           # 单笔上限（美元）
   max_leverage: 10                # 最大杠杆
 
+# 调度配置
+scheduler:
+  interval_minutes: 30            # 兜底巡检，突发由 market_monitor 覆盖
+
+# 数据配置
+data:
+  timeframe: 1h                   # 兜底决策用大周期 K 线，减少噪音
+
 prompt:
   set: nof1-improved              # Prompt 集（推荐 nof1-improved）
 
@@ -555,11 +563,11 @@ enhanced_analysis:
 
 # 多空辩论（每次决策额外 2 次 LLM 调用）
 debate:
-  enabled: false
+  enabled: true
 
 # Regime 自适应策略（根据市场状态动态调整参数）
 regime_adaptive:
-  enabled: false
+  enabled: true
 
 # 账户保护
 account_protection:
@@ -570,7 +578,7 @@ account_protection:
 
 # 市场主动监控（异常波动触发决策循环）
 market_monitor:
-  enabled: false
+  enabled: true                   # 突发行情由 monitor 30s 一检覆盖
   check_interval_seconds: 30      # 检查间隔（秒）
   alert_threshold_pct: 3.0        # HIGH 告警阈值（%）
   elevated_threshold_pct: 1.5     # ELEVATED 阈值（%）
@@ -578,14 +586,14 @@ market_monitor:
   cooldown_minutes: 5             # 触发后冷却时间（分钟）
   reference_window_minutes: 10    # 价格基准窗口（分钟）
 
-# 复盘系统增强（5 项改进，全部默认关闭）
+# 复盘系统增强
 review_agent:
-  instant_reflection_enabled: false     # 即时反思
-  weekly_reflection_enabled: false      # 每周反思
-  regime_aware_enabled: false           # Regime 感知记忆
-  bias_protection_enabled: false        # 确认偏差防护
-  fact_subjective_split_enabled: false  # 事实-主观分离
-  prompt_meta_reflection_enabled: false # Prompt 自优化
+  instant_reflection_enabled: true      # 即时反思
+  weekly_reflection_enabled: true       # 每周反思
+  regime_aware_enabled: true            # Regime 感知记忆
+  bias_protection_enabled: true         # 确认偏差防护
+  fact_subjective_split_enabled: true   # 事实-主观分离
+  prompt_meta_reflection_enabled: true  # Prompt 自优化
 ```
 
 ## 设计模式
