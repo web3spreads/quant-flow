@@ -160,6 +160,8 @@ ETH 波动性高，是激进交易者的理想标的：
 
 {{ debate_summary }}
 
+{{ volatility_alert }}
+
 {{ historical_summary }}
 
 ---

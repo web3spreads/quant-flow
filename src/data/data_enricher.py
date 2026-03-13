@@ -355,13 +355,14 @@ class MarketDataEnricher:
 
     def _get_onchain_mvrv_sopr(self, symbol: str) -> dict[str, Any]:
         """
-        获取链上 MVRV 和 SOPR 信号（仅 BTC 有效）
-        基于 ScienceDirect 2025 研究：SOPR≈1.03 和 MVRV≈2.3x 是强方向信号
+        获取 BTC 链上公开数据信号（仅 BTC 有效）
 
-        使用 Blockchain.com 免费 API 获取 MVRV 近似值
-        SOPR 使用 CryptoQuant 公开数据
+        注意：由于免费 API 限制，无法获取真正的 MVRV（需要 UTXO realized value）
+        和 SOPR（需要 spent output 数据）。此处使用以下代理指标：
+        - 量价信号：blockchain.info 的市价和 24h 交易量比率
+        - 算力趋势信号：mempool.space 的算力周变化率（反映矿工信心）
         """
-        # MVRV/SOPR 仅对 BTC 有可靠的链上数据
+        # 链上数据仅对 BTC 有可靠的公开 API
         if symbol != "BTC":
             return self._empty_onchain(reason="仅BTC支持链上指标")
 
@@ -373,9 +374,8 @@ class MarketDataEnricher:
             "onchain_summary": "数据不可用",
         }
 
-        # 尝试获取 MVRV（使用 blockchain.info 市值 / 实际价值近似）
+        # 获取 BTC 量价信号（blockchain.info 公开 API）
         try:
-            # 市值
             req = urllib.request.Request(
                 "https://api.blockchain.info/stats?format=json",
                 headers={"User-Agent": "quant-flow/1.0"},
@@ -384,23 +384,13 @@ class MarketDataEnricher:
                 stats = json.loads(resp.read().decode())
 
             market_cap = stats.get("market_price_usd", 0) * stats.get("n_btc_mined", 0) / 1e8
-            # 简化 MVRV 近似：使用 200日平均价格作为 realized value 代理
-            # 真实 MVRV 需要 UTXO 级别数据，这里用 market_cap / (0.7 * market_cap) 的保守估计
-            # 或直接使用 trade_volume_usd 作为活跃度信号
             trade_vol = stats.get("trade_volume_usd", 0)
-
-            # 使用市场价与挖矿成本比作为 MVRV 的代理指标
-            # difficulty 越高 → 挖矿成本越高 → 价格/成本比越有参考意义
             market_price = stats.get("market_price_usd", 0)
 
-            # 由于无法直接获取 realized value，使用定性信号
             if market_price > 0 and trade_vol > 0:
-                # 交易量/市值比率作为活跃度信号
                 vol_ratio = trade_vol / market_cap if market_cap > 0 else 0
                 result["btc_market_price"] = market_price
                 result["btc_trade_volume_usd"] = trade_vol
-
-                # 注：这不是真正的 MVRV，只是基于公开数据的近似分析
                 result["mvrv_signal"] = (
                     f"BTC市价${market_price:,.0f}，24h交易量${trade_vol:,.0f}，"
                     f"量价比{vol_ratio:.4f}"
@@ -412,7 +402,7 @@ class MarketDataEnricher:
             logger.debug("blockchain.info 数据获取失败: %s", e)
             result["mvrv_signal"] = "数据获取失败"
 
-        # 尝试获取 SOPR（使用 mempool.space 的交易数据近似）
+        # 获取算力趋势信号（mempool.space 公开 API，反映矿工信心）
         try:
             req = urllib.request.Request(
                 "https://mempool.space/api/v1/mining/hashrate/1w",
@@ -421,7 +411,6 @@ class MarketDataEnricher:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 hash_data = json.loads(resp.read().decode())
 
-            # hashrate 趋势可以作为矿工信心的代理
             if hash_data and "hashrates" in hash_data and len(hash_data["hashrates"]) >= 2:
                 recent = hash_data["hashrates"][-1].get("avgHashrate", 0)
                 prev = hash_data["hashrates"][-2].get("avgHashrate", 0)
@@ -429,11 +418,11 @@ class MarketDataEnricher:
                     hr_change = (recent - prev) / prev * 100
                     if hr_change > 5:
                         result["sopr_signal"] = (
-                            f"算力上升{hr_change:.1f}%，矿工信心增强（类SOPR看多）"
+                            f"算力上升{hr_change:.1f}%，矿工信心增强（看多信号）"
                         )
                     elif hr_change < -5:
                         result["sopr_signal"] = (
-                            f"算力下降{hr_change:.1f}%，矿工信心减弱（类SOPR看空）"
+                            f"算力下降{hr_change:.1f}%，矿工信心减弱（看空信号）"
                         )
                     else:
                         result["sopr_signal"] = f"算力变化{hr_change:.1f}%，矿工情绪中性"

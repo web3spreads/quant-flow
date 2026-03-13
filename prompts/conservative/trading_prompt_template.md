@@ -187,6 +187,8 @@ ETH 作为第二大市值币种，在保守策略中同样占有重要地位：
 
 {{ debate_summary }}
 
+{{ volatility_alert }}
+
 {{ historical_summary }}
 
 ---

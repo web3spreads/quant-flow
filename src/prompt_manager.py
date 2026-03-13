@@ -350,6 +350,28 @@ class PromptManager:
         self.research_system_prompt = self._load_prompt_file(research_system_file)
         self.research_prompt_template_content = self._load_prompt_file(research_template_file)
 
+        # Weekly review prompts（改进1b）
+        weekly_review_system_file = self.prompt_set.get(
+            "weekly_review_system_prompt_file", "default/weekly_review_system_prompt.md"
+        )
+        weekly_review_template_file = self.prompt_set.get(
+            "weekly_review_prompt_template_file", "default/weekly_review_prompt_template.md"
+        )
+        self.weekly_review_system_prompt = self._load_optional_prompt_file(
+            weekly_review_system_file, "你是一名策略级量化交易分析师，负责每周系统性复盘。"
+        )
+        self.weekly_review_prompt_template = self._load_optional_prompt_template(
+            weekly_review_template_file, "{{ weekly_stats }}"
+        )
+
+        # Prompt meta review template（改进5）
+        prompt_meta_review_file = self.prompt_set.get(
+            "prompt_meta_review_template_file", "default/prompt_meta_review_template.md"
+        )
+        self.prompt_meta_review_template = self._load_optional_prompt_template(
+            prompt_meta_review_file, "{{ effectiveness_report }}"
+        )
+
         print(
             f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}"
         )
@@ -816,6 +838,7 @@ class PromptManager:
         context.setdefault("cex_funding_signal", "")
         context.setdefault("onchain_summary", "")
         context.setdefault("regime_hint", "")
+        context.setdefault("volatility_alert", "")
         context.setdefault("ema_20_4h", current_price)
         context.setdefault("ema_50_4h", current_price)
         context.setdefault("atr_3_4h", 0)
@@ -983,6 +1006,38 @@ class PromptManager:
         prompt = self.spot_prompt_template.render(context)
 
         return prompt
+
+    def get_weekly_review_system_prompt(self) -> str:
+        """获取每周复盘系统 Prompt（改进1b）"""
+        return self.weekly_review_system_prompt
+
+    def format_weekly_review_prompt(
+        self,
+        weekly_stats: dict[str, Any],
+        systematic_biases: list[dict[str, Any]],
+        recurring_errors: list[dict[str, Any]],
+        all_symbols_summary: dict[str, list[dict[str, Any]]],
+    ) -> str:
+        """格式化每周复盘 Prompt（改进1b）"""
+        context = {
+            "weekly_stats": weekly_stats,
+            "systematic_biases": systematic_biases,
+            "recurring_errors": recurring_errors,
+            "all_symbols_summary": all_symbols_summary,
+        }
+        return self.weekly_review_prompt_template.render(context)
+
+    def format_prompt_meta_review(
+        self,
+        effectiveness_report: dict[str, Any],
+        historical_trend: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """格式化 Prompt 元反思 Prompt（改进5）"""
+        context = {
+            "effectiveness_report": effectiveness_report,
+            "historical_trend": historical_trend or [],
+        }
+        return self.prompt_meta_review_template.render(context)
 
     def get_prompt_set_info(self) -> dict[str, str]:
         """获取当前 Prompt 集合的信息"""

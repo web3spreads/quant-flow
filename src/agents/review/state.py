@@ -45,6 +45,9 @@ class ReviewAgentState(TypedDict):
     summary: str  # 复盘摘要
     spot_checks: list[dict[str, Any]]  # 现货检查建议
 
+    # ===== 改进2: Regime 感知 =====
+    current_regime: str  # 当前市场 Regime（trending/ranging/volatile/unknown）
+
     # ===== 工作流控制 =====
     current_step: str  # 当前步骤
     errors: list[str]  # 错误信息列表
@@ -101,6 +104,7 @@ def create_initial_state(
         lessons=[],
         summary="",
         spot_checks=[],
+        current_regime="unknown",
         current_step="start",
         errors=[],
     )

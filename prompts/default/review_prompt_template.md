@@ -34,6 +34,14 @@
 
 请基于当前环境特征判断经验是否适用，相似度低则降低置信度或标注为不采纳。
 
+{% if fact_subjective_enabled is defined and fact_subjective_enabled %}
+### 事实-主观信号分析要求
+请在分析中明确区分：
+- **事实信号**：基于技术指标（RSI、MACD、EMA、ATR、成交量、布林带、支撑位、阻力位等）的客观判断
+- **主观信号**：基于情绪、新闻、恐惧贪婪指数、资金费率、市场氛围等的主观判断
+并在每条经验的 `source_type` 字段中标注。
+{% endif %}
+
 请输出 JSON：
 {
   "summary": "10~40字总述",
@@ -44,7 +52,9 @@
       "conditions": ["触发条件A", "触发条件B"],
       "confidence": 0.7,
       "evidence": ["引用第X条决策", "指标/数据"],
-      "context_features": {{ context_features_json }}
+      "context_features": {{ context_features_json }},
+      "lesson_type": "positive 或 negative",
+      "source_type": "factual 或 subjective 或 mixed"
     }
   ],
   "spot_checks": [

@@ -210,6 +210,8 @@
 
 {{ debate_summary }}
 
+{{ volatility_alert }}
+
 {{ historical_summary }}
 
 ---

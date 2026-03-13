@@ -21,6 +21,7 @@
 | 多空辩论 Agent | [arXiv:2412.20138](https://arxiv.org/abs/2412.20138) | `debate.enabled` | Bull/Bear 双 Agent 消除确认偏见 |
 | CEX 领先信号 + 链上数据 | [MDPI 2026](https://www.mdpi.com/2227-7390/14/2/346) | `enhanced_analysis.enabled` | Binance 费率对比、MVRV/SOPR 方向信号 |
 | Regime 自适应策略 | [Springer 2025](https://link.springer.com/article/10.1007/s42521-024-00123-2) | `regime_adaptive.enabled` | 趋势/震荡/高波动三种市场状态动态调参 |
+| 市场主动监控 | — | `market_monitor.enabled` | 异常波动自动触发决策循环，无需等待定时周期 |
 
 所有增强功能**通过配置独立开关控制，默认不影响现有流程**。
 
@@ -126,6 +127,14 @@ account_protection:
   max_drawdown_pct: 0.10          # 最大回撤 10%
   max_daily_loss_pct: 0.05        # 单日亏损 5%
   max_position_hours: 48
+
+# 市场主动监控（异常波动触发决策循环）
+market_monitor:
+  enabled: false
+  check_interval_seconds: 30      # 检查间隔
+  alert_threshold_pct: 3.0        # HIGH 告警阈值（%）
+  cooldown_minutes: 5             # 冷却时间（分钟）
+  reference_window_minutes: 10    # 价格基准窗口（分钟）
 ```
 
 完整配置参考 `config.yaml.example`。
@@ -192,6 +201,29 @@ regime_adaptive:
 
 依赖关系：`regime_adaptive` 依赖 `enhanced_analysis.enabled: true`。
 
+### 市场主动监控
+
+启用后，独立线程在决策周期间隔内持续监控价格波动，检测到异常波动时主动触发决策循环：
+
+```yaml
+market_monitor:
+  enabled: true
+  check_interval_seconds: 30       # 每 30 秒检查一次价格
+  alert_threshold_pct: 3.0         # 波动 ≥3% 触发决策
+  cooldown_minutes: 5              # 触发后 5 分钟内不重复触发
+```
+
+工作流程：
+1. 监控线程每 30 秒通过 `all_mids()` 获取最新价格
+2. 与参考窗口（默认 10 分钟）内的基准价格对比
+3. 波动超过阈值时生成 `VolatilityAlert`，触发 `trading_cycle`
+4. 告警上下文通过 `{{ volatility_alert }}` 注入 LLM Prompt，辅助决策
+
+注意事项：
+- 独立于其他增强功能，不依赖 `enhanced_analysis`
+- 冷却期按交易对独立管理，BTC 触发不影响 ETH
+- 预热期（窗口内无基准数据）不会误触发
+
 ### A/B 回测对比
 
 使用内置的回测对比工具验证各功能效果：
@@ -228,6 +260,7 @@ quant-flow/
 │   │   └── account_protector.py   # 账户保护
 │   ├── data/                      # 数据处理
 │   │   ├── data_enricher.py       # 数据增强（CEX/链上/恐惧贪婪）
+│   │   ├── market_monitor.py      # 市场主动监控（异常波动触发决策）
 │   │   ├── signal_scorer.py       # 多因子信号评分
 │   │   ├── regime_adapter.py      # Regime 自适应
 │   │   ├── market_state.py        # 市场状态分析

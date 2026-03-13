@@ -93,7 +93,7 @@ class LessonGeneralizer:
     3. 反例收集：记录经验失效的场景
     """
 
-    def __init__(self, min_diversity_ratio: float = 0.4):
+    def __init__(self, min_diversity_ratio: float = 0.5):
         """
         Args:
             min_diversity_ratio: 最低多样性比例，低于此值会触发警告
@@ -245,10 +245,11 @@ class LessonGeneralizer:
         if diversity_score.recommendation == "excellent":
             diversity_factor = 1.0
         elif diversity_score.recommendation == "acceptable":
-            diversity_factor = 0.9
+            # 多样性一般，适度惩罚（根据实际覆盖率线性插值）
+            diversity_factor = 0.75 + (diversity_score.diversity_ratio * 0.2)
         else:
             # 低多样性，显著降低置信度
-            diversity_factor = 0.6 + (diversity_score.diversity_ratio * 0.3)
+            diversity_factor = 0.5 + (diversity_score.diversity_ratio * 0.3)
 
         adjusted["confidence"] = round(original_confidence * diversity_factor, 3)
         adjusted["diversity_factor"] = diversity_factor
@@ -377,7 +378,7 @@ class LessonGeneralizer:
 
 
 def enhance_lessons_with_generalization(
-    lessons: list[dict[str, Any]], records: list[dict[str, Any]], min_diversity_ratio: float = 0.4
+    lessons: list[dict[str, Any]], records: list[dict[str, Any]], min_diversity_ratio: float = 0.5
 ) -> list[dict[str, Any]]:
     """
     便捷函数：增强经验列表，添加泛化和多样性调整

@@ -210,6 +210,8 @@ Assuming max amount and leverage
 
 {{ debate_summary }}
 
+{{ volatility_alert }}
+
 {{ historical_summary }}
 
 ## 🎯 Your Goal

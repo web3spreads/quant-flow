@@ -67,6 +67,8 @@ EMA: {{ ema_analysis }}  |  量能: {{ volume_analysis }}  |  4H: {{ h4_trend_an
 
 {{ debate_summary }}
 
+{{ volatility_alert }}
+
 {{ historical_summary }}
 
 ---

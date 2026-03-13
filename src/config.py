@@ -66,6 +66,7 @@ class Config:
         self._init_enhanced_analysis_config()
         self._init_logging_config()
         self._init_notifications_config()
+        self._init_market_monitor_config()
 
     def _load_yaml_config(self) -> dict[str, Any]:
         """加载 YAML 配置文件"""
@@ -239,6 +240,42 @@ class Config:
         )
         self.review_similarity_method: str = review.get("similarity_method", "cosine")
 
+        # 改进1: 双粒度反思
+        self.review_instant_reflection_enabled: bool = review.get(
+            "instant_reflection_enabled", False
+        )
+        self.review_weekly_reflection_enabled: bool = review.get("weekly_reflection_enabled", False)
+        self.review_weekly_reflection_day: int = int(review.get("weekly_reflection_day", 0))
+        self.review_weekly_reflection_hour: int = int(review.get("weekly_reflection_hour", 8))
+
+        # 改进2: Regime 感知记忆
+        self.review_regime_aware_enabled: bool = review.get("regime_aware_enabled", False)
+        self.review_regime_mismatch_factor: float = float(review.get("regime_mismatch_factor", 0.4))
+
+        # 改进3: 确认偏差防护
+        self.review_bias_protection_enabled: bool = review.get("bias_protection_enabled", False)
+        self.review_max_positive_ratio: float = float(review.get("max_positive_ratio", 0.7))
+        self.review_negative_confidence_boost: float = float(
+            review.get("negative_confidence_boost", 1.15)
+        )
+
+        # 改进4: 事实-主观分离
+        self.review_fact_subjective_split_enabled: bool = review.get(
+            "fact_subjective_split_enabled", False
+        )
+        self.review_trending_subjective_boost: float = float(
+            review.get("trending_subjective_boost", 1.3)
+        )
+        self.review_ranging_factual_boost: float = float(review.get("ranging_factual_boost", 1.3))
+
+        # 改进5: Prompt 自优化
+        self.review_prompt_meta_reflection_enabled: bool = review.get(
+            "prompt_meta_reflection_enabled", False
+        )
+        self.review_prompt_optimization_dir: str = review.get(
+            "prompt_optimization_dir", "logs/prompt_optimization"
+        )
+
     def _init_external_info_agent_config(self):
         """初始化外部信息收集 Agent 配置"""
         external_info = self.config_data.get("external_info_agent", {})
@@ -312,6 +349,27 @@ class Config:
     def _init_notifications_config(self):
         """初始化通知配置"""
         self.notifications = self.config_data.get("notifications", {"enabled": False})
+
+    def _init_market_monitor_config(self):
+        """初始化市场主动监控配置"""
+        monitor = self.config_data.get("market_monitor", {})
+        self.market_monitor_enabled: bool = monitor.get("enabled", False)
+        self.market_monitor_check_interval_seconds: int = int(
+            monitor.get("check_interval_seconds", 30)
+        )
+        self.market_monitor_alert_threshold_pct: float = float(
+            monitor.get("alert_threshold_pct", 3.0)
+        )
+        self.market_monitor_elevated_threshold_pct: float = float(
+            monitor.get("elevated_threshold_pct", 1.5)
+        )
+        self.market_monitor_extreme_threshold_pct: float = float(
+            monitor.get("extreme_threshold_pct", 5.0)
+        )
+        self.market_monitor_cooldown_minutes: int = int(monitor.get("cooldown_minutes", 5))
+        self.market_monitor_reference_window_minutes: int = int(
+            monitor.get("reference_window_minutes", 10)
+        )
 
     def validate(self):
         """验证配置的有效性"""
@@ -406,6 +464,7 @@ class Config:
         止损比例: {self.stop_loss_ratio * 100}%
         决策间隔: {self.interval_minutes} 分钟
         K线周期: {self.timeframe}
+        市场监控: {"启用 (波动阈值 " + str(self.market_monitor_alert_threshold_pct) + "%)" if self.market_monitor_enabled else "未启用"}
         """
 
 
