@@ -66,6 +66,7 @@ class Config:
         self._init_enhanced_analysis_config()
         self._init_logging_config()
         self._init_notifications_config()
+        self._init_market_monitor_config()
 
     def _load_yaml_config(self) -> dict[str, Any]:
         """加载 YAML 配置文件"""
@@ -313,6 +314,29 @@ class Config:
         """初始化通知配置"""
         self.notifications = self.config_data.get("notifications", {"enabled": False})
 
+    def _init_market_monitor_config(self):
+        """初始化市场主动监控配置"""
+        monitor = self.config_data.get("market_monitor", {})
+        self.market_monitor_enabled: bool = monitor.get("enabled", False)
+        self.market_monitor_check_interval_seconds: int = int(
+            monitor.get("check_interval_seconds", 30)
+        )
+        self.market_monitor_alert_threshold_pct: float = float(
+            monitor.get("alert_threshold_pct", 3.0)
+        )
+        self.market_monitor_elevated_threshold_pct: float = float(
+            monitor.get("elevated_threshold_pct", 1.5)
+        )
+        self.market_monitor_extreme_threshold_pct: float = float(
+            monitor.get("extreme_threshold_pct", 5.0)
+        )
+        self.market_monitor_cooldown_minutes: int = int(
+            monitor.get("cooldown_minutes", 5)
+        )
+        self.market_monitor_reference_window_minutes: int = int(
+            monitor.get("reference_window_minutes", 10)
+        )
+
     def validate(self):
         """验证配置的有效性"""
         errors = []
@@ -406,6 +430,7 @@ class Config:
         止损比例: {self.stop_loss_ratio * 100}%
         决策间隔: {self.interval_minutes} 分钟
         K线周期: {self.timeframe}
+        市场监控: {'启用 (波动阈值 ' + str(self.market_monitor_alert_threshold_pct) + '%)' if self.market_monitor_enabled else '未启用'}
         """
 
 

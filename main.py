@@ -30,6 +30,7 @@ from src.config import DEFAULT_PERP_FEE_RATES, get_config
 from src.data.data_enricher import MarketDataEnricher
 from src.data.indicators import TechnicalIndicators
 from src.data.market_data import MarketDataFetcher
+from src.data.market_monitor import MarketMonitor, MonitorConfig, VolatilityAlert
 from src.llm import LLMClientManager
 from src.notification import Notifier
 from src.prompt_manager import PromptManager
@@ -349,6 +350,46 @@ class QuantFlowBot:
             store_dir = getattr(self.config, "external_info_store_dir", "data/market_info")
             self.market_info_store = MarketInfoStore(base_dir=store_dir)
 
+        # 11. 市场主动监控器
+        self.market_monitor = None
+        self._pending_alerts: dict[str, VolatilityAlert] = {}  # 待处理的波动告警
+        self._alert_lock = threading.Lock()
+
+        if getattr(self.config, "market_monitor_enabled", False):
+            self.logger.print_info("初始化市场主动监控器...")
+            monitor_config = MonitorConfig(
+                enabled=True,
+                check_interval_seconds=getattr(
+                    self.config, "market_monitor_check_interval_seconds", 30
+                ),
+                alert_threshold_pct=getattr(
+                    self.config, "market_monitor_alert_threshold_pct", 3.0
+                ),
+                elevated_threshold_pct=getattr(
+                    self.config, "market_monitor_elevated_threshold_pct", 1.5
+                ),
+                extreme_threshold_pct=getattr(
+                    self.config, "market_monitor_extreme_threshold_pct", 5.0
+                ),
+                cooldown_minutes=getattr(
+                    self.config, "market_monitor_cooldown_minutes", 5
+                ),
+                reference_window_minutes=getattr(
+                    self.config, "market_monitor_reference_window_minutes", 10
+                ),
+            )
+            self.market_monitor = MarketMonitor(
+                symbols=self.config.symbols,
+                testnet=self.config.hyperliquid_testnet,
+                config=monitor_config,
+                on_alert_callback=self._on_market_alert,
+                logger=self.logger,
+            )
+            self.logger.print_info(
+                f"✅ 市场监控器初始化完成 | 波动阈值: {monitor_config.alert_threshold_pct}% | "
+                f"检查间隔: {monitor_config.check_interval_seconds}s"
+            )
+
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info("  - 1 个汇总 Agent")
@@ -357,6 +398,8 @@ class QuantFlowBot:
             self.logger.print_info("  - 1 个复盘 Agent")
         if self.external_info_agent:
             self.logger.print_info("  - 1 个外部信息收集 Agent")
+        if self.market_monitor:
+            self.logger.print_info("  - 1 个市场主动监控器")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -438,7 +481,43 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"发送启动通知失败: {e}")
 
-    def trading_cycle(self):
+    def _on_market_alert(self, alert: VolatilityAlert):
+        """
+        市场监控告警回调（在监控线程中执行）。
+        将告警存入待处理队列，然后触发一次异步决策循环。
+        """
+        self.logger.print_warning(
+            f"🚨 [市场监控] 检测到异常波动: {alert.message} [{alert.level.value}]"
+        )
+
+        # 存储告警信息（供决策周期读取）
+        with self._alert_lock:
+            self._pending_alerts[alert.symbol] = alert
+
+        # 在独立线程中触发决策循环（避免阻塞监控线程）
+        trigger_thread = threading.Thread(
+            target=self._alert_triggered_cycle,
+            args=(alert,),
+            name=f"alert-cycle-{alert.symbol}",
+            daemon=True,
+        )
+        trigger_thread.start()
+
+    def _alert_triggered_cycle(self, alert: VolatilityAlert):
+        """由异常波动告警触发的决策循环"""
+        self.logger.print_header(
+            f"⚡ 异常波动触发决策: {alert.symbol} {alert.change_pct:+.2f}% "
+            f"[{alert.level.value}] - {datetime.now().strftime('%H:%M:%S')}"
+        )
+        # 复用常规的 trading_cycle，告警信息通过 _pending_alerts 传递
+        self.trading_cycle(triggered_by_alert=True)
+
+    def _consume_pending_alert(self, symbol: str) -> VolatilityAlert | None:
+        """消费并清除某个交易对的待处理告警"""
+        with self._alert_lock:
+            return self._pending_alerts.pop(symbol, None)
+
+    def trading_cycle(self, triggered_by_alert: bool = False):
         """执行一轮交易决策循环（多 Agent 独立决策模式）"""
         # 尝试获取锁，如果正在执行则跳过
         if not self._trading_lock.acquire(blocking=False):
@@ -450,8 +529,9 @@ class QuantFlowBot:
 
         try:
             self.cycle_counter += 1
+            trigger_label = "⚡ 异常波动触发" if triggered_by_alert else "🔄 定时"
             self.logger.print_header(
-                f"🔄 多 Agent 交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"{trigger_label} 多 Agent 交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
 
             # 第一步：获取当前持仓和余额
@@ -588,6 +668,15 @@ class QuantFlowBot:
                         initial_balance=initial_balance,
                     )
                     enriched_data.update(account_enriched)
+
+                    # 注入异常波动告警上下文（如果有）
+                    pending_alert = self._consume_pending_alert(symbol)
+                    if pending_alert and self.market_monitor:
+                        alert_context = self.market_monitor.format_alert_context(pending_alert)
+                        enriched_data["volatility_alert"] = alert_context
+                        self.logger.print_warning(
+                            f"⚡ {symbol} 注入异常波动上下文: {pending_alert.message}"
+                        )
 
                     # 获取最近1小时的操作记录并注入到 enriched_data
                     recent_fills = self._get_recent_fills_for_symbol(symbol, hours=1)
@@ -801,6 +890,10 @@ class QuantFlowBot:
                 f"✅ 多 Agent 交易周期完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
 
+            # 通知市场监控器决策周期已完成（重置价格基准）
+            if self.market_monitor:
+                self.market_monitor.notify_cycle_completed()
+
         except Exception as e:
             self.logger.print_error(f"交易周期异常: {e}")
             self.logger.logger.exception(e)
@@ -866,6 +959,14 @@ class QuantFlowBot:
             self.logger.print_info(f"下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
             self.logger.print_info(f"执行间隔: {self.config.interval_minutes} 分钟")
 
+            # 启动市场主动监控线程
+            if self.market_monitor:
+                self.market_monitor.start()
+                self.logger.print_info(
+                    f"📡 市场主动监控已启动，决策间隔 {self.config.interval_minutes} 分钟内"
+                    f"检测到 ≥{self.config.market_monitor_alert_threshold_pct}% 波动将主动触发决策"
+                )
+
             # 启动调度器
             self.is_running = True
             self.start_time = datetime.now()  # 记录启动时间
@@ -885,6 +986,10 @@ class QuantFlowBot:
         """停止机器人"""
         self.logger.print_section("🛑 停止多 Agent 交易机器人", style="bold red")
         self.is_running = False
+
+        # 停止市场监控线程
+        if self.market_monitor:
+            self.market_monitor.stop()
 
         if self.scheduler and self.scheduler.running:
             self.scheduler.shutdown()
