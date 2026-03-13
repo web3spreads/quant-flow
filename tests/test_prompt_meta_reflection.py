@@ -2,7 +2,6 @@
 Prompt 自优化测试（改进5）
 """
 
-from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -139,7 +138,6 @@ class TestPromptMetaReflector:
 
         reflector.save_report(report, suggestions)
 
-        import os
         output_dir = tmp_path / "prompt_opt"
         files = list(output_dir.glob("*_report.json"))
         assert len(files) == 1

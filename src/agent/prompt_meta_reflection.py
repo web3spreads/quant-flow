@@ -106,7 +106,7 @@ class PromptMetaReflector:
         检查决策输出中各步骤是否有实质内容
         """
         fincot_steps = ["趋势确认", "入场信号", "情绪校验", "复盘比对", "风险计算", "最终决策"]
-        step_counts = {step: 0 for step in fincot_steps}
+        step_counts = dict.fromkeys(fincot_steps, 0)
         total_checked = 0
 
         for record in records:

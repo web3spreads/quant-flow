@@ -3,7 +3,7 @@
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -143,7 +143,6 @@ class TestWeeklyReflector:
         }
         reflector._save_report(report)
 
-        import os
         output_dir = tmp_path / "weekly"
         files = list(output_dir.glob("*.json"))
         assert len(files) == 1

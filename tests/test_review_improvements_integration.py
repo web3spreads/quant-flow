@@ -15,7 +15,6 @@
 import json
 import threading
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,8 +24,6 @@ from src.agent.instant_reflection import InstantReflector
 from src.agent.prompt_meta_reflection import PromptMetaReflector
 from src.agent.review_memory import ReviewMemoryStore
 from src.agent.similarity_scorer import SimilarityScorer
-from src.agent.weekly_reflection import WeeklyReflector
-
 
 # ========== 公共 Fixtures ==========
 
@@ -342,7 +339,7 @@ class TestFactualRegimeWeight:
         pos_factual = vft.find("RSI > 70")
         pos_subjective = vft.find("市场情绪恐惧")
         assert pos_factual < pos_subjective, (
-            f"ranging regime 下 factual 经验应排在 subjective 前面"
+            "ranging regime 下 factual 经验应排在 subjective 前面"
         )
 
     def test_trending_regime_subjective_boost(self, memory_path):

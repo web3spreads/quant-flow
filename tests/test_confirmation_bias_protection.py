@@ -101,7 +101,7 @@ class TestConfirmationBiasProtection:
         assert len(remaining) <= 8
 
         # 确保 negative 经验被保护
-        negative_remaining = [l for l in remaining if l.get("lesson_type") == "negative"]
+        negative_remaining = [ls for ls in remaining if ls.get("lesson_type") == "negative"]
         assert len(negative_remaining) >= 1  # negative 应该被保护
 
     def test_negative_confidence_boost_in_review(self):

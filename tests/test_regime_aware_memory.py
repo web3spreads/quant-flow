@@ -93,8 +93,8 @@ class TestRegimeAwareMemory:
         # trending 经验应该排在前面（分数更高）
         assert len(lessons) >= 1
         # 找到 trending 经验
-        trending_lessons = [l for l in lessons if l.get("source_regime") == "trending"]
-        ranging_lessons = [l for l in lessons if l.get("source_regime") == "ranging"]
+        trending_lessons = [ls for ls in lessons if ls.get("source_regime") == "trending"]
+        ranging_lessons = [ls for ls in lessons if ls.get("source_regime") == "ranging"]
 
         if trending_lessons and ranging_lessons:
             assert trending_lessons[0]["similarity_score"] > ranging_lessons[0]["similarity_score"]
@@ -110,7 +110,7 @@ class TestRegimeAwareMemory:
             current_regime="trending",
         )
 
-        unknown_lessons = [l for l in lessons if l.get("source_regime") == "unknown"]
+        unknown_lessons = [ls for ls in lessons if ls.get("source_regime") == "unknown"]
         assert len(unknown_lessons) >= 1
         # unknown 不应该被降权，保持原始分数
         assert unknown_lessons[0]["similarity_score"] == 0.9

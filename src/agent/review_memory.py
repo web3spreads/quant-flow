@@ -320,8 +320,8 @@ class ReviewMemoryStore:
             return {"total": 0, "positive": 0, "negative": 0, "unknown": 0,
                     "positive_ratio": 0.0, "negative_ratio": 0.0}
 
-        positive = sum(1 for l in lessons if l.get("lesson_type") == "positive")
-        negative = sum(1 for l in lessons if l.get("lesson_type") == "negative")
+        positive = sum(1 for ls in lessons if ls.get("lesson_type") == "positive")
+        negative = sum(1 for ls in lessons if ls.get("lesson_type") == "negative")
         unknown = total - positive - negative
 
         return {
@@ -469,7 +469,7 @@ class ReviewMemoryStore:
             return bucket
 
         # 统计类型分布（基于淘汰后目标容量判断，而非当前总量）
-        negative_count = sum(1 for l in bucket if l.get("lesson_type") == "negative")
+        negative_count = sum(1 for item in bucket if item.get("lesson_type") == "negative")
         min_negative_ratio = 1.0 - max_positive_ratio
         min_negative_needed = max(1, int(self.max_lessons * min_negative_ratio))
         # 如果淘汰可能导致 negative 低于最低保留数，触发保护
