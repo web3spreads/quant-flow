@@ -49,7 +49,7 @@ class TradingAgentState(TypedDict):
     # ===== 决策相关 =====
     prompt: str  # 生成的 Prompt
     decision_type: (
-        str  # 决策类型 (BUY, SELL, SELL_SHORT, BUY_TO_COVER, DO_NOTHING, BUY_SPOT_RECOMMEND)
+        str  # 决策类型 (BUY, SELL, SELL_SHORT, BUY_TO_COVER, DO_NOTHING)
     )
     decision_details: dict[str, Any]  # 决策详情
     execution_result: str | None  # 执行结果
@@ -68,7 +68,7 @@ class TradingDecision(TypedDict):
     """
 
     decision_type: Literal[
-        "BUY", "SELL", "SELL_SHORT", "BUY_TO_COVER", "DO_NOTHING", "BUY_SPOT_RECOMMEND", "ERROR"
+        "BUY", "SELL", "SELL_SHORT", "BUY_TO_COVER", "DO_NOTHING", "ERROR"
     ]
     symbol: str
     amount: float | None

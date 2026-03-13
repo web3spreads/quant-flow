@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Quant Flow - AI-Powered Cryptocurrency Auto Trading Bot
-Multi-Agent Architecture: Maintains independent context for each trading pair, with aggregation agents and spot agents
+Multi-Agent Architecture: Maintains independent context for each trading pair, with aggregation agents
 """
 
 import argparse
@@ -25,7 +25,6 @@ from src.agent.single_symbol_agent import SingleSymbolAgent
 # 改进1: 双粒度反思（延迟导入在初始化时使用）
 
 # RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
-from src.agent.spot_agent import SpotAgent
 from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
 from src.agents.common.utils.helpers import send_error_notification
 from src.config import DEFAULT_PERP_FEE_RATES, get_config
@@ -347,19 +346,7 @@ class QuantFlowBot:
                 )
                 self.logger.print_info(f"  ✅ {symbol} Agent 创建完成")
 
-        # 9. 现货定投 Agent
-        self.logger.print_info("初始化现货定投 Agent...")
-        self.spot_agent = SpotAgent(
-            order_manager=self.order_manager,
-            logger=self.logger,
-            llm_manager=self.llm_manager,
-            temperature=0.05,  # 更保守
-            trade_amount=self.config.max_trade_amount,
-            notifier=self.notifier,
-            prompt_manager=self.prompt_manager,
-        )
-
-        # 10. 外部信息收集 Agent
+        # 9. 外部信息收集 Agent
         self.external_info_agent = None
         self.external_info_scheduler = None
         self.market_info_store = None
@@ -440,7 +427,6 @@ class QuantFlowBot:
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info("  - 1 个汇总 Agent")
-        self.logger.print_info("  - 1 个现货定投 Agent")
         if self.review_agent:
             self.logger.print_info("  - 1 个复盘 Agent")
         if self.external_info_agent:
@@ -629,12 +615,8 @@ class QuantFlowBot:
             # 更新所有 Agent 的交易金额
             for agent in self.symbol_agents.values():
                 agent.trade_amount = adjusted_amount
-            self.spot_agent.trade_amount = adjusted_amount
-
             # 第二步：为每个交易对独立决策
             self.logger.print_section("🤖 多 Agent 独立决策", style="bold magenta")
-
-            spot_recommendations = []  # 收集现货定投推荐
 
             for symbol in self.config.symbols:
                 try:
@@ -908,18 +890,6 @@ class QuantFlowBot:
                         except Exception as e:
                             self.logger.print_warning(f"[{symbol}] 即时反思失败: {e}")
 
-                    # 如果是现货定投推荐，收集起来
-                    if decision == "BUY_SPOT_RECOMMEND":
-                        spot_recommendations.append(
-                            {
-                                "symbol": symbol,
-                                "market_data": market_data,
-                                "multi_timeframe_trends": multi_timeframe_trends,
-                                "reason": details.get("output", ""),
-                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            }
-                        )
-
                 except Exception as e:
                     self.logger.print_error(f"{symbol} Agent 决策异常: {e}")
                     self.logger.logger.exception(e)
@@ -934,45 +904,7 @@ class QuantFlowBot:
                         },
                     )
 
-            # 第三步：处理现货定投推荐
-            if spot_recommendations:
-                self.logger.print_section("💎 现货定投 Agent 评估", style="bold blue")
-
-                # 获取当前现货持仓
-                current_spot_holdings = self.order_manager.get_spot_holdings()
-
-                for recommendation in spot_recommendations:
-                    try:
-                        symbol = recommendation["symbol"]
-                        self.logger.print_info(f"评估 {symbol} 的现货定投推荐...")
-
-                        # 调用现货 Agent 评估
-                        spot_decision, spot_details = self.spot_agent.evaluate_spot_recommendation(
-                            symbol=symbol,
-                            market_data=recommendation["market_data"],
-                            multi_timeframe_trends=recommendation["multi_timeframe_trends"],
-                            recommendation=recommendation,
-                            current_spot_holdings=current_spot_holdings,
-                        )
-
-                        self.logger.print_info(f"[现货Agent] {symbol} 决策: {spot_decision}")
-
-                        # 记录现货决策日志
-                        self.logger.log_decision(
-                            symbol=f"{symbol}_SPOT",
-                            market_data=recommendation["market_data"],
-                            prompt=spot_details.get("prompt", ""),
-                            ai_response=spot_details.get("output", ""),
-                            decision=spot_decision,
-                            action_details=spot_details,
-                            status="SUCCESS",
-                        )
-
-                    except Exception as e:
-                        self.logger.print_error(f"现货 Agent 评估 {symbol} 异常: {e}")
-                        self.logger.logger.exception(e)
-
-            # 第四步：按需运行复盘 Agent
+            # 第三步：按需运行复盘 Agent
             self._maybe_run_review_cycle()
 
             self.logger.print_header(
@@ -1203,7 +1135,6 @@ class QuantFlowBot:
                 action_details={
                     "lessons": added,
                     "summary": review_result.get("summary", ""),
-                    "spot_checks": review_result.get("spot_checks", []),
                 },
                 status="SUCCESS",
             )

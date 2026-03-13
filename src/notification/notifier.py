@@ -19,7 +19,6 @@ class NotificationEvent(StrEnum):
     TRADE_CLOSED = "trade_closed"  # 平仓
     STOP_LOSS = "stop_loss"  # 止损
     TAKE_PROFIT = "take_profit"  # 止盈
-    SPOT_INVESTMENT = "spot_investment"  # 现货定投
     ERROR = "error"  # 错误
     CIRCUIT_BREAKER = "circuit_breaker"  # 熔断
     SYSTEM_SHUTDOWN = "system_shutdown"  # 系统关闭
@@ -534,50 +533,6 @@ class Notifier:
             f"盈利: +{profit:.2f} USD (+{profit_percent:.2f}%)"
         )
         self.notify(NotificationEvent.TAKE_PROFIT, title, message)
-
-    def notify_spot_investment(
-        self,
-        symbol: str,
-        quantity: float,
-        price: float,
-        amount: float,
-        order_hash: str | None = None,
-    ):
-        """
-        发送现货定投通知
-
-        Args:
-            symbol: 交易对
-            quantity: 数量
-            price: 价格
-            amount: 投资金额
-            order_hash: 订单哈希
-        """
-        title = f"💎 现货定投: {symbol}"
-
-        lines = [
-            f"【交易对】{symbol}",
-            f"【数量】{quantity:,.4f}",
-            f"【价格】${price:,.4f}" if price < 1 else f"【价格】${price:,.2f}",
-            f"【金额】${amount:,.2f}",
-        ]
-
-        # 添加订单哈希和浏览器链接
-        if order_hash:
-            lines.append("")  # 空行
-            if len(order_hash) >= 18:
-                lines.append(f"【交易哈希】{order_hash[:10]}...{order_hash[-8:]}")
-            else:
-                lines.append(f"【交易哈希】{order_hash}")
-            # Hyperliquid 浏览器链接 - 根据testnet/mainnet使用不同URL
-            if self.is_testnet:
-                explorer_url = f"https://app.hyperliquid-testnet.xyz/explorer/tx/{order_hash}"
-            else:
-                explorer_url = f"https://app.hyperliquid.xyz/explorer/tx/{order_hash}"
-            lines.append(f"【查看详情】{explorer_url}")
-
-        message = "\n".join(lines)
-        self.notify(NotificationEvent.SPOT_INVESTMENT, title, message)
 
     def notify_error(self, title: str, error_message: str, context: str | None = None):
         """

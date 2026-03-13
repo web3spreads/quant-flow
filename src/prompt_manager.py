@@ -320,12 +320,8 @@ class PromptManager:
 
         # 加载 Prompt 内容（作为 Jinja2 模板）
         self.system_prompt = self._load_prompt_file(self.prompt_set["system_prompt_file"])
-        self.spot_system_prompt = self._load_prompt_file(self.prompt_set["spot_system_prompt_file"])
         self.trading_prompt_template = self._load_prompt_template(
             self.prompt_set["trading_prompt_template_file"]
-        )
-        self.spot_prompt_template = self._load_prompt_template(
-            self.prompt_set["spot_prompt_template_file"]
         )
 
         # Review prompts: 优先使用当前 prompt set 的配置，如果没有则 fallback 到 default
@@ -462,10 +458,6 @@ class PromptManager:
     def get_system_prompt(self) -> str:
         """获取系统 Prompt"""
         return self.system_prompt
-
-    def get_spot_system_prompt(self) -> str:
-        """获取现货 Agent 系统 Prompt"""
-        return self.spot_system_prompt
 
     def get_review_system_prompt(self) -> str:
         """
@@ -879,134 +871,6 @@ class PromptManager:
         }
         return self.review_prompt_template.render(context)
 
-    def format_spot_prompt(
-        self,
-        symbol: str,
-        market_data: dict[str, Any],
-        multi_timeframe_trends: dict[str, str],
-        recommendation: dict[str, Any],
-        current_spot_holdings: list,
-        max_trade_amount: float,
-        balance_info: dict[str, float] | None = None,
-    ) -> str:
-        """
-        格式化现货定投决策 Prompt
-
-        Args:
-            symbol: 交易对
-            market_data: 市场数据
-            multi_timeframe_trends: 多时间周期趋势
-            recommendation: 推荐信息
-            current_spot_holdings: 当前现货持仓
-            max_trade_amount: 单笔定投金额上限
-            balance_info: 账户余额信息 {'total': float, 'occupied': float, 'available': float}
-
-        Returns:
-            格式化后的 Prompt
-        """
-        # 提取市场数据
-        current_price = market_data.get("current_price", 0)
-        rsi = market_data.get("rsi", 0)
-        macd_hist = market_data.get("macd_hist", 0)
-        ma_7 = market_data.get("ma_7", 0)
-        ma_25 = market_data.get("ma_25", 0)
-        ma_99 = market_data.get("ma_99", 0)
-        bb_position = market_data.get("bb_position", 0.5)
-        volume_change = market_data.get("volume_change", 0)
-
-        # 检查是否已持有该现货
-        has_spot = any(h.get("symbol") == symbol for h in current_spot_holdings)
-
-        # 格式化多周期趋势
-        def t(key, **kwargs):
-            return get_text(self.language, key, **kwargs)
-
-        timeframes = [
-            ("daily", "日线"),
-            ("4h", "4小时"),
-            ("1h", "1小时"),
-            ("15m", "15分钟"),
-            ("1m", "1分钟"),
-        ]
-        trends_text = ""
-        for tf_key, tf_zh in timeframes:
-            timeframe_display = t(tf_key) if self.language == "en" else tf_zh
-            timeframe_key = tf_zh
-            trend = multi_timeframe_trends.get(timeframe_key, t("unknown"))
-            trends_text += f"- {timeframe_display}: {trend}\n"
-
-        # 格式化账户余额信息
-        balance_text = ""
-        if balance_info:
-            total = balance_info.get("total", 0)
-            occupied = balance_info.get("occupied", 0)
-            available = balance_info.get("available", 0)
-            unrealized_pnl = balance_info.get("unrealized_pnl", 0)
-            pnl_emoji = "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
-            balance_text = f"""
-## 💰 {t("account_balance")}
-
-- **{t("total_value")}**: ${total:.2f}
-- **{t("occupied_margin")}**: ${occupied:.2f}
-- **{t("available_balance")}**: ${available:.2f}
-- **{t("unrealized_pnl_total")}**: ${unrealized_pnl:+.2f} {pnl_emoji}
-
-**{t("balance_notice_title")}**:
-- {t("balance_check_for_dca")}
-- {t("insufficient_balance_dca")}
-- {t("large_loss_notice")}
-"""
-
-        # 准备模板上下文（使用 Jinja2 渲染）
-        context = {
-            # 基础信息
-            "symbol": symbol,
-            "coin": symbol,
-            # 币种类型判断
-            "is_BTC": symbol == "BTC",
-            "is_ETH": symbol == "ETH",
-            "is_SOL": symbol == "SOL",
-            "is_major_coin": symbol in ["BTC", "ETH"],
-            "is_altcoin": symbol not in ["BTC", "ETH"],
-            # 推荐信息
-            "recommendation_reason": recommendation.get(
-                "reason", t("recommendation_reason_default")
-            ),
-            "recommendation_timestamp": recommendation.get(
-                "timestamp", t("recommendation_timestamp_default")
-            ),
-            # 市场数据
-            "current_price": f"{current_price:.2f}",
-            "current_price_raw": current_price,
-            "has_spot": t("has_spot") if has_spot else t("no_spot"),
-            "has_spot_bool": has_spot,
-            "rsi": f"{rsi:.2f}",
-            "rsi_raw": rsi,
-            "macd_hist": f"{macd_hist:.4f}",
-            "macd_hist_raw": macd_hist,
-            "ma_7": f"{ma_7:.2f}",
-            "ma_7_raw": ma_7,
-            "ma_25": f"{ma_25:.2f}",
-            "ma_25_raw": ma_25,
-            "ma_99": f"{ma_99:.2f}",
-            "ma_99_raw": ma_99,
-            "bb_position": f"{bb_position:.2%}",
-            "bb_position_raw": bb_position,
-            "volume_change": f"{volume_change:.2f}",
-            "volume_change_raw": volume_change,
-            "multi_timeframe_trends": trends_text,
-            # 交易参数
-            "max_trade_amount": f"{max_trade_amount:.2f}",
-            "max_trade_amount_raw": max_trade_amount,
-            # 余额信息
-            "balance_info": balance_text,
-        }
-
-        # 使用 Jinja2 渲染模板
-        prompt = self.spot_prompt_template.render(context)
-
-        return prompt
-
     def get_weekly_review_system_prompt(self) -> str:
         """获取每周复盘系统 Prompt（改进1b）"""
         return self.weekly_review_system_prompt
@@ -1070,8 +934,6 @@ if __name__ == "__main__":
         manager = get_prompt_manager()
         print(f"\n当前 Prompt 集合: {manager.get_prompt_set_info()}")
         print(f"\n系统 Prompt 长度: {len(manager.get_system_prompt())} 字符")
-        print(f"现货系统 Prompt 长度: {len(manager.get_spot_system_prompt())} 字符")
         print(f"交易 Prompt 模板长度: {len(manager.trading_prompt_template)} 字符")
-        print(f"现货 Prompt 模板长度: {len(manager.spot_prompt_template)} 字符")
     except Exception as e:
         print(f"❌ Prompt 管理器加载失败: {e}")

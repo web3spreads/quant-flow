@@ -7,7 +7,6 @@ Quant Flow Agents 模块
 - ExecutionAgent: 决策执行 Agent
 - SummaryAgent: 上下文汇总 Agent
 - ExternalInfoAgent: 外部信息收集 Agent
-- SpotAgent: 现货定投 Agent
 
 目录结构：
 - agents/
@@ -20,7 +19,6 @@ Quant Flow Agents 模块
   - execution/       # 执行 Agent
   - summary/         # 汇总 Agent
   - external_info/   # 外部信息 Agent
-  - spot/            # 现货 Agent
 """
 
 from src.agents.common.state.base import BaseAgentState

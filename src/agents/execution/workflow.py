@@ -141,7 +141,7 @@ class ExecutionAgentWorkflow:
 {decision_text}
 
 请识别：
-1. 决策类型（BUY/SELL/SELL_SHORT/BUY_TO_COVER/DO_NOTHING/BUY_SPOT）
+1. 决策类型（BUY/SELL/SELL_SHORT/BUY_TO_COVER/DO_NOTHING）
 2. 交易金额（如果提到）
 3. 杠杆倍数（如果提到）
 4. 决策理由摘要
@@ -307,13 +307,6 @@ class ExecutionAgentWorkflow:
                     result = callback(symbol=symbol)
                 else:
                     result = "❌ 未找到 BUY_TO_COVER 工具回调"
-
-            elif decision == DecisionType.BUY_SPOT.value:
-                callback = self.tools_callbacks.get("buy_spot")
-                if callback:
-                    result = callback(symbol=symbol, amount=amount)
-                else:
-                    result = "❌ 未找到 BUY_SPOT 工具回调"
 
             elif decision == DecisionType.DO_NOTHING.value:
                 callback = self.tools_callbacks.get("do_nothing")

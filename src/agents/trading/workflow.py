@@ -448,7 +448,6 @@ class TradingAgentWorkflow:
             "sell": "SELL",
             "sell_short": "SELL_SHORT",
             "buy_to_cover": "BUY_TO_COVER",
-            "buy_spot": "BUY_SPOT_RECOMMEND",
             "do_nothing": "DO_NOTHING",
         }
 

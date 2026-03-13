@@ -117,7 +117,6 @@ class TradingAgent:
             sell_short_callback=self._sell_short_callback,
             buy_to_cover_callback=self._buy_to_cover_callback,
             do_nothing_callback=self._do_nothing_callback,
-            buy_spot_callback=self._buy_spot_callback,
         )
 
     def _check_fee_guard(self) -> str | None:
@@ -400,18 +399,6 @@ class TradingAgent:
             self.logger.print_info(f"[{self.symbol}Agent] 不操作 - {reason}")
             self._executed_callbacks.add(callback_key)
         return f"⏸️ 确认：不执行操作。原因：{reason}"
-
-    def _buy_spot_callback(self, symbol: str, amount: float | None = None) -> str:
-        """现货定投推荐回调"""
-        if self.trade_amount <= 0:
-            return "❌ 当前余额不足，无法进行现货定投。"
-
-        actual_amount = amount if amount is not None else self.trade_amount
-        if actual_amount > self.trade_amount:
-            return f"❌ 定投金额 ${actual_amount} 超过上限 ${self.trade_amount}"
-
-        self.logger.print_info(f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})")
-        return f"📝 已推荐 {symbol} 现货定投 (建议金额: ${actual_amount})"
 
     def make_decision(
         self,

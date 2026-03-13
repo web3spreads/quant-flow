@@ -56,8 +56,5 @@
       "lesson_type": "positive 或 negative",
       "source_type": "factual 或 subjective 或 mixed"
     }
-  ],
-  "spot_checks": [
-    {"timestamp": "可选，指出具体异常", "issue": "问题", "fix": "建议修复"}
   ]
 }

@@ -26,11 +26,6 @@ def __getattr__(name):
 
         return create_enhanced_agent
 
-    if name == "SpotAgent":
-        from src.agent.spot_agent import SpotAgent
-
-        return SpotAgent
-
     # Summary agent
     if name in ("SummaryAgentV2", "DecisionHistory"):
         from src.agent import summary_agent_v2
@@ -90,7 +85,6 @@ __all__ = [
     "SingleSymbolAgent",
     "EnhancedSingleSymbolAgent",
     "create_enhanced_agent",
-    "SpotAgent",
     "SummaryAgentV2",
     "DecisionHistory",
     "TradingTools",

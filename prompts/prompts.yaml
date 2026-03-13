@@ -5,7 +5,7 @@
 # 说明:
 # 1. 可以定义多套 Prompt 配置供不同策略使用
 # 2. 通过修改 config.yaml 中的 prompt_set 来切换不同的 Prompt
-# 3. 每套 Prompt 包含：系统 Prompt、交易 Prompt、现货 Prompt
+# 3. 每套 Prompt 包含：系统 Prompt、交易 Prompt
 # 4. 支持自定义新的 Prompt 集合用于策略调优和 A/B 测试
 
 # 当前使用的 Prompt 集合名称
@@ -23,14 +23,8 @@ prompt_sets:
     # 系统 Prompt（定义 AI 角色）
     system_prompt_file: "default/system_prompt.md"
 
-    # 现货系统 Prompt
-    spot_system_prompt_file: "default/spot_system_prompt.md"
-
     # 交易决策 Prompt 模板
     trading_prompt_template_file: "default/trading_prompt_template.md"
-
-    # 现货定投 Prompt 模板
-    spot_prompt_template_file: "default/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
 
@@ -44,9 +38,7 @@ prompt_sets:
     description: "优先关注实时价格行为和成交量，指标用于确认而非等待"
     language: "zh"
     system_prompt_file: "realtime/system_prompt.md"
-    spot_system_prompt_file: "realtime/spot_system_prompt.md"
     trading_prompt_template_file: "realtime/trading_prompt_template.md"
-    spot_prompt_template_file: "realtime/spot_prompt_template.md"
     review_system_prompt_file: "realtime/review_system_prompt.md"
     review_prompt_template_file: "realtime/review_prompt_template.md"
     research_system_prompt_file: "default/research_system_prompt.md"
@@ -58,9 +50,7 @@ prompt_sets:
     description: "Prioritizes real-time price action and volume; uses indicators for confirmation rather than waiting. (English Version)"
     language: "en"
     system_prompt_file: "realtime-eng/system_prompt.md"
-    spot_system_prompt_file: "realtime-eng/spot_system_prompt.md"
     trading_prompt_template_file: "realtime-eng/trading_prompt_template.md"
-    spot_prompt_template_file: "realtime-eng/spot_prompt_template.md"
     review_system_prompt_file: "realtime-eng/review_system_prompt.md"
     review_prompt_template_file: "realtime-eng/review_prompt_template.md"
     research_system_prompt_file: "default/research_system_prompt.md"
@@ -72,9 +62,7 @@ prompt_sets:
     description: "极度严格的开仓条件，极低的杠杆使用，资金安全优先"
     language: "zh"
     system_prompt_file: "conservative/system_prompt.md"
-    spot_system_prompt_file: "conservative/spot_system_prompt.md"
     trading_prompt_template_file: "conservative/trading_prompt_template.md"
-    spot_prompt_template_file: "conservative/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
     research_system_prompt_file: "default/research_system_prompt.md"
@@ -86,9 +74,7 @@ prompt_sets:
     description: "宽松的开仓条件，高杠杆使用，追求收益最大化"
     language: "zh"
     system_prompt_file: "aggressive/system_prompt.md"
-    spot_system_prompt_file: "aggressive/spot_system_prompt.md"
     trading_prompt_template_file: "aggressive/trading_prompt_template.md"
-    spot_prompt_template_file: "aggressive/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
     research_system_prompt_file: "default/research_system_prompt.md"
@@ -100,9 +86,7 @@ prompt_sets:
     description: "nof1.ai风格的prompt，模仿其交易逻辑和风格"
     language: "zh"
     system_prompt_file: "nof1/system_prompt.md"
-    spot_system_prompt_file: "nof1/spot_system_prompt.md"
     trading_prompt_template_file: "nof1/trading_prompt_template.md"
-    spot_prompt_template_file: "nof1/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
     research_system_prompt_file: "default/research_system_prompt.md"
@@ -114,9 +98,7 @@ prompt_sets:
     description: "nof1.ai风格的改进版prompt，优化了部分交易逻辑"
     language: "zh"
     system_prompt_file: "nof1-improved/system_prompt.md"
-    spot_system_prompt_file: "nof1-improved/spot_system_prompt.md"
     trading_prompt_template_file: "nof1-improved/trading_prompt_template.md"
-    spot_prompt_template_file: "nof1-improved/spot_prompt_template.md"
     review_system_prompt_file: "default/review_system_prompt.md"
     review_prompt_template_file: "default/review_prompt_template.md"
     research_system_prompt_file: "default/research_system_prompt.md"
@@ -128,9 +110,7 @@ prompt_sets:
     description: "English version of nof1.ai style prompts, imitating its trading logic and style"
     language: "en"
     system_prompt_file: "nof1-eng/system_prompt.md"
-    spot_system_prompt_file: "nof1-eng/spot_system_prompt.md"
     trading_prompt_template_file: "nof1-eng/trading_prompt_template.md"
-    spot_prompt_template_file: "nof1-eng/spot_prompt_template.md"
     review_system_prompt_file: "nof1-eng/review_system_prompt.md"
     review_prompt_template_file: "nof1-eng/review_prompt_template.md"
     research_system_prompt_file: "default/research_system_prompt.md"

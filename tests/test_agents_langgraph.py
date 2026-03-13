@@ -130,7 +130,6 @@ class TestTradingToolFactory:
             sell_short_cb,
             buy_to_cover_cb,
             nothing_cb,
-            spot_cb,
             buy_limit_cb,
             sell_short_limit_cb,
             cancel_limit_cb,
@@ -175,7 +174,6 @@ class TestTradingToolFactory:
         assert "sell_short" in tool_names
         assert "buy_to_cover" in tool_names
         assert "do_nothing" in tool_names
-        assert "buy_spot" in tool_names
         assert "buy_limit" in tool_names
         assert "sell_short_limit" in tool_names
         assert "cancel_limit_order" in tool_names
@@ -191,7 +189,6 @@ class TestTradingToolFactory:
         assert "sell_short" in callbacks_dict
         assert "buy_to_cover" in callbacks_dict
         assert "do_nothing" in callbacks_dict
-        assert "buy_spot" in callbacks_dict
         assert "buy_limit" in callbacks_dict
         assert "sell_short_limit" in callbacks_dict
         assert "cancel_limit_order" in callbacks_dict

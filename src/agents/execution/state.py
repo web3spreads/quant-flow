@@ -21,7 +21,6 @@ class DecisionType(StrEnum):
     SELL_SHORT = "SELL_SHORT"
     BUY_TO_COVER = "BUY_TO_COVER"
     DO_NOTHING = "DO_NOTHING"
-    BUY_SPOT = "BUY_SPOT"
     BUY_LIMIT = "BUY_LIMIT"
     SELL_SHORT_LIMIT = "SELL_SHORT_LIMIT"
     CANCEL_LIMIT_ORDER = "CANCEL_LIMIT_ORDER"
@@ -95,7 +94,6 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 - SELL_SHORT (开空/卖空开空) → 调用 sell_short() 工具
 - BUY_TO_COVER (平空/买入平空/CLOSE) → 调用 buy_to_cover() 工具
 - DO_NOTHING (观望/HOLD/不操作) → 调用 do_nothing() 工具
-- BUY_SPOT (现货买入/定投) → 调用 buy_spot() 工具
 - BUY_LIMIT (限价开多) → 调用 buy_limit() 工具，需要提供 price 字段
 - SELL_SHORT_LIMIT (限价开空) → 调用 sell_short_limit() 工具，需要提供 price 字段
 - CANCEL_LIMIT_ORDER (取消限价单) → 调用 cancel_limit_order() 工具，需要提供 order_id 字段

@@ -88,7 +88,6 @@ class ReviewDailyLogger:
         stats: dict[str, Any],
         fills_summary: dict[str, Any] | None = None,
         existing_lessons: list[dict[str, Any]] | None = None,
-        spot_checks: list[dict[str, Any]] | None = None,
     ) -> bool:
         """
         记录一次完整的复盘经验
@@ -104,7 +103,6 @@ class ReviewDailyLogger:
             stats: 统计信息
             fills_summary: 成交摘要（可选）
             existing_lessons: 历史经验（可选）
-            spot_checks: 抽查点（可选）
 
         Returns:
             是否成功写入
@@ -124,7 +122,6 @@ class ReviewDailyLogger:
             "parsed_output": {
                 "lessons": lessons,
                 "summary": summary,
-                "spot_checks": spot_checks or [],
             },
             # ===== 决策历史（用于训练上下文理解）=====
             "decision_digest": decision_digest,
@@ -160,7 +157,7 @@ class ReviewDailyLogger:
             f"2. 总结有效的入场/出场时机判断\n"
             f"3. 评估风险控制的执行效果\n"
             f"4. 提炼可用于未来决策的具体规则\n"
-            f"请以 JSON 格式输出，包含 summary、lessons 和 spot_checks 字段。"
+            f"请以 JSON 格式输出，包含 summary 和 lessons 字段。"
         )
 
     def _write_record(self, record: dict[str, Any], timestamp: datetime) -> bool:

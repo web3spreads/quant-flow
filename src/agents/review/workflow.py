@@ -222,7 +222,6 @@ class ReviewAgentWorkflow:
                 "raw_output": raw_text,
                 "lessons": parsed.get("lessons", []),
                 "summary": parsed.get("summary", ""),
-                "spot_checks": parsed.get("spot_checks", []),
                 "current_step": "generate_review",
             }
 
@@ -359,7 +358,6 @@ class ReviewAgentWorkflow:
                     stats=state.get("stats", {}),
                     fills_summary=state.get("fills_summary"),
                     existing_lessons=state.get("existing_lessons"),
-                    spot_checks=state.get("spot_checks", []),
                 )
             except Exception as e:
                 if self.logger:
@@ -435,7 +433,7 @@ class ReviewAgentWorkflow:
         json_data = extract_json_from_text(text)
         if json_data and isinstance(json_data, dict):
             return json_data
-        return {"summary": text[:200], "lessons": [], "spot_checks": []}
+        return {"summary": text[:200], "lessons": []}
 
     def run(
         self,
@@ -457,7 +455,7 @@ class ReviewAgentWorkflow:
             复盘结果
         """
         if not decision_records:
-            return {"lessons": [], "summary": "", "spot_checks": []}
+            return {"lessons": [], "summary": ""}
 
         initial_state = create_initial_state(
             symbol=symbol,
@@ -471,7 +469,6 @@ class ReviewAgentWorkflow:
         return {
             "summary": final_state.get("summary", ""),
             "lessons": final_state.get("lessons", []),
-            "spot_checks": final_state.get("spot_checks", []),
             "raw_output": final_state.get("raw_output", ""),
             "prompt": final_state.get("prompt", ""),
             "context_features": final_state.get("context_features", {}),

@@ -14,7 +14,6 @@ As the cornerstone and value benchmark of the cryptocurrency market, BTC has uni
 - **Leverage Usage**: Can use medium-to-high leverage ({{ max_leverage * 0.7 | round | int }}-{{ max_leverage }}x), but a strict stop-loss is required.
 - **Holding Period**: Suitable for medium-to-long term holding; frequent short-term trading is not recommended.
 - **Position Management**: Can use larger positions (70-100% of limit) on strong signals.
-- **DCA Timing**: RSI < 30 presents a prime long-term DCA opportunity.
 - **Key Levels**: Watch round numbers (e.g., $50,000, $60,000), which often have strong support/resistance.
 
 **Risk Warning:**
@@ -36,7 +35,6 @@ As the leading smart contract platform, ETH combines value investing and swing t
 - **Leverage Usage**: Suggest medium leverage ({{ max_leverage * 0.5 | round | int }}-{{ max_leverage * 0.7 | round | int }}x); control risk due to high volatility.
 - **Holding Period**: Suitable for short-to-medium term swings; adjust flexibly based on technical signals.
 - **Position Management**: Medium positions (50-80% of limit), adjusted by signal strength.
-- **DCA Timing**: Consider DCA when RSI < 30 and price is at key support.
 - **Technical Analysis Priority**: ETH is sensitive to technicals; emphasize Moving Averages and Bollinger Bands.
 
 **Special Attention:**
@@ -62,7 +60,6 @@ As a non-mainstream coin, {{ symbol }} requires a more conservative trading stra
   * Consider partial take-profit when profit reaches {{ take_profit_ratio_raw * 0.6 | round(2) * 100 }}%.
   * Strictly execute stop-losses; do not hope for rebounds.
 - **Prohibited Actions**:
-  * ❌ No Spot DCA.
   * ❌ No "bottom fishing" during downtrends.
   * ❌ No chasing pumps due to FOMO.
 
@@ -256,30 +253,9 @@ You have the following tools available (you must choose one):
    - Parameters: symbol (Trading Pair)
    - Prerequisite: Must hold a short position for this coin.
 
-### Spot DCA Operation (Long-Term Investment):
-
-5. **buy_spot** - Spot Buy (DCA)
-   - Scenario: When a high-quality asset long-term DCA opportunity is detected.
-   - Parameters:
-     * symbol (Trading Pair, required)
-     * amount (Investment amount USD, optional, defaults to max)
-   - Features:
-     * No leverage, spot holding.
-     * Long-term holding, no Take-Profit/Stop-Loss.
-     * Suitable for bear market bottoms.
-   - ⚠️ Important Conditions:
-     * Multi-timeframe consistent deep downtrend (Daily, 4H, 1H all down).
-     * RSI < 30 (Deep Oversold).
-     * Price significantly below all MAs.
-     * Only for major assets like BTC, ETH.
-   - 🔔 Decision Process:
-     * You only **Recommend** this operation.
-     * Recommendation is passed to a specialized Spot Agent for final decision.
-     * Spot Agent will evaluate long-term holding value more strictly.
-
 ### Wait Operation:
 
-6. **do_nothing** - Do Nothing
+5. **do_nothing** - Do Nothing
    - Scenario: When market signals are unclear or conditions are not met.
    - Parameters: reason (Reason for waiting; must specify filter/cost/cooling, etc.)
 
@@ -427,60 +403,6 @@ You have the following tools available (you must choose one):
 
 **Flexible Principle**: Closing does not require all conditions to be met; profit protection comes first.
 
-### Spot DCA Recommendation Signal (Major Coins Only, Extremely Cautious):
-⚠️ **This is a recommendation for the Spot Agent; you do not execute directly.**
-
-{% if is_major_coin %}
-**{{ symbol }} Spot DCA Conditions:**
-
-{% if is_BTC %}
-**BTC DCA Signal (Top Quality Asset):**
-1. **Multi-TF Consistent Deep Downtrend**: Daily, 4H, 1H all down.
-2. **Deep Oversold**: RSI < 30 (RSI < 25 even better).
-3. **Price Significantly Below MAs**: Price < MA(7) < MA(25) < MA(99).
-4. **Bollinger Band Extreme**: BB Position < 0.2.
-5. **MACD Bottom**: MACD Hist negative for multiple periods.
-6. **Extra Ref**: Macro environment and market panic sentiment.
-
-**BTC DCA Amount Suggestion:**
-- Extreme Panic (RSI < 20): 80-100% of Limit; this is a golden opportunity.
-- Deep Oversold (RSI 20-25): 60-80% of Limit.
-- General Oversold (RSI 25-30): 40-60% of Limit.
-
-{% elif is_ETH %}
-**ETH DCA Signal (Quality Asset):**
-1. **Multi-TF Consistent Deep Downtrend**: Daily, 4H, 1H all down.
-2. **Deep Oversold**: RSI < 28 (ETH needs deeper oversold).
-3. **Price Significantly Below MAs**: Price < MA(7) < MA(25) < MA(99).
-4. **Bollinger Band Extreme**: BB Position < 0.15 (More extreme).
-5. **MACD Bottom**: MACD Hist negative.
-6. **Extra Ref**: Network development and DeFi ecosystem health.
-
-**ETH DCA Amount Suggestion:**
-- Extreme Panic (RSI < 20): 70-100% of Limit.
-- Deep Oversold (RSI 20-25): 50-70% of Limit.
-- General Oversold (RSI 25-28): 30-50% of Limit.
-
-{% endif %}
-
-**Recommendation Principles:**
-- {{ symbol }} as a major asset, deep pullbacks are good long-term DCA opportunities.
-- Spot DCA is long-term investing, not short-term trading.
-- When all conditions are met, actively recommend to Spot Agent.
-- Frequency Limit: Max one recommendation per asset per 24h to avoid signal spam.
-
-{% else %}
-**⚠️ {{ symbol }} Not Suitable for Spot DCA**
-
-Altcoins are high risk, long-term Spot DCA is not recommended:
-- ❌ {{ symbol }} lacks long-term value support.
-- ❌ Poor liquidity, may not sell smoothly.
-- ❌ Risk of going to zero.
-
-**Prohibited Operation**: Do not recommend altcoins for Spot DCA.
-
-{% endif %}
-
 ### Wait Scenarios:
 Consider waiting in the following situations (not mandatory):
 
@@ -497,8 +419,7 @@ Consider waiting in the following situations (not mandatory):
 3. Cannot duplicate `buy` if already holding long.
 4. Cannot duplicate `sell_short` if already holding short.
 5. Cannot open new position if max positions reached.
-6. `buy_spot` is for recommending to Spot Agent.
-7. Provide clear decision justification.
+6. Provide clear decision justification.
 
 ## 💭 Decision Process
 
@@ -532,7 +453,7 @@ Consider waiting in the following situations (not mandatory):
 
 **Decision Points:**
 - Must call one of the tools.
-- If using `buy`/`sell_short`/`buy_spot`, specify `amount` and `leverage` clearly.
+- If using `buy`/`sell_short`, specify `amount` and `leverage` clearly.
 - Briefly explain decision reasoning (Signal, Position Choice).
 
 **Trading Philosophy:**

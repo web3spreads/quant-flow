@@ -124,7 +124,6 @@ class ReviewAgent:
             复盘结果，包含：
             - summary: 复盘摘要
             - lessons: 提取的经验教训
-            - spot_checks: 现货检查建议
             - raw_output: LLM 原始输出
             - prompt: 使用的 Prompt
             - context_features: 上下文特征

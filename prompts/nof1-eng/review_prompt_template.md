@@ -44,8 +44,5 @@ Please output JSON:
       "evidence": ["Reference Decision X", "Indicator/Data"],
       "context_features": {{ context_features_json }}
     }
-  ],
-  "spot_checks": [
-    {"timestamp": "Optional, point out specific anomaly", "issue": "Issue", "fix": "Suggested Fix"}
   ]
 }

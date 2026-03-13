@@ -9,7 +9,6 @@
 from src.agents.common.tools.trading import (
     BuyInput,
     BuyLimitInput,
-    BuySpotInput,
     CancelLimitOrderInput,
     SellShortInput,
     SellShortLimitInput,
@@ -21,7 +20,6 @@ __all__ = [
     "TradingToolFactory",
     "BuyInput",
     "SellShortInput",
-    "BuySpotInput",
     "BuyLimitInput",
     "SellShortLimitInput",
     "CancelLimitOrderInput",

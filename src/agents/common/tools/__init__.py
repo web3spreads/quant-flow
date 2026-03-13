@@ -11,7 +11,6 @@ from src.agents.common.tools.base import (
 )
 from src.agents.common.tools.trading import (
     BuyInput,
-    BuySpotInput,
     SellShortInput,
     TradingToolFactory,
 )
@@ -23,5 +22,4 @@ __all__ = [
     "TradingToolFactory",
     "BuyInput",
     "SellShortInput",
-    "BuySpotInput",
 ]

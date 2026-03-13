@@ -47,13 +47,6 @@ class SellShortInput(BaseModel):
         return v
 
 
-class BuySpotInput(BaseModel):
-    """现货买入工具的输入模式"""
-
-    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
-    amount: float | None = Field(default=None, description="定投金额（USD），不填则使用配置上限")
-
-
 class BuyLimitInput(BaseModel):
     """限价开多工具的输入模式"""
 
@@ -178,36 +171,6 @@ DO_NOTHING_TOOL_DESCRIPTION = """不执行任何交易操作。当市场信号�
 
 返回: 确认信息"""
 
-BUY_SPOT_TOOL_DESCRIPTION = """执行现货买入操作（长期持有策略）。当市场出现长期阴跌趋势，发现优质定投点位时使用此工具。
-
-使用条件:
-- 检测到市场处于持续阴跌趋势（多周期下跌）
-- 资产价格已从高点回撤显著（建议 20%+）
-- RSI 处于超卖区域（< 30）
-- 多个时间周期趋势一致向下，但出现企稳迹象
-- 成交量开始萎缩或出现底部放量
-
-定投策略特点:
-- 现货买入，无杠杆风险
-- 用于长期持有，不设置止盈止损
-- 适合优质资产的长期配置
-- 分散风险的定投点位
-
-你的权限:
-- 可以根据市场恐慌程度自主决定定投金额（不超过配置上限）
-- 极度恐慌时可以使用更大金额，一般恐慌时使用较小金额
-
-系统会自动:
-- 不设置杠杆（1x）
-- 不设置止盈止损（长期持有）
-- 记录为现货持仓
-
-注意: 这是长期投资工具，请确保:
-1. 市场处于明显的下跌趋势
-2. 价格已有充分回撤
-3. 技术指标显示超卖
-4. 资产基本面良好"""
-
 BUY_LIMIT_TOOL_DESCRIPTION = """执行限价开多操作。当市场出现做多信号但希望以更好的价格成交时使用此工具。
 
 使用条件:
@@ -279,7 +242,6 @@ class TradingToolFactory:
         sell_short_callback: Callable[[str, float | None, int | None], str],
         buy_to_cover_callback: Callable[[str], str],
         do_nothing_callback: Callable[[str], str],
-        buy_spot_callback: Callable[[str, float | None], str] | None = None,
         buy_limit_callback: Callable[[str, float | None, int | None, float], str] | None = None,
         sell_short_limit_callback: Callable[[str, float | None, int | None, float], str]
         | None = None,
@@ -294,7 +256,6 @@ class TradingToolFactory:
             sell_short_callback: 卖空开空回调函数，接收 (symbol, amount, leverage)
             buy_to_cover_callback: 买入平空回调函数，接收 symbol
             do_nothing_callback: 不操作回调函数，接收 reason
-            buy_spot_callback: 现货买入回调函数（可选），接收 (symbol, amount)
             buy_limit_callback: 限价开多回调函数（可选），接收 (symbol, amount, leverage, price)
             sell_short_limit_callback: 限价开空回调函数（可选），接收 (symbol, amount, leverage, price)
             cancel_limit_order_callback: 取消限价单回调函数（可选），接收 (symbol, order_id)
@@ -304,7 +265,6 @@ class TradingToolFactory:
         self.sell_short_callback = sell_short_callback
         self.buy_to_cover_callback = buy_to_cover_callback
         self.do_nothing_callback = do_nothing_callback
-        self.buy_spot_callback = buy_spot_callback
         self.buy_limit_callback = buy_limit_callback
         self.sell_short_limit_callback = sell_short_limit_callback
         self.cancel_limit_order_callback = cancel_limit_order_callback
@@ -354,31 +314,6 @@ class TradingToolFactory:
             name="do_nothing",
             description=DO_NOTHING_TOOL_DESCRIPTION,
             func=self.do_nothing_callback,
-        )
-
-    def create_buy_spot_tool(self) -> StructuredTool:
-        """创建现货买入工具"""
-        if not self.buy_spot_callback:
-
-            def disabled_func(symbol: str, amount: float | None = None) -> str:
-                return "现货买入功能未启用"
-
-            return StructuredTool.from_function(
-                func=disabled_func,
-                name="buy_spot",
-                description="现货买入功能未启用",
-                args_schema=BuySpotInput,
-            )
-
-        def buy_spot_func(symbol: str, amount: float | None = None) -> str:
-            """执行现货买入操作"""
-            return self.buy_spot_callback(symbol, amount)
-
-        return StructuredTool.from_function(
-            func=buy_spot_func,
-            name="buy_spot",
-            description=BUY_SPOT_TOOL_DESCRIPTION,
-            args_schema=BuySpotInput,
         )
 
     def create_buy_limit_tool(self) -> StructuredTool:
@@ -476,12 +411,11 @@ class TradingToolFactory:
             args_schema=CancelLimitOrderInput,
         )
 
-    def get_all_tools(self, include_spot: bool = True, include_limit: bool = True) -> list:
+    def get_all_tools(self, include_limit: bool = True) -> list:
         """
         获取所有工具
 
         Args:
-            include_spot: 是否包含现货工具
             include_limit: 是否包含限价单工具
 
         Returns:
@@ -494,9 +428,6 @@ class TradingToolFactory:
             self.create_buy_to_cover_tool(),
             self.create_do_nothing_tool(),
         ]
-
-        if include_spot and self.buy_spot_callback:
-            tools.append(self.create_buy_spot_tool())
 
         # 添加限价单工具
         if include_limit:
@@ -526,8 +457,6 @@ class TradingToolFactory:
             "buy_to_cover": self.buy_to_cover_callback,
             "do_nothing": self.do_nothing_callback,
         }
-        if self.buy_spot_callback:
-            callbacks["buy_spot"] = self.buy_spot_callback
         if self.buy_limit_callback:
             callbacks["buy_limit"] = self.buy_limit_callback
         if self.sell_short_limit_callback:
@@ -543,7 +472,7 @@ def create_mock_callbacks():
 
     Returns:
         (buy_callback, sell_callback, sell_short_callback,
-         buy_to_cover_callback, do_nothing_callback, buy_spot_callback,
+         buy_to_cover_callback, do_nothing_callback,
          buy_limit_callback, sell_short_limit_callback, cancel_limit_order_callback)
     """
 
@@ -568,10 +497,6 @@ def create_mock_callbacks():
     def do_nothing_callback(reason: str) -> str:
         return f"⏸️ [模拟] 不执行操作。原因: {reason}"
 
-    def buy_spot_callback(symbol: str, amount: float | None = None) -> str:
-        amount_str = f"${amount}" if amount else "默认金额"
-        return f"✅ [模拟] 已执行现货买入: {symbol} ({amount_str})"
-
     def buy_limit_callback(
         symbol: str, amount: float | None = None, leverage: int | None = None, price: float = 0.0
     ) -> str:
@@ -595,7 +520,6 @@ def create_mock_callbacks():
         sell_short_callback,
         buy_to_cover_callback,
         do_nothing_callback,
-        buy_spot_callback,
         buy_limit_callback,
         sell_short_limit_callback,
         cancel_limit_order_callback,
