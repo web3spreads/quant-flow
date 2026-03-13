@@ -17,19 +17,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install ruff
-        run: pip install ruff>=0.8.0
+      - name: 安装开发依赖
+        run: uv sync --group dev
 
       - name: Ruff lint
-        run: ruff check src/ tests/
+        run: uv run ruff check src/ tests/
 
       - name: Ruff format check
-        run: ruff format --check src/ tests/
+        run: uv run ruff format --check src/ tests/
 
   syntax-check:
     name: Syntax Check
@@ -42,7 +45,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Compile all Python files
+      - name: 编译检查所有 Python 文件
         run: python -m compileall -q src/ tests/
 
   test:
@@ -51,15 +54,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
-      - name: Install dependencies
-        run: |
-          pip install -e ".[dev]"
+      - name: 安装依赖
+        run: uv sync --group dev
 
-      - name: Run tests
-        run: pytest --tb=short -q
+      - name: 运行测试
+        run: uv run pytest --tb=short -q
