@@ -91,7 +91,6 @@ class GridFlowBot:
 
             df = TechnicalIndicators.calculate_all_indicators(df)
             market_data = TechnicalIndicators.get_latest_indicators(df)
-
             self.logger.print_market_data(self.config.symbols[0], market_data)
 
             multi_timeframe_trends = TechnicalIndicators.get_multi_timeframe_trend(
