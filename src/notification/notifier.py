@@ -3,27 +3,29 @@
 支持钉钉、飞书、邮件等多种通知方式
 """
 
-from enum import Enum
-from typing import Dict, List, Optional, Any
 import logging
+from enum import StrEnum
+from typing import Any
 from urllib.parse import quote
+
 from apprise import Apprise
 
 
-class NotificationEvent(str, Enum):
+class NotificationEvent(StrEnum):
     """通知事件类型"""
-    SYSTEM_STARTUP = "system_startup"       # 系统启动
-    TRADE_OPENED = "trade_opened"           # 开仓
-    TRADE_CLOSED = "trade_closed"           # 平仓
-    STOP_LOSS = "stop_loss"                 # 止损
-    TAKE_PROFIT = "take_profit"             # 止盈
-    SPOT_INVESTMENT = "spot_investment"     # 现货定投
-    ERROR = "error"                         # 错误
-    CIRCUIT_BREAKER = "circuit_breaker"     # 熔断
-    SYSTEM_SHUTDOWN = "system_shutdown"     # 系统关闭
+
+    SYSTEM_STARTUP = "system_startup"  # 系统启动
+    TRADE_OPENED = "trade_opened"  # 开仓
+    TRADE_CLOSED = "trade_closed"  # 平仓
+    STOP_LOSS = "stop_loss"  # 止损
+    TAKE_PROFIT = "take_profit"  # 止盈
+    SPOT_INVESTMENT = "spot_investment"  # 现货定投
+    ERROR = "error"  # 错误
+    CIRCUIT_BREAKER = "circuit_breaker"  # 熔断
+    SYSTEM_SHUTDOWN = "system_shutdown"  # 系统关闭
     EXTERNAL_INFO_SUMMARY = "external_info_summary"  # 外部信息汇总完成
     REVIEW_LESSON_LEARNED = "review_lesson_learned"  # 复盘获得新经验
-    GRID_UPDATE = "grid_update"             # 网格更新
+    GRID_UPDATE = "grid_update"  # 网格更新
 
 
 class Notifier:
@@ -37,7 +39,7 @@ class Notifier:
     - 作为配置项，用户配置则启用
     """
 
-    def __init__(self, config: Dict[str, Any], is_testnet: bool = True):
+    def __init__(self, config: dict[str, Any], is_testnet: bool = True):
         """
         初始化通知管理器
 
@@ -96,7 +98,7 @@ class Notifier:
             except Exception as e:
                 self.logger.error(f"❌ 初始化通知渠道失败: {e}", exc_info=True)
 
-    def _add_dingtalk_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_dingtalk_channel(self, channel: dict[str, Any]) -> None:
         """添加钉钉通知渠道"""
         api_key = channel.get("api_key")
         secret = channel.get("secret", "")
@@ -107,17 +109,21 @@ class Notifier:
             return
 
         try:
-            # 使用标准的 Apprise 钉钉 URL 格式
-            # 格式: dingtalk://token/?secret=secret
-            url = f"dingtalk://{api_key}/"
+            # 构建钉钉 URL - 对参数进行 URL 编码
+            # 格式: dingtalk://{secret}@{api_key}/{phone1}/{phone2}
+            # API key 可能包含特殊字符，为安全起见应完全编码
+            api_key_encoded = quote(api_key, safe="")
             if secret:
-                url += f"?secret={secret}"
+                # Secret 可能包含特殊字符，需要完全编码
+                secret_encoded = quote(secret, safe="")
+                url = f"dingtalk://{secret_encoded}@{api_key_encoded}"
+            else:
+                url = f"dingtalk://{api_key_encoded}"
 
             # 添加电话号码（如果需要 @ 某人）
             if phone_numbers:
-                # Apprise 钉钉模块通常不支持直接在 URL 中加电话
-                # 但如果是作为 targets 传递可以尝试，不过这里我们简单化
-                pass
+                encoded_phones = [quote(str(phone), safe="") for phone in phone_numbers]
+                url += "/" + "/".join(encoded_phones)
 
             # 验证是否成功添加
             if not self.apprise.add(url):
@@ -129,7 +135,7 @@ class Notifier:
         except Exception:
             self.logger.error("❌ 钉钉通知渠道配置错误")
 
-    def _add_feishu_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_feishu_channel(self, channel: dict[str, Any]) -> None:
         """添加飞书通知渠道"""
         token = channel.get("token")
 
@@ -141,7 +147,7 @@ class Notifier:
             # 构建飞书 URL - 对 token 进行 URL 编码
             # 格式: feishu://{token}
             # Token 通常包含字母数字、连字符和下划线，保留这些字符以提高可读性
-            token_encoded = quote(token, safe='')
+            token_encoded = quote(token, safe="")
             url = f"feishu://{token_encoded}"
 
             # 验证是否成功添加
@@ -155,7 +161,7 @@ class Notifier:
             # 不记录敏感信息（token）到日志
             self.logger.error("❌ 飞书通知渠道配置错误")
 
-    def _add_lark_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_lark_channel(self, channel: dict[str, Any]) -> None:
         """添加lark通知渠道"""
         token = channel.get("token")
 
@@ -167,7 +173,7 @@ class Notifier:
             # 构建lark URL - 对 token 进行 URL 编码
             # 格式: lark://{token}
             # Token 通常包含字母数字、连字符和下划线，保留这些字符以提高可读性
-            token_encoded = quote(token, safe='')
+            token_encoded = quote(token, safe="")
             url = f"lark://{token_encoded}"
 
             # 验证是否成功添加
@@ -181,7 +187,7 @@ class Notifier:
             # 不记录敏感信息（token）到日志
             self.logger.error("❌ lark通知渠道配置错误")
 
-    def _add_email_channel(self, channel: Dict[str, Any]) -> None:
+    def _add_email_channel(self, channel: dict[str, Any]) -> None:
         """添加邮件通知渠道"""
         smtp_user = channel.get("smtp_user")
         smtp_password = channel.get("smtp_password")
@@ -202,10 +208,10 @@ class Notifier:
             # 构建邮件 URL - 对所有参数进行 URL 编码以处理特殊字符
             # 格式: mailtos://{user}:{password}@{server}:{port}?from={from}&to={to1},{to2}
             # URL 编码可防止密码或邮箱中的特殊字符（@, :, /, ?, # 等）破坏 URL 格式
-            smtp_user_encoded = quote(smtp_user, safe='')
-            smtp_password_encoded = quote(smtp_password, safe='')
-            from_email_encoded = quote(from_email, safe='')
-            to_emails_str = ",".join(quote(email, safe='') for email in to_emails)
+            smtp_user_encoded = quote(smtp_user, safe="")
+            smtp_password_encoded = quote(smtp_password, safe="")
+            from_email_encoded = quote(from_email, safe="")
+            to_emails_str = ",".join(quote(email, safe="") for email in to_emails)
 
             url = (
                 f"mailtos://{smtp_user_encoded}:{smtp_password_encoded}@{smtp_server}:{smtp_port}"
@@ -239,13 +245,7 @@ class Notifier:
         # 检查该事件是否启用通知
         return self.events_config.get(event.value, True)
 
-    def notify(
-        self,
-        event: NotificationEvent,
-        title: str,
-        message: str,
-        **kwargs
-    ) -> bool:
+    def notify(self, event: NotificationEvent, title: str, message: str, **kwargs) -> bool:
         """
         发送通知
 
@@ -269,10 +269,7 @@ class Notifier:
 
         try:
             # 使用 Apprise 发送通知
-            result = self.apprise.notify(
-                title=full_title,
-                body=message
-            )
+            result = self.apprise.notify(title=full_title, body=message)
 
             if result:
                 self.logger.info(f"📤 通知发送成功: {full_title}")
@@ -292,12 +289,12 @@ class Notifier:
         quantity: float,
         price: float,
         leverage: int = 1,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-        position_value: Optional[float] = None,
-        margin: Optional[float] = None,
-        reason: Optional[str] = None,
-        order_hash: Optional[str] = None
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        position_value: float | None = None,
+        margin: float | None = None,
+        reason: str | None = None,
+        order_hash: str | None = None,
     ):
         """
         发送开仓通知
@@ -317,13 +314,13 @@ class Notifier:
         """
         side_text = "做多 📈" if side.lower() == "long" else "做空 📉"
         title = f"🔔 开仓通知: {symbol} {side_text}"
-        
+
         # 计算持仓价值和保证金
         if position_value is None:
             position_value = quantity * price
         if margin is None and leverage > 0:
             margin = position_value / leverage
-        
+
         # 构建消息
         lines = [
             f"【交易对】{symbol}",
@@ -331,39 +328,45 @@ class Notifier:
             f"【开仓价】${price:,.4f}" if price < 1 else f"【开仓价】${price:,.2f}",
             f"【数量】{quantity:,.4f}",
             f"【杠杆】{leverage}x",
-            f"",  # 空行
+            "",  # 空行
             f"【持仓价值】${position_value:,.2f}",
         ]
-        
+
         if margin:
             lines.append(f"【保证金】${margin:,.2f}")
-        
+
         # 添加止盈止损信息
         if stop_loss or take_profit:
             lines.append("")  # 空行
-            
+
         if stop_loss:
             sl_diff_pct = abs((stop_loss - price) / price * 100)
-            lines.append(f"【止损价】${stop_loss:,.4f} ({sl_diff_pct:.2f}%)" if stop_loss < 1 
-                        else f"【止损价】${stop_loss:,.2f} (-{sl_diff_pct:.2f}%)")
-            
+            lines.append(
+                f"【止损价】${stop_loss:,.4f} ({sl_diff_pct:.2f}%)"
+                if stop_loss < 1
+                else f"【止损价】${stop_loss:,.2f} (-{sl_diff_pct:.2f}%)"
+            )
+
         if take_profit:
             tp_diff_pct = abs((take_profit - price) / price * 100)
-            lines.append(f"【止盈价】${take_profit:,.4f} (+{tp_diff_pct:.2f}%)" if take_profit < 1 
-                        else f"【止盈价】${take_profit:,.2f} (+{tp_diff_pct:.2f}%)")
-        
+            lines.append(
+                f"【止盈价】${take_profit:,.4f} (+{tp_diff_pct:.2f}%)"
+                if take_profit < 1
+                else f"【止盈价】${take_profit:,.2f} (+{tp_diff_pct:.2f}%)"
+            )
+
         # 添加风险收益比
         if stop_loss and take_profit:
             risk = abs(price - stop_loss)
             reward = abs(take_profit - price)
             rr_ratio = reward / risk if risk > 0 else 0
             lines.append(f"【风险收益比】1:{rr_ratio:.2f}")
-        
+
         # 添加开仓理由
         if reason:
             lines.append("")  # 空行
             lines.append(f"【开仓理由】{reason}")
-        
+
         # 添加订单哈希和浏览器链接
         if order_hash:
             lines.append("")  # 空行
@@ -390,10 +393,10 @@ class Notifier:
         exit_price: float,
         pnl: float,
         pnl_percent: float,
-        leverage: Optional[int] = None,
-        holding_time: Optional[str] = None,
-        close_reason: Optional[str] = None,
-        order_hash: Optional[str] = None
+        leverage: int | None = None,
+        holding_time: str | None = None,
+        close_reason: str | None = None,
+        order_hash: str | None = None,
     ):
         """
         发送平仓通知
@@ -436,15 +439,21 @@ class Notifier:
         if leverage:
             lines.append(f"【杠杆】{leverage}x")
 
-        lines.extend([
-            "",  # 空行
-            f"【开仓价】${entry_price:,.4f}" if entry_price < 1 else f"【开仓价】${entry_price:,.2f}",
-            f"【平仓价】${exit_price:,.4f}" if exit_price < 1 else f"【平仓价】${exit_price:,.2f}",
-            f"【价格变动】{pnl_percent:+.2f}%",
-            "",  # 空行
-            f"【盈亏金额】${pnl:+,.2f} USD",
-            f"【收益率】{pnl_percent:+.2f}%"
-        ])
+        lines.extend(
+            [
+                "",  # 空行
+                f"【开仓价】${entry_price:,.4f}"
+                if entry_price < 1
+                else f"【开仓价】${entry_price:,.2f}",
+                f"【平仓价】${exit_price:,.4f}"
+                if exit_price < 1
+                else f"【平仓价】${exit_price:,.2f}",
+                f"【价格变动】{pnl_percent:+.2f}%",
+                "",  # 空行
+                f"【盈亏金额】${pnl:+,.2f} USD",
+                f"【收益率】{pnl_percent:+.2f}%",
+            ]
+        )
 
         # 添加持仓时间
         if holding_time:
@@ -481,12 +490,7 @@ class Notifier:
         self.notify(NotificationEvent.TRADE_CLOSED, title, message)
 
     def notify_stop_loss(
-        self,
-        symbol: str,
-        side: str,
-        price: float,
-        loss: float,
-        loss_percent: float
+        self, symbol: str, side: str, price: float, loss: float, loss_percent: float
     ):
         """
         发送止损通知
@@ -509,12 +513,7 @@ class Notifier:
         self.notify(NotificationEvent.STOP_LOSS, title, message)
 
     def notify_take_profit(
-        self,
-        symbol: str,
-        side: str,
-        price: float,
-        profit: float,
-        profit_percent: float
+        self, symbol: str, side: str, price: float, profit: float, profit_percent: float
     ):
         """
         发送止盈通知
@@ -542,7 +541,7 @@ class Notifier:
         quantity: float,
         price: float,
         amount: float,
-        order_hash: Optional[str] = None
+        order_hash: str | None = None,
     ):
         """
         发送现货定投通知
@@ -560,7 +559,7 @@ class Notifier:
             f"【交易对】{symbol}",
             f"【数量】{quantity:,.4f}",
             f"【价格】${price:,.4f}" if price < 1 else f"【价格】${price:,.2f}",
-            f"【金额】${amount:,.2f}"
+            f"【金额】${amount:,.2f}",
         ]
 
         # 添加订单哈希和浏览器链接
@@ -580,12 +579,7 @@ class Notifier:
         message = "\n".join(lines)
         self.notify(NotificationEvent.SPOT_INVESTMENT, title, message)
 
-    def notify_error(
-        self,
-        title: str,
-        error_message: str,
-        context: Optional[str] = None
-    ):
+    def notify_error(self, title: str, error_message: str, context: str | None = None):
         """
         发送错误通知
 
@@ -602,11 +596,7 @@ class Notifier:
 
         self.notify(NotificationEvent.ERROR, full_title, message)
 
-    def notify_circuit_breaker(
-        self,
-        reason: str,
-        pause_minutes: int
-    ):
+    def notify_circuit_breaker(self, reason: str, pause_minutes: int):
         """
         发送熔断通知
 
@@ -615,18 +605,14 @@ class Notifier:
             pause_minutes: 暂停时间（分钟）
         """
         title = "🚨 熔断机制触发"
-        message = (
-            f"原因: {reason}\n"
-            f"暂停时间: {pause_minutes} 分钟\n"
-            f"交易已暂停，请注意风险"
-        )
+        message = f"原因: {reason}\n暂停时间: {pause_minutes} 分钟\n交易已暂停，请注意风险"
         self.notify(NotificationEvent.CIRCUIT_BREAKER, title, message)
 
     def notify_system_startup(
         self,
-        version: Optional[str] = None,
-        symbols: Optional[list] = None,
-        config_info: Optional[Dict[str, Any]] = None
+        version: str | None = None,
+        symbols: list | None = None,
+        config_info: dict[str, Any] | None = None,
     ):
         """
         发送系统启动通知
@@ -637,43 +623,43 @@ class Notifier:
             config_info: 配置信息
         """
         from datetime import datetime
-        
+
         title = "🚀 交易系统启动成功"
-        
+
         lines = [
             f"【启动时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
-        
+
         if version:
             lines.append(f"【系统版本】{version}")
-        
+
         if symbols:
             lines.append("")
             lines.append(f"【监控币种】{', '.join(symbols)}")
             lines.append(f"【币种数量】{len(symbols)} 个")
-        
+
         if config_info:
             lines.append("")
-            if 'trade_amount' in config_info:
+            if "trade_amount" in config_info:
                 lines.append(f"【单笔金额】${config_info['trade_amount']:.2f}")
-            if 'max_positions' in config_info:
+            if "max_positions" in config_info:
                 lines.append(f"【最大持仓】{config_info['max_positions']} 个")
-            if 'leverage' in config_info:
+            if "leverage" in config_info:
                 lines.append(f"【杠杆倍数】{config_info['leverage']}x")
-            if 'check_interval' in config_info:
+            if "check_interval" in config_info:
                 lines.append(f"【检查间隔】{config_info['check_interval']} 分钟")
-        
+
         lines.append("")
         lines.append("✅ 系统已就绪，开始监控市场")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.SYSTEM_STARTUP, title, message)
 
     def notify_system_shutdown(
         self,
-        reason: Optional[str] = None,
-        runtime: Optional[str] = None,
-        statistics: Optional[Dict[str, Any]] = None
+        reason: str | None = None,
+        runtime: str | None = None,
+        statistics: dict[str, Any] | None = None,
     ):
         """
         发送系统关闭通知
@@ -684,40 +670,37 @@ class Notifier:
             statistics: 运行统计
         """
         from datetime import datetime
-        
+
         title = "⏹️ 交易系统已关闭"
-        
+
         lines = [
             f"【关闭时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
-        
+
         if reason:
             lines.append(f"【关闭原因】{reason}")
-        
+
         if runtime:
             lines.append(f"【运行时长】{runtime}")
-        
+
         if statistics:
             lines.append("")
             lines.append("【运行统计】")
-            if 'total_trades' in statistics:
+            if "total_trades" in statistics:
                 lines.append(f"  总交易次数: {statistics['total_trades']}")
-            if 'profitable_trades' in statistics:
+            if "profitable_trades" in statistics:
                 lines.append(f"  盈利交易: {statistics['profitable_trades']}")
-            if 'total_pnl' in statistics:
+            if "total_pnl" in statistics and statistics["total_pnl"] is not None:
                 lines.append(f"  总盈亏: ${statistics['total_pnl']:+.2f}")
-        
+
         lines.append("")
         lines.append("👋 系统已安全退出")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.SYSTEM_SHUTDOWN, title, message)
 
     def notify_review_lesson(
-        self,
-        symbol: str,
-        lessons: List[Dict[str, Any]],
-        summary: Optional[str] = None
+        self, symbol: str, lessons: list[dict[str, Any]], summary: str | None = None
     ):
         """
         发送复盘经验通知
@@ -728,46 +711,41 @@ class Notifier:
             summary: 复盘总结
         """
         from datetime import datetime
-        
+
         if not lessons:
             return
-        
+
         title = f"🧠 {symbol} 复盘获得新经验"
-        
+
         lines = [
             f"【时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"【币种】{symbol}",
             f"【新经验数量】{len(lessons)} 条",
         ]
-        
+
         if summary:
             lines.append("")
             lines.append(f"【复盘总结】{summary[:200]}")
-        
+
         lines.append("")
         lines.append("【新获得的经验】")
-        
+
         for i, lesson in enumerate(lessons[:3], 1):  # 最多显示3条
             rule = lesson.get("rule", "")
             action = lesson.get("action", "")
             confidence = lesson.get("confidence", 0)
-            
+
             lines.append(f"\n{i}. {rule[:100]}")
             lines.append(f"   → 建议行动: {action[:50]}")
             lines.append(f"   → 置信度: {confidence:.1%}")
-        
+
         if len(lessons) > 3:
             lines.append(f"\n... 还有 {len(lessons) - 3} 条经验")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.REVIEW_LESSON_LEARNED, title, message)
 
-
-    def notify_external_info_summary(
-        self,
-        summary: str = "",
-        file_path: str = ""
-    ):
+    def notify_external_info_summary(self, summary: str = "", file_path: str = ""):
         """
         发送外部信息汇总完成通知
 
@@ -777,18 +755,18 @@ class Notifier:
         """
         from datetime import datetime
         from pathlib import Path
-        
+
         title = "📰 外部信息汇总完成"
-        
+
         lines = [
             f"【完成时间】{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
-        
+
         if file_path:
             # 使用 pathlib 提取文件名（跨平台兼容）
             file_name = Path(file_path).name
             lines.append(f"【报告文件】{file_name}")
-        
+
         if summary:
             lines.append("")
             lines.append("【市场信息摘要】")
@@ -796,11 +774,23 @@ class Notifier:
         else:
             lines.append("")
             lines.append("✅ 市场信息已更新，可用于交易决策参考")
-        
+
         message = "\n".join(lines)
         self.notify(NotificationEvent.EXTERNAL_INFO_SUMMARY, title, message)
 
-    def notify_grid_update(self, symbol: str, lower: float, upper: float, num: int, amount: float, tp: float, sl: float, buy_count: int, sell_count: int, reason: str):
+    def notify_grid_update(
+        self,
+        symbol: str,
+        lower: float,
+        upper: float,
+        num: int,
+        amount: float,
+        tp: float,
+        sl: float,
+        buy_count: int,
+        sell_count: int,
+        reason: str,
+    ):
         """发送网格更新通知"""
         title = f"🚀 网格部署: {symbol}"
         lines = [
@@ -808,9 +798,9 @@ class Notifier:
             f"【区间】${lower} - ${upper}",
             f"【网格数】{num} (买:{buy_count} | 卖:{sell_count})",
             f"【单格投入】${amount}",
-            f"【止盈比例】{tp*100 if tp else '默认'}%",
-            f"【止损比例】{sl*100 if sl else '默认'}%",
-            f"",
-            f"【AI 理由】{reason}"
+            f"【止盈比例】{tp * 100 if tp else '默认'}%",
+            f"【止损比例】{sl * 100 if sl else '默认'}%",
+            "",
+            f"【AI 理由】{reason}",
         ]
         self.notify(NotificationEvent.GRID_UPDATE, title, "\n".join(lines))

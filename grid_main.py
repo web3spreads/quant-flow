@@ -63,7 +63,7 @@ class GridFlowBot:
             order_manager=self.order_manager,
             logger=self.logger,
             llm_manager=self.llm_manager,
-            trade_amount=self.config.config_data["trading"].get("max_total_investment", 100.0),
+            trade_amount=self.config.max_trade_amount,
             width_pct_min=self.config.grid_width_min_pct,
             width_pct_max=self.config.grid_width_max_pct,
             width_pct_fallback=self.config.grid_width_fallback_pct,

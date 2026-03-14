@@ -3,7 +3,8 @@
 用于回测，提供与真实OrderManager相同的接口
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Any
+
 from .mock_client import MockHyperliquidClient
 
 
@@ -15,11 +16,11 @@ class MockOrderManager:
         client: MockHyperliquidClient,
         take_profit_ratio: float = 0.05,
         stop_loss_ratio: float = 0.02,
-        default_leverage: int = 10
+        default_leverage: int = 10,
     ):
         """
         初始化模拟订单管理器
-        
+
         Args:
             client: 模拟客户端
             take_profit_ratio: 止盈比例
@@ -34,88 +35,85 @@ class MockOrderManager:
     def get_available_balance(self) -> float:
         """
         获取可用余额
-        
+
         Returns:
             可用余额
         """
         balance = self.client.get_balance()
         if balance:
-            return balance['accountValue'] - balance['totalMarginUsed']
+            return balance["accountValue"] - balance["totalMarginUsed"]
         return 0.0
 
     def check_sufficient_balance(self, required_amount: float) -> bool:
         """
         检查余额是否充足
-        
+
         Args:
             required_amount: 所需金额
-            
+
         Returns:
             是否有足够余额
         """
         available = self.get_available_balance()
         return available >= required_amount
 
-    def get_available_balance_info(self) -> Dict[str, Any]:
+    def get_available_balance_info(self) -> dict[str, Any]:
         """
         获取详细的余额信息
-        
+
         Returns:
             余额信息字典
         """
         balance = self.client.get_balance()
         if not balance:
             return {
-                'status': 'error',
-                'message': '无法获取余额信息',
-                'total': 0,
-                'occupied': 0,
-                'available': 0,
-                'unrealized_pnl': 0
+                "status": "error",
+                "message": "无法获取余额信息",
+                "total": 0,
+                "occupied": 0,
+                "available": 0,
+                "unrealized_pnl": 0,
             }
 
-        total = balance['accountValue']
-        occupied = balance['totalMarginUsed']
+        total = balance["accountValue"]
+        occupied = balance["totalMarginUsed"]
         available = total - occupied
 
         # 计算未实现盈亏
         unrealized_pnl = 0
         positions = self.client.get_positions()
         for position in positions:
-            unrealized_pnl += float(position.get('unrealizedPnl', 0))
+            unrealized_pnl += float(position.get("unrealizedPnl", 0))
 
         return {
-            'status': 'ok',
-            'total': total,
-            'occupied': occupied,
-            'available': available,
-            'unrealized_pnl': unrealized_pnl,
-            'message': f'总价值: ${total:.2f}, 可用: ${available:.2f}, 未实现盈亏: ${unrealized_pnl:+.2f}'
+            "status": "ok",
+            "total": total,
+            "occupied": occupied,
+            "available": available,
+            "unrealized_pnl": unrealized_pnl,
+            "message": f"总价值: ${total:.2f}, 可用: ${available:.2f}, 未实现盈亏: ${unrealized_pnl:+.2f}",
         }
 
-    def get_current_positions(self) -> List[Dict[str, Any]]:
+    def get_current_positions(self) -> list[dict[str, Any]]:
         """
         获取当前持仓列表
-        
+
         Returns:
             持仓列表
         """
         return self.client.get_positions()
 
     def calculate_position_size(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        leverage: Optional[int] = None
-    ) -> Optional[float]:
+        self, symbol: str, usdt_amount: float, leverage: int | None = None
+    ) -> float | None:
         """
         根据 USDT 金额计算合约数量
-        
+
         Args:
             symbol: 交易对符号
             usdt_amount: 投入的 USDT 金额
             leverage: 杠杆倍数
-            
+
         Returns:
             合约数量
         """
@@ -130,8 +128,8 @@ class MockOrderManager:
 
         # 获取交易对的精度信息
         asset_info = self.client.get_asset_info(symbol)
-        if asset_info and 'szDecimals' in asset_info:
-            decimals = asset_info['szDecimals']
+        if asset_info and "szDecimals" in asset_info:
+            decimals = asset_info["szDecimals"]
             size = round(size, decimals)
         else:
             size = round(size, 3)
@@ -139,21 +137,17 @@ class MockOrderManager:
         return size
 
     def execute_long(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        leverage: Optional[int] = None,
-        with_tpsl: bool = True
-    ) -> Optional[Dict[str, Any]]:
+        self, symbol: str, usdt_amount: float, leverage: int | None = None, with_tpsl: bool = True
+    ) -> dict[str, Any] | None:
         """
         执行做多操作（模拟）
-        
+
         Args:
             symbol: 交易对符号
             usdt_amount: 投入金额
             leverage: 杠杆倍数
             with_tpsl: 是否设置止盈止损
-            
+
         Returns:
             订单信息
         """
@@ -183,16 +177,16 @@ class MockOrderManager:
                 is_buy=True,
                 size=size,
                 take_profit_price=tp_price if tp_price else 0,
-                stop_loss_price=sl_price if sl_price else 0
+                stop_loss_price=sl_price if sl_price else 0,
             )
 
             # 添加交易信息并创建持仓
-            if result and result.get('success'):
-                result['quantity'] = size
-                result['price'] = current_price
-                result['leverage'] = lev
-                result['hash'] = f'mock_{len(self.client.trade_history)}'
-                
+            if result and result.get("success"):
+                result["quantity"] = size
+                result["price"] = current_price
+                result["leverage"] = lev
+                result["hash"] = f"mock_{len(self.client.trade_history)}"
+
                 # 在模拟客户端中添加持仓
                 self.client.add_position(
                     symbol=symbol,
@@ -201,14 +195,13 @@ class MockOrderManager:
                     leverage=lev,
                     is_long=True,
                     take_profit_price=tp_price,
-                    stop_loss_price=sl_price
+                    stop_loss_price=sl_price,
                 )
-                
+
                 # 更新已用保证金
                 margin_used = current_price * size / lev
                 self.client.update_account_value(
-                    self.client.account_value,
-                    self.client.total_margin_used + margin_used
+                    self.client.account_value, self.client.total_margin_used + margin_used
                 )
 
             return result
@@ -218,21 +211,17 @@ class MockOrderManager:
             return None
 
     def execute_short(
-        self,
-        symbol: str,
-        usdt_amount: float,
-        leverage: Optional[int] = None,
-        with_tpsl: bool = True
-    ) -> Optional[Dict[str, Any]]:
+        self, symbol: str, usdt_amount: float, leverage: int | None = None, with_tpsl: bool = True
+    ) -> dict[str, Any] | None:
         """
         执行做空操作（模拟）
-        
+
         Args:
             symbol: 交易对符号
             usdt_amount: 投入金额
             leverage: 杠杆倍数
             with_tpsl: 是否设置止盈止损
-            
+
         Returns:
             订单信息
         """
@@ -262,16 +251,16 @@ class MockOrderManager:
                 is_buy=False,
                 size=size,
                 take_profit_price=tp_price if tp_price else 0,
-                stop_loss_price=sl_price if sl_price else 0
+                stop_loss_price=sl_price if sl_price else 0,
             )
 
             # 添加交易信息并创建持仓
-            if result and result.get('success'):
-                result['quantity'] = size
-                result['price'] = current_price
-                result['leverage'] = lev
-                result['hash'] = f'mock_{len(self.client.trade_history)}'
-                
+            if result and result.get("success"):
+                result["quantity"] = size
+                result["price"] = current_price
+                result["leverage"] = lev
+                result["hash"] = f"mock_{len(self.client.trade_history)}"
+
                 # 在模拟客户端中添加持仓
                 self.client.add_position(
                     symbol=symbol,
@@ -280,14 +269,13 @@ class MockOrderManager:
                     leverage=lev,
                     is_long=False,
                     take_profit_price=tp_price,
-                    stop_loss_price=sl_price
+                    stop_loss_price=sl_price,
                 )
-                
+
                 # 更新已用保证金
                 margin_used = current_price * size / lev
                 self.client.update_account_value(
-                    self.client.account_value,
-                    self.client.total_margin_used + margin_used
+                    self.client.account_value, self.client.total_margin_used + margin_used
                 )
 
             return result
@@ -301,16 +289,16 @@ class MockOrderManager:
         symbol: str,
         usdt_amount: float,
         limit_price: float,
-        leverage: Optional[int] = None,
-        tp_ratio: Optional[float] = None,
-        sl_ratio: Optional[float] = None
-    ) -> Optional[Dict[str, Any]]:
+        leverage: int | None = None,
+        tp_ratio: float | None = None,
+        sl_ratio: float | None = None,
+    ) -> dict[str, Any] | None:
         """
         执行限价开多（模拟）
         """
         try:
             if limit_price <= 0:
-                return {'success': False, 'message': 'limit_price 必须大于 0'}
+                return {"success": False, "message": "limit_price 必须大于 0"}
 
             lev = leverage if leverage else self.default_leverage
             balance_info = self.get_available_balance_info()
@@ -319,14 +307,14 @@ class MockOrderManager:
                 min_trade_amount=10.0,
                 balance_info=balance_info,
             )
-            if not suggested.get('can_trade'):
-                return {'success': False, 'message': suggested.get('reason', '余额不足')}
+            if not suggested.get("can_trade"):
+                return {"success": False, "message": suggested.get("reason", "余额不足")}
 
-            actual_amount = float(suggested.get('suggested_amount', usdt_amount))
+            actual_amount = float(suggested.get("suggested_amount", usdt_amount))
             size = (actual_amount * lev) / limit_price
             asset_info = self.client.get_asset_info(symbol)
-            if asset_info and 'szDecimals' in asset_info:
-                size = round(size, asset_info['szDecimals'])
+            if asset_info and "szDecimals" in asset_info:
+                size = round(size, asset_info["szDecimals"])
             else:
                 size = round(size, 3)
 
@@ -342,39 +330,39 @@ class MockOrderManager:
                 price=limit_price,
                 reduce_only=False,
                 metadata={
-                    'tp_price': tp_px,
-                    'sl_price': sl_px,
-                    'leverage': lev,
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "leverage": lev,
                 },
             )
 
-            if isinstance(limit_order, dict) and limit_order.get('status') == 'ok':
+            if isinstance(limit_order, dict) and limit_order.get("status") == "ok":
                 return {
-                    'success': True,
-                    'limit_order': limit_order,
-                    'tp_price': tp_px,
-                    'sl_price': sl_px,
-                    'quantity': size,
+                    "success": True,
+                    "limit_order": limit_order,
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "quantity": size,
                 }
-            return {'success': False, 'message': str(limit_order)}
+            return {"success": False, "message": str(limit_order)}
         except Exception as e:
-            return {'success': False, 'message': str(e)}
+            return {"success": False, "message": str(e)}
 
     def execute_short_limit(
         self,
         symbol: str,
         usdt_amount: float,
         limit_price: float,
-        leverage: Optional[int] = None,
-        tp_ratio: Optional[float] = None,
-        sl_ratio: Optional[float] = None
-    ) -> Optional[Dict[str, Any]]:
+        leverage: int | None = None,
+        tp_ratio: float | None = None,
+        sl_ratio: float | None = None,
+    ) -> dict[str, Any] | None:
         """
         执行限价开空（模拟）
         """
         try:
             if limit_price <= 0:
-                return {'success': False, 'message': 'limit_price 必须大于 0'}
+                return {"success": False, "message": "limit_price 必须大于 0"}
 
             lev = leverage if leverage else self.default_leverage
             balance_info = self.get_available_balance_info()
@@ -383,14 +371,14 @@ class MockOrderManager:
                 min_trade_amount=10.0,
                 balance_info=balance_info,
             )
-            if not suggested.get('can_trade'):
-                return {'success': False, 'message': suggested.get('reason', '余额不足')}
+            if not suggested.get("can_trade"):
+                return {"success": False, "message": suggested.get("reason", "余额不足")}
 
-            actual_amount = float(suggested.get('suggested_amount', usdt_amount))
+            actual_amount = float(suggested.get("suggested_amount", usdt_amount))
             size = (actual_amount * lev) / limit_price
             asset_info = self.client.get_asset_info(symbol)
-            if asset_info and 'szDecimals' in asset_info:
-                size = round(size, asset_info['szDecimals'])
+            if asset_info and "szDecimals" in asset_info:
+                size = round(size, asset_info["szDecimals"])
             else:
                 size = round(size, 3)
 
@@ -406,70 +394,72 @@ class MockOrderManager:
                 price=limit_price,
                 reduce_only=False,
                 metadata={
-                    'tp_price': tp_px,
-                    'sl_price': sl_px,
-                    'leverage': lev,
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "leverage": lev,
                 },
             )
 
-            if isinstance(limit_order, dict) and limit_order.get('status') == 'ok':
+            if isinstance(limit_order, dict) and limit_order.get("status") == "ok":
                 return {
-                    'success': True,
-                    'limit_order': limit_order,
-                    'tp_price': tp_px,
-                    'sl_price': sl_px,
-                    'quantity': size,
+                    "success": True,
+                    "limit_order": limit_order,
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "quantity": size,
                 }
-            return {'success': False, 'message': str(limit_order)}
+            return {"success": False, "message": str(limit_order)}
         except Exception as e:
-            return {'success': False, 'message': str(e)}
+            return {"success": False, "message": str(e)}
 
-    def cancel_limit_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
+    def cancel_limit_order(self, symbol: str, order_id: int) -> dict[str, Any]:
         """取消限价单（模拟）"""
         return self.client.cancel_order(symbol, order_id)
 
-    def get_open_limit_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_open_limit_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """获取限价挂单（模拟）"""
         orders = self.client.get_open_orders()
         if symbol:
-            return [o for o in orders if o.get('coin') == symbol]
+            return [o for o in orders if o.get("coin") == symbol]
         return orders
 
-    def close_position(self, symbol: str, size: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    def close_position(self, symbol: str, size: float | None = None) -> dict[str, Any] | None:
         """
         平仓操作（模拟）
-        
+
         Args:
             symbol: 交易对符号
             size: 平仓数量（None=全平）
-            
+
         Returns:
             平仓结果
         """
         try:
             # 获取当前持仓
-            position = next((p for p in self.client.get_positions() if p.get('coin') == symbol), None)
+            position = next(
+                (p for p in self.client.get_positions() if p.get("coin") == symbol), None
+            )
             if not position:
-                return {'status': 'error', 'message': f'没有 {symbol} 的持仓'}
-            
+                return {"status": "error", "message": f"没有 {symbol} 的持仓"}
+
             # 获取当前价格
             current_price = self.client.get_current_price(symbol)
             if not current_price:
-                return {'status': 'error', 'message': '无法获取当前价格'}
-            
+                return {"status": "error", "message": "无法获取当前价格"}
+
             # 移除持仓（交易记录由BacktestEngine处理）
             self.client.remove_position(symbol)
-            
+
             # 返回成功结果
             result = {
-                'status': 'ok',
-                'message': '平仓成功（模拟）',
-                'symbol': symbol,
-                'size': size,
-                'price': current_price,
-                'hash': f'mock_{len(self.client.trade_history)}'
+                "status": "ok",
+                "message": "平仓成功（模拟）",
+                "symbol": symbol,
+                "size": size,
+                "price": current_price,
+                "hash": f"mock_{len(self.client.trade_history)}",
             }
-            
+
             return result
         except Exception as e:
             print(f"❌ 平仓失败: {e}")
@@ -479,16 +469,16 @@ class MockOrderManager:
         self,
         desired_amount: float,
         min_trade_amount: float = 10.0,
-        balance_info: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        balance_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         计算建议的交易金额
-        
+
         Args:
             desired_amount: 期望的交易金额
             min_trade_amount: 最小交易金额
             balance_info: 余额信息
-            
+
         Returns:
             建议信息字典
         """
@@ -496,88 +486,76 @@ class MockOrderManager:
             if not balance_info:
                 balance_info = self.get_available_balance_info()
 
-            if balance_info['status'] != 'ok':
+            if balance_info["status"] != "ok":
                 return {
-                    'can_trade': False,
-                    'suggested_amount': 0,
-                    'reason': balance_info['message']
+                    "can_trade": False,
+                    "suggested_amount": 0,
+                    "reason": balance_info["message"],
                 }
 
-            available = balance_info['available']
+            available = balance_info["available"]
 
             if available < min_trade_amount:
                 return {
-                    'can_trade': False,
-                    'suggested_amount': 0,
-                    'reason': f'可用余额 ${available:.2f} 低于最小交易金额 ${min_trade_amount:.2f}'
+                    "can_trade": False,
+                    "suggested_amount": 0,
+                    "reason": f"可用余额 ${available:.2f} 低于最小交易金额 ${min_trade_amount:.2f}",
                 }
 
             if desired_amount <= available:
                 return {
-                    'can_trade': True,
-                    'suggested_amount': desired_amount,
-                    'reason': f'使用配置的交易金额 ${desired_amount:.2f}'
+                    "can_trade": True,
+                    "suggested_amount": desired_amount,
+                    "reason": f"使用配置的交易金额 ${desired_amount:.2f}",
                 }
             else:
                 suggested = available * 0.8
                 if suggested >= min_trade_amount:
                     return {
-                        'can_trade': True,
-                        'suggested_amount': suggested,
-                        'reason': f'可用余额不足，调整为 ${suggested:.2f} (可用余额的 80%)'
+                        "can_trade": True,
+                        "suggested_amount": suggested,
+                        "reason": f"可用余额不足，调整为 ${suggested:.2f} (可用余额的 80%)",
                     }
                 else:
                     return {
-                        'can_trade': False,
-                        'suggested_amount': 0,
-                        'reason': f'可用余额不足，无法交易'
+                        "can_trade": False,
+                        "suggested_amount": 0,
+                        "reason": "可用余额不足，无法交易",
                     }
 
         except Exception as e:
-            return {
-                'can_trade': False,
-                'suggested_amount': 0,
-                'reason': f'计算建议金额失败: {e}'
-            }
+            return {"can_trade": False, "suggested_amount": 0, "reason": f"计算建议金额失败: {e}"}
 
-    def get_spot_holdings(self) -> List[Dict[str, Any]]:
+    def get_spot_holdings(self) -> list[dict[str, Any]]:
         """
         获取现货持仓列表（回测中暂不支持）
-        
+
         Returns:
             空列表
         """
         return []
 
-    def buy_spot_for_dca(
-        self,
-        symbol: str,
-        usdt_amount: float
-    ) -> Optional[Dict[str, Any]]:
+    def buy_spot_for_dca(self, symbol: str, usdt_amount: float) -> dict[str, Any] | None:
         """
         现货定投买入（回测中暂不支持）
-        
+
         Args:
             symbol: 交易对符号
             usdt_amount: 投入金额
-            
+
         Returns:
             None
         """
         return None
 
-    def sell_spot(
-        self,
-        symbol: str,
-        size: Optional[float] = None
-    ) -> Optional[Dict[str, Any]]:
+    def sell_spot(self, symbol: str, size: float | None = None) -> dict[str, Any] | None:
         """
         卖出现货（回测中暂不支持）
-        
+
         Args:
             symbol: 交易对符号
             size: 卖出数量
-            
+
         Returns:
             None
         """

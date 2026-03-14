@@ -4,16 +4,17 @@ Prompt 管理模块
 支持 Jinja2 模板引擎，可根据不同币种自定义 Prompt
 """
 
-import os
 import json
-import yaml
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any
+
+import yaml
 from jinja2 import Environment, FileSystemLoader, Template
 
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
-from src.i18n import get_text
 from src.fees import FeeRates
+from src.i18n import get_text
 
 
 class PromptManager:
@@ -21,7 +22,7 @@ class PromptManager:
 
     def format_position_details(
         self, symbol: str, current_positions: list, current_price: float
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         格式化当前币种的持仓详情
 
@@ -101,15 +102,11 @@ class PromptManager:
         if entry_price > 0 and current_price > 0:
             if position_side == "long":
                 # 多头：(当前价 - 入场价) / 入场价 * 杠杆
-                price_change_percent = (
-                    (current_price - entry_price) / entry_price
-                ) * 100
+                price_change_percent = ((current_price - entry_price) / entry_price) * 100
                 unrealized_pnl_percent = price_change_percent * leverage
             else:
                 # 空头：(入场价 - 当前价) / 入场价 * 杠杆
-                price_change_percent = (
-                    (entry_price - current_price) / entry_price
-                ) * 100
+                price_change_percent = ((entry_price - current_price) / entry_price) * 100
                 unrealized_pnl_percent = price_change_percent * leverage
 
             distance_from_entry = abs(price_change_percent)
@@ -140,51 +137,50 @@ class PromptManager:
 
         # 格式化持仓信息文本
         side_emoji = "📈" if position_side == "long" else "📉"
-        pnl_emoji = (
-            "✅" if unrealized_pnl > 0 else ("❌" if unrealized_pnl < 0 else "➖")
-        )
+        pnl_emoji = "✅" if unrealized_pnl > 0 else ("❌" if unrealized_pnl < 0 else "➖")
 
         # 获取本地化文本
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
 
         position_side_text = t("long") if position_side == "long" else t("short")
 
-        position_text = f"""**{symbol} {t('position_details')}** {side_emoji}:
+        position_text = f"""**{symbol} {t("position_details")}** {side_emoji}:
 
-**{t('basic_info')}**:
-- {t('position_side')}: {position_side_text} {side_emoji}
-- {t('position_size')}: {position_size:.4f} {symbol}
-- {t('entry_price')}: ${entry_price:.2f}
-- {t('current_price')}: ${current_price:.2f}
-- {t('leverage')}: {leverage}x
+**{t("basic_info")}**:
+- {t("position_side")}: {position_side_text} {side_emoji}
+- {t("position_size")}: {position_size:.4f} {symbol}
+- {t("entry_price")}: ${entry_price:.2f}
+- {t("current_price")}: ${current_price:.2f}
+- {t("leverage")}: {leverage}x
 
-**{t('pnl_status')}** {pnl_emoji}:
-- {t('price_change')}: {price_change_percent:+.2f}% ({t('distance_from_entry')})
-- {t('unrealized_pnl')}: ${unrealized_pnl:+.2f} ({unrealized_pnl_percent:+.2f}%) {pnl_emoji}
-- {t('position_value')}: ${position_value:.2f}
-- {t('margin_used')}: ${margin_used:.2f}"""
+**{t("pnl_status")}** {pnl_emoji}:
+- {t("price_change")}: {price_change_percent:+.2f}% ({t("distance_from_entry")})
+- {t("unrealized_pnl")}: ${unrealized_pnl:+.2f} ({unrealized_pnl_percent:+.2f}%) {pnl_emoji}
+- {t("position_value")}: ${position_value:.2f}
+- {t("margin_used")}: ${margin_used:.2f}"""
 
         if liquidation_price > 0:
             position_text += f"""
-- {t('liquidation_price')}: ${liquidation_price:.2f}
-- {t('distance_to_liquidation')}: {distance_to_liquidation:.2f}%"""
+- {t("liquidation_price")}: ${liquidation_price:.2f}
+- {t("distance_to_liquidation")}: {distance_to_liquidation:.2f}%"""
 
         # 确定盈亏状态
         if unrealized_pnl > 0:
-            status = t('profit_status')
+            status = t("profit_status")
         elif unrealized_pnl == 0:
-            status = t('flat_status')
+            status = t("flat_status")
         else:
-            status = t('loss_status')
+            status = t("loss_status")
 
-        risk_level = t('risk_high') if leverage >= 10 else t('risk_moderate')
+        risk_level = t("risk_high") if leverage >= 10 else t("risk_moderate")
 
         position_text += f"""
 
-**{t('important_notice')}**:
-- {t('current_status_notice', status=status)}
-- {t('leverage_risk', leverage=leverage, risk_level=risk_level)}
-- {t('watch_price_notice')}"""
+**{t("important_notice")}**:
+- {t("current_status_notice", status=status)}
+- {t("leverage_risk", leverage=leverage, risk_level=risk_level)}
+- {t("watch_price_notice")}"""
 
         return {
             "has_position": True,
@@ -199,11 +195,92 @@ class PromptManager:
             "liquidation_price": liquidation_price,
             "price_change_percent": price_change_percent,
             "distance_from_entry": distance_from_entry,
-            "distance_to_liquidation": (
-                distance_to_liquidation if liquidation_price > 0 else 0
-            ),
+            "distance_to_liquidation": (distance_to_liquidation if liquidation_price > 0 else 0),
             "position_text": position_text,
         }
+
+    def format_recent_trades_text(
+        self,
+        symbol: str,
+        recent_trades: list[dict[str, Any]],
+    ) -> str:
+        """
+        格式化最近1小时操作记录文本
+
+        Args:
+            symbol: 交易对
+            recent_trades: 最近1小时的交易记录列表，每条记录包含:
+                - time: 时间戳（毫秒）
+                - side: 方向 ('B' 表示买入, 'A' 表示卖出)
+                - dir: 开平方向 (Open Long/Close Long/Open Short/Close Short)
+                - px: 成交价格
+                - sz: 成交数量
+                - closedPnl: 已实现盈亏
+
+        Returns:
+            格式化后的操作记录文本，如果没有记录则返回空字符串
+        """
+        # 如果没有记录，返回空字符串（不注入任何信息）
+        if not recent_trades:
+            return ""
+
+        # 获取国际化文本的快捷方法
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
+
+        # 计算统计信息
+        total_pnl = sum(float(trade.get("closedPnl", 0)) for trade in recent_trades)
+        trade_count = len(recent_trades)
+
+        # 构建操作记录文本
+        lines = []
+        lines.append(f"## {t('recent_trades_title')}")
+        lines.append("")
+        lines.append(f"- {t('recent_trades_count')}: {trade_count}")
+        lines.append(f"- {t('recent_trades_total_pnl')}: ${total_pnl:+.2f}")
+        lines.append("")
+        lines.append(f"**{t('recent_trades_list_header')}:**")
+
+        # 按时间顺序排列（从旧到新）
+        sorted_trades = sorted(recent_trades, key=lambda x: x.get("time", 0))
+
+        for trade in sorted_trades:
+            # 解析时间
+            time_ms = trade.get("time", 0)
+            trade_time = datetime.fromtimestamp(time_ms / 1000).strftime("%H:%M:%S")
+
+            # 解析方向
+            dir_text = trade.get("dir", "")
+            if dir_text == "Open Long":
+                dir_display = t("recent_trades_open_long")
+            elif dir_text == "Close Long":
+                dir_display = t("recent_trades_close_long")
+            elif dir_text == "Open Short":
+                dir_display = t("recent_trades_open_short")
+            elif dir_text == "Close Short":
+                dir_display = t("recent_trades_close_short")
+            else:
+                # 如果没有 dir，根据 side 显示
+                side = trade.get("side", "")
+                dir_display = t("recent_trades_buy") if side == "B" else t("recent_trades_sell")
+
+            # 价格和数量
+            price = float(trade.get("px", 0))
+            size = abs(float(trade.get("sz", 0)))
+            pnl = float(trade.get("closedPnl", 0))
+
+            # 格式化单条记录
+            pnl_text = f"{t('recent_trades_pnl')}: ${pnl:+.2f}" if pnl != 0 else ""
+            line = f"- {trade_time}: {dir_display} {size:.4f} @ ${price:.2f}"
+            if pnl_text:
+                line += f" ({pnl_text})"
+            lines.append(line)
+
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+        return "\n".join(lines)
 
     def __init__(
         self,
@@ -242,12 +319,8 @@ class PromptManager:
         self.language = self.prompt_set.get("language", "zh")
 
         # 加载 Prompt 内容（作为 Jinja2 模板）
-        self.system_prompt = self._load_prompt_file(
-            self.prompt_set["system_prompt_file"]
-        )
-        self.spot_system_prompt = self._load_prompt_file(
-            self.prompt_set["spot_system_prompt_file"]
-        )
+        self.system_prompt = self._load_prompt_file(self.prompt_set["system_prompt_file"])
+        self.spot_system_prompt = self._load_prompt_file(self.prompt_set["spot_system_prompt_file"])
         self.trading_prompt_template = self._load_prompt_template(
             self.prompt_set["trading_prompt_template_file"]
         )
@@ -265,7 +338,7 @@ class PromptManager:
 
         self.review_system_prompt = self._load_prompt_file(review_system_file)
         self.review_prompt_template = self._load_prompt_template(review_template_file)
-        
+
         # Research prompts: 优先使用当前 prompt set 的配置，如果没有则 fallback 到 default
         research_system_file = self.prompt_set.get(
             "research_system_prompt_file", "default/research_system_prompt.md"
@@ -273,34 +346,54 @@ class PromptManager:
         research_template_file = self.prompt_set.get(
             "research_prompt_template_file", "default/research_prompt_template.md"
         )
-        
+
         self.research_system_prompt = self._load_prompt_file(research_system_file)
         self.research_prompt_template_content = self._load_prompt_file(research_template_file)
+
+        # Weekly review prompts（改进1b）
+        weekly_review_system_file = self.prompt_set.get(
+            "weekly_review_system_prompt_file", "default/weekly_review_system_prompt.md"
+        )
+        weekly_review_template_file = self.prompt_set.get(
+            "weekly_review_prompt_template_file", "default/weekly_review_prompt_template.md"
+        )
+        self.weekly_review_system_prompt = self._load_optional_prompt_file(
+            weekly_review_system_file, "你是一名策略级量化交易分析师，负责每周系统性复盘。"
+        )
+        self.weekly_review_prompt_template = self._load_optional_prompt_template(
+            weekly_review_template_file, "{{ weekly_stats }}"
+        )
+
+        # Prompt meta review template（改进5）
+        prompt_meta_review_file = self.prompt_set.get(
+            "prompt_meta_review_template_file", "default/prompt_meta_review_template.md"
+        )
+        self.prompt_meta_review_template = self._load_optional_prompt_template(
+            prompt_meta_review_file, "{{ effectiveness_report }}"
+        )
 
         print(
             f"✅ 已加载 Prompt 集合: {self.prompt_set['name']} - {self.prompt_set['description']}"
         )
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self) -> dict[str, Any]:
         """加载 Prompt 配置文件"""
         if not self.config_file.exists():
             raise FileNotFoundError(
-                f"Prompt 配置文件不存在: {self.config_file}\n"
-                f"请确保 prompts/prompts.yaml 文件存在"
+                f"Prompt 配置文件不存在: {self.config_file}\n请确保 prompts/prompts.yaml 文件存在"
             )
 
-        with open(self.config_file, "r", encoding="utf-8") as f:
+        with open(self.config_file, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
-    def _get_prompt_set(self, set_name: str) -> Dict[str, Any]:
+    def _get_prompt_set(self, set_name: str) -> dict[str, Any]:
         """获取指定的 Prompt 集合配置"""
         prompt_sets = self.config.get("prompt_sets", {})
 
         if set_name not in prompt_sets:
             available_sets = list(prompt_sets.keys())
             raise ValueError(
-                f"Prompt 集合 '{set_name}' 不存在\n"
-                f"可用的集合: {', '.join(available_sets)}"
+                f"Prompt 集合 '{set_name}' 不存在\n可用的集合: {', '.join(available_sets)}"
             )
 
         return prompt_sets[set_name]
@@ -319,11 +412,10 @@ class PromptManager:
 
         if not file_path.exists():
             raise FileNotFoundError(
-                f"Prompt 文件不存在: {file_path}\n"
-                f"请确保文件存在或检查 prompts.yaml 配置"
+                f"Prompt 文件不存在: {file_path}\n请确保文件存在或检查 prompts.yaml 配置"
             )
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             return f.read()
 
     def _load_prompt_template(self, relative_path: str) -> Template:
@@ -340,17 +432,14 @@ class PromptManager:
 
         if not file_path.exists():
             raise FileNotFoundError(
-                f"Prompt 文件不存在: {file_path}\n"
-                f"请确保文件存在或检查 prompts.yaml 配置"
+                f"Prompt 文件不存在: {file_path}\n请确保文件存在或检查 prompts.yaml 配置"
             )
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             template_content = f.read()
             return self.jinja_env.from_string(template_content)
 
-    def _load_optional_prompt_file(
-        self, relative_path: Optional[str], default: str
-    ) -> str:
+    def _load_optional_prompt_file(self, relative_path: str | None, default: str) -> str:
         """加载可选 Prompt 文件，不存在时使用默认内容"""
         if not relative_path:
             return default
@@ -360,7 +449,7 @@ class PromptManager:
             return default
 
     def _load_optional_prompt_template(
-        self, relative_path: Optional[str], default_template: str
+        self, relative_path: str | None, default_template: str
     ) -> Template:
         """加载可选 Prompt 模板，不存在时使用默认模板"""
         if not relative_path:
@@ -386,7 +475,7 @@ class PromptManager:
             复盘 Agent 的系统 Prompt 字符串，用于指导复盘 Agent 的行为。
         """
         return self.review_system_prompt
-    
+
     def get_research_system_prompt(self) -> str:
         """
         获取外部信息收集 Agent 的系统 Prompt。
@@ -395,7 +484,7 @@ class PromptManager:
             研究 Agent 的系统 Prompt 字符串。
         """
         return self.research_system_prompt
-    
+
     def get_research_prompt_template(self) -> str:
         """
         获取外部信息收集 Agent 的 Prompt 模板内容。
@@ -408,19 +497,19 @@ class PromptManager:
     def format_trading_prompt(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
         current_positions: list,
         max_positions: int,
         max_trade_amount: float,
         max_leverage: int,
         take_profit_ratio: float,
         stop_loss_ratio: float,
-        historical_summary: Optional[str] = None,
-        balance_info: Optional[Dict[str, float]] = None,
-        enriched_data: Optional[Dict[str, Any]] = None,
+        historical_summary: str | None = None,
+        balance_info: dict[str, float] | None = None,
+        enriched_data: dict[str, Any] | None = None,
         limit_order_enabled: bool = False,
-        open_limit_orders: Optional[List[Dict[str, Any]]] = None,
+        open_limit_orders: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         格式化交易决策 Prompt
@@ -441,45 +530,46 @@ class PromptManager:
         Returns:
             格式化后的 Prompt
         """
-        # 提取市场数据
-        current_price = market_data.get("current_price", 0)
-        rsi = market_data.get("rsi", 0)
-        macd = market_data.get("macd", 0)
-        macd_signal = market_data.get("macd_signal", 0)
-        macd_hist = market_data.get("macd_hist", 0)
-        ma_7 = market_data.get("ma_7", 0)
-        ma_25 = market_data.get("ma_25", 0)
-        ma_99 = market_data.get("ma_99", 0)
-        bb_upper = market_data.get("bb_upper", 0)
-        bb_middle = market_data.get("bb_middle", 0)
-        bb_lower = market_data.get("bb_lower", 0)
-        bb_position = market_data.get("bb_position", 0.5)
-        volume_change = market_data.get("volume_change", 0)
+
+        # 提取市场数据（防御 None 值：get() 在 key 存在但值为 None 时仍返回 None）
+        def _safe(val, default=0):
+            """确保值不为 None，防止格式化和算术运算报错"""
+            return val if val is not None else default
+
+        current_price = _safe(market_data.get("current_price"), 0)
+        rsi = _safe(market_data.get("rsi"), 0)
+        macd = _safe(market_data.get("macd"), 0)
+        macd_signal = _safe(market_data.get("macd_signal"), 0)
+        macd_hist = _safe(market_data.get("macd_hist"), 0)
+        ma_7 = _safe(market_data.get("ma_7"), 0)
+        ma_25 = _safe(market_data.get("ma_25"), 0)
+        ma_99 = _safe(market_data.get("ma_99"), 0)
+        bb_upper = _safe(market_data.get("bb_upper"), 0)
+        bb_middle = _safe(market_data.get("bb_middle"), 0)
+        bb_lower = _safe(market_data.get("bb_lower"), 0)
+        bb_position = _safe(market_data.get("bb_position"), 0.5)
+        volume_change = _safe(market_data.get("volume_change"), 0)
 
         # 获取详细持仓信息
-        position_details = self.format_position_details(
-            symbol, current_positions, current_price
-        )
+        position_details = self.format_position_details(symbol, current_positions, current_price)
 
         # 判断持仓状态（保持向后兼容）
-        has_long = (
-            position_details["has_position"]
-            and position_details["position_side"] == "long"
-        )
+        has_long = position_details["has_position"] and position_details["position_side"] == "long"
         has_short = (
-            position_details["has_position"]
-            and position_details["position_side"] == "short"
+            position_details["has_position"] and position_details["position_side"] == "short"
         )
         position_count = len(current_positions)
 
         # 格式化多周期趋势
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
+
         timeframes = [
             ("daily", "日线"),
             ("4h", "4小时"),
             ("1h", "1小时"),
             ("15m", "15分钟"),
-            ("1m", "1分钟")
+            ("1m", "1分钟"),
         ]
         trends_text = ""
         for tf_key, tf_zh in timeframes:
@@ -510,21 +600,19 @@ class PromptManager:
             occupied = balance_info.get("occupied", 0)
             available = balance_info.get("available", 0)
             unrealized_pnl = balance_info.get("unrealized_pnl", 0)
-            pnl_emoji = (
-                "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
-            )
+            pnl_emoji = "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
             balance_text = f"""
-## 💰 {t('account_balance')}
+## 💰 {t("account_balance")}
 
-- **{t('total_value')}**: ${total:.2f}
-- **{t('occupied_margin')}**: ${occupied:.2f}
-- **{t('available_balance')}**: ${available:.2f}
-- **{t('unrealized_pnl_total')}**: ${unrealized_pnl:+.2f} {pnl_emoji}
+- **{t("total_value")}**: ${total:.2f}
+- **{t("occupied_margin")}**: ${occupied:.2f}
+- **{t("available_balance")}**: ${available:.2f}
+- **{t("unrealized_pnl_total")}**: ${unrealized_pnl:+.2f} {pnl_emoji}
 
-**{t('balance_notice_title')}**:
-- {t('balance_check_notice')}
-- {t('insufficient_balance_notice')}
-- {t('large_loss_notice')}
+**{t("balance_notice_title")}**:
+- {t("balance_check_notice")}
+- {t("insufficient_balance_notice")}
+- {t("large_loss_notice")}
 """
 
         # 计算手续费相关的值（防止除零错误）
@@ -607,23 +695,17 @@ class PromptManager:
             "position_unrealized_pnl": f"{position_details['unrealized_pnl']:+.2f}",
             "position_unrealized_pnl_raw": position_details["unrealized_pnl"],
             "position_unrealized_pnl_percent": f"{position_details['unrealized_pnl_percent']:+.2f}",
-            "position_unrealized_pnl_percent_raw": position_details[
-                "unrealized_pnl_percent"
-            ],
+            "position_unrealized_pnl_percent_raw": position_details["unrealized_pnl_percent"],
             "position_margin_used": f"{position_details['margin_used']:.2f}",
             "position_margin_used_raw": position_details["margin_used"],
             "position_liquidation_price": f"{position_details['liquidation_price']:.2f}",
             "position_liquidation_price_raw": position_details["liquidation_price"],
             "position_price_change_percent": f"{position_details['price_change_percent']:+.2f}",
-            "position_price_change_percent_raw": position_details[
-                "price_change_percent"
-            ],
+            "position_price_change_percent_raw": position_details["price_change_percent"],
             "position_distance_from_entry": f"{position_details['distance_from_entry']:.2f}",
             "position_distance_from_entry_raw": position_details["distance_from_entry"],
             "position_distance_to_liquidation": f"{position_details['distance_to_liquidation']:.2f}",
-            "position_distance_to_liquidation_raw": position_details[
-                "distance_to_liquidation"
-            ],
+            "position_distance_to_liquidation_raw": position_details["distance_to_liquidation"],
             "position_details_text": position_details["position_text"],
             # 交易参数
             "max_trade_amount": f"{max_trade_amount:.2f}",
@@ -634,8 +716,8 @@ class PromptManager:
             "stop_loss_ratio": f"{stop_loss_ratio:.1%}",
             "stop_loss_ratio_raw": stop_loss_ratio,
             # 费用计算
-            "position_value": f"{position_value:.2f}",
-            "position_value_raw": position_value,
+            "fee_position_value": f"{position_value:.2f}",
+            "fee_position_value_raw": position_value,
             "fee_rate_per_side": f"{fee_rate_per_side * 100:.3f}%",
             "fee_rate_per_side_raw": fee_rate_per_side,
             "total_fee_rate": f"{total_fee_rate * 100:.3f}%",
@@ -649,9 +731,7 @@ class PromptManager:
             "breakeven_percent": breakeven_percent,
             "price_move_percent": price_move_percent,
             "profit_to_fee_ratio": (
-                f"{profit_to_fee_ratio:.1f}x"
-                if profit_to_fee_ratio != float("inf")
-                else "∞"
+                f"{profit_to_fee_ratio:.1f}x" if profit_to_fee_ratio != float("inf") else "∞"
             ),
             "profit_to_fee_ratio_raw": profit_to_fee_ratio,
             # 历史和余额信息
@@ -661,7 +741,7 @@ class PromptManager:
             "limit_order_enabled": limit_order_enabled,
             "open_limit_orders": open_limit_orders or [],
         }
-        
+
         # 格式化限价单信息文本（根据语言选择）
         def _generate_limit_orders_text(orders, lang):
             if lang == "en":
@@ -669,10 +749,10 @@ class PromptManager:
                     "header": "\n## 📋 Pending Limit Orders\n\n",
                     "no_orders": "No pending limit orders\n",
                     "order_fmt": "- **Order #{order_id}** {side_emoji} {side_text}\n"
-                                 "  - Limit Price: ${limit_price:.2f}\n"
-                                 "  - Current Price: ${current_price:.2f}\n"
-                                 "  - Price Gap: {price_diff_str}\n"
-                                 "  - Size: {size:.6f}\n\n",
+                    "  - Limit Price: ${limit_price:.2f}\n"
+                    "  - Current Price: ${current_price:.2f}\n"
+                    "  - Price Gap: {price_diff_str}\n"
+                    "  - Size: {size:.6f}\n\n",
                     "side_text": {"buy": "Limit Long", "sell": "Limit Short"},
                 }
             else:
@@ -680,22 +760,22 @@ class PromptManager:
                     "header": "\n## 📋 待处理限价单\n\n",
                     "no_orders": "暂无待处理的限价单\n",
                     "order_fmt": "- **订单 #{order_id}** {side_emoji} {side_text}\n"
-                                 "  - 限价: ${limit_price:.2f}\n"
-                                 "  - 当前价: ${current_price:.2f}\n"
-                                 "  - 价格差距: {price_diff_str}\n"
-                                 "  - 数量: {size:.6f}\n\n",
+                    "  - 限价: ${limit_price:.2f}\n"
+                    "  - 当前价: ${current_price:.2f}\n"
+                    "  - 价格差距: {price_diff_str}\n"
+                    "  - 数量: {size:.6f}\n\n",
                     "side_text": {"buy": "限价开多", "sell": "限价开空"},
                 }
             text = strings["header"]
             if orders:
                 for order in orders:
-                    order_id = order.get('order_id', 0)
-                    side = order.get('side', 'unknown')
-                    limit_price = order.get('limit_price', 0)
-                    size = order.get('size', 0)
-                    current_price = order.get('current_price', 0)
-                    price_diff = order.get('price_diff_percent', 0)
-                    side_emoji = "📈" if side == 'buy' else "📉"
+                    order_id = order.get("order_id", 0)
+                    side = order.get("side", "unknown")
+                    limit_price = order.get("limit_price", 0)
+                    size = order.get("size", 0)
+                    current_price = order.get("current_price", 0)
+                    price_diff = order.get("price_diff_percent", 0)
+                    side_emoji = "📈" if side == "buy" else "📉"
                     side_text = strings["side_text"].get(side, side)
                     price_diff_str = f"{price_diff:+.2f}%"
                     text += strings["order_fmt"].format(
@@ -712,7 +792,9 @@ class PromptManager:
             return text
 
         if limit_order_enabled:
-            context["limit_orders_text"] = _generate_limit_orders_text(open_limit_orders, self.language)
+            context["limit_orders_text"] = _generate_limit_orders_text(
+                open_limit_orders, self.language
+            )
         else:
             context["limit_orders_text"] = ""
 
@@ -721,48 +803,68 @@ class PromptManager:
             # 直接合并所有enriched_data字段
             context.update(enriched_data)
 
-            # 确保关键字段有默认值
-            context.setdefault("elapsed_minutes", 0)
-            context.setdefault("mid_prices", [])
-            context.setdefault("ema_indicators", [])
-            context.setdefault("macd_indicators", [])
-            context.setdefault("rsi_7_indicators", [])
-            context.setdefault("rsi_14_indicators", [])
-            context.setdefault("current_ema20", current_price)
-            context.setdefault("current_rsi", rsi)
-            context.setdefault("oi_latest", 0)
-            context.setdefault("oi_average", 0)
-            context.setdefault("funding_rate", 0)
-            context.setdefault("ema_20_4h", current_price)
-            context.setdefault("ema_50_4h", current_price)
-            context.setdefault("atr_3_4h", 0)
-            context.setdefault("atr_14_4h", 0)
-            context.setdefault("current_volume", 0)
-            context.setdefault("avg_volume", 0)
-            context.setdefault("macd_4h_indicators", [])
-            context.setdefault("rsi_14_4h_indicators", [])
-            context.setdefault("total_return_pct", 0)
-            context.setdefault("account_value", 10000)
-            context.setdefault(
-                "available_cash",
-                balance_info.get("available", 0) if balance_info else 0,
-            )
-            context.setdefault("sharpe_ratio", 0)
-            context.setdefault("current_positions", str(current_positions))
+        # 确保关键字段有默认值（无论 enriched_data 是否存在）
+        self._set_enriched_defaults(context, current_price, rsi, balance_info, current_positions)
 
         # 使用 Jinja2 渲染模板
         prompt = self.trading_prompt_template.render(context)
 
         return prompt
 
+    @staticmethod
+    def _set_enriched_defaults(
+        context: dict,
+        current_price: float,
+        rsi: float,
+        balance_info: dict | None,
+        current_positions: list,
+    ) -> None:
+        """设置 enriched_data 相关字段的默认值，避免 Jinja2 UndefinedError"""
+        context.setdefault("elapsed_minutes", 0)
+        context.setdefault("mid_prices", [])
+        context.setdefault("ema_indicators", [])
+        context.setdefault("macd_indicators", [])
+        context.setdefault("rsi_7_indicators", [])
+        context.setdefault("rsi_14_indicators", [])
+        context.setdefault("current_ema20", current_price)
+        context.setdefault("current_rsi", rsi)
+        context.setdefault("oi_latest", 0)
+        context.setdefault("oi_average", 0)
+        context.setdefault("funding_rate", 0)
+        context.setdefault("funding_rate_signal", "")
+        context.setdefault("fear_greed_sentiment", "")
+        context.setdefault("verbal_finetuning_section", "")
+        context.setdefault("debate_summary", "")
+        context.setdefault("cex_funding_signal", "")
+        context.setdefault("onchain_summary", "")
+        context.setdefault("regime_hint", "")
+        context.setdefault("volatility_alert", "")
+        context.setdefault("ema_20_4h", current_price)
+        context.setdefault("ema_50_4h", current_price)
+        context.setdefault("atr_3_4h", 0)
+        context.setdefault("atr_14_4h", 0)
+        context.setdefault("current_volume", 0)
+        context.setdefault("avg_volume", 0)
+        context.setdefault("macd_4h_indicators", [])
+        context.setdefault("rsi_14_4h_indicators", [])
+        context.setdefault("total_return_pct", 0)
+        context.setdefault("account_value", 10000)
+        context.setdefault(
+            "available_cash",
+            balance_info.get("available", 0) if balance_info else 0,
+        )
+        context.setdefault("sharpe_ratio", 0)
+        context.setdefault("current_positions", str(current_positions))
+        context.setdefault("recent_trades_text", "")
+
     def format_review_prompt(
         self,
         symbol: str,
-        decision_digest: List[Dict[str, Any]],
-        stats: Dict[str, Any],
-        existing_lessons: List[Dict[str, Any]],
-        fills_summary: Optional[Dict[str, Any]] = None,
-        context_features: Optional[Dict[str, Any]] = None,
+        decision_digest: list[dict[str, Any]],
+        stats: dict[str, Any],
+        existing_lessons: list[dict[str, Any]],
+        fills_summary: dict[str, Any] | None = None,
+        context_features: dict[str, Any] | None = None,
     ) -> str:
         """格式化复盘 Prompt"""
         fills_context = fills_summary or {"total_fills": 0, "total_pnl": 0.0}
@@ -773,21 +875,19 @@ class PromptManager:
             "existing_lessons": existing_lessons,
             "fills_summary": fills_context,
             "context_features": context_features or {},
-            "context_features_json": json.dumps(
-                context_features or {}, ensure_ascii=False
-            ),
+            "context_features_json": json.dumps(context_features or {}, ensure_ascii=False),
         }
         return self.review_prompt_template.render(context)
 
     def format_spot_prompt(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
-        recommendation: Dict[str, Any],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
+        recommendation: dict[str, Any],
         current_spot_holdings: list,
         max_trade_amount: float,
-        balance_info: Optional[Dict[str, float]] = None,
+        balance_info: dict[str, float] | None = None,
     ) -> str:
         """
         格式化现货定投决策 Prompt
@@ -818,13 +918,15 @@ class PromptManager:
         has_spot = any(h.get("symbol") == symbol for h in current_spot_holdings)
 
         # 格式化多周期趋势
-        t = lambda key, **kwargs: get_text(self.language, key, **kwargs)
+        def t(key, **kwargs):
+            return get_text(self.language, key, **kwargs)
+
         timeframes = [
             ("daily", "日线"),
             ("4h", "4小时"),
             ("1h", "1小时"),
             ("15m", "15分钟"),
-            ("1m", "1分钟")
+            ("1m", "1分钟"),
         ]
         trends_text = ""
         for tf_key, tf_zh in timeframes:
@@ -840,21 +942,19 @@ class PromptManager:
             occupied = balance_info.get("occupied", 0)
             available = balance_info.get("available", 0)
             unrealized_pnl = balance_info.get("unrealized_pnl", 0)
-            pnl_emoji = (
-                "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
-            )
+            pnl_emoji = "📈" if unrealized_pnl > 0 else ("📉" if unrealized_pnl < 0 else "➖")
             balance_text = f"""
-## 💰 {t('account_balance')}
+## 💰 {t("account_balance")}
 
-- **{t('total_value')}**: ${total:.2f}
-- **{t('occupied_margin')}**: ${occupied:.2f}
-- **{t('available_balance')}**: ${available:.2f}
-- **{t('unrealized_pnl_total')}**: ${unrealized_pnl:+.2f} {pnl_emoji}
+- **{t("total_value")}**: ${total:.2f}
+- **{t("occupied_margin")}**: ${occupied:.2f}
+- **{t("available_balance")}**: ${available:.2f}
+- **{t("unrealized_pnl_total")}**: ${unrealized_pnl:+.2f} {pnl_emoji}
 
-**{t('balance_notice_title')}**:
-- {t('balance_check_for_dca')}
-- {t('insufficient_balance_dca')}
-- {t('large_loss_notice')}
+**{t("balance_notice_title")}**:
+- {t("balance_check_for_dca")}
+- {t("insufficient_balance_dca")}
+- {t("large_loss_notice")}
 """
 
         # 准备模板上下文（使用 Jinja2 渲染）
@@ -869,8 +969,12 @@ class PromptManager:
             "is_major_coin": symbol in ["BTC", "ETH"],
             "is_altcoin": symbol not in ["BTC", "ETH"],
             # 推荐信息
-            "recommendation_reason": recommendation.get("reason", t("recommendation_reason_default")),
-            "recommendation_timestamp": recommendation.get("timestamp", t("recommendation_timestamp_default")),
+            "recommendation_reason": recommendation.get(
+                "reason", t("recommendation_reason_default")
+            ),
+            "recommendation_timestamp": recommendation.get(
+                "timestamp", t("recommendation_timestamp_default")
+            ),
             # 市场数据
             "current_price": f"{current_price:.2f}",
             "current_price_raw": current_price,
@@ -903,7 +1007,39 @@ class PromptManager:
 
         return prompt
 
-    def get_prompt_set_info(self) -> Dict[str, str]:
+    def get_weekly_review_system_prompt(self) -> str:
+        """获取每周复盘系统 Prompt（改进1b）"""
+        return self.weekly_review_system_prompt
+
+    def format_weekly_review_prompt(
+        self,
+        weekly_stats: dict[str, Any],
+        systematic_biases: list[dict[str, Any]],
+        recurring_errors: list[dict[str, Any]],
+        all_symbols_summary: dict[str, list[dict[str, Any]]],
+    ) -> str:
+        """格式化每周复盘 Prompt（改进1b）"""
+        context = {
+            "weekly_stats": weekly_stats,
+            "systematic_biases": systematic_biases,
+            "recurring_errors": recurring_errors,
+            "all_symbols_summary": all_symbols_summary,
+        }
+        return self.weekly_review_prompt_template.render(context)
+
+    def format_prompt_meta_review(
+        self,
+        effectiveness_report: dict[str, Any],
+        historical_trend: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """格式化 Prompt 元反思 Prompt（改进5）"""
+        context = {
+            "effectiveness_report": effectiveness_report,
+            "historical_trend": historical_trend or [],
+        }
+        return self.prompt_meta_review_template.render(context)
+
+    def get_prompt_set_info(self) -> dict[str, str]:
         """获取当前 Prompt 集合的信息"""
         return {
             "name": self.prompt_set["name"],

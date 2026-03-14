@@ -100,9 +100,7 @@ class FakeOrderManager:
         )
         return {
             "success": True,
-            "limit_order": {
-                "response": {"data": {"statuses": [{"resting": {"oid": oid}}]}}
-            },
+            "limit_order": {"response": {"data": {"statuses": [{"resting": {"oid": oid}}]}}},
         }
 
     def execute_short_limit(self, symbol, usdt_amount, limit_price, tp_ratio=None, sl_ratio=None):
@@ -119,9 +117,7 @@ class FakeOrderManager:
         )
         return {
             "success": True,
-            "limit_order": {
-                "response": {"data": {"statuses": [{"resting": {"oid": oid}}]}}
-            },
+            "limit_order": {"response": {"data": {"statuses": [{"resting": {"oid": oid}}]}}},
         }
 
 

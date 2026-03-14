@@ -4,9 +4,10 @@
 """
 
 import os
-import yaml
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any
+
+import yaml
 from dotenv import load_dotenv
 
 from src.fees import default_perp_fee_rates
@@ -40,7 +41,7 @@ class Config:
             self._env_file = env_file
         else:
             # 优先检查环境变量 DOTENV_PATH，否则使用默认 .env
-            env_path = os.getenv('DOTENV_PATH', '.env')
+            env_path = os.getenv("DOTENV_PATH", ".env")
             load_dotenv(dotenv_path=env_path)
             self._env_file = env_path
 
@@ -50,6 +51,7 @@ class Config:
         self.config_data = self._load_yaml_config()
 
         # 初始化各配置项
+        self._init_llm_config()
         self._init_openai_config()
         self._init_hyperliquid_config()
         self._init_trading_config()
@@ -61,10 +63,12 @@ class Config:
         self._init_review_agent_config()
         self._init_external_info_agent_config()
         self._init_risk_config()
+        self._init_enhanced_analysis_config()
         self._init_logging_config()
         self._init_notifications_config()
+        self._init_market_monitor_config()
 
-    def _load_yaml_config(self) -> Dict[str, Any]:
+    def _load_yaml_config(self) -> dict[str, Any]:
         """加载 YAML 配置文件"""
         if not self.config_path.exists():
             raise FileNotFoundError(
@@ -72,14 +76,50 @@ class Config:
                 f"请将 config.yaml.example 复制为 config.yaml 并根据需要修改配置"
             )
 
-        with open(self.config_path, "r", encoding="utf-8") as f:
+        with open(self.config_path, encoding="utf-8") as f:
             return yaml.safe_load(f)
+
+    def _init_llm_config(self):
+        """初始化 LLM 客户端配置"""
+        llm_config = self.config_data.get("llm", {})
+
+        # 客户端类型：优先从 YAML 配置读取，如果没有则从环境变量读取
+        self.llm_client_type = llm_config.get("client_type") or os.getenv(
+            "LLM_CLIENT_TYPE", "langchain_openai"
+        )
+
+        # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取
+        self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", "deepseek-chat")
+
+        # 基础参数（可选）
+        self.llm_temperature = llm_config.get("temperature")
+        self.llm_top_p = llm_config.get("top_p")
+        self.llm_max_tokens = llm_config.get("max_tokens")
+
+        # 额外参数（可选）
+        self.llm_extra_body = llm_config.get("extra_body")
+
+        # OpenAI / OpenAI-compatible 配置
+        self.llm_openai_api_base = os.getenv("OPENAI_API_BASE")
+        self.llm_openai_api_key = os.getenv("OPENAI_API_KEY")
+
+        # Cloudflare 配置
+        self.llm_cloudflare_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        self.llm_cloudflare_api_token = os.getenv("CLOUDFLARE_API_TOKEN")
+
+        # Google 配置
+        self.llm_google_api_key = os.getenv("GOOGLE_API_KEY")
+
+        # LiteLLM 配置
+        self.llm_litellm_api_base = os.getenv("LITELLM_API_BASE")
+        self.llm_litellm_api_key = os.getenv("LITELLM_API_KEY")
+
+        # NVIDIA 配置
+        self.llm_nvidia_api_key = os.getenv("NVIDIA_API_KEY")
 
     def _init_openai_config(self):
         """初始化 OpenAI API 配置"""
-        self.openai_api_base = os.getenv(
-            "OPENAI_API_BASE", "https://api.deepseek.com/v1"
-        )
+        self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
 
@@ -89,20 +129,15 @@ class Config:
         self.llm_fallback_model = os.getenv("LLM_FALLBACK_MODEL", "")
 
         if not self.openai_api_key and self.require_api_credentials:
-            raise ValueError(
-                "未设置 OPENAI_API_KEY 环境变量！\n"
-                "请在 .env 文件中设置或使用环境变量"
-            )
+            raise ValueError("未设置 OPENAI_API_KEY 环境变量！\n请在 .env 文件中设置或使用环境变量")
 
     def _init_hyperliquid_config(self):
         """初始化 Hyperliquid 配置"""
         self.hyperliquid_private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY")
         self.hyperliquid_account_address = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", "")
         self.hyperliquid_vault_address = os.getenv("HYPERLIQUID_VAULT_ADDRESS", "")
-        self.hyperliquid_testnet = (
-            os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
-        )
-        
+        self.hyperliquid_testnet = os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
+
         # API Fallback 配置
         fallbacks = os.getenv("HYPERLIQUID_API_FALLBACKS", "")
         self.hyperliquid_api_urls = [url.strip() for url in fallbacks.split(",") if url.strip()]
@@ -110,14 +145,13 @@ class Config:
         # 检查私钥配置
         if not self.hyperliquid_private_key and self.require_api_credentials:
             raise ValueError(
-                "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n"
-                "请在 .env 文件中设置钱包私钥"
+                "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n请在 .env 文件中设置钱包私钥"
             )
 
     def _init_trading_config(self):
         """初始化交易配置"""
         trading = self.config_data.get("trading", {})
-        self.symbols: List[str] = trading.get("symbols", ["BTC", "ETH"])
+        self.symbols: list[str] = trading.get("symbols", ["BTC", "ETH"])
 
         # 单笔交易金额上限（AI可自主决定实际金额，但不超过此上限）
         # 向后兼容：支持旧字段名 trade_amount
@@ -155,7 +189,7 @@ class Config:
     def _init_indicators_config(self):
         """初始化技术指标配置"""
         indicators = self.config_data.get("indicators", {})
-        self.ma_periods: List[int] = indicators.get("ma_periods", [7, 25, 99])
+        self.ma_periods: list[int] = indicators.get("ma_periods", [7, 25, 99])
         self.rsi_period: int = int(indicators.get("rsi_period", 14))
 
         macd_params = indicators.get("macd_params", {})
@@ -182,12 +216,8 @@ class Config:
         grid_width = agent.get("grid_width", {})
         self.grid_width_min_pct: float = float(grid_width.get("min_pct", 0.02))
         self.grid_width_max_pct: float = float(grid_width.get("max_pct", 0.15))
-        self.grid_width_fallback_pct: float = float(
-            grid_width.get("fallback_pct", 0.05)
-        )
-        self.grid_ai_blend_weight: float = float(
-            grid_width.get("ai_blend_weight", 0.35)
-        )
+        self.grid_width_fallback_pct: float = float(grid_width.get("fallback_pct", 0.05))
+        self.grid_ai_blend_weight: float = float(grid_width.get("ai_blend_weight", 0.35))
 
     def _init_prompt_config(self):
         """初始化 Prompt 配置"""
@@ -204,71 +234,120 @@ class Config:
         self.review_temperature: float = float(review.get("temperature", 0.05))
         # 如果配置文件中指定了 model，使用它；否则使用默认的 openai_model
         self.review_model: str = review.get("model", None)
-        self.review_memory_file: str = review.get(
-            "memory_file", "logs/review_memory.json"
-        )
+        self.review_memory_file: str = review.get("memory_file", "logs/review_memory.json")
+        # 每日日志目录（用于 LoRA 训练数据收集）
+        self.review_daily_log_dir: str = review.get("daily_log_dir", "logs/review_daily")
         self.review_max_lessons: int = int(review.get("max_lessons", 30))
         self.review_min_confidence: float = float(review.get("min_confidence", 0.35))
-        self.review_similarity_threshold: float = float(
-            review.get("similarity_threshold", 0.5)
-        )
-        self.review_similarity_weights: Dict[str, float] = review.get(
-            "similarity_weights", {}
-        )
+        self.review_similarity_threshold: float = float(review.get("similarity_threshold", 0.5))
+        self.review_similarity_weights: dict[str, float] = review.get("similarity_weights", {})
         self.review_confidence_decay_factor: float = float(
             review.get("confidence_decay_factor", 0.6)
         )
-        self.review_similarity_method: str = review.get(
-            "similarity_method", "cosine"
+        self.review_similarity_method: str = review.get("similarity_method", "cosine")
+
+        # 改进1: 双粒度反思
+        self.review_instant_reflection_enabled: bool = review.get(
+            "instant_reflection_enabled", False
+        )
+        self.review_weekly_reflection_enabled: bool = review.get("weekly_reflection_enabled", False)
+        self.review_weekly_reflection_day: int = int(review.get("weekly_reflection_day", 0))
+        self.review_weekly_reflection_hour: int = int(review.get("weekly_reflection_hour", 8))
+
+        # 改进2: Regime 感知记忆
+        self.review_regime_aware_enabled: bool = review.get("regime_aware_enabled", False)
+        self.review_regime_mismatch_factor: float = float(review.get("regime_mismatch_factor", 0.4))
+
+        # 改进3: 确认偏差防护
+        self.review_bias_protection_enabled: bool = review.get("bias_protection_enabled", False)
+        self.review_max_positive_ratio: float = float(review.get("max_positive_ratio", 0.7))
+        self.review_negative_confidence_boost: float = float(
+            review.get("negative_confidence_boost", 1.15)
+        )
+
+        # 改进4: 事实-主观分离
+        self.review_fact_subjective_split_enabled: bool = review.get(
+            "fact_subjective_split_enabled", False
+        )
+        self.review_trending_subjective_boost: float = float(
+            review.get("trending_subjective_boost", 1.3)
+        )
+        self.review_ranging_factual_boost: float = float(review.get("ranging_factual_boost", 1.3))
+
+        # 改进5: Prompt 自优化
+        self.review_prompt_meta_reflection_enabled: bool = review.get(
+            "prompt_meta_reflection_enabled", False
+        )
+        self.review_prompt_optimization_dir: str = review.get(
+            "prompt_optimization_dir", "logs/prompt_optimization"
         )
 
     def _init_external_info_agent_config(self):
         """初始化外部信息收集 Agent 配置"""
         external_info = self.config_data.get("external_info_agent", {})
         self.external_info_enabled: bool = external_info.get("enabled", False)
-        self.external_info_interval_hours: float = float(
-            external_info.get("interval_hours", 3.0)
-        )
-        self.external_info_store_dir: str = external_info.get(
-            "store_dir", "data/market_info"
-        )
+        self.external_info_interval_hours: float = float(external_info.get("interval_hours", 3.0))
+        self.external_info_store_dir: str = external_info.get("store_dir", "data/market_info")
         # 从环境变量读取 Exa API 密钥
         self.external_info_exa_api_key: str = os.getenv("EXA_API_KEY")
-        
-        self.external_info_temperature: float = float(
-            external_info.get("temperature", 0.1)
-        )
+
+        self.external_info_temperature: float = float(external_info.get("temperature", 0.1))
         self.external_info_max_summary_length: int = int(
             external_info.get("max_summary_length", 2000)
         )
-        self.external_info_periods: List[str] = external_info.get(
+        self.external_info_periods: list[str] = external_info.get(
             "periods", ["daily", "weekly", "biweekly", "monthly"]
         )
-        self.external_info_cleanup_days: int = int(
-            external_info.get("cleanup_days", 30)
-        )
+        self.external_info_cleanup_days: int = int(external_info.get("cleanup_days", 30))
 
     def _init_risk_config(self):
         """初始化风控配置"""
         risk = self.config_data.get("risk_management", {})
         self.circuit_breaker_enabled: bool = risk.get("circuit_breaker_enabled", True)
-        self.circuit_breaker_threshold: float = float(
-            risk.get("circuit_breaker_threshold", 0.1)
-        )
+        self.circuit_breaker_threshold: float = float(risk.get("circuit_breaker_threshold", 0.1))
         self.circuit_breaker_window: int = int(risk.get("circuit_breaker_window", 5))
         self.circuit_breaker_pause: int = int(risk.get("circuit_breaker_pause", 30))
+
+    def _init_enhanced_analysis_config(self):
+        """初始化增强分析配置"""
+        enhanced = self.config_data.get("enhanced_analysis", {})
+
+        # 是否启用增强分析
+        self.enhanced_analysis_enabled: bool = enhanced.get("enabled", True)
+
+        # 信号过滤配置
+        self.enhanced_min_signal_quality: str = enhanced.get("min_signal_quality", "fair")
+        self.enhanced_min_confidence: float = float(enhanced.get("min_confidence", 0.4))
+        self.enhanced_enable_risk_filter: bool = enhanced.get("enable_risk_filter", True)
+        self.enhanced_enable_timing_filter: bool = enhanced.get("enable_timing_filter", True)
+
+        # 风险管理配置
+        risk_config = enhanced.get("risk", {})
+        self.enhanced_max_risk_per_trade: float = float(risk_config.get("max_risk_per_trade", 0.02))
+        self.enhanced_max_total_exposure: float = float(risk_config.get("max_total_exposure", 0.5))
+        self.enhanced_atr_sl_multiplier: float = float(risk_config.get("atr_sl_multiplier", 1.5))
+        self.enhanced_atr_tp_multiplier: float = float(risk_config.get("atr_tp_multiplier", 3.0))
+        self.enhanced_trailing_stop_enabled: bool = risk_config.get("trailing_stop_enabled", True)
+        self.enhanced_volatility_adjustment: bool = risk_config.get("volatility_adjustment", True)
+
+        # 信号权重配置
+        signal_config = enhanced.get("signal_weights", {})
+        self.enhanced_signal_weights: dict[str, float] = {
+            "trend": float(signal_config.get("trend", 0.25)),
+            "momentum": float(signal_config.get("momentum", 0.20)),
+            "volume": float(signal_config.get("volume", 0.15)),
+            "volatility": float(signal_config.get("volatility", 0.10)),
+            "price_action": float(signal_config.get("price_action", 0.15)),
+            "multi_timeframe": float(signal_config.get("multi_timeframe", 0.15)),
+        }
 
     def _init_logging_config(self):
         """初始化日志配置"""
         logging_config = self.config_data.get("logging", {})
         self.console_color: bool = logging_config.get("console_color", True)
         self.show_full_prompt: bool = logging_config.get("show_full_prompt", True)
-        self.show_chain_of_thought: bool = logging_config.get(
-            "show_chain_of_thought", True
-        )
-        self.decision_log_format: str = logging_config.get(
-            "decision_log_format", "json"
-        )
+        self.show_chain_of_thought: bool = logging_config.get("show_chain_of_thought", True)
+        self.decision_log_format: str = logging_config.get("decision_log_format", "json")
 
         # 日志级别
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
@@ -276,6 +355,27 @@ class Config:
     def _init_notifications_config(self):
         """初始化通知配置"""
         self.notifications = self.config_data.get("notifications", {"enabled": False})
+
+    def _init_market_monitor_config(self):
+        """初始化市场主动监控配置"""
+        monitor = self.config_data.get("market_monitor", {})
+        self.market_monitor_enabled: bool = monitor.get("enabled", False)
+        self.market_monitor_check_interval_seconds: int = int(
+            monitor.get("check_interval_seconds", 30)
+        )
+        self.market_monitor_alert_threshold_pct: float = float(
+            monitor.get("alert_threshold_pct", 3.0)
+        )
+        self.market_monitor_elevated_threshold_pct: float = float(
+            monitor.get("elevated_threshold_pct", 1.5)
+        )
+        self.market_monitor_extreme_threshold_pct: float = float(
+            monitor.get("extreme_threshold_pct", 5.0)
+        )
+        self.market_monitor_cooldown_minutes: int = int(monitor.get("cooldown_minutes", 5))
+        self.market_monitor_reference_window_minutes: int = int(
+            monitor.get("reference_window_minutes", 10)
+        )
 
     def validate(self):
         """验证配置的有效性"""
@@ -311,34 +411,76 @@ class Config:
             errors.append("agent.grid_width.ai_blend_weight 必须在 [0,1] 区间内")
 
         if errors:
+            raise ValueError("配置验证失败:\n" + "\n".join(f"- {err}" for err in errors))
+
+    def get_llm_client_config(self):
+        """
+        创建 LLM 客户端配置对象
+
+        Returns:
+            LLMClientConfig: LLM 客户端配置
+
+        Raises:
+            ValueError: 如果 llm_client_type 配置无效
+        """
+        from src.llm import LLMClientConfig, LLMClientType
+
+        # 验证 llm_client_type 以提供清晰的错误信息
+        try:
+            client_type_enum = LLMClientType(self.llm_client_type)
+        except ValueError as exc:
+            valid_values = [t.value for t in LLMClientType]
             raise ValueError(
-                "配置验证失败:\n" + "\n".join(f"- {err}" for err in errors)
-            )
+                f"Invalid llm_client_type '{self.llm_client_type}' in configuration. "
+                f"Expected one of: {valid_values}"
+            ) from exc
+
+        return LLMClientConfig(
+            client_type=client_type_enum,
+            model=self.llm_model,
+            temperature=self.llm_temperature,
+            top_p=self.llm_top_p,
+            max_tokens=self.llm_max_tokens,
+            extra_body=self.llm_extra_body,
+            openai_api_base=self.llm_openai_api_base,
+            openai_api_key=self.llm_openai_api_key,
+            cloudflare_account_id=self.llm_cloudflare_account_id,
+            cloudflare_api_token=self.llm_cloudflare_api_token,
+            google_api_key=self.llm_google_api_key,
+            litellm_api_base=self.llm_litellm_api_base,
+            litellm_api_key=self.llm_litellm_api_key,
+            nvidia_api_key=self.llm_nvidia_api_key,
+        )
 
     def __str__(self) -> str:
         """返回配置摘要（不包含敏感信息）"""
         # 确定运行模式
-        mode = (
-            "Hyperliquid 测试网 🧪"
-            if self.hyperliquid_testnet
-            else "Hyperliquid 主网 ⚠️"
+        mode = "Hyperliquid 测试网 🧪" if self.hyperliquid_testnet else "Hyperliquid 主网 ⚠️"
+        vault_info = (
+            f"\n        Vault 地址: {self.hyperliquid_vault_address}"
+            if getattr(self, "hyperliquid_vault_address", "")
+            else ""
         )
-        vault_info = f"\nVault 地址: {self.hyperliquid_vault_address}" if self.hyperliquid_vault_address else ""
-        api_info = f"\nAPI 列表: {', '.join(self.hyperliquid_api_urls)}" if self.hyperliquid_api_urls else ""
-        llm_fallback_info = f"\nLLM Fallback: {self.llm_fallback_model} ({self.llm_fallback_api_base})" if self.llm_fallback_model else ""
+        api_info = (
+            f"\n        API 列表: {', '.join(self.hyperliquid_api_urls)}"
+            if getattr(self, "hyperliquid_api_urls", [])
+            else ""
+        )
 
         return f"""
         === Quant Flow 配置摘要 ===
-        OpenAI API Base: {self.openai_api_base}
-        OpenAI Model: {self.openai_model}
-        运行模式: {mode}{vault_info}{api_info}{llm_fallback_info}
-        交易对: {', '.join(self.symbols)}
+        LLM 客户端: {self.llm_client_type}
+        模型: {self.llm_model}
+        交易平台: Hyperliquid（永续合约）
+        运行模式: {mode}{vault_info}{api_info}
+        交易对: {", ".join(self.symbols)}
         单笔交易金额上限: {self.max_trade_amount} USD
         最大杠杆倍数: {self.max_leverage}x
         止盈比例: {self.take_profit_ratio * 100}%
         止损比例: {self.stop_loss_ratio * 100}%
         决策间隔: {self.interval_minutes} 分钟
         K线周期: {self.timeframe}
+        市场监控: {"启用 (波动阈值 " + str(self.market_monitor_alert_threshold_pct) + "%)" if self.market_monitor_enabled else "未启用"}
         """
 
 
@@ -366,7 +508,7 @@ def get_config(
     """
     global _config
     requested_path = Path(config_path)
-    requested_env_file = env_file or os.getenv('DOTENV_PATH', '.env')
+    requested_env_file = env_file or os.getenv("DOTENV_PATH", ".env")
     if (
         _config is None
         or force_reload

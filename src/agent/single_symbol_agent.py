@@ -3,19 +3,22 @@
 为每个交易对维护独立的上下文窗口和决策历史
 """
 
-from typing import Dict, Any, Tuple, Optional
-from langchain_openai import ChatOpenAI
+import time
+from typing import Any
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
-from src.agent.tools import TradingTools
-from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.execution_agent import ExecutionAgent
-from src.trading.order_manager import OrderManager
-from src.utils.logger import TradingLogger
-from src.prompt_manager import PromptManager
+from src.agent.prompts import SYSTEM_PROMPT
+from src.agent.tools import TradingTools
+from src.agents.common.utils.helpers import send_error_notification
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
+from src.llm import LLMClientManager
+from src.prompt_manager import PromptManager
+from src.trading.order_manager import OrderManager
+from src.utils.logger import TradingLogger
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -60,7 +63,7 @@ def safe_leverage(leverage_data: Any, default: int = 1) -> int:
 
         # 如果是字典，尝试提取 value 字段
         if isinstance(leverage_data, dict):
-            value = leverage_data.get('value', default)
+            value = leverage_data.get("value", default)
             return int(value)
 
         # 如果直接是数字，转换为整数
@@ -79,9 +82,7 @@ class SingleSymbolAgent:
         symbol: str,
         order_manager: OrderManager,
         logger: TradingLogger,
-        openai_api_base: str,
-        openai_api_key: str,
-        openai_model: str,
+        llm_manager: LLMClientManager,
         temperature: float = 0.1,
         max_iterations: int = 5,
         trade_amount: float = 100.0,
@@ -89,8 +90,8 @@ class SingleSymbolAgent:
         take_profit_ratio: float = 0.05,
         stop_loss_ratio: float = 0.02,
         notifier=None,
-        prompt_manager: Optional[PromptManager] = None,
-        fee_rates: Optional[FeeRates] = None,
+        prompt_manager: PromptManager | None = None,
+        fee_rates: FeeRates | None = None,
         limit_order_enabled: bool = False,
     ):
         """
@@ -100,9 +101,7 @@ class SingleSymbolAgent:
             symbol: 交易对
             order_manager: 订单管理器
             logger: 日志记录器
-            openai_api_base: OpenAI API Base URL
-            openai_api_key: OpenAI API Key
-            openai_model: 模型名称
+            llm_manager: LLM 客户端管理器
             temperature: 温度参数
             max_iterations: 最大迭代次数
             trade_amount: 单笔交易金额上限
@@ -115,6 +114,7 @@ class SingleSymbolAgent:
         self.symbol = symbol
         self.order_manager = order_manager
         self.logger = logger
+        self.llm_manager = llm_manager
         self.trade_amount = trade_amount
         self.max_leverage = max_leverage
         self.take_profit_ratio = take_profit_ratio
@@ -127,24 +127,17 @@ class SingleSymbolAgent:
         self.fee_rates = fee_rates or FeeRates(
             maker_rate=MAKER_FEE_RATE_PER_SIDE, taker_rate=FEE_RATE_PER_SIDE
         )
-        
+
         # 用于去重：记录本次决策周期中已执行的工具调用
         self._executed_callbacks = set()
 
-        # 初始化 LLM
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=temperature,
-        )
+        # 初始化 LLM（从管理器获取）
+        self.llm = self.llm_manager.get_client(temperature=temperature)
 
         # 初始化执行 Agent（用于解析决策文本并执行）
         self.execution_agent = ExecutionAgent(
-            openai_api_base=openai_api_base,
-            openai_api_key=openai_api_key,
-            openai_model=openai_model,
-            temperature=0.0  # 执行 Agent 使用零温度确保确定性
+            llm_manager=llm_manager,
+            temperature=0.0,  # 执行 Agent 使用零温度确保确定性
         )
 
         # 创建工具
@@ -153,10 +146,7 @@ class SingleSymbolAgent:
         # 保存工具回调以供执行 Agent 使用
         self.tools_callbacks = self._get_tool_callbacks()
 
-        self.agent_executor = create_react_agent(
-            model=self.llm,
-            tools=self.tools
-        )
+        self.agent_executor = create_react_agent(model=self.llm, tools=self.tools)
 
         # 设置系统提示词
         if self.prompt_manager:
@@ -168,12 +158,14 @@ class SingleSymbolAgent:
     def _create_tools(self) -> list:
         """创建工具集"""
 
-        def buy_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
+        def buy_callback(
+            symbol: str, amount: float | None = None, leverage: int | None = None
+        ) -> str:
             """买入开多回调"""
             try:
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
-                    return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+                    return "❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
 
                 fee_guard_msg = self._check_fee_guard()
                 if fee_guard_msg:
@@ -189,12 +181,10 @@ class SingleSymbolAgent:
                 if actual_leverage > self.max_leverage:
                     return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
 
-                self.logger.print_info(f"[{self.symbol}Agent] 执行买入开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)")
+                self.logger.print_info(
+                    f"[{self.symbol}Agent] 执行买入开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)"
+                )
 
-                # 检查余额方法已在 OrderManager 中修复
-                if not hasattr(self.order_manager, 'check_sufficient_balance'):
-                    self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
-                
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
 
@@ -204,17 +194,17 @@ class SingleSymbolAgent:
                     symbol=self.symbol,
                     usdt_amount=actual_amount,
                     leverage=actual_leverage,
-                    with_tpsl=True
+                    with_tpsl=True,
                 )
 
-                if result and result.get('success'):
+                if result and result.get("success"):
                     # 获取市场订单信息
-                    market_order = result.get('market_order', {})
+                    result.get("market_order", {})
                     entry_price = self.current_price
                     # 使用配置的止盈止损比例（与实际交易一致）
                     tp_price = entry_price * (1 + self.take_profit_ratio)
                     sl_price = entry_price * (1 - self.stop_loss_ratio)
-                    quantity = result.get('quantity', 0)
+                    quantity = result.get("quantity", 0)
                     leverage_used = actual_leverage
 
                     # 发送开仓通知
@@ -230,7 +220,7 @@ class SingleSymbolAgent:
                             position_value=quantity * entry_price,
                             margin=actual_amount,
                             reason=f"AI 策略分析，多头信号确认 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)",
-                            order_hash=result.get('hash', '')
+                            order_hash=result.get("hash", ""),
                         )
 
                     return (
@@ -247,7 +237,9 @@ class SingleSymbolAgent:
                 error_details = f"API 返回: {result}"
                 self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                 self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
-                self.logger.print_error(f"[{self.symbol}Agent] 交易参数: 金额=${actual_amount}, 杠杆={actual_leverage}x, 价格=${self.current_price}")
+                self.logger.print_error(
+                    f"[{self.symbol}Agent] 交易参数: 金额=${actual_amount}, 杠杆={actual_leverage}x, 价格=${self.current_price}"
+                )
 
                 # 发送即时错误通知
                 if self.notifier:
@@ -261,13 +253,14 @@ class SingleSymbolAgent:
                     self.notifier.notify_error(
                         title=f"{self.symbol} 买入开多失败",
                         error_message=error_details,
-                        context=context
+                        context=context,
                     )
 
                 return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
                 import traceback
+
                 error_msg = f"❌ 买入开多异常: {str(e)}"
                 stack_trace = traceback.format_exc()
 
@@ -285,9 +278,7 @@ class SingleSymbolAgent:
                         f"堆栈跟踪: {stack_trace[:500]}"
                     )
                     self.notifier.notify_error(
-                        title=f"{self.symbol} 买入开多异常",
-                        error_message=str(e),
-                        context=context
+                        title=f"{self.symbol} 买入开多异常", error_message=str(e), context=context
                     )
 
                 return error_msg
@@ -299,28 +290,43 @@ class SingleSymbolAgent:
 
                 positions = self.order_manager.get_current_positions()
                 # 查找多头仓位（szi > 0 表示多头）
-                position = next((p for p in positions if p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) > 0), None)
+                position = next(
+                    (
+                        p
+                        for p in positions
+                        if p.get("coin") == self.symbol and safe_float(p.get("szi", 0)) > 0
+                    ),
+                    None,
+                )
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的多头仓位"
 
                 # 记录持仓详情以便调试
-                self.logger.print_info(f"[{self.symbol}Agent] 持仓详情: 币种={position.get('coin')}, 大小={position.get('szi')}, 入场价={position.get('entryPx')}")
+                self.logger.print_info(
+                    f"[{self.symbol}Agent] 持仓详情: 币种={position.get('coin')}, 大小={position.get('szi')}, 入场价={position.get('entryPx')}"
+                )
 
                 result = self.order_manager.close_position(
                     symbol=self.symbol,
-                    size=None  # Close entire position
+                    size=None,  # Close entire position
                 )
 
-                if result and result.get('status') == 'ok':
+                if result and result.get("status") == "ok":
                     # 发送平仓通知
                     if self.notifier:
-                        entry_price = float(position.get('entryPx', 0))
-                        exit_price = self.current_price
-                        size = abs(float(position.get('szi', 0)))
-                        pnl = result.get('pnl', 0)
-                        leverage = safe_leverage(position.get('leverage'), 1)
-                        pnl_percent = (exit_price - entry_price) / entry_price * leverage * 100 if entry_price > 0 else 0
+                        entry_price = float(position.get("entryPx", 0))
+                        # 优先使用实际成交价，回退到当前市场价
+                        exit_price = result.get("fill_price", self.current_price)
+                        size = abs(float(position.get("szi", 0)))
+                        # 根据开仓价、平仓价和数量计算实际盈亏金额
+                        pnl = (exit_price - entry_price) * size
+                        leverage = safe_leverage(position.get("leverage"), 1)
+                        pnl_percent = (
+                            (exit_price - entry_price) / entry_price * leverage * 100
+                            if entry_price > 0
+                            else 0
+                        )
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
@@ -330,13 +336,13 @@ class SingleSymbolAgent:
                             exit_price=exit_price,
                             pnl=pnl,
                             pnl_percent=pnl_percent,
-                            order_hash=result.get('hash', '')
+                            order_hash=result.get("hash", ""),
                         )
 
-                    return f"✅ 卖出平多成功！"
+                    return "✅ 卖出平多成功！"
 
                 # 平仓失败 - 记录详细信息并发送通知
-                error_msg = f"❌ 卖出平多失败"
+                error_msg = "❌ 卖出平多失败"
                 error_details = f"API 返回: {result}"
                 self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                 self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
@@ -355,13 +361,14 @@ class SingleSymbolAgent:
                     self.notifier.notify_error(
                         title=f"{self.symbol} 卖出平多失败",
                         error_message=error_details,
-                        context=context
+                        context=context,
                     )
 
                 return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
                 import traceback
+
                 error_msg = f"❌ 卖出平多异常: {str(e)}"
                 stack_trace = traceback.format_exc()
 
@@ -379,19 +386,19 @@ class SingleSymbolAgent:
                         f"堆栈跟踪: {stack_trace[:500]}"  # 限制长度
                     )
                     self.notifier.notify_error(
-                        title=f"{self.symbol} 卖出平多异常",
-                        error_message=str(e),
-                        context=context
+                        title=f"{self.symbol} 卖出平多异常", error_message=str(e), context=context
                     )
 
                 return error_msg
 
-        def sell_short_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None) -> str:
+        def sell_short_callback(
+            symbol: str, amount: float | None = None, leverage: int | None = None
+        ) -> str:
             """卖空开空回调"""
             try:
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
-                    return f"❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
+                    return "❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
 
                 fee_guard_msg = self._check_fee_guard()
                 if fee_guard_msg:
@@ -407,11 +414,9 @@ class SingleSymbolAgent:
                 if actual_leverage > self.max_leverage:
                     return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
 
-                self.logger.print_info(f"[{self.symbol}Agent] 执行卖空开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)")
-
-                # 检查余额方法已在 OrderManager 中修复
-                if not hasattr(self.order_manager, 'check_sufficient_balance'):
-                     self.logger.print_error(f"[{self.symbol}Agent] OrderManager 缺失 check_sufficient_balance 方法")
+                self.logger.print_info(
+                    f"[{self.symbol}Agent] 执行卖空开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)"
+                )
 
                 if not self.order_manager.check_sufficient_balance(actual_amount):
                     return f"❌ 余额不足，需要 {actual_amount} USDT"
@@ -422,16 +427,16 @@ class SingleSymbolAgent:
                     symbol=self.symbol,
                     usdt_amount=actual_amount,
                     leverage=actual_leverage,
-                    with_tpsl=True
+                    with_tpsl=True,
                 )
 
-                if result and result.get('success'):
+                if result and result.get("success"):
                     # 获取市场订单信息
                     entry_price = self.current_price
                     # 使用配置的止盈止损比例（做空方向相反）
                     tp_price = entry_price * (1 - self.take_profit_ratio)  # 下跌时止盈
-                    sl_price = entry_price * (1 + self.stop_loss_ratio)    # 上涨时止损
-                    quantity = result.get('quantity', 0)
+                    sl_price = entry_price * (1 + self.stop_loss_ratio)  # 上涨时止损
+                    quantity = result.get("quantity", 0)
                     leverage_used = actual_leverage
 
                     # 发送开仓通知
@@ -447,7 +452,7 @@ class SingleSymbolAgent:
                             position_value=quantity * entry_price,
                             margin=actual_amount,
                             reason=f"AI 策略分析，空头信号确认 (金额: ${actual_amount}, 杠杆: {actual_leverage}x)",
-                            order_hash=result.get('hash', '')
+                            order_hash=result.get("hash", ""),
                         )
 
                     return (
@@ -464,7 +469,9 @@ class SingleSymbolAgent:
                 error_details = f"API 返回: {result}"
                 self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                 self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
-                self.logger.print_error(f"[{self.symbol}Agent] 交易参数: 金额=${actual_amount}, 杠杆={actual_leverage}x, 价格=${self.current_price}")
+                self.logger.print_error(
+                    f"[{self.symbol}Agent] 交易参数: 金额=${actual_amount}, 杠杆={actual_leverage}x, 价格=${self.current_price}"
+                )
 
                 # 发送即时错误通知
                 if self.notifier:
@@ -478,13 +485,14 @@ class SingleSymbolAgent:
                     self.notifier.notify_error(
                         title=f"{self.symbol} 卖空开空失败",
                         error_message=error_details,
-                        context=context
+                        context=context,
                     )
 
                 return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
                 import traceback
+
                 error_msg = f"❌ 卖空开空异常: {str(e)}"
                 stack_trace = traceback.format_exc()
 
@@ -502,9 +510,7 @@ class SingleSymbolAgent:
                         f"堆栈跟踪: {stack_trace[:500]}"
                     )
                     self.notifier.notify_error(
-                        title=f"{self.symbol} 卖空开空异常",
-                        error_message=str(e),
-                        context=context
+                        title=f"{self.symbol} 卖空开空异常", error_message=str(e), context=context
                     )
 
                 return error_msg
@@ -516,28 +522,43 @@ class SingleSymbolAgent:
 
                 positions = self.order_manager.get_current_positions()
                 # 查找空头仓位（szi < 0 表示空头）
-                position = next((p for p in positions if p.get('coin') == self.symbol and safe_float(p.get('szi', 0)) < 0), None)
+                position = next(
+                    (
+                        p
+                        for p in positions
+                        if p.get("coin") == self.symbol and safe_float(p.get("szi", 0)) < 0
+                    ),
+                    None,
+                )
 
                 if not position:
                     return f"❌ 未持有 {self.symbol} 的空头仓位"
 
                 # 记录持仓详情以便调试
-                self.logger.print_info(f"[{self.symbol}Agent] 持仓详情: 币种={position.get('coin')}, 大小={position.get('szi')}, 入场价={position.get('entryPx')}")
+                self.logger.print_info(
+                    f"[{self.symbol}Agent] 持仓详情: 币种={position.get('coin')}, 大小={position.get('szi')}, 入场价={position.get('entryPx')}"
+                )
 
                 result = self.order_manager.close_position(
                     symbol=self.symbol,
-                    size=None  # Close entire position
+                    size=None,  # Close entire position
                 )
 
-                if result and result.get('status') == 'ok':
+                if result and result.get("status") == "ok":
                     # 发送平仓通知
                     if self.notifier:
-                        entry_price = float(position.get('entryPx', 0))
-                        exit_price = self.current_price
-                        size = abs(float(position.get('szi', 0)))
-                        pnl = result.get('pnl', 0)
-                        leverage = safe_leverage(position.get('leverage'), 1)
-                        pnl_percent = ((entry_price - exit_price) / entry_price * leverage * 100) if entry_price > 0 else 0
+                        entry_price = float(position.get("entryPx", 0))
+                        # 优先使用实际成交价，回退到当前市场价
+                        exit_price = result.get("fill_price", self.current_price)
+                        size = abs(float(position.get("szi", 0)))
+                        # 做空盈亏：价格下跌盈利，上涨亏损
+                        pnl = (entry_price - exit_price) * size
+                        leverage = safe_leverage(position.get("leverage"), 1)
+                        pnl_percent = (
+                            ((entry_price - exit_price) / entry_price * leverage * 100)
+                            if entry_price > 0
+                            else 0
+                        )
 
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
@@ -547,13 +568,13 @@ class SingleSymbolAgent:
                             exit_price=exit_price,
                             pnl=pnl,
                             pnl_percent=pnl_percent,
-                            order_hash=result.get('hash', '')
+                            order_hash=result.get("hash", ""),
                         )
 
-                    return f"✅ 买入平空成功！"
+                    return "✅ 买入平空成功！"
 
                 # 平仓失败 - 记录详细信息并发送通知
-                error_msg = f"❌ 买入平空失败"
+                error_msg = "❌ 买入平空失败"
                 error_details = f"API 返回: {result}"
                 self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                 self.logger.print_error(f"[{self.symbol}Agent] {error_details}")
@@ -572,13 +593,14 @@ class SingleSymbolAgent:
                     self.notifier.notify_error(
                         title=f"{self.symbol} 买入平空失败",
                         error_message=error_details,
-                        context=context
+                        context=context,
                     )
 
                 return f"{error_msg}\n详情: {error_details}"
 
             except Exception as e:
                 import traceback
+
                 error_msg = f"❌ 买入平空异常: {str(e)}"
                 stack_trace = traceback.format_exc()
 
@@ -596,9 +618,7 @@ class SingleSymbolAgent:
                         f"堆栈跟踪: {stack_trace[:500]}"  # 限制长度
                     )
                     self.notifier.notify_error(
-                        title=f"{self.symbol} 买入平空异常",
-                        error_message=str(e),
-                        context=context
+                        title=f"{self.symbol} 买入平空异常", error_message=str(e), context=context
                     )
 
                 return error_msg
@@ -612,16 +632,18 @@ class SingleSymbolAgent:
                 self._executed_callbacks.add(callback_key)
             return f"⏸️  确认：不执行操作。原因：{reason}"
 
-        def buy_spot_callback(symbol: str, amount: Optional[float] = None) -> str:
+        def buy_spot_callback(symbol: str, amount: float | None = None) -> str:
             """现货定投推荐回调（仅推荐，不直接执行）"""
             # 检查是否允许开新仓
             if self.trade_amount <= 0:
-                return f"❌ 当前余额不足，无法进行现货定投。"
+                return "❌ 当前余额不足，无法进行现货定投。"
 
             actual_amount = amount if amount is not None else self.trade_amount
             if actual_amount > self.trade_amount:
                 return f"❌ 定投金额 ${actual_amount} 超过上限 ${self.trade_amount}"
-            self.logger.print_info(f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})，将交给现货 Agent 评估")
+            self.logger.print_info(
+                f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})，将交给现货 Agent 评估"
+            )
             return f"📝 已推荐 {symbol} 现货定投 (建议金额: ${actual_amount})，等待现货 Agent 评估"
 
         # 限价单回调（仅在启用时创建）
@@ -630,15 +652,21 @@ class SingleSymbolAgent:
         cancel_limit_order_callback = None
 
         if self.limit_order_enabled:
-            def buy_limit_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None, price: float = 0.0) -> str:
+
+            def buy_limit_callback(
+                symbol: str,
+                amount: float | None = None,
+                leverage: int | None = None,
+                price: float = 0.0,
+            ) -> str:
                 """限价开多回调"""
                 try:
                     if self.trade_amount <= 0:
-                        return f"❌ 当前余额不足，无法开新仓。"
-                    
+                        return "❌ 当前余额不足，无法开新仓。"
+
                     if price <= 0:
-                        return f"❌ 限价价格必须大于0"
-                    
+                        return "❌ 限价价格必须大于0"
+
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
                         return fee_guard_msg
@@ -651,7 +679,9 @@ class SingleSymbolAgent:
                     if actual_leverage > self.max_leverage:
                         return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
 
-                    self.logger.print_info(f"[{self.symbol}Agent] 执行限价开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})")
+                    self.logger.print_info(
+                        f"[{self.symbol}Agent] 执行限价开多 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})"
+                    )
 
                     if not self.order_manager.check_sufficient_balance(actual_amount):
                         return f"❌ 余额不足，需要 {actual_amount} USDT"
@@ -660,12 +690,13 @@ class SingleSymbolAgent:
                         symbol=self.symbol,
                         usdt_amount=actual_amount,
                         limit_price=price,
-                        leverage=actual_leverage
+                        leverage=actual_leverage,
                     )
 
-                    if result and result.get('success'):
-                        tp_price = result.get('take_profit_price', 0)
-                        sl_price = result.get('stop_loss_price', 0)
+                    if result and result.get("success"):
+                        tp_price = result.get("take_profit_price", 0)
+                        sl_price = result.get("stop_loss_price", 0)
+
                         return (
                             f"✅ 限价开多订单已提交！\n"
                             f"  币种: {symbol}\n"
@@ -685,15 +716,20 @@ class SingleSymbolAgent:
                     self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                     return f"❌ {error_msg}"
 
-            def sell_short_limit_callback(symbol: str, amount: Optional[float] = None, leverage: Optional[int] = None, price: float = 0.0) -> str:
+            def sell_short_limit_callback(
+                symbol: str,
+                amount: float | None = None,
+                leverage: int | None = None,
+                price: float = 0.0,
+            ) -> str:
                 """限价开空回调"""
                 try:
                     if self.trade_amount <= 0:
-                        return f"❌ 当前余额不足，无法开新仓。"
-                    
+                        return "❌ 当前余额不足，无法开新仓。"
+
                     if price <= 0:
-                        return f"❌ 限价价格必须大于0"
-                    
+                        return "❌ 限价价格必须大于0"
+
                     fee_guard_msg = self._check_fee_guard()
                     if fee_guard_msg:
                         return fee_guard_msg
@@ -706,7 +742,9 @@ class SingleSymbolAgent:
                     if actual_leverage > self.max_leverage:
                         return f"❌ 杠杆倍数 {actual_leverage}x 超过上限 {self.max_leverage}x"
 
-                    self.logger.print_info(f"[{self.symbol}Agent] 执行限价开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})")
+                    self.logger.print_info(
+                        f"[{self.symbol}Agent] 执行限价开空 (金额: ${actual_amount}, 杠杆: {actual_leverage}x, 限价: ${price:.2f})"
+                    )
 
                     if not self.order_manager.check_sufficient_balance(actual_amount):
                         return f"❌ 余额不足，需要 {actual_amount} USDT"
@@ -715,12 +753,13 @@ class SingleSymbolAgent:
                         symbol=self.symbol,
                         usdt_amount=actual_amount,
                         limit_price=price,
-                        leverage=actual_leverage
+                        leverage=actual_leverage,
                     )
 
-                    if result and result.get('success'):
-                        tp_price = result.get('take_profit_price', 0)
-                        sl_price = result.get('stop_loss_price', 0)
+                    if result and result.get("success"):
+                        tp_price = result.get("take_profit_price", 0)
+                        sl_price = result.get("stop_loss_price", 0)
+
                         return (
                             f"✅ 限价开空订单已提交！\n"
                             f"  币种: {symbol}\n"
@@ -748,12 +787,9 @@ class SingleSymbolAgent:
 
                     self.logger.print_info(f"[{self.symbol}Agent] 取消限价单 (订单ID: {order_id})")
 
-                    result = self.order_manager.cancel_limit_order(
-                        symbol=symbol,
-                        order_id=order_id
-                    )
+                    result = self.order_manager.cancel_limit_order(symbol=symbol, order_id=order_id)
 
-                    if result and result.get('success'):
+                    if result and result.get("success"):
                         return f"✅ 限价单 {order_id} 已成功取消"
                     else:
                         return f"❌ 取消限价单失败: {result.get('message', '未知错误') if result else '取消失败'}"
@@ -772,7 +808,7 @@ class SingleSymbolAgent:
             buy_spot_callback,
             buy_limit_callback if self.limit_order_enabled else None,
             sell_short_limit_callback if self.limit_order_enabled else None,
-            cancel_limit_order_callback if self.limit_order_enabled else None
+            cancel_limit_order_callback if self.limit_order_enabled else None,
         )
 
         # 保存回调函数引用以供后续使用
@@ -793,7 +829,7 @@ class SingleSymbolAgent:
 
         return trading_tools.get_all_tools()
 
-    def _get_tool_callbacks(self) -> Dict[str, Any]:
+    def _get_tool_callbacks(self) -> dict[str, Any]:
         """
         获取工具回调函数字典
 
@@ -801,23 +837,23 @@ class SingleSymbolAgent:
             工具回调函数字典
         """
         callbacks = {
-            'buy': self._buy_callback,
-            'sell': self._sell_callback,
-            'sell_short': self._sell_short_callback,
-            'buy_to_cover': self._buy_to_cover_callback,
-            'do_nothing': self._do_nothing_callback,
-            'buy_spot': self._buy_spot_callback
+            "buy": self._buy_callback,
+            "sell": self._sell_callback,
+            "sell_short": self._sell_short_callback,
+            "buy_to_cover": self._buy_to_cover_callback,
+            "do_nothing": self._do_nothing_callback,
+            "buy_spot": self._buy_spot_callback,
         }
-        
+
         # 如果限价单功能启用，添加限价单回调
         if self.limit_order_enabled:
-            callbacks['buy_limit'] = self._buy_limit_callback
-            callbacks['sell_short_limit'] = self._sell_short_limit_callback
-            callbacks['cancel_limit_order'] = self._cancel_limit_order_callback
-        
+            callbacks["buy_limit"] = self._buy_limit_callback
+            callbacks["sell_short_limit"] = self._sell_short_limit_callback
+            callbacks["cancel_limit_order"] = self._cancel_limit_order_callback
+
         return callbacks
 
-    def _check_fee_guard(self) -> Optional[str]:
+    def _check_fee_guard(self) -> str | None:
         """
         确保当前止盈目标足以覆盖手续费，避免因为手续费导致的小额亏损
         """
@@ -833,13 +869,13 @@ class SingleSymbolAgent:
 
     def make_decision(
         self,
-        market_data: Dict[str, Any],
-        multi_timeframe_trends: Dict[str, str],
+        market_data: dict[str, Any],
+        multi_timeframe_trends: dict[str, str],
         current_positions: list,
         max_positions: int,
-        historical_summary: Optional[str] = None,
-        enriched_data: Optional[Dict[str, Any]] = None
-    ) -> Tuple[str, Dict[str, Any]]:
+        historical_summary: str | None = None,
+        enriched_data: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """
         做出交易决策
 
@@ -856,18 +892,18 @@ class SingleSymbolAgent:
         try:
             # 重置去重状态（每次新的决策周期开始时）
             self._executed_callbacks.clear()
-            
+
             # 更新当前价格
-            self.current_price = market_data.get('current_price', 0)
+            self.current_price = market_data.get("current_price", 0)
 
             # 获取实时余额信息
             balance_info = self.order_manager.get_available_balance_info()
             balance_dict = None
-            if balance_info.get('status') == 'ok':
+            if balance_info.get("status") == "ok":
                 balance_dict = {
-                    'total': balance_info['total'],
-                    'occupied': balance_info['occupied'],
-                    'available': balance_info['available']
+                    "total": balance_info["total"],
+                    "occupied": balance_info["occupied"],
+                    "available": balance_info["available"],
                 }
 
             # 创建 Prompt
@@ -896,50 +932,21 @@ class SingleSymbolAgent:
                 balance_info=balance_dict,
                 enriched_data=enriched_data,
                 limit_order_enabled=self.limit_order_enabled,
-                open_limit_orders=open_limit_orders
+                open_limit_orders=open_limit_orders,
             )
 
             # 显示 Prompt
             self.logger.print_section(f"[{self.symbol}Agent] 独立决策分析", style="bold magenta")
             self.logger.print_prompt(prompt)
 
-            # 调用 Agent
-            messages = [
-                self.system_message,
-                HumanMessage(content=prompt)
-            ]
-
-            # 收集所有输出
-            all_events = []
-            agent_output = ""
-            last_printed_content = ""  # 记录上次打印的内容，避免重复打印
+            # 调用 Agent（含自动重试 1 次机制）
+            messages = [self.system_message, HumanMessage(content=prompt)]
 
             # 使用 config 参数限制最大迭代次数
             # recursion_limit 控制图的最大递归深度，防止无限循环
             config = {"recursion_limit": self.max_iterations * 2}
-            
-            for event in self.agent_executor.stream(
-                {"messages": messages},
-                stream_mode="values",
-                config=config
-            ):
-                all_events.append(event)
-                if "messages" in event and len(event["messages"]) > 0:
-                    last_message = event["messages"][-1]
-                    if hasattr(last_message, 'content'):
-                        content = last_message.content
-                        # 更新agent_output为最新的完整内容
-                        if content and content != prompt:
-                            agent_output = content
-                        
-                        # 只在内容长度增加时打印（支持流式输出，避免重复打印相同内容）
-                        # 这样可以处理逐步生成的内容，同时避免重复打印相同的完整响应
-                        if (content and 
-                            content != prompt and 
-                            len(content) > len(last_printed_content)):
-                            # 使用新的 AI 响应渲染方法（支持 Markdown）
-                            self.logger.print_ai_response(content, f"🎯 {self.symbol} Agent 分析中...")
-                            last_printed_content = content
+
+            all_events, agent_output = self._invoke_agent_with_retry(messages, config, prompt)
 
             # 解析结果
             decision_type = self._parse_decision_from_events(all_events)
@@ -947,7 +954,7 @@ class SingleSymbolAgent:
                 "output": agent_output,
                 "events": all_events,
                 "prompt": prompt,
-                "symbol": self.symbol
+                "symbol": self.symbol,
             }
 
             return decision_type, decision_details
@@ -955,7 +962,100 @@ class SingleSymbolAgent:
         except Exception as e:
             self.logger.print_error(f"[{self.symbol}Agent] 决策异常: {e}")
             self.logger.logger.exception(e)
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{self.symbol} Agent 决策异常",
+                context_details={
+                    "交易对": self.symbol,
+                    "当前价": f"${self.current_price}",
+                    "阶段": "LLM 决策分析",
+                    "说明": "LLM API 调用异常，本轮决策将降级为 ERROR",
+                },
+            )
             return "ERROR", {"error": str(e)}
+
+    def _invoke_agent_with_retry(
+        self,
+        messages: list,
+        config: dict,
+        prompt: str,
+        max_retries: int = 1,
+    ) -> tuple[list, str]:
+        """
+        调用 Agent 并在失败时自动重试，重试成功或失败均发送通知
+
+        Args:
+            messages: LLM 消息列表
+            config: LangGraph 配置
+            prompt: 原始 prompt（用于过滤输出）
+            max_retries: 最大重试次数（默认 1 次）
+
+        Returns:
+            (事件列表, agent 输出文本)
+        """
+        for attempt in range(1, max_retries + 2):  # 首次 + 重试次数
+            try:
+                all_events = []
+                agent_output = ""
+                last_printed_content = ""
+
+                for event in self.agent_executor.stream(
+                    {"messages": messages}, stream_mode="values", config=config
+                ):
+                    all_events.append(event)
+                    if "messages" in event and len(event["messages"]) > 0:
+                        last_message = event["messages"][-1]
+                        if hasattr(last_message, "content"):
+                            content = last_message.content
+                            if content and content != prompt:
+                                agent_output = content
+
+                            if (
+                                content
+                                and content != prompt
+                                and len(content) > len(last_printed_content)
+                            ):
+                                self.logger.print_ai_response(
+                                    content, f"🎯 {self.symbol} Agent 分析中..."
+                                )
+                                last_printed_content = content
+
+                # 调用成功，如果是重试成功则记录日志
+                if attempt > 1:
+                    self.logger.print_info(
+                        f"[{self.symbol}Agent] LLM API 重试成功（第 {attempt} 次尝试）"
+                    )
+
+                return all_events, agent_output
+
+            except Exception as e:
+                if attempt <= max_retries:
+                    # 还有重试机会
+                    self.logger.print_warning(
+                        f"[{self.symbol}Agent] LLM API 调用失败（第 {attempt} 次），"
+                        f"{2**attempt}s 后重试: {e}"
+                    )
+                    time.sleep(2**attempt)
+                else:
+                    # 所有重试均失败，发送通知并抛出异常
+                    self.logger.print_error(
+                        f"[{self.symbol}Agent] LLM API 调用失败，"
+                        f"已重试 {max_retries} 次仍未恢复: {e}"
+                    )
+                    send_error_notification(
+                        notifier=self.notifier,
+                        exception=e,
+                        title=f"{self.symbol} LLM API 重试失败",
+                        context_details={
+                            "交易对": self.symbol,
+                            "当前价": f"${self.current_price}",
+                            "阶段": "LLM 决策分析",
+                            "尝试次数": f"{attempt} 次（含首次 + {max_retries} 次重试）",
+                            "说明": "LLM API 调用重试后仍然失败",
+                        },
+                    )
+                    raise
 
     def _parse_decision_from_events(self, events: list) -> str:
         """
@@ -976,9 +1076,9 @@ class SingleSymbolAgent:
                     continue
 
                 for message in reversed(event["messages"]):
-                    if hasattr(message, 'tool_calls') and message.tool_calls:
+                    if hasattr(message, "tool_calls") and message.tool_calls:
                         for tool_call in message.tool_calls:
-                            tool_name = tool_call.get('name', '')
+                            tool_name = tool_call.get("name", "")
                             if tool_name == "buy":
                                 return "BUY"
                             elif tool_name == "sell":
@@ -992,7 +1092,7 @@ class SingleSymbolAgent:
                             elif tool_name == "do_nothing":
                                 return "DO_NOTHING"
 
-                    if hasattr(message, 'name'):
+                    if hasattr(message, "name"):
                         if message.name == "buy":
                             return "BUY"
                         elif message.name == "sell":
@@ -1014,32 +1114,38 @@ class SingleSymbolAgent:
                     continue
                 for message in reversed(event["messages"]):
                     # 只提取 AI 的响应消息
-                    if (hasattr(message, 'content') and
-                        isinstance(message.content, str) and
-                        hasattr(message, 'type') and
-                        message.type == 'ai'):
+                    if (
+                        hasattr(message, "content")
+                        and isinstance(message.content, str)
+                        and hasattr(message, "type")
+                        and message.type == "ai"
+                    ):
                         decision_text = message.content
                         break
                 if decision_text:
                     break
 
             if decision_text:
-                self.logger.print_info(f"[{self.symbol}Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本")
-                self.logger.print_info(f"[{self.symbol}Agent] 决策文本长度: {len(decision_text)} 字符")
-                self.logger.print_info(f"[{self.symbol}Agent] 决策文本预览: {decision_text[:300]}{'...' if len(decision_text) > 300 else ''}")
+                self.logger.print_info(
+                    f"[{self.symbol}Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本"
+                )
+                self.logger.print_info(
+                    f"[{self.symbol}Agent] 决策文本长度: {len(decision_text)} 字符"
+                )
+                self.logger.print_info(
+                    f"[{self.symbol}Agent] 决策文本预览: {decision_text[:300]}{'...' if len(decision_text) > 300 else ''}"
+                )
 
                 # 使用 ExecutionAgent 解析决策
                 execution_plan = self.execution_agent.parse_decision(
-                    decision_text=decision_text,
-                    symbol=self.symbol,
-                    logger=self.logger
+                    decision_text=decision_text, symbol=self.symbol, logger=self.logger
                 )
 
                 # 执行计划
                 result = self.execution_agent.execute_plan(
                     execution_plan=execution_plan,
                     tools_callbacks=self.tools_callbacks,
-                    logger=self.logger
+                    logger=self.logger,
                 )
 
                 self.logger.print_info(f"[ExecutionAgent] 执行结果: {result}")
@@ -1051,7 +1157,7 @@ class SingleSymbolAgent:
                     "SELL_SHORT": "SELL_SHORT",
                     "BUY_TO_COVER": "BUY_TO_COVER",
                     "BUY_SPOT": "BUY_SPOT_RECOMMEND",
-                    "DO_NOTHING": "DO_NOTHING"
+                    "DO_NOTHING": "DO_NOTHING",
                 }
                 return decision_map.get(execution_plan.decision.value, "DO_NOTHING")
 
@@ -1059,4 +1165,14 @@ class SingleSymbolAgent:
 
         except Exception as e:
             self.logger.logger.error(f"解析决策失败: {e}")
+            send_error_notification(
+                notifier=self.notifier,
+                exception=e,
+                title=f"{self.symbol} 决策解析失败",
+                context_details={
+                    "交易对": self.symbol,
+                    "阶段": "SingleSymbolAgent 决策解析",
+                    "说明": "LLM 决策解析异常，本轮决策将降级为 ERROR",
+                },
+            )
             return "ERROR"

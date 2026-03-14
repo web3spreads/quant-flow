@@ -10,7 +10,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.utils.grid_math import calculate_grid_config
 
-
 DEFAULT_WIDTH_PCT_MIN = 0.02
 DEFAULT_WIDTH_PCT_MAX = 0.15
 DEFAULT_WIDTH_PCT_FALLBACK = 0.05
@@ -213,7 +212,10 @@ class GridAgent:
         ai_width = self._safe_float(ai_width_pct, 0.0)
         if ai_width > 0:
             ai_width = self._clamp(ai_width, self.width_pct_min, self.width_pct_max)
-            blended = market_width * (1 - self.ai_width_blend_weight) + ai_width * self.ai_width_blend_weight
+            blended = (
+                market_width * (1 - self.ai_width_blend_weight)
+                + ai_width * self.ai_width_blend_weight
+            )
             return self._clamp(blended, self.width_pct_min, self.width_pct_max)
 
         return market_width

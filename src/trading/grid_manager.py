@@ -3,13 +3,14 @@
 支持网格同步、AI 止盈止损和状态持久化
 """
 
-import time
 import json
 import os
-from typing import Dict, Any, List, Optional
+import time
+from contextlib import suppress
+from typing import Any
+
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
-
 
 DEFAULT_MIN_ORDERS = 4
 DEFAULT_AMOUNT_PER_ORDER = 10.0
@@ -38,9 +39,9 @@ class GridManager:
         self.state_file = state_file
         self.state = self._load_state()
 
-    def _load_state(self) -> Dict[str, Any]:
+    def _load_state(self) -> dict[str, Any]:
         if os.path.exists(self.state_file):
-            with open(self.state_file, "r", encoding="utf-8") as f:
+            with open(self.state_file, encoding="utf-8") as f:
                 try:
                     data = json.load(f)
                     if "active_grids" not in data:
@@ -57,9 +58,9 @@ class GridManager:
     def update_grid(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
+        market_data: dict[str, Any],
         agent: Any,
-        trends: Dict[str, str] = None,
+        trends: dict[str, str] = None,
     ):
         """
         统一入口：获取状态 -> AI 决策 -> 同步网格
@@ -68,7 +69,7 @@ class GridManager:
         ai_config = agent.make_decision(market_data, trends, summary)
         self.sync_grid(symbol, ai_config)
 
-    def sync_grid(self, symbol: str, ai_config: Dict[str, Any]):
+    def sync_grid(self, symbol: str, ai_config: dict[str, Any]):
         """
         核心逻辑：根据 AI 最新的决策，同步现实中的网格状态。
         """
@@ -90,15 +91,17 @@ class GridManager:
             new_num = int(new_num)
             if new_num <= 0:
                 new_num = DEFAULT_GRID_NUM
-        except:
+        except (TypeError, ValueError):
             new_num = DEFAULT_GRID_NUM
-            
+
         new_amount = params.get("amount_per_grid")
         tp_ratio = params.get("tp_ratio")
         sl_ratio = params.get("sl_ratio")
 
         if new_lower is None or new_upper is None or new_amount is None:
-            self.logger.print_error(f"   [Grid] ❌ 配置缺失: lower={new_lower}, upper={new_upper}, amount={new_amount}")
+            self.logger.print_error(
+                f"   [Grid] ❌ 配置缺失: lower={new_lower}, upper={new_upper}, amount={new_amount}"
+            )
             return
 
         # 防止 AI 抽风输出 -1
@@ -107,7 +110,9 @@ class GridManager:
             return
 
         self.logger.print_section(f"🔄 动态调整 {symbol} 网格", style="bold cyan")
-        self.logger.print_info(f"AI 新区间: ${new_lower} - ${new_upper} | TP: {tp_ratio} SL: {sl_ratio}")
+        self.logger.print_info(
+            f"AI 新区间: ${new_lower} - ${new_upper} | TP: {tp_ratio} SL: {sl_ratio}"
+        )
 
         # 1. 彻底清理旧订单
         self._cancel_all_orders(symbol)
@@ -120,33 +125,42 @@ class GridManager:
             ai_config.get("grid_type", DEFAULT_GRID_TYPE),
         )
         current_price = self.order_manager.client.get_current_price(symbol)
-        
+
         buy_orders = []
         sell_orders = []
 
         # 3. 重新布置
         for i, p in enumerate(prices):
-            if i > 0: time.sleep(1.0) # 防限流
+            if i > 0:
+                time.sleep(1.0)  # 防限流
 
             try:
                 if p < current_price:
-                    res = self.order_manager.execute_long_limit(symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio)
-                    if res and res.get('success'):
-                        oid = self._extract_oid(res['limit_order'])
+                    res = self.order_manager.execute_long_limit(
+                        symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio
+                    )
+                    if res and res.get("success"):
+                        oid = self._extract_oid(res["limit_order"])
                         if oid:
                             buy_orders.append({"oid": oid, "px": p})
                             self.logger.print_info(f"   [Grid] ✅ 买单挂载: ${p}")
-                    elif res and not res.get('success'):
-                        self.logger.print_warning(f"   [Grid] ⚠️ 买单跳过 @ ${p}: {res.get('message', 'unknown')}")
+                    elif res and not res.get("success"):
+                        self.logger.print_warning(
+                            f"   [Grid] ⚠️ 买单跳过 @ ${p}: {res.get('message', 'unknown')}"
+                        )
                 elif p > current_price:
-                    res = self.order_manager.execute_short_limit(symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio)
-                    if res and res.get('success'):
-                        oid = self._extract_oid(res['limit_order'])
+                    res = self.order_manager.execute_short_limit(
+                        symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio
+                    )
+                    if res and res.get("success"):
+                        oid = self._extract_oid(res["limit_order"])
                         if oid:
                             sell_orders.append({"oid": oid, "px": p})
                             self.logger.print_info(f"   [Grid] ✅ 卖单挂载: ${p}")
-                    elif res and not res.get('success'):
-                        self.logger.print_warning(f"   [Grid] ⚠️ 卖单跳过 @ ${p}: {res.get('message', 'unknown')}")
+                    elif res and not res.get("success"):
+                        self.logger.print_warning(
+                            f"   [Grid] ⚠️ 卖单跳过 @ ${p}: {res.get('message', 'unknown')}"
+                        )
             except Exception as e:
                 self.logger.print_error(f"   [Grid] 下单异常 @ ${p}: {e}")
 
@@ -155,11 +169,10 @@ class GridManager:
             "config": ai_config,
             "buy_orders": buy_orders,
             "sell_orders": sell_orders,
-            "last_sync": time.time()
+            "last_sync": time.time(),
         }
         self._save_state()
         self.logger.print_info(f"✅ {symbol} 网格调整完成。")
-
 
         # 无论 AI 如何，始终检查减仓保护单（不强制补基础开仓单）
         self._ensure_min_orders(symbol=symbol)
@@ -176,7 +189,7 @@ class GridManager:
                 sl=sl_ratio,
                 buy_count=len(buy_orders),
                 sell_count=len(sell_orders),
-                reason=ai_config.get("reason", "N/A")
+                reason=ai_config.get("reason", "N/A"),
             )
 
     @staticmethod
@@ -187,16 +200,16 @@ class GridManager:
             return default
 
     @staticmethod
-    def _is_buy_side(order: Dict[str, Any]) -> bool:
+    def _is_buy_side(order: dict[str, Any]) -> bool:
         side = str(order.get("side", "")).strip().upper()
         return side in {"B", "BUY", "BID"}
 
     @staticmethod
-    def _is_sell_side(order: Dict[str, Any]) -> bool:
+    def _is_sell_side(order: dict[str, Any]) -> bool:
         side = str(order.get("side", "")).strip().upper()
         return side in {"A", "ASK", "SELL"}
 
-    def _get_symbol_open_orders(self, symbol: str) -> List[Dict[str, Any]]:
+    def _get_symbol_open_orders(self, symbol: str) -> list[dict[str, Any]]:
         try:
             orders = self.order_manager.client.get_open_orders() or []
             return [o for o in orders if o.get("coin") == symbol]
@@ -226,7 +239,7 @@ class GridManager:
         except Exception:
             return 0.001
 
-    def _build_order_snapshot(self, order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _build_order_snapshot(self, order: dict[str, Any]) -> dict[str, Any] | None:
         oid = order.get("oid")
         if oid is None:
             return None
@@ -235,10 +248,10 @@ class GridManager:
             "px": self._safe_float(order.get("limitPx"), 0.0),
         }
 
-    def _sync_local_state_with_orders(self, symbol: str, open_orders: List[Dict[str, Any]]):
+    def _sync_local_state_with_orders(self, symbol: str, open_orders: list[dict[str, Any]]):
         grid = self.state["active_grids"].get(symbol) or {}
-        buy_orders: List[Dict[str, Any]] = []
-        sell_orders: List[Dict[str, Any]] = []
+        buy_orders: list[dict[str, Any]] = []
+        sell_orders: list[dict[str, Any]] = []
 
         for order in open_orders:
             snapshot = self._build_order_snapshot(order)
@@ -259,7 +272,7 @@ class GridManager:
 
     @staticmethod
     def _append_order_cache(
-        open_orders: List[Dict[str, Any]],
+        open_orders: list[dict[str, Any]],
         symbol: str,
         oid: int,
         side_code: str,
@@ -276,7 +289,7 @@ class GridManager:
             }
         )
 
-    def _resync_state_with_exchange(self, symbol: str, open_orders: List[Dict[str, Any]]):
+    def _resync_state_with_exchange(self, symbol: str, open_orders: list[dict[str, Any]]):
         """以交易所真实挂单为准刷新本地状态。"""
         refreshed_open_orders = self._get_symbol_open_orders(symbol)
         if refreshed_open_orders:
@@ -287,11 +300,11 @@ class GridManager:
         self,
         symbol: str,
         current_price: float,
-        open_orders: List[Dict[str, Any]],
+        open_orders: list[dict[str, Any]],
         min_exit_orders: int = EXIT_MIN_ORDERS,
         max_exit_orders: int = EXIT_MAX_ORDERS,
         target_coverage_ratio: float = EXIT_TARGET_COVERAGE_RATIO,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """有持仓时，强制确保存在 reduce_only 减仓挂单。"""
         if not current_price or current_price <= 0:
             return open_orders
@@ -393,16 +406,18 @@ class GridManager:
 
         return open_orders
 
-    def _extract_oid(self, limit_order_res: Dict[str, Any]) -> Optional[int]:
+    def _extract_oid(self, limit_order_res: dict[str, Any]) -> int | None:
         try:
             # 兼容 SDK 原始返回格式
-            if 'response' in limit_order_res:
-                return limit_order_res['response']['data']['statuses'][0]['resting']['oid']
+            if "response" in limit_order_res:
+                return limit_order_res["response"]["data"]["statuses"][0]["resting"]["oid"]
             return None
         except Exception:
             return None
 
-    def _calculate_grid_prices(self, lower: float, upper: float, num: int, grid_type: str) -> List[float]:
+    def _calculate_grid_prices(
+        self, lower: float, upper: float, num: int, grid_type: str
+    ) -> list[float]:
         if num < 2:
             return [lower]
         # 确保输入是实数而非复数
@@ -425,7 +440,7 @@ class GridManager:
                 return [lower]
             ratio = (upper / lower) ** (1 / (num - 1))
             for i in range(num):
-                prices.append(round(lower * (ratio ** i), 1))
+                prices.append(round(lower * (ratio**i), 1))
         return prices
 
     def _cancel_all_orders(self, symbol: str):
@@ -445,20 +460,18 @@ class GridManager:
         # 回退：补撤 state 中仍记录但交易所列表里未返回的 oid
         grid = self.state["active_grids"].get(symbol)
         if grid:
-            local_oids = [o.get("oid") for o in grid.get("buy_orders", []) if isinstance(o, dict)] + \
-                        [o.get("oid") for o in grid.get("sell_orders", []) if isinstance(o, dict)]
+            local_oids = [
+                o.get("oid") for o in grid.get("buy_orders", []) if isinstance(o, dict)
+            ] + [o.get("oid") for o in grid.get("sell_orders", []) if isinstance(o, dict)]
             for oid in local_oids:
                 if oid is None or oid in canceled_oids:
                     continue
-                try:
+                with suppress(Exception):
                     self.order_manager.client.cancel_order(symbol, oid)
-                except Exception:
-                    pass
 
         if symbol in self.state["active_grids"]:
             del self.state["active_grids"][symbol]
             self._save_state()
-
 
     def _ensure_min_orders(
         self,
@@ -492,12 +505,15 @@ class GridManager:
 
     def get_grid_summary(self, symbol: str) -> str:
         grid = self.state["active_grids"].get(symbol)
-        if not grid: return "目前无运行中的网格。"
-        
-        config = grid['config']
+        if not grid:
+            return "目前无运行中的网格。"
+
+        config = grid["config"]
         params = config.get("parameters", config)
-        return (f"当前正在运行 {symbol} 天地单网格：\n"
-                f"- 区间: ${params.get('lower_price', 'N/A')} - ${params.get('upper_price', 'N/A')}\n"
-                f"- 止盈比例: {params.get('tp_ratio', 'N/A')}\n"
-                f"- 待成交买单: {len(grid['buy_orders'])} 个\n"
-                f"- 待成交卖单: {len(grid['sell_orders'])} 个")
+        return (
+            f"当前正在运行 {symbol} 天地单网格：\n"
+            f"- 区间: ${params.get('lower_price', 'N/A')} - ${params.get('upper_price', 'N/A')}\n"
+            f"- 止盈比例: {params.get('tp_ratio', 'N/A')}\n"
+            f"- 待成交买单: {len(grid['buy_orders'])} 个\n"
+            f"- 待成交卖单: {len(grid['sell_orders'])} 个"
+        )

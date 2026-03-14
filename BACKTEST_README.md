@@ -140,7 +140,6 @@ backtest_results/
     ├── pnl_history.csv          # 盈亏历史记录（用于图表展示）
     ├── metadata.json            # 回测参数和配置信息
     ├── README.md                # 报告说明文档
-    └── config.yaml              # 配置文件副本
 ```
 
 ### 工作空间特点
