@@ -83,7 +83,6 @@ backtest_results/
 
 # Local runtime artifacts
 grid_state*.json
-FILE_NAME
 /src/trading/*.py.new
 
 # One-off local scripts
