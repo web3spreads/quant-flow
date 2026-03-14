@@ -13,9 +13,11 @@ from .mock_order_manager import MockOrderManager
 from .report_generator import BacktestReportGenerator
 from src.data.indicators import TechnicalIndicators
 from src.agent.single_symbol_agent import SingleSymbolAgent
+from src.agent.grid_agent import GridAgent
 from src.agent.summary_agent_v2 import SummaryAgentV2, DecisionHistory
 from src.agent.review_agent import ReviewAgent
 from src.agent.review_memory import ReviewMemoryStore
+from src.trading.grid_manager import GridManager
 from src.utils.logger import TradingLogger
 from src.prompt_manager import PromptManager
 from src.config import FEE_RATE_PER_SIDE
@@ -32,7 +34,9 @@ class BacktestEngine:
         initial_balance: float = 1000.0,
         config: Any = None,
         logger: Optional[TradingLogger] = None,
-        prompt_manager: Optional[PromptManager] = None
+        prompt_manager: Optional[PromptManager] = None,
+        strategy: str = "single",
+        grid_state_file: Optional[str] = None,
     ):
         """
         初始化回测引擎
@@ -44,6 +48,8 @@ class BacktestEngine:
             config: 配置对象
             logger: 日志记录器
             prompt_manager: Prompt管理器
+            strategy: 回测策略（single/grid）
+            grid_state_file: 网格状态文件路径（仅 grid 策略使用）
         """
         self.symbol = symbol
         self.historical_data = historical_data.copy()
@@ -52,6 +58,8 @@ class BacktestEngine:
         self.config = config
         self.logger = logger or TradingLogger()
         self.prompt_manager = prompt_manager
+        self.strategy = str(strategy or "single").lower()
+        self.grid_state_file = grid_state_file or "grid_state.backtest.json"
 
         # 初始化模拟客户端和订单管理器
         self.client = MockHyperliquidClient(historical_data, initial_balance)
@@ -63,24 +71,46 @@ class BacktestEngine:
         )
 
         # 初始化Agent（需要配置信息）
+        self.grid_manager: Optional[GridManager] = None
         if config:
-            self.agent = SingleSymbolAgent(
-                symbol=symbol,
-                order_manager=self.order_manager,
-                logger=self.logger,
-                openai_api_base=config.openai_api_base,
-                openai_api_key=config.openai_api_key,
-                openai_model=config.openai_model,
-                temperature=config.agent_temperature,
-                max_iterations=config.agent_max_iterations,
-                trade_amount=config.max_trade_amount,
-                max_leverage=config.max_leverage,
-                take_profit_ratio=config.take_profit_ratio,
-                stop_loss_ratio=config.stop_loss_ratio,
-                notifier=None,  # 回测不需要通知
-                prompt_manager=prompt_manager,
-                limit_order_enabled=config.limit_order_enabled if hasattr(config, 'limit_order_enabled') else False
-            )
+            if self.strategy == "grid":
+                self.agent = GridAgent(
+                    symbol=symbol,
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    openai_api_base=config.openai_api_base,
+                    openai_api_key=config.openai_api_key,
+                    openai_model=config.openai_model,
+                    trade_amount=config.max_trade_amount,
+                    width_pct_min=config.grid_width_min_pct,
+                    width_pct_max=config.grid_width_max_pct,
+                    width_pct_fallback=config.grid_width_fallback_pct,
+                    ai_width_blend_weight=config.grid_ai_blend_weight,
+                )
+                self.grid_manager = GridManager(
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    state_file=self.grid_state_file,
+                    notifier=None,
+                )
+            else:
+                self.agent = SingleSymbolAgent(
+                    symbol=symbol,
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    openai_api_base=config.openai_api_base,
+                    openai_api_key=config.openai_api_key,
+                    openai_model=config.openai_model,
+                    temperature=config.agent_temperature,
+                    max_iterations=config.agent_max_iterations,
+                    trade_amount=config.max_trade_amount,
+                    max_leverage=config.max_leverage,
+                    take_profit_ratio=config.take_profit_ratio,
+                    stop_loss_ratio=config.stop_loss_ratio,
+                    notifier=None,  # 回测不需要通知
+                    prompt_manager=prompt_manager,
+                    limit_order_enabled=config.limit_order_enabled if hasattr(config, 'limit_order_enabled') else False
+                )
         else:
             self.agent = None
 
@@ -151,6 +181,7 @@ class BacktestEngine:
         self.language = "zh"  # 默认中文，可以从config读取
 
         print(f"✅ 回测引擎初始化完成")
+        print(f"   策略模式: {self.strategy}")
         print(f"   交易对: {symbol}")
         print(f"   初始余额: ${initial_balance:.2f}")
         print(f"   数据点数: {len(historical_data)}")
@@ -386,6 +417,14 @@ class BacktestEngine:
         if not self.agent:
             raise ValueError("Agent未初始化，无法运行回测")
 
+        if self.strategy == "grid":
+            return self._run_grid_backtest(
+                decision_interval_minutes=decision_interval_minutes,
+                live_report_path=live_report_path,
+                live_report_interval=live_report_interval,
+                resume_from=resume_from,
+            )
+
         # 配置实时报告
         if resume_from and resume_from.get('resume_file'):
             # 如果从恢复文件继续，使用恢复文件作为实时报告路径
@@ -594,6 +633,248 @@ class BacktestEngine:
 
         return result
 
+    def _run_grid_backtest(
+        self,
+        decision_interval_minutes: int = 15,
+        live_report_path: Optional[str] = None,
+        live_report_interval: int = 1,
+        resume_from: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        运行网格策略回测
+        """
+        if not self.grid_manager:
+            raise ValueError("GridManager未初始化，无法运行网格回测")
+
+        # 配置实时报告
+        if resume_from and resume_from.get('resume_file'):
+            self.live_report_path = Path(resume_from['resume_file'])
+            self.live_report_interval = max(1, live_report_interval)
+            self._last_live_report_index = -1
+        elif live_report_path:
+            self.live_report_path = Path(live_report_path)
+            self.live_report_interval = max(1, live_report_interval)
+            self._last_live_report_index = -1
+        else:
+            self.live_report_path = None
+
+        # 计算技术指标
+        if self.config:
+            df = TechnicalIndicators.calculate_all_indicators(
+                self.historical_data.copy(),
+                ma_periods=self.config.ma_periods,
+                rsi_period=self.config.rsi_period,
+                macd_params={
+                    'fast': self.config.macd_fast,
+                    'slow': self.config.macd_slow,
+                    'signal': self.config.macd_signal
+                },
+                bollinger_params={
+                    'period': self.config.bollinger_period,
+                    'std_dev': self.config.bollinger_std
+                }
+            )
+        else:
+            df = TechnicalIndicators.calculate_all_indicators(self.historical_data.copy())
+
+        decision_timestamps = self._get_decision_timestamps(df, decision_interval_minutes)
+        self._total_decision_points = len(decision_timestamps)
+        print(f"   决策点数量: {len(decision_timestamps)}")
+
+        start_index = 0
+        if resume_from:
+            start_index = self._restore_from_live_report(resume_from, decision_timestamps)
+            self._last_live_report_index = start_index - 1 if start_index > 0 else -1
+
+        self._maybe_write_live_report(
+            processed_decisions=start_index,
+            total_decisions=self._total_decision_points,
+            force=True,
+            status="running" if start_index > 0 else "initializing"
+        )
+
+        for i in range(start_index, len(decision_timestamps)):
+            timestamp = decision_timestamps[i]
+            try:
+                if i > 0:
+                    prev_timestamp = decision_timestamps[i - 1]
+                    self._process_grid_fills_between_decisions(prev_timestamp, timestamp, df)
+
+                self.client.set_current_time(timestamp)
+                market_data = self._get_market_data_at_time(df, timestamp)
+                if not market_data:
+                    continue
+
+                # 决策点也撮合一次，避免边界遗漏
+                self._process_grid_fills_for_candle(df, timestamp)
+
+                trends = {'15m': 'NEUTRAL'}
+                summary = self.grid_manager.get_grid_summary(self.symbol)
+                ai_config = self.agent.make_decision(market_data, trends, summary) or {}
+                if not isinstance(ai_config, dict):
+                    ai_config = {
+                        'action': 'KEEP_GRID',
+                        'reason': f'AI返回异常类型: {type(ai_config).__name__}',
+                    }
+                self.grid_manager.sync_grid(self.symbol, ai_config)
+
+                self.decision_history.add_decision(
+                    symbol=self.symbol,
+                    decision=ai_config.get('action', 'KEEP_GRID'),
+                    market_data=market_data,
+                    reason=str(ai_config.get('reason', '')),
+                    action_details=self._sanitize_action_details(ai_config),
+                )
+
+                self._update_positions_pnl(timestamp, df)
+                self._update_account_value()
+                self._maybe_write_live_report(
+                    processed_decisions=i + 1,
+                    total_decisions=self._total_decision_points
+                )
+            except Exception as e:
+                print(f"⚠️ 决策点 {i+1}/{len(decision_timestamps)} 处理失败: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+
+        # 回测结束：先撤掉残余网格挂单，再平仓
+        try:
+            self.grid_manager._cancel_all_orders(self.symbol)
+        except Exception:
+            pass
+        self._close_all_positions(df.iloc[-1]['timestamp'], df.iloc[-1]['close'])
+
+        result = self._generate_result()
+        result['status'] = 'completed'
+        print(f"\n✅ 回测完成")
+        print(f"   总交易数: {len(self.closed_trades)}")
+        print(f"   最终余额: ${result['final_balance']:.2f}")
+        print(f"   总收益率: {result['total_return']*100:.2f}%")
+
+        self._maybe_write_live_report(
+            processed_decisions=self._total_decision_points,
+            total_decisions=self._total_decision_points,
+            force=True,
+            status="completed",
+            base_result=result
+        )
+        return result
+
+    def _process_grid_fills_between_decisions(
+        self,
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+        df: pd.DataFrame,
+    ):
+        """
+        在两个决策点之间按K线撮合网格挂单
+        """
+        mask = (df['timestamp'] > start_timestamp) & (df['timestamp'] <= end_timestamp)
+        between_candles = df[mask].sort_values('timestamp')
+        for _, row in between_candles.iterrows():
+            candle_timestamp = row['timestamp']
+            self.client.set_current_time(candle_timestamp)
+            self._process_grid_fills_for_candle(df, candle_timestamp)
+            self._update_positions_pnl(candle_timestamp, df)
+
+    def _process_grid_fills_for_candle(self, df: pd.DataFrame, timestamp: datetime):
+        """
+        在指定K线上撮合限价挂单并执行成交
+        """
+        time_diffs = (df['timestamp'] - timestamp).abs()
+        closest_idx = time_diffs.idxmin()
+        row = df.iloc[closest_idx]
+        candle_low = float(row['low'])
+        candle_high = float(row['high'])
+
+        filled_orders = self.client.match_limit_orders(
+            symbol=self.symbol,
+            candle_low=candle_low,
+            candle_high=candle_high,
+        )
+        if not filled_orders:
+            return
+
+        for order in filled_orders:
+            self._handle_filled_grid_order(order)
+
+        # 成交后也检查一次止盈止损，模拟同一根K线内触发风控
+        self._check_take_profit_stop_loss(timestamp, df)
+        self._update_account_value()
+
+    def _handle_filled_grid_order(self, order: Dict[str, Any]):
+        """
+        处理网格挂单成交后的持仓与交易记录
+        """
+        side = str(order.get('side', '')).upper()
+        is_buy = side in {'B', 'BUY', 'BID'}
+        reduce_only = bool(order.get('reduceOnly', False))
+        try:
+            size = abs(float(order.get('sz', 0)))
+            fill_price = float(order.get('limitPx', 0))
+        except (TypeError, ValueError):
+            return
+
+        if size <= 0 or fill_price <= 0:
+            return
+
+        if reduce_only:
+            self._handle_reduce_only_fill(
+                is_buy=is_buy,
+                fill_size=size,
+                fill_price=fill_price,
+            )
+            return
+
+        leverage = int(order.get('leverage', self.order_manager.default_leverage))
+        tp_price = order.get('tp_price')
+        sl_price = order.get('sl_price')
+        self.client.add_position(
+            symbol=self.symbol,
+            size=size,
+            entry_price=fill_price,
+            leverage=max(leverage, 1),
+            is_long=is_buy,
+            take_profit_price=tp_price,
+            stop_loss_price=sl_price,
+        )
+        margin_add = fill_price * size / max(leverage, 1)
+        self.client.update_account_value(
+            account_value=self.client.account_value,
+            margin_used=self.client.total_margin_used + margin_add,
+        )
+
+    def _handle_reduce_only_fill(self, is_buy: bool, fill_size: float, fill_price: float):
+        """
+        执行 reduce_only 成交：只对冲已有反向持仓，不开新仓
+        """
+        remaining = fill_size
+        positions = self.client.get_positions()
+        if is_buy:
+            candidates = [p for p in positions if p.get('coin') == self.symbol and float(p.get('szi', 0)) < 0]
+        else:
+            candidates = [p for p in positions if p.get('coin') == self.symbol and float(p.get('szi', 0)) > 0]
+
+        # FIFO 关闭
+        candidates.sort(key=lambda p: str(p.get('entry_time') or ''))
+        for position in candidates:
+            if remaining <= 0:
+                break
+            pos_size = abs(float(position.get('szi', 0)))
+            if pos_size <= 0:
+                continue
+
+            close_size = min(pos_size, remaining)
+            self._close_position(
+                symbol=self.symbol,
+                price=fill_price,
+                reason="reduce_only 成交平仓",
+                size=close_size,
+                position_id=position.get('position_id'),
+            )
+            remaining -= close_size
+
     def _get_decision_timestamps(
         self,
         df: pd.DataFrame,
@@ -764,7 +1045,12 @@ class BacktestEngine:
 
             if should_close:
                 # 平仓
-                self._close_position(symbol, current_price, close_reason)
+                self._close_position(
+                    symbol=symbol,
+                    price=current_price,
+                    reason=close_reason,
+                    position_id=position.get('position_id'),
+                )
                 position_closed = True
         
         return position_closed
@@ -773,7 +1059,9 @@ class BacktestEngine:
         self,
         symbol: str,
         price: float,
-        reason: str = "手动平仓"
+        reason: str = "手动平仓",
+        size: Optional[float] = None,
+        position_id: Optional[int] = None,
     ):
         """
         平仓
@@ -782,26 +1070,39 @@ class BacktestEngine:
             symbol: 交易对符号
             price: 平仓价格
             reason: 平仓原因
+            size: 平仓数量（None=全平）
+            position_id: 指定持仓ID（None=按symbol取第一笔）
         """
         positions = self.client.get_positions()
-        position = next((p for p in positions if p.get('coin') == symbol), None)
+        if position_id is not None:
+            position = next(
+                (p for p in positions if p.get('coin') == symbol and p.get('position_id') == position_id),
+                None
+            )
+        else:
+            position = next((p for p in positions if p.get('coin') == symbol), None)
         if not position:
             return
 
         entry_price = float(position.get('entryPx', 0))
-        size = abs(float(position.get('szi', 0)))
+        full_size = abs(float(position.get('szi', 0)))
+        close_size = full_size if size is None else min(abs(float(size)), full_size)
+        if close_size <= 0:
+            return
         is_long = position.get('is_long', True)
-        leverage = position.get('leverage', {}).get('value', 1)
+        leverage_data = position.get('leverage', {})
+        leverage = leverage_data.get('value', 1) if isinstance(leverage_data, dict) else leverage_data
+        leverage = max(int(leverage), 1)
 
         # 计算盈亏
         if is_long:
-            pnl = (price - entry_price) * size
+            pnl = (price - entry_price) * close_size
         else:
-            pnl = (entry_price - price) * size
+            pnl = (entry_price - price) * close_size
 
         # 计算手续费
-        entry_fee = entry_price * size * self.fee_rate
-        exit_fee = price * size * self.fee_rate
+        entry_fee = entry_price * close_size * self.fee_rate
+        exit_fee = price * close_size * self.fee_rate
         total_fee = entry_fee + exit_fee
 
         # 净盈亏
@@ -817,27 +1118,41 @@ class BacktestEngine:
             'exit_time': current_timestamp,
             'entry_price': entry_price,
             'exit_price': price,
-            'size': size,
+            'size': close_size,
             'leverage': leverage,
             'is_long': is_long,
             'pnl': pnl,
             'fee': total_fee,
             'net_pnl': net_pnl,
-            'return_pct': (net_pnl / (entry_price * size / leverage)) * 100 if leverage > 0 else 0,
+            'return_pct': (net_pnl / (entry_price * close_size / leverage)) * 100 if leverage > 0 else 0,
             'reason': reason
         }
 
         self.closed_trades.append(trade)
 
         # 更新账户余额
-        margin_used = entry_price * size / leverage
+        margin_used = entry_price * close_size / leverage
         new_account_value = self.client.account_value + net_pnl
         new_margin_used = max(0, self.client.total_margin_used - margin_used)
         
         self.client.update_account_value(new_account_value, new_margin_used)
 
-        # 移除持仓
-        self.client.remove_position(symbol)
+        # 更新或移除持仓
+        if close_size >= full_size - 1e-12:
+            self.client.remove_position(symbol, position_id=position.get('position_id'))
+            return
+
+        remaining_size = full_size - close_size
+        direction = 1 if float(position.get('szi', 0)) >= 0 else -1
+        target_id = position.get('position_id')
+        for open_pos in self.client.positions:
+            if open_pos.get('coin') != symbol:
+                continue
+            if target_id is not None and open_pos.get('position_id') != target_id:
+                continue
+            open_pos['szi'] = str(direction * remaining_size)
+            open_pos['positionValue'] = str(abs(remaining_size * entry_price))
+            break
 
     def _update_positions_pnl(self, timestamp: datetime, df: pd.DataFrame):
         """
@@ -963,7 +1278,12 @@ class BacktestEngine:
         positions = self.client.get_positions()
         for position in positions[:]:
             symbol = position.get('coin')
-            self._close_position(symbol, price, "回测结束平仓")
+            self._close_position(
+                symbol=symbol,
+                price=price,
+                reason="回测结束平仓",
+                position_id=position.get('position_id'),
+            )
 
     def _generate_result(self) -> Dict[str, Any]:
         """
@@ -977,6 +1297,7 @@ class BacktestEngine:
         if total_trades == 0:
             return {
                 'symbol': self.symbol,
+                'strategy': self.strategy,
                 'total_trades': 0,
                 'profitable_trades': 0,
                 'losing_trades': 0,
@@ -1015,6 +1336,7 @@ class BacktestEngine:
 
         return {
             'symbol': self.symbol,
+            'strategy': self.strategy,
             'total_trades': total_trades,
             'profitable_trades': len(profitable_trades),
             'losing_trades': len(losing_trades),

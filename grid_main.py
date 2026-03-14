@@ -82,7 +82,11 @@ class GridFlowBot:
             # 计算技术指标
             df = TechnicalIndicators.calculate_all_indicators(df)
             market_data = TechnicalIndicators.get_latest_indicators(df)
-            trends = TechnicalIndicators.get_multi_timeframe_trend(self.market_fetcher, self.config.symbols[0])
+            trends = TechnicalIndicators.get_multi_timeframe_trend(
+                self.market_fetcher,
+                self.config.symbols[0],
+                cached_ohlcv={self.config.timeframe: df},
+            )
             
             # 记录市场状态
             self.logger.print_market_data(self.config.symbols[0], market_data)

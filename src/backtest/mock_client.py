@@ -4,6 +4,7 @@
 """
 
 from typing import Optional, Dict, Any, List
+from copy import deepcopy
 import pandas as pd
 from datetime import datetime
 
@@ -38,6 +39,11 @@ class MockHyperliquidClient:
         
         # 持仓列表（模拟）
         self.positions: List[Dict[str, Any]] = []
+
+        # 挂单列表（用于网格回测）
+        self.open_orders: List[Dict[str, Any]] = []
+        self._oid_seed: int = 100000
+        self._position_id_seed: int = 1
         
         # 交易历史（用于记录）
         self.trade_history: List[Dict[str, Any]] = []
@@ -104,6 +110,15 @@ class MockHyperliquidClient:
             持仓列表
         """
         return self.positions.copy()
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        """
+        获取当前挂单
+
+        Returns:
+            挂单列表
+        """
+        return deepcopy(self.open_orders)
 
     def get_asset_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
@@ -196,6 +211,99 @@ class MockHyperliquidClient:
             'size': size,
             'price': current_price
         }
+
+    def place_limit_order(
+        self,
+        symbol: str,
+        is_buy: bool,
+        size: float,
+        price: float,
+        reduce_only: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        下限价单（模拟）
+        """
+        if size <= 0:
+            return {'status': 'error', 'message': '下单数量必须大于0'}
+
+        self._oid_seed += 1
+        oid = self._oid_seed
+
+        order = {
+            'oid': oid,
+            'coin': symbol,
+            'side': 'B' if is_buy else 'A',
+            'sz': str(size),
+            'limitPx': str(self.format_price(symbol, price)),
+            'reduceOnly': bool(reduce_only),
+            'orderType': {'limit': {'tif': 'Gtc'}},
+        }
+        if metadata:
+            order.update(metadata)
+
+        self.open_orders.append(order)
+
+        return {
+            'status': 'ok',
+            'response': {
+                'type': 'order',
+                'data': {
+                    'statuses': [{'resting': {'oid': oid}}]
+                }
+            }
+        }
+
+    def cancel_order(self, symbol: str, oid: int) -> Dict[str, Any]:
+        """
+        取消挂单（模拟）
+        """
+        before = len(self.open_orders)
+        self.open_orders = [
+            o for o in self.open_orders
+            if not (o.get('coin') == symbol and o.get('oid') == oid)
+        ]
+        if len(self.open_orders) == before:
+            return {'status': 'error', 'message': f'订单不存在: {oid}'}
+        return {'status': 'ok'}
+
+    def match_limit_orders(
+        self,
+        symbol: str,
+        candle_low: float,
+        candle_high: float,
+    ) -> List[Dict[str, Any]]:
+        """
+        在一根K线内撮合可成交的限价单
+        """
+        if candle_low > candle_high:
+            candle_low, candle_high = candle_high, candle_low
+
+        filled_orders: List[Dict[str, Any]] = []
+        remaining_orders: List[Dict[str, Any]] = []
+
+        for order in self.open_orders:
+            if order.get('coin') != symbol:
+                remaining_orders.append(order)
+                continue
+
+            try:
+                limit_px = float(order.get('limitPx', 0))
+            except (TypeError, ValueError):
+                remaining_orders.append(order)
+                continue
+
+            side = str(order.get('side', '')).upper()
+            is_buy = side in {'B', 'BUY', 'BID'}
+            can_fill = (limit_px >= candle_low) if is_buy else (limit_px <= candle_high)
+
+            if can_fill:
+                filled_orders.append(deepcopy(order))
+            else:
+                remaining_orders.append(order)
+
+        self.open_orders = remaining_orders
+        return filled_orders
 
     def place_order_with_tpsl(
         self,
@@ -322,8 +430,12 @@ class MockHyperliquidClient:
             current_timestamp = self.historical_data.iloc[self.current_index]['timestamp']
         else:
             current_timestamp = self.historical_data.iloc[-1]['timestamp']
-        
+
+        position_id = self._position_id_seed
+        self._position_id_seed += 1
+
         position = {
+            'position_id': position_id,
             'coin': symbol,
             'szi': str(size if is_long else -size),
             'entryPx': str(entry_price),
@@ -337,14 +449,22 @@ class MockHyperliquidClient:
         }
         self.positions.append(position)
 
-    def remove_position(self, symbol: str):
+    def remove_position(self, symbol: str, position_id: Optional[int] = None):
         """
         移除持仓（由BacktestEngine调用）
         
         Args:
             symbol: 交易对符号
+            position_id: 指定持仓ID（None=移除该symbol全部持仓）
         """
-        self.positions = [p for p in self.positions if p.get('coin') != symbol]
+        if position_id is None:
+            self.positions = [p for p in self.positions if p.get('coin') != symbol]
+            return
+
+        self.positions = [
+            p for p in self.positions
+            if not (p.get('coin') == symbol and p.get('position_id') == position_id)
+        ]
 
     def update_position_pnl(self, symbol: str, unrealized_pnl: float):
         """
@@ -375,4 +495,3 @@ class MockHyperliquidClient:
     def address(self) -> str:
         """返回模拟地址"""
         return "mock_address_for_backtest"
-

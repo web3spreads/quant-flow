@@ -84,7 +84,15 @@ def parse_args():
         '--interval',
         type=int,
         default=5,
-        help='决策间隔（分钟，默认: 15）'
+        help='决策间隔（分钟，默认: 5）'
+    )
+
+    parser.add_argument(
+        '--strategy',
+        type=str,
+        choices=['single', 'grid'],
+        default='single',
+        help='回测策略模式（single=单币Agent, grid=网格策略，默认: single）'
     )
 
     # 输出参数
@@ -174,6 +182,7 @@ def _load_resume_info(resume_from_path: str) -> dict:
         # 提取关键信息
         info = {
             'symbol': resume_data.get('symbol'),
+            'strategy': resume_data.get('strategy', 'single'),
             'initial_balance': resume_data.get('initial_balance', 1000.0),
             'resume_file': str(resume_path),
             'progress': resume_data.get('progress', {}),
@@ -297,6 +306,7 @@ def main():
                 resume_info = _load_resume_info(args.resume_from)
                 print(f"✅ 恢复信息加载成功")
                 print(f"   交易对: {resume_info['symbol']}")
+                print(f"   策略: {resume_info.get('strategy', 'single')}")
                 print(f"   初始余额: ${resume_info['initial_balance']:.2f}")
                 print(f"   已处理决策点: {resume_info['progress'].get('processed_decisions', 0)}/{resume_info['progress'].get('total_decisions', 0)}")
                 
@@ -331,6 +341,8 @@ def main():
                     args.initial_balance = resume_info['initial_balance']
                 if resume_info.get('interval'):
                     args.interval = resume_info['interval']
+                if resume_info.get('strategy') in {'single', 'grid'}:
+                    args.strategy = resume_info['strategy']
             except Exception as e:
                 print(f"⚠️ 恢复文件加载失败: {e}")
                 print("   将从头开始回测")
@@ -415,7 +427,9 @@ def main():
             initial_balance=args.initial_balance,
             config=config,
             logger=logger,
-            prompt_manager=prompt_manager
+            prompt_manager=prompt_manager,
+            strategy=args.strategy,
+            grid_state_file=str(workspace_dir / "logs" / "grid_state.json"),
         )
 
         # 运行回测
@@ -447,6 +461,7 @@ def main():
         # 准备回测参数
         backtest_params = {
             'symbol': args.symbol,
+            'strategy': args.strategy,
             'initial_balance': args.initial_balance,
             'interval': args.interval,
             'timeframe': args.timeframe,

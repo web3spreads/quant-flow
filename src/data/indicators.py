@@ -5,7 +5,7 @@
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 class TechnicalIndicators:
@@ -435,13 +435,18 @@ class TechnicalIndicators:
             return "震荡"
 
     @staticmethod
-    def get_multi_timeframe_trend(market_data_fetcher, symbol: str) -> Dict[str, str]:
+    def get_multi_timeframe_trend(
+        market_data_fetcher,
+        symbol: str,
+        cached_ohlcv: Optional[Dict[str, pd.DataFrame]] = None
+    ) -> Dict[str, str]:
         """
         获取多时间周期趋势
 
         Args:
             market_data_fetcher: MarketDataFetcher 实例
             symbol: 交易对
+            cached_ohlcv: 预加载的 K 线数据，键为 timeframe（如 {"15m": df}）
 
         Returns:
             包含各时间周期趋势的字典
@@ -455,11 +460,14 @@ class TechnicalIndicators:
         }
 
         trends = {}
+        cached_ohlcv = cached_ohlcv or {}
 
         for tf, tf_name in timeframes.items():
             try:
-                # 获取数据
-                df = market_data_fetcher.fetch_ohlcv(symbol, tf, limit=100)
+                # 优先复用已获取的数据，避免重复请求同一时间周期
+                df = cached_ohlcv.get(tf)
+                if df is None:
+                    df = market_data_fetcher.fetch_ohlcv(symbol, tf, limit=100)
                 if df is None or df.empty:
                     trends[tf_name] = "无数据"
                     continue

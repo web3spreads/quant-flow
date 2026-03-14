@@ -489,10 +489,42 @@ class QuantFlowBot:
 
                     market_data = TechnicalIndicators.get_latest_indicators(df)
 
+                    # 预加载可复用的多周期数据，避免重复拉取
+                    cached_ohlcv = {self.config.timeframe: df}
+
+                    # 获取4小时数据（用于数据增强；若主周期已是4h则直接复用）
+                    if self.config.timeframe == "4h":
+                        df_4h = df
+                    else:
+                        df_4h = self.market_fetcher.fetch_ohlcv(
+                            symbol=symbol, timeframe="4h", limit=100
+                        )
+                        if df_4h is not None and not df_4h.empty:
+                            # 计算4小时数据的指标（包括EMA和ATR）
+                            df_4h = TechnicalIndicators.calculate_all_indicators(
+                                df_4h,
+                                ema_periods=[20, 50],
+                                atr_periods=[3, 14],
+                                ma_periods=self.config.ma_periods,
+                                rsi_period=self.config.rsi_period,
+                                macd_params={
+                                    "fast": self.config.macd_fast,
+                                    "slow": self.config.macd_slow,
+                                    "signal": self.config.macd_signal,
+                                },
+                                bollinger_params={
+                                    "period": self.config.bollinger_period,
+                                    "std_dev": self.config.bollinger_std,
+                                },
+                            )
+
+                    if df_4h is not None and not df_4h.empty:
+                        cached_ohlcv["4h"] = df_4h
+
                     # 获取多周期趋势
                     multi_timeframe_trends = (
                         TechnicalIndicators.get_multi_timeframe_trend(
-                            self.market_fetcher, symbol
+                            self.market_fetcher, symbol, cached_ohlcv=cached_ohlcv
                         )
                     )
 
@@ -505,30 +537,6 @@ class QuantFlowBot:
                         ]
                     )
                     self.logger.print_info(f"多周期趋势: {trend_info}")
-
-                    # 获取4小时数据（用于数据增强）
-                    df_4h = self.market_fetcher.fetch_ohlcv(
-                        symbol=symbol, timeframe="4h", limit=100
-                    )
-
-                    if df_4h is not None and not df_4h.empty:
-                        # 计算4小时数据的指标（包括EMA和ATR）
-                        df_4h = TechnicalIndicators.calculate_all_indicators(
-                            df_4h,
-                            ema_periods=[20, 50],
-                            atr_periods=[3, 14],
-                            ma_periods=self.config.ma_periods,
-                            rsi_period=self.config.rsi_period,
-                            macd_params={
-                                "fast": self.config.macd_fast,
-                                "slow": self.config.macd_slow,
-                                "signal": self.config.macd_signal,
-                            },
-                            bollinger_params={
-                                "period": self.config.bollinger_period,
-                                "std_dev": self.config.bollinger_std,
-                            },
-                        )
 
                     # 增强市场数据（添加额外字段供nof1/nof1-improved prompts使用）
                     enriched_data = self.data_enricher.enrich_market_data(
