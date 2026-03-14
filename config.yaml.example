@@ -92,6 +92,17 @@ agent:
   # Agent 超时时间（秒）
   timeout: 60
 
+  # 网格宽度参数（用于 grid_agent 动态区间计算）
+  grid_width:
+    # 最小网格宽度（2%）
+    min_pct: 0.02
+    # 最大网格宽度（15%）
+    max_pct: 0.15
+    # 市场数据异常时的回退宽度（5%）
+    fallback_pct: 0.05
+    # AI 输出与市场波动的融合权重（0~1）
+    ai_blend_weight: 0.35
+
 # Prompt 配置
 prompt:
   # 使用的 Prompt 集合名称

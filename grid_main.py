@@ -54,7 +54,11 @@ class GridFlowBot:
             openai_api_base=self.config.openai_api_base,
             openai_api_key=self.config.openai_api_key,
             openai_model=self.config.openai_model,
-            trade_amount=self.config.config_data['trading'].get('max_total_investment', 100.0)
+            trade_amount=self.config.config_data['trading'].get('max_total_investment', 100.0),
+            width_pct_min=self.config.grid_width_min_pct,
+            width_pct_max=self.config.grid_width_max_pct,
+            width_pct_fallback=self.config.grid_width_fallback_pct,
+            ai_width_blend_weight=self.config.grid_ai_blend_weight,
         )
         
         self.scheduler = BlockingScheduler()
@@ -78,12 +82,13 @@ class GridFlowBot:
             # 计算技术指标
             df = TechnicalIndicators.calculate_all_indicators(df)
             market_data = TechnicalIndicators.get_latest_indicators(df)
+            trends = TechnicalIndicators.get_multi_timeframe_trend(self.market_fetcher, self.config.symbols[0])
             
             # 记录市场状态
             self.logger.print_market_data(self.config.symbols[0], market_data)
             
             # 运行网格管理逻辑
-            self.grid_manager.update_grid(self.config.symbols[0], market_data, self.agent)
+            self.grid_manager.update_grid(self.config.symbols[0], market_data, self.agent, trends)
             
             self.logger.print_header(f"✅ 网格交易周期完成")
             

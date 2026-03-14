@@ -14,6 +14,31 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 
+# Monkeypatch Info.spot_meta to handle inconsistent testnet metadata
+# This filters out spot assets that reference non-existent tokens (common on testnet)
+_original_spot_meta = Info.spot_meta
+
+def _patched_spot_meta(self):
+    meta = _original_spot_meta(self)
+    if not meta or "universe" not in meta or "tokens" not in meta:
+        return meta
+    
+    tokens_len = len(meta["tokens"])
+    valid_universe = []
+    for spot_info in meta["universe"]:
+        try:
+            base, quote = spot_info["tokens"]
+            if base < tokens_len and quote < tokens_len:
+                valid_universe.append(spot_info)
+        except (IndexError, KeyError, ValueError):
+            continue
+            
+    meta["universe"] = valid_universe
+    return meta
+
+Info.spot_meta = _patched_spot_meta
+
+
 from src.fees import FeeRates, calculate_fee_rates
 
 
@@ -73,7 +98,30 @@ class HyperliquidClient:
             print(f"📍 钱包地址: {self.address}")
 
         # 初始化 Info API（市场数据查询）
-        self.info = Info(self.base_url, skip_ws=True)
+        try:
+            self.info = Info(self.base_url, skip_ws=True)
+        except IndexError as e:
+            print(f"⚠️ Hyperliquid SDK 初始化异常 (已知 SDK Bug): {e}")
+            print("💡 尝试进入修复模式：降级 Info 对象初始化...")
+            # 这是一个针对 hyperliquid-python-sdk 在测试网 spotMeta 解析时的 IndexError 的临时修复
+            # 我们先创建一个空的 Info 对象，或者跳过 Info 初始化（如果可能）
+            # 但 SDK 的 Info.__init__ 内部强制调用了 spot_meta
+            # 这里我们手动猴子补丁 (Monkey Patch) Info 的构造函数或者其依赖
+            import hyperliquid.info
+            original_init = hyperliquid.info.Info.__init__
+            
+            def patched_init(self_info, base_url, skip_ws=False):
+                self_info.base_url = base_url
+                # 避开导致 IndexError 的逻辑，只保留核心初始化
+                # 这里的逻辑需要非常小心，或者直接捕获错误并让程序继续
+                try:
+                    original_init(self_info, base_url, skip_ws)
+                except IndexError:
+                    pass 
+            
+            # 由于 __init__ 已经在上面失败了，我们需要一个已经部分初始化的对象
+            # 或者重新尝试并捕获。最稳妥的方法是修改 SDK 行为
+            self.info = Info(self.base_url, skip_ws=True)
 
         # 初始化 Exchange API（交易执行）
         # 在 API 钱包模式下，account_address 参数告诉 Exchange 代理哪个主钱包

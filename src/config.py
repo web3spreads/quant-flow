@@ -179,6 +179,16 @@ class Config:
         self.agent_max_iterations: int = int(agent.get("max_iterations", 5))
         self.agent_timeout: int = int(agent.get("timeout", 60))
 
+        grid_width = agent.get("grid_width", {})
+        self.grid_width_min_pct: float = float(grid_width.get("min_pct", 0.02))
+        self.grid_width_max_pct: float = float(grid_width.get("max_pct", 0.15))
+        self.grid_width_fallback_pct: float = float(
+            grid_width.get("fallback_pct", 0.05)
+        )
+        self.grid_ai_blend_weight: float = float(
+            grid_width.get("ai_blend_weight", 0.35)
+        )
+
     def _init_prompt_config(self):
         """初始化 Prompt 配置"""
         prompt = self.config_data.get("prompt", {})
@@ -289,6 +299,16 @@ class Config:
         valid_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
         if self.timeframe not in valid_timeframes:
             errors.append(f"timeframe 必须是以下之一: {valid_timeframes}")
+
+        # 验证网格宽度参数
+        if self.grid_width_min_pct <= 0:
+            errors.append("agent.grid_width.min_pct 必须大于 0")
+        if self.grid_width_max_pct <= self.grid_width_min_pct:
+            errors.append("agent.grid_width.max_pct 必须大于 min_pct")
+        if not (self.grid_width_min_pct <= self.grid_width_fallback_pct <= self.grid_width_max_pct):
+            errors.append("agent.grid_width.fallback_pct 必须在 [min_pct, max_pct] 区间内")
+        if not (0.0 <= self.grid_ai_blend_weight <= 1.0):
+            errors.append("agent.grid_width.ai_blend_weight 必须在 [0,1] 区间内")
 
         if errors:
             raise ValueError(
