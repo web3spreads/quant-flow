@@ -47,9 +47,11 @@ logs/*.json
 logs/*.csv
 logs/decisions/*
 logs/trades/*
+logs/review_daily/*
 !logs/.gitkeep
 !logs/decisions/.gitkeep
 !logs/trades/.gitkeep
+!logs/review_daily/.gitkeep
 *.log
 
 # Config (保留模板文件)
@@ -63,13 +65,21 @@ config.*.yaml
 .pytest_cache/
 .coverage
 htmlcov/
-data/
+/data/
 
 # Backup files
 *.bak
 *.backup
 .venv
 backtest_results/
+!.env.example
+.env.testnet
+.env.backtest
+.env.mainnet
+.env.grid
+
+# 模型签名密钥
+.signing_key
 
 # Local runtime artifacts
 grid_state*.json

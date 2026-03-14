@@ -4,9 +4,10 @@
 
 import json
 import re
-from typing import Dict, Any
-from langchain_openai import ChatOpenAI
+from typing import Any
+
 from langchain_core.messages import HumanMessage, SystemMessage
+
 from src.utils.grid_math import calculate_grid_config
 
 
@@ -22,9 +23,7 @@ class GridAgent:
         symbol,
         order_manager,
         logger,
-        openai_api_base,
-        openai_api_key,
-        openai_model,
+        llm_manager,
         trade_amount,
         width_pct_min: float = DEFAULT_WIDTH_PCT_MIN,
         width_pct_max: float = DEFAULT_WIDTH_PCT_MAX,
@@ -35,12 +34,7 @@ class GridAgent:
         self.order_manager = order_manager
         self.logger = logger
         self.trade_amount = trade_amount
-        self.llm = ChatOpenAI(
-            base_url=openai_api_base,
-            api_key=openai_api_key,
-            model=openai_model,
-            temperature=0.1,
-        )
+        self.llm = llm_manager.get_client(temperature=0.1)
         self.width_pct_min = float(width_pct_min)
         self.width_pct_max = float(width_pct_max)
         self.width_pct_fallback = float(width_pct_fallback)
@@ -48,55 +42,59 @@ class GridAgent:
 
     def make_decision(self, market_data, multi_timeframe_trends, current_grid_summary):
         try:
-            # 1. AI 只负责逻辑决策
-            messages = [SystemMessage(content=self._get_decision_system_prompt()), 
-                        HumanMessage(content=self._format_prompt(market_data, multi_timeframe_trends, current_grid_summary))]
+            messages = [
+                SystemMessage(content=self._get_decision_system_prompt()),
+                HumanMessage(
+                    content=self._format_prompt(
+                        market_data, multi_timeframe_trends, current_grid_summary
+                    )
+                ),
+            ]
             response = self.llm.invoke(messages)
             content = response.content
-            
+
             try:
                 ai_decision = self._parse_decision_json(content)
-                
-                # 2. 如果需要更新，将决策传递给数学引擎
+
                 if ai_decision.get("action") == "UPDATE_GRID":
-                    current_price = float(market_data.get('current_price'))
+                    current_price = float(market_data.get("current_price"))
                     balance_info = self.order_manager.get_available_balance_info()
-                    available = float(balance_info.get('available', 0))
+                    available = float(balance_info.get("available", 0))
                     mode = ai_decision.get("mode", "NEUTRAL")
                     dynamic_width_pct = self._calculate_dynamic_width_pct(
                         market_data=market_data,
                         ai_width_pct=ai_decision.get("width_pct"),
                         mode=mode,
                     )
-                    
-                    # AI 给出倾向性参数
+
                     math_config = calculate_grid_config(
                         current_price=current_price,
                         available_balance=min(available, self.trade_amount),
                         mode=mode,
                         width_pct=dynamic_width_pct,
-                        grid_num=ai_decision.get("grid_num", 6)
+                        grid_num=ai_decision.get("grid_num", 6),
                     )
                     math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
                     math_config["width_pct"] = dynamic_width_pct
                     return math_config
-                
+
                 return ai_decision
-            except Exception as e:
-                # 兜底逻辑：AI 抽风时强制由数学引擎接管
+            except Exception:
                 fallback_width_pct = self._calculate_dynamic_width_pct(
                     market_data=market_data,
                     ai_width_pct=None,
                     mode="NEUTRAL",
                 )
+                balance_info = self.order_manager.get_available_balance_info()
+                available = float(balance_info.get("available", 0.0))
                 return calculate_grid_config(
-                    current_price=float(market_data['current_price']),
-                    available_balance=50.0,
+                    current_price=float(market_data["current_price"]),
+                    available_balance=min(available, self.trade_amount),
                     mode="NEUTRAL",
                     width_pct=fallback_width_pct,
                     grid_num=6,
-                )  # 安全兜底
-                
+                )
+
         except Exception as e:
             return {"action": "ERROR", "reason": str(e)}
 
@@ -133,7 +131,7 @@ class GridAgent:
 
         raise ValueError("未找到有效 JSON 对象")
 
-    def _parse_decision_json(self, content: Any) -> Dict[str, Any]:
+    def _parse_decision_json(self, content: Any) -> dict[str, Any]:
         if isinstance(content, dict):
             return content
 
@@ -141,20 +139,17 @@ class GridAgent:
         if not text:
             raise ValueError("AI 返回为空")
 
-        # 优先解析 fenced json
         fenced_match = re.search(r"```json\s*([\s\S]*?)```", text, re.IGNORECASE)
         if fenced_match:
             fenced_text = fenced_match.group(1).strip()
             if fenced_text:
                 return json.loads(fenced_text)
 
-        # 直接尝试整段
         try:
             return json.loads(text)
         except Exception:
             pass
 
-        # 回退：提取首个平衡 JSON 对象
         candidate = self._extract_first_json_object(text)
         return json.loads(candidate)
 
@@ -169,8 +164,7 @@ class GridAgent:
     def _clamp(value: float, lower: float, upper: float) -> float:
         return max(lower, min(value, upper))
 
-    def _estimate_market_width_pct(self, market_data: Dict[str, Any]) -> float:
-        """根据实时波动估算网格区间宽度（百分比）。"""
+    def _estimate_market_width_pct(self, market_data: dict[str, Any]) -> float:
         current_price = self._safe_float(market_data.get("current_price"), 0.0)
         if current_price <= 0:
             return self.width_pct_fallback
@@ -189,7 +183,6 @@ class GridAgent:
         if high > low > 0:
             candle_range_pct = (high - low) / current_price
 
-        # 布林带反映中短期波动，K线振幅反映即时波动，做加权融合。
         if bb_width_pct > 0 and candle_range_pct > 0:
             base_width = 0.7 * bb_width_pct + 0.3 * (candle_range_pct * 2.2)
         elif bb_width_pct > 0:
@@ -199,32 +192,23 @@ class GridAgent:
         else:
             base_width = self.width_pct_fallback
 
-        # 成交量变化放大时适度拉宽网格，避免暴波期频繁重置。
         volume_boost = 1 + min(volume_change / 100.0, 1.5) * 0.15
         dynamic_width = base_width * volume_boost
         return self._clamp(dynamic_width, self.width_pct_min, self.width_pct_max)
 
     def _calculate_dynamic_width_pct(
         self,
-        market_data: Dict[str, Any],
+        market_data: dict[str, Any],
         ai_width_pct: Any = None,
         mode: str = "NEUTRAL",
     ) -> float:
-        """
-        动态计算 width_pct：
-        1) 先按市场波动估算；
-        2) 再与 AI 输出做融合（AI 作为偏好，不作为硬锚定）；
-        3) 最终做上下限保护。
-        """
         market_width = self._estimate_market_width_pct(market_data)
 
         mode_upper = str(mode or "").upper()
         if mode_upper in {"LONG", "SHORT"}:
-            market_width *= 1.10  # 单边模式适度放宽，减少扫单后立刻失效
+            market_width *= 1.10
 
-        market_width = self._clamp(
-            market_width, self.width_pct_min, self.width_pct_max
-        )
+        market_width = self._clamp(market_width, self.width_pct_min, self.width_pct_max)
 
         ai_width = self._safe_float(ai_width_pct, 0.0)
         if ai_width > 0:
@@ -272,14 +256,14 @@ width_pct 约束：
 - 不要输出 markdown、解释性文字、代码块
 
 JSON Schema:
-{
+{{
   "action": "UPDATE_GRID | KEEP_GRID",
   "mode": "LONG | SHORT | NEUTRAL",
   "width_pct": 0.06,
   "grid_num": 8,
   "confidence": 0.78,
   "reason": "一句话说明依据"
-}
+}}
 """
 
     def _format_prompt(self, market_data, trends, summary):
@@ -292,13 +276,13 @@ JSON Schema:
         bb_width_pct = ((bb_upper - bb_lower) / current_price) if current_price > 0 else 0.0
 
         return (
-            f"symbol={self.symbol}\n"
-            f"current_price={current_price:.4f}\n"
-            f"rsi={rsi:.2f}\n"
-            f"macd_hist={macd_hist:.6f}\n"
-            f"bb_width_pct={bb_width_pct:.4f}\n"
-            f"volume_change_pct={volume_change:.2f}\n"
-            f"multi_timeframe_trends={json.dumps(trends, ensure_ascii=False)}\n"
-            f"current_grid_summary={summary}\n"
+            f"symbol={self.symbol}\\n"
+            f"current_price={current_price:.4f}\\n"
+            f"rsi={rsi:.2f}\\n"
+            f"macd_hist={macd_hist:.6f}\\n"
+            f"bb_width_pct={bb_width_pct:.4f}\\n"
+            f"volume_change_pct={volume_change:.2f}\\n"
+            f"multi_timeframe_trends={json.dumps(trends, ensure_ascii=False)}\\n"
+            f"current_grid_summary={summary}\\n"
             "请输出严格 JSON 决策。"
         )

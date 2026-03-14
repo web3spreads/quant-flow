@@ -103,6 +103,30 @@ agent:
     # AI 输出与市场波动的融合权重（0~1）
     ai_blend_weight: 0.35
 
+# LLM 配置
+llm:
+  # 客户端类型: langchain_openai, langchain_cloudflare, langchain_google, langchain_litellm, langchain_nvidia
+  # - langchain_openai: 符合 OpenAI 规范的供应商（DeepSeek、OpenAI、本地部署等）
+  # - langchain_litellm: 更宽泛的多模型支持（通过 LiteLLM 代理）
+  # - langchain_cloudflare: Cloudflare AI Gateway 转发的模型
+  # - langchain_google: Google Gemini 模型
+  # - langchain_nvidia: NVIDIA AI Endpoints
+  client_type: langchain_openai
+
+  # 模型名称
+  # model: deepseek-chat
+
+  # 基础参数（可选，如不指定则使用默认值）
+  # temperature: 0.1
+  # top_p: 0.95
+  # max_tokens: 8192
+
+  # 额外参数（可选，JSON 格式）
+  # 用于特定客户端的高级配置，如 NVIDIA 的 thinking 模式
+  # extra_body:
+  #   chat_template_kwargs:
+  #     thinking: true
+
 # Prompt 配置
 prompt:
   # 使用的 Prompt 集合名称
@@ -119,7 +143,8 @@ review_agent:
   run_every_cycles: 3            # 每隔多少个交易周期运行一次复盘
   lookback_decisions: 12         # 复盘时回顾多少条历史决策
   temperature: 0.05              # 复盘时的 LLM 温度（更低以保证稳定性）
-  memory_file: logs/review_memory.json  # 复盘经验存储文件
+  memory_file: logs/review_memory.json  # 复盘经验存储文件（保留用于快速查询）
+  daily_log_dir: logs/review_daily     # 每日日志目录（用于 LoRA 训练数据收集）
   max_lessons: 30                # 最多保留多少条经验教训数量
   min_confidence: 0.35           # 采纳经验所需的最小置信度
   similarity_threshold: 0.5      # 当前环境与历史经验的最小相似度
@@ -171,6 +196,117 @@ risk_management:
 
   # 熔断后暂停交易时间（分钟）
   circuit_breaker_pause: 30
+
+# 账户保护配置
+# 实现最大回撤保护、持仓时间限制等风控机制
+account_protection:
+  # 是否启用账户保护（强烈建议启用）
+  enabled: true
+
+  # 最大回撤百分比（0.10 = 10%）
+  # 净值从峰值回撤超过此值时，将平仓所有持仓并暂停交易
+  max_drawdown_pct: 0.10
+
+  # 单日最大亏损百分比（0.05 = 5%）
+  # 当日亏损超过此值时，暂停新开仓
+  max_daily_loss_pct: 0.05
+
+  # 最大持仓时间（小时）
+  # 超过此时间的持仓将被强制平仓
+  # 防止资金长期被占用或死多/死空
+  max_position_hours: 48
+
+  # 最大连续亏损次数
+  # 连续亏损达到此次数时，暂停交易
+  max_consecutive_losses: 5
+
+  # 触发保护后暂停交易时间（小时）
+  pause_hours_after_protection: 4
+
+  # 最小风险回报比
+  # 开仓前验证止盈/止损比例，低于此值将拒绝开仓
+  min_risk_reward_ratio: 1.5
+
+# 增强型交易分析配置
+# 整合市场状态分析、智能风险管理和多因子信号评分系统
+enhanced_analysis:
+  # 是否启用增强分析（默认启用）
+  enabled: true
+
+  # 最低信号质量要求: excellent, good, fair, poor
+  # excellent: 只接受极佳信号（更保守）
+  # fair: 接受一般及以上信号（默认）
+  min_signal_quality: fair
+
+  # 最低置信度要求（0.0-1.0）
+  min_confidence: 0.4
+
+  # 是否启用风险过滤（基于账户风险评估过滤交易）
+  enable_risk_filter: true
+
+  # 是否启用时机过滤（基于入场时机评分过滤交易）
+  enable_timing_filter: true
+
+  # 风险管理参数
+  risk:
+    # 单笔最大风险（账户百分比）
+    max_risk_per_trade: 0.02
+
+    # 最大总敞口（账户百分比）
+    max_total_exposure: 0.5
+
+    # ATR止损倍数（波动性自适应）
+    atr_sl_multiplier: 1.5
+
+    # ATR止盈倍数
+    atr_tp_multiplier: 3.0
+
+    # 是否启用追踪止损
+    trailing_stop_enabled: true
+
+    # 是否启用波动性调整（高波动时自动调整止损止盈距离）
+    volatility_adjustment: true
+
+  # 信号因子权重（总和应为1.0）
+  # 可根据交易风格调整各因子权重
+  signal_weights:
+    trend: 0.25           # 趋势因子
+    momentum: 0.20        # 动量因子（RSI、MACD）
+    volume: 0.15          # 成交量因子
+    volatility: 0.10      # 波动性因子
+    price_action: 0.15    # 价格行为因子（支撑阻力）
+    multi_timeframe: 0.15 # 多周期一致性因子
+
+  # 决策验证配置（开仓前多维度验证）
+  validation:
+    # 是否要求多周期趋势一致
+    require_trend_alignment: true
+
+    # 至少需要几个周期趋势一致才允许开仓
+    min_aligned_timeframes: 2
+
+    # 是否避开高波动市场
+    avoid_high_volatility: true
+
+    # 是否优先等待回调入场
+    prefer_pullback_entry: true
+
+    # 追高/追低阈值（超过此比例视为追高）
+    max_chase_percent: 0.02
+
+  # 动态仓位管理配置
+  position_sizing:
+    # 凯利分数（使用1/4凯利更保守）
+    kelly_fraction: 0.25
+
+    # 最小仓位比例（信号弱时）
+    min_position_ratio: 0.1
+
+    # 最大仓位比例（信号强时）
+    max_position_ratio: 1.0
+
+    # 胜率计算回看周期
+    win_rate_lookback: 20
 
 # 日志配置
 logging:
