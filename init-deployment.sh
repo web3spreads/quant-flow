@@ -46,22 +46,36 @@ fi
 
 echo ""
 
-# 创建并设置 logs 目录权限
-echo -e "${YELLOW}📁 设置 logs 目录权限...${NC}"
+# 自动探测当前用户 UID/GID 并写入 .env
+echo -e "${YELLOW}📁 配置运行用户 UID/GID...${NC}"
 
-# 创建 logs 目录结构
-mkdir -p logs/decisions
-mkdir -p logs/trades
+CURRENT_UID=$(id -u)
+CURRENT_GID=$(id -g)
 
-# 设置权限 (777 确保容器内的 quantflow 用户可以写入)
-# 注意：这是为了 Docker volume 挂载的兼容性
-chmod -R 777 logs/
+# 将 PUID/PGID 写入 .env（如果尚未设置）
+if [ -f ".env" ]; then
+    # 移除已有的 PUID/PGID 行（避免重复）
+    sed -i '/^PUID=/d' .env
+    sed -i '/^PGID=/d' .env
+fi
 
-echo -e "${GREEN}✅ logs 目录权限已设置 (777)${NC}"
-echo -e "${BLUE}   目录结构：${NC}"
-echo -e "   logs/"
-echo -e "   ├── decisions/"
-echo -e "   └── trades/"
+echo "PUID=${CURRENT_UID}" >> .env
+echo "PGID=${CURRENT_GID}" >> .env
+
+echo -e "${GREEN}✅ 已写入 PUID=${CURRENT_UID}, PGID=${CURRENT_GID} 到 .env${NC}"
+echo -e "   容器内运行用户将匹配当前宿主机用户，挂载卷权限自动兼容"
+
+echo ""
+
+# 创建 logs 目录结构（无需 777 权限，容器 entrypoint 会自动 chown）
+echo -e "${YELLOW}📁 创建目录结构...${NC}"
+
+mkdir -p logs/decisions logs/trades data/market_info experiments
+
+echo -e "${GREEN}✅ 目录结构已创建${NC}"
+echo -e "${BLUE}   logs/decisions/     - 决策日志${NC}"
+echo -e "${BLUE}   logs/trades/        - 交易日志${NC}"
+echo -e "${BLUE}   data/market_info/   - 市场信息存储${NC}"
 echo ""
 
 # 检查 Docker 和 Docker Compose
@@ -105,6 +119,7 @@ echo -e "   5. 停止容器："
 echo -e "      ${GREEN}docker-compose down${NC}"
 echo ""
 echo -e "${YELLOW}💡 提示：${NC}"
-echo -e "   - logs 目录已设置为 777 权限，允许容器写入日志"
-echo -e "   - 如果遇到权限问题，重新运行此脚本即可修复"
+echo -e "   - PUID/PGID 已自动配置为当前用户 (${CURRENT_UID}:${CURRENT_GID})"
+echo -e "   - 容器启动时会自动匹配宿主机用户权限，无需手动 chmod 777"
+echo -e "   - 如果更换部署用户，重新运行此脚本即可"
 echo ""

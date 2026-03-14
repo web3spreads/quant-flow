@@ -1,14 +1,23 @@
 """
 环境特征提取模块
 从市场数据和决策记录中提取用于相似度计算的特征
+
+注意：此模块已迁移到 src.agents.common.utils.context_extractor
+此文件保留用于向后兼容，请使用新位置。
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+# 从新位置导入（兼容层）
+from src.agents.common.utils.context_extractor import ContextExtractor
+
+__all__ = ["ContextExtractor"]
+
+# 以下为原始实现，已被新位置取代
 import math
+from datetime import datetime
+from typing import Any
 
 
-class ContextExtractor:
+class _DeprecatedContextExtractor:
     """将原始市场数据转换为轻量的环境特征向量"""
 
     def __init__(self, volatility_window: int = 10):
@@ -17,9 +26,9 @@ class ContextExtractor:
 
     def extract(
         self,
-        market_data: Dict[str, Any],
-        decision_records: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        market_data: dict[str, Any],
+        decision_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """提取当前环境特征"""
         md = market_data or {}
         price = float(md.get("current_price") or md.get("close") or 0.0)
@@ -36,16 +45,16 @@ class ContextExtractor:
         }
         return features
 
-    def _macd_state(self, market_data: Dict[str, Any]) -> str:
+    def _macd_state(self, market_data: dict[str, Any]) -> str:
         hist = float(market_data.get("macd_hist", 0) or 0)
-        signal = float(market_data.get("macd_signal", 0) or 0)
+        float(market_data.get("macd_signal", 0) or 0)
         if hist > 0:
             return "bullish"
         if hist < 0:
             return "bearish"
         return "neutral"
 
-    def _trend_direction(self, market_data: Dict[str, Any]) -> str:
+    def _trend_direction(self, market_data: dict[str, Any]) -> str:
         ma_short = market_data.get("ma_7")
         ma_mid = market_data.get("ma_25")
         ma_long = market_data.get("ma_99")
@@ -63,7 +72,7 @@ class ContextExtractor:
                 return "down"
         return "sideways"
 
-    def _ema_trend(self, market_data: Dict[str, Any]) -> str:
+    def _ema_trend(self, market_data: dict[str, Any]) -> str:
         ema_fast = market_data.get("ema_20") or market_data.get("ma_7")
         ema_slow = market_data.get("ema_50") or market_data.get("ma_25")
 
@@ -78,9 +87,9 @@ class ContextExtractor:
 
     def _volatility_level(
         self,
-        market_data: Dict[str, Any],
+        market_data: dict[str, Any],
         price: float,
-        decision_records: Optional[List[Dict[str, Any]]],
+        decision_records: list[dict[str, Any]] | None,
     ) -> str:
         if price <= 0:
             price = 1.0
@@ -89,9 +98,7 @@ class ContextExtractor:
         if atr:
             ratio = abs(float(atr)) / price
         elif market_data.get("bb_upper") and market_data.get("bb_lower"):
-            bb_range = float(market_data["bb_upper"]) - float(
-                market_data["bb_lower"]
-            )
+            bb_range = float(market_data["bb_upper"]) - float(market_data["bb_lower"])
             ratio = bb_range / price if price else 0.0
         else:
             ratio = self._volatility_from_history(decision_records, price)
@@ -103,7 +110,7 @@ class ContextExtractor:
         return "high"
 
     def _volatility_from_history(
-        self, decision_records: Optional[List[Dict[str, Any]]], price: float
+        self, decision_records: list[dict[str, Any]] | None, price: float
     ) -> float:
         if not decision_records:
             return 0.01
@@ -125,7 +132,7 @@ class ContextExtractor:
         std_dev = math.sqrt(variance)
         return std_dev / mean_price
 
-    def _volume_ratio(self, market_data: Dict[str, Any]) -> float:
+    def _volume_ratio(self, market_data: dict[str, Any]) -> float:
         volume = float(market_data.get("volume") or market_data.get("current_volume") or 0)
         volume_ma = float(market_data.get("volume_ma_20") or market_data.get("avg_volume") or 0)
         if volume_ma <= 0:
@@ -134,7 +141,7 @@ class ContextExtractor:
         # 防止极端值影响相似度
         return max(0.0, min(ratio, 5.0))
 
-    def _price_position(self, market_data: Dict[str, Any]) -> float:
+    def _price_position(self, market_data: dict[str, Any]) -> float:
         bb_pos = market_data.get("bb_position")
         if bb_pos is not None:
             try:

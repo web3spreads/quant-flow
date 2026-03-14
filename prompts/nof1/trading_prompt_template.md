@@ -21,6 +21,10 @@
 **永续合约数据:**
 - 持仓量 (Open Interest): 最新: {{ oi_latest }} | 平均: {{ oi_average }}
 - 资金费率 (Funding Rate): {{ funding_rate }}
+- 资金费率信号: {{ funding_rate_signal }}
+- 市场情绪 (恐惧贪婪指数): {{ fear_greed_sentiment }}
+- CEX领先信号: {{ cex_funding_signal }}
+- 链上数据: {{ onchain_summary }}
 
 **日内序列 (按分钟, 最旧 → 最新):**
 
@@ -71,6 +75,17 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
 **夏普比率 (Sharpe Ratio):** {{ sharpe_ratio }}
 
 ---
+
+{% if recent_trades_text %}
+{{ recent_trades_text }}
+{% endif %}
+{{ verbal_finetuning_section }}
+
+{{ regime_hint }}
+
+{{ debate_summary }}
+
+{{ volatility_alert }}
 
 {{ historical_summary }}
 
@@ -132,4 +147,3 @@ RSI指标 (14周期, 4小时): {{ rsi_14_4h_indicators }}
   * 选择该仓位和杠杆的原因
   * 手续费成本与预期盈利的比例
   * 风险收益比分析
-

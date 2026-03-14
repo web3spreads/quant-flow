@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   quant-flow:
     build:
@@ -10,10 +8,32 @@ services:
 
     # Environment variables (override with .env file)
     environment:
+      # 容器运行用户 UID/GID，设置为宿主机用户的 id 以解决挂载卷权限问题
+      # 获取方式: id -u (UID), id -g (GID)
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+
+      # 运行模式: main（仅主交易）/ grid（仅网格）/ all（同时运行）
+      - RUN_MODE=${RUN_MODE:-main}
+      # 主交易配置文件路径（相对于 /app）
+      - MAIN_CONFIG=${MAIN_CONFIG:-config.yaml}
+      # 网格交易配置文件路径（相对于 /app）
+      - GRID_CONFIG=${GRID_CONFIG:-config.grid.yaml}
+
+      # LLM Client Configuration
       # OpenAI/DeepSeek API Configuration
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.deepseek.com/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-deepseek-chat}
+      # Cloudflare Workers AI Configuration
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      # Google Gemini Configuration
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      # LiteLLM Configuration
+      - LITELLM_API_BASE=${LITELLM_API_BASE}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      # NVIDIA AI Endpoints Configuration
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
 
       # Exa Search API Configuration (Optional)
       - EXA_API_KEY=${EXA_API_KEY:-}
@@ -32,15 +52,21 @@ services:
 
     # Mount volumes for configuration and persistence
     volumes:
-      # Configuration file (read-only)
+      # 主交易配置文件（只读）
       - ./config.yaml:/app/config.yaml:ro
+
+      # 网格交易配置文件（只读）
+      # RUN_MODE=grid 或 all 时需要此文件存在
+      - ./config.grid.yaml:/app/config.grid.yaml:ro
 
       # Prompts directory (read-only)
       - ./prompts:/app/prompts:ro
 
+      # 数据目录（读写，回填数据 + 模型训练数据持久化）
+      - ./data:/app/data
+
       # Logs directory (persistent, read-write)
-      # IMPORTANT: Run ./init-deployment.sh first to set correct permissions
-      # Or manually: chmod -R 777 ./logs
+      # 容器 entrypoint 会根据 PUID/PGID 自动修复权限，无需手动 chmod
       - ./logs:/app/logs
 
       # Optional: Mount .env file if you prefer file-based config
@@ -75,13 +101,7 @@ services:
     # Commented out as the app may need to write temporary files
     # read_only: true
 
-    # Health check
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "python main.py"]
-      interval: 60s
-      timeout: 10s
-      start_period: 30s
-      retries: 3
+    # Health check 由 Dockerfile 中的 HEALTHCHECK 指令定义，此处不重复配置
 
 networks:
   quant-network:

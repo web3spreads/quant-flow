@@ -88,6 +88,12 @@ As a non-mainstream coin, {{ symbol }} requires a more conservative trading stra
 - Price Position: {{ bb_position }} (0=Lower Band, 1=Upper Band)
 - Volume Change: {{ volume_change }}%
 
+**Perpetual Contract Sentiment:**
+- Funding Rate Signal: {{ funding_rate_signal }}
+- Fear & Greed: {{ fear_greed_sentiment }}
+- CEX Leading Signal: {{ cex_funding_signal }}
+- On-chain Data: {{ onchain_summary }}
+
 ⚠️ **Important Reminder - Indicator Lag**:
 - All technical indicators are calculated based on historical prices and have lag.
 - RSI, MACD, MAs, etc., reflect past price behavior, not the future.
@@ -197,6 +203,14 @@ Assuming max amount and leverage
 - Single trade limit 5% of available balance.
 - Stronger signal -> Larger position; Weaker signal -> Smaller position.
 - When uncertain, probe with small positions; do not need to completely abandon opportunities.
+
+{{ verbal_finetuning_section }}
+
+{{ regime_hint }}
+
+{{ debate_summary }}
+
+{{ volatility_alert }}
 
 {{ historical_summary }}
 

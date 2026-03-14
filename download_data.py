@@ -5,10 +5,11 @@ Hyperliquid历史数据下载工具
 """
 
 import argparse
-import sys
 import json
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 
 from src.backtest.data_loader import BacktestDataLoader
@@ -99,14 +100,14 @@ def parse_args():
 def build_filename(symbol: str, timeframe: str, start_date: str, end_date: str, format: str) -> str:
     """
     构建输出文件名
-    
+
     Args:
         symbol: 交易对符号
         timeframe: 时间周期
         start_date: 开始日期
         end_date: 结束日期
         format: 文件格式
-        
+
     Returns:
         文件名
     """
@@ -117,7 +118,7 @@ def build_filename(symbol: str, timeframe: str, start_date: str, end_date: str, 
 def save_data(df: pd.DataFrame, file_path: Path, format: str):
     """
     保存数据到文件
-    
+
     Args:
         df: 数据DataFrame
         file_path: 文件路径
@@ -132,7 +133,7 @@ def save_data(df: pd.DataFrame, file_path: Path, format: str):
         for record in data:
             if isinstance(record['timestamp'], pd.Timestamp):
                 record['timestamp'] = record['timestamp'].isoformat()
-        
+
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
@@ -149,7 +150,7 @@ def download_symbol(
 ) -> bool:
     """
     下载单个交易对的数据
-    
+
     Args:
         loader: 数据加载器
         symbol: 交易对符号
@@ -159,7 +160,7 @@ def download_symbol(
         output_dir: 输出目录
         format: 文件格式
         overwrite: 是否覆盖已存在的文件
-        
+
     Returns:
         是否成功
     """
@@ -169,32 +170,32 @@ def download_symbol(
         end_date_str = end_date.strftime('%Y-%m-%d')
         filename = build_filename(symbol, timeframe, start_date_str, end_date_str, format)
         file_path = output_dir / filename
-        
+
         # 检查文件是否已存在
         if file_path.exists() and not overwrite:
             print(f"⏭️  {symbol}: 文件已存在，跳过 ({filename})")
             return True
-        
+
         # 下载数据
         print(f"\n📥 正在下载 {symbol} 数据...")
         df = loader.load_from_api(symbol, timeframe, start_date, end_date)
-        
+
         if df is None or df.empty:
             print(f"❌ {symbol}: 下载失败或数据为空")
             return False
-        
+
         # 保存文件
         save_data(df, file_path, format)
-        
+
         # 显示统计信息
         print(f"✅ {symbol}: 下载完成")
         print(f"   文件: {filename}")
         print(f"   数据量: {len(df)} 条K线")
         print(f"   时间范围: {df['timestamp'].min()} 至 {df['timestamp'].max()}")
         print(f"   价格范围: ${df['low'].min():.2f} - ${df['high'].max():.2f}")
-        
+
         return True
-        
+
     except Exception as e:
         print(f"❌ {symbol}: 下载失败 - {e}")
         import traceback
@@ -205,7 +206,7 @@ def download_symbol(
 def main():
     """主函数"""
     args = parse_args()
-    
+
     # 解析日期
     try:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
@@ -214,30 +215,30 @@ def main():
         print(f"❌ 日期格式错误: {e}")
         print("   请使用格式: YYYY-MM-DD (例如: 2025-11-01)")
         sys.exit(1)
-    
+
     if start_date >= end_date:
         print("❌ 开始日期必须早于结束日期")
         sys.exit(1)
-    
+
     # 创建输出目录
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"📁 输出目录: {output_dir.absolute()}")
-    
+
     # 初始化数据加载器
     print(f"🔧 初始化数据加载器 ({'测试网' if args.testnet else '主网'})...")
     loader = BacktestDataLoader(testnet=args.testnet)
-    
+
     # 下载每个交易对
-    print(f"\n🚀 开始下载数据...")
+    print("\n🚀 开始下载数据...")
     print(f"   交易对: {', '.join(args.symbol)}")
     print(f"   时间周期: {args.timeframe}")
     print(f"   时间范围: {args.start_date} 至 {args.end_date}")
     print(f"   输出格式: {args.format}")
-    
+
     success_count = 0
     failed_symbols = []
-    
+
     for symbol in args.symbol:
         success = download_symbol(
             loader=loader,
@@ -249,25 +250,24 @@ def main():
             format=args.format,
             overwrite=args.overwrite
         )
-        
+
         if success:
             success_count += 1
         else:
             failed_symbols.append(symbol)
-    
+
     # 显示总结
     print(f"\n{'='*60}")
-    print(f"📊 下载完成")
+    print("📊 下载完成")
     print(f"   成功: {success_count}/{len(args.symbol)}")
     if failed_symbols:
         print(f"   失败: {', '.join(failed_symbols)}")
     print(f"   输出目录: {output_dir.absolute()}")
     print(f"{'='*60}")
-    
+
     if success_count == 0:
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
-

@@ -3,20 +3,20 @@
 提供结构化日志记录和美化的控制台输出
 """
 
-import json
 import csv
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-from rich.markdown import Markdown
-from rich import box
+from typing import Any
+
 import numpy as np
 import pandas as pd
+from rich import box
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -61,10 +61,10 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.isoformat()
 
         # 处理 LangChain 消息对象 (SystemMessage, HumanMessage, AIMessage, ToolMessage, 等)
-        if hasattr(obj, 'content') and hasattr(obj, 'type'):
+        if hasattr(obj, "content") and hasattr(obj, "type"):
             return {
-                'type': obj.type if hasattr(obj, 'type') else obj.__class__.__name__,
-                'content': str(obj.content)[:500] if obj.content else ''  # 限制内容长度
+                "type": obj.type if hasattr(obj, "type") else obj.__class__.__name__,
+                "content": str(obj.content)[:500] if obj.content else "",  # 限制内容长度
             }
 
         # 其他情况调用父类方法
@@ -75,10 +75,7 @@ class TradingLogger:
     """交易日志记录器"""
 
     def __init__(
-        self,
-        log_level: str = "INFO",
-        console_color: bool = True,
-        decision_log_format: str = "json"
+        self, log_level: str = "INFO", console_color: bool = True, decision_log_format: str = "json"
     ):
         """
         初始化日志记录器
@@ -115,15 +112,13 @@ class TradingLogger:
         file_handler.setLevel(logging.DEBUG)
 
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
     def print_header(self, text: str):
         """打印标题"""
-        from rich.align import Align
         self.console.print()  # 空行
         self.console.rule(text, style="bold cyan")
         self.console.print()  # 空行
@@ -135,7 +130,7 @@ class TradingLogger:
         if content:
             self.console.print(content)
 
-    def print_market_data(self, symbol: str, data: Dict[str, Any]):
+    def print_market_data(self, symbol: str, data: dict[str, Any]):
         """
         打印市场数据
 
@@ -163,13 +158,15 @@ class TradingLogger:
         Args:
             prompt: Prompt 内容
         """
-        self.console.print(Panel(
-            prompt,
-            title="🤖 AI Agent Prompt",
-            border_style="blue",
-            padding=(1, 2),
-            box=box.ROUNDED
-        ))
+        self.console.print(
+            Panel(
+                prompt,
+                title="🤖 AI Agent Prompt",
+                border_style="blue",
+                padding=(1, 2),
+                box=box.ROUNDED,
+            )
+        )
 
     def print_agent_thought(self, thought: str):
         """
@@ -178,13 +175,15 @@ class TradingLogger:
         Args:
             thought: 思考内容
         """
-        self.console.print(Panel(
-            thought,
-            title="💭 Agent 思考链",
-            border_style="magenta",
-            padding=(1, 2),
-            box=box.ROUNDED
-        ))
+        self.console.print(
+            Panel(
+                thought,
+                title="💭 Agent 思考链",
+                border_style="magenta",
+                padding=(1, 2),
+                box=box.ROUNDED,
+            )
+        )
 
     def print_ai_response(self, response: str, title: str = "🤖 AI 回复"):
         """
@@ -201,13 +200,9 @@ class TradingLogger:
         else:
             content = response
 
-        self.console.print(Panel(
-            content,
-            title=title,
-            border_style="cyan",
-            padding=(1, 2),
-            box=box.DOUBLE
-        ))
+        self.console.print(
+            Panel(content, title=title, border_style="cyan", padding=(1, 2), box=box.DOUBLE)
+        )
 
     def _is_likely_markdown(self, text: str) -> bool:
         """
@@ -221,17 +216,27 @@ class TradingLogger:
         """
         # 简单检测：包含常见 Markdown 标记
         markdown_indicators = [
-            '# ', '## ', '### ',  # 标题
-            '- ', '* ', '+ ',     # 列表
-            '```', '`',           # 代码
-            '**', '__',           # 粗体
-            '*', '_',             # 斜体
-            '[', '](', '![',      # 链接和图片
-            '>', '|'              # 引用和表格
+            "# ",
+            "## ",
+            "### ",  # 标题
+            "- ",
+            "* ",
+            "+ ",  # 列表
+            "```",
+            "`",  # 代码
+            "**",
+            "__",  # 粗体
+            "*",
+            "_",  # 斜体
+            "[",
+            "](",
+            "![",  # 链接和图片
+            ">",
+            "|",  # 引用和表格
         ]
         return any(indicator in text for indicator in markdown_indicators)
 
-    def print_decision(self, decision: str, details: Dict[str, Any] = None):
+    def print_decision(self, decision: str, details: dict[str, Any] = None):
         """
         打印决策结果
 
@@ -240,11 +245,7 @@ class TradingLogger:
             details: 决策详情
         """
         # 决策颜色映射
-        color_map = {
-            "BUY": "green",
-            "SELL": "red",
-            "DO_NOTHING": "yellow"
-        }
+        color_map = {"BUY": "green", "SELL": "red", "DO_NOTHING": "yellow"}
         color = color_map.get(decision, "white")
 
         # 创建决策面板
@@ -255,13 +256,9 @@ class TradingLogger:
             for key, value in details.items():
                 content += f"  • {key}: {value}\n"
 
-        self.console.print(Panel(
-            content,
-            title="⚡ 决策结果",
-            border_style=color,
-            padding=(1, 2),
-            box=box.HEAVY
-        ))
+        self.console.print(
+            Panel(content, title="⚡ 决策结果", border_style=color, padding=(1, 2), box=box.HEAVY)
+        )
 
     def print_execution_result(self, success: bool, message: str, order_id: str = None):
         """
@@ -279,13 +276,9 @@ class TradingLogger:
         if order_id:
             content += f"\n订单ID: {order_id}"
 
-        self.console.print(Panel(
-            content,
-            title="📋 执行结果",
-            border_style=style,
-            padding=(1, 2),
-            box=box.HEAVY
-        ))
+        self.console.print(
+            Panel(content, title="📋 执行结果", border_style=style, padding=(1, 2), box=box.HEAVY)
+        )
 
     def print_error(self, error: str):
         """
@@ -317,13 +310,13 @@ class TradingLogger:
     def log_decision(
         self,
         symbol: str,
-        market_data: Dict[str, Any],
+        market_data: dict[str, Any],
         prompt: str,
         ai_response: str,
         decision: str,
-        action_details: Dict[str, Any] = None,
+        action_details: dict[str, Any] = None,
         status: str = "SUCCESS",
-        error_message: str = None
+        error_message: str = None,
     ):
         """
         记录决策日志到文件
@@ -348,23 +341,26 @@ class TradingLogger:
             "decision": decision,
             "action_details": action_details or {},
             "status": status,
-            "error_message": error_message
+            "error_message": error_message,
         }
 
-        # 根据格式保存
-        if self.decision_log_format == "json":
-            self._save_decision_json(timestamp, log_entry)
-        else:
-            self._save_decision_csv(timestamp, log_entry)
+        # 根据格式保存（日志写入失败不应影响主流程）
+        try:
+            if self.decision_log_format == "json":
+                self._save_decision_json(timestamp, log_entry)
+            else:
+                self._save_decision_csv(timestamp, log_entry)
+        except OSError as e:
+            self.logger.warning(f"决策日志写入失败: {e}")
 
-    def _save_decision_json(self, timestamp: datetime, log_entry: Dict[str, Any]):
+    def _save_decision_json(self, timestamp: datetime, log_entry: dict[str, Any]):
         """保存决策日志为 JSON 格式"""
         filename = self.decisions_dir / f"decisions_{timestamp.strftime('%Y%m%d')}.jsonl"
 
         with open(filename, "a", encoding="utf-8") as f:
             f.write(json.dumps(log_entry, ensure_ascii=False, cls=CustomJSONEncoder) + "\n")
 
-    def _save_decision_csv(self, timestamp: datetime, log_entry: Dict[str, Any]):
+    def _save_decision_csv(self, timestamp: datetime, log_entry: dict[str, Any]):
         """保存决策日志为 CSV 格式"""
         filename = self.decisions_dir / f"decisions_{timestamp.strftime('%Y%m%d')}.csv"
 
@@ -372,8 +368,13 @@ class TradingLogger:
 
         with open(filename, "a", newline="", encoding="utf-8") as f:
             fieldnames = [
-                "timestamp", "symbol", "decision", "status",
-                "current_price", "rsi", "error_message"
+                "timestamp",
+                "symbol",
+                "decision",
+                "status",
+                "current_price",
+                "rsi",
+                "error_message",
             ]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
 
@@ -381,15 +382,17 @@ class TradingLogger:
                 writer.writeheader()
 
             # 简化的 CSV 记录
-            writer.writerow({
-                "timestamp": log_entry["timestamp"],
-                "symbol": log_entry["symbol"],
-                "decision": log_entry["decision"],
-                "status": log_entry["status"],
-                "current_price": log_entry["market_data"].get("current_price", ""),
-                "rsi": log_entry["market_data"].get("rsi", ""),
-                "error_message": log_entry.get("error_message", "")
-            })
+            writer.writerow(
+                {
+                    "timestamp": log_entry["timestamp"],
+                    "symbol": log_entry["symbol"],
+                    "decision": log_entry["decision"],
+                    "status": log_entry["status"],
+                    "current_price": log_entry["market_data"].get("current_price", ""),
+                    "rsi": log_entry["market_data"].get("rsi", ""),
+                    "error_message": log_entry.get("error_message", ""),
+                }
+            )
 
     def log_trade(
         self,
@@ -401,7 +404,7 @@ class TradingLogger:
         take_profit_price: float = None,
         stop_loss_price: float = None,
         status: str = "FILLED",
-        pnl: float = None
+        pnl: float = None,
     ):
         """
         记录交易日志
@@ -428,7 +431,7 @@ class TradingLogger:
             "take_profit_price": take_profit_price,
             "stop_loss_price": stop_loss_price,
             "status": status,
-            "pnl": pnl
+            "pnl": pnl,
         }
 
         # 保存为 JSON 格式
@@ -441,13 +444,11 @@ class TradingLogger:
 
 
 # 全局日志实例
-_logger: Optional[TradingLogger] = None
+_logger: TradingLogger | None = None
 
 
 def get_logger(
-    log_level: str = "INFO",
-    console_color: bool = True,
-    decision_log_format: str = "json"
+    log_level: str = "INFO", console_color: bool = True, decision_log_format: str = "json"
 ) -> TradingLogger:
     """
     获取全局日志实例（单例模式）

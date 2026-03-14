@@ -1,0 +1,49 @@
+# Pre-commit hooks 配置
+# 安装: pre-commit install
+# 手动运行: pre-commit run --all-files
+
+repos:
+  # Ruff - 快速 Python linter 和 formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.0
+    hooks:
+      - id: ruff
+        name: ruff lint
+        args: [--fix, --exit-non-zero-on-fix]
+        # 只检查重构后的新模块，避免历史遗留问题阻塞 CI
+        files: ^(src/agents/|src/backtest/|src/llm/|src/agent/review_agent\.py)
+      - id: ruff-format
+        name: ruff format
+        files: ^(src/agents/|src/backtest/|src/llm/|src/agent/review_agent\.py)
+
+  # 基本代码检查
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        name: check yaml
+      - id: check-json
+        name: check json
+      - id: check-toml
+        name: check toml
+      - id: check-added-large-files
+        name: check large files
+        args: ['--maxkb=1000']
+      - id: trailing-whitespace
+        name: trailing whitespace
+      - id: end-of-file-fixer
+        name: end of file fixer
+      - id: mixed-line-ending
+        name: mixed line ending
+        args: ['--fix=lf']
+
+  # 类型检查（可选，建议逐步启用）
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.13.0
+  #   hooks:
+  #     - id: mypy
+  #       name: mypy
+  #       args: [--ignore-missing-imports]
+  #       additional_dependencies:
+  #         - types-PyYAML
+  #         - types-requests
