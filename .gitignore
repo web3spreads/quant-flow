@@ -38,7 +38,8 @@ uv.lock
 
 # Environment variables
 .env
-.env.local
+.env.*
+!.env.example
 
 # Logs
 logs/runtime/
@@ -79,3 +80,16 @@ backtest_results/
 
 # 模型签名密钥
 .signing_key
+
+# Local runtime artifacts
+grid_state*.json
+FILE_NAME
+/src/trading/*.py.new
+
+# One-off local scripts
+/test_*.py
+/debug_*.py
+/check_orders.py
+/clean_2000_orders.py
+/emergency_close_eth.py
+/grid_main_mainnet.py
