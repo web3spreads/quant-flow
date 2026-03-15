@@ -314,20 +314,6 @@ class GridManager:
                 f"区间变化 {price_change * 100:.3f}% / 单格资金变化 {amount_change * 100:.2f}% 低于阈值",
             )
 
-        last_sync = self._safe_float(current_grid.get("last_sync"), 0.0)
-        elapsed = max(0.0, time.time() - last_sync)
-        hard_rebuild_threshold = self.grid_rebuild_min_price_change_ratio * 3
-        if (
-            self.grid_rebuild_cooldown_seconds > 0
-            and elapsed < self.grid_rebuild_cooldown_seconds
-            and price_change < hard_rebuild_threshold
-            and amount_change < 0.35
-        ):
-            return (
-                False,
-                f"冷却中（{elapsed:.0f}s/{self.grid_rebuild_cooldown_seconds}s），跳过重建",
-            )
-
         return True, "满足重建条件"
 
     @staticmethod
