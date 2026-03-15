@@ -35,6 +35,14 @@ trading:
   # 启用后，AI 可以使用限价单提前埋伏，等待价格回调成交
   limit_order_enabled: false
 
+  # 以下两个开关仅在 grid 模式下生效：
+  # 网格限价单成交后是否自动补挂止盈触发单
+  grid_limit_order_take_profit_enabled: true
+  # 网格限价单成交后是否自动补挂止损触发单
+  grid_limit_order_stop_loss_enabled: true
+  # 仅 grid 模式：是否启用 reduce_only 分层减仓单（分批止盈）
+  grid_reduce_only_exit_orders_enabled: true
+
 # 调度配置
 scheduler:
   # 决策间隔（分钟）

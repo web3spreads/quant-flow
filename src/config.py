@@ -21,6 +21,17 @@ MAKER_FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.maker_rate
 class Config:
     """配置管理类"""
 
+    @staticmethod
+    def _as_bool(value: Any, default: bool) -> bool:
+        """宽松解析布尔配置，兼容 YAML 布尔和字符串。"""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
     def __init__(
         self,
         config_path: str = "config.yaml",
@@ -165,6 +176,19 @@ class Config:
         self.stop_loss_ratio: float = float(trading.get("stop_loss_ratio", 0.02))
         self.max_positions: int = int(trading.get("max_positions", 2))
         self.limit_order_enabled: bool = trading.get("limit_order_enabled", False)
+        # 网格限价单是否在成交后自动挂止盈/止损触发单（默认保持历史行为：都开启）
+        self.grid_limit_order_take_profit_enabled: bool = self._as_bool(
+            trading.get("grid_limit_order_take_profit_enabled"),
+            True,
+        )
+        self.grid_limit_order_stop_loss_enabled: bool = self._as_bool(
+            trading.get("grid_limit_order_stop_loss_enabled"),
+            True,
+        )
+        self.grid_reduce_only_exit_orders_enabled: bool = self._as_bool(
+            trading.get("grid_reduce_only_exit_orders_enabled"),
+            True,
+        )
 
         # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
         # 向后兼容：支持旧字段名 default_leverage

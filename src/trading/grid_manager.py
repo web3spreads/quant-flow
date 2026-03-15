@@ -32,11 +32,17 @@ class GridManager:
         logger: TradingLogger,
         state_file: str = "grid_state.json",
         notifier=None,
+        grid_limit_order_take_profit_enabled: bool = True,
+        grid_limit_order_stop_loss_enabled: bool = True,
+        grid_reduce_only_exit_orders_enabled: bool = True,
     ):
         self.order_manager = order_manager
         self.logger = logger
         self.notifier = notifier
         self.state_file = state_file
+        self.grid_limit_order_take_profit_enabled = bool(grid_limit_order_take_profit_enabled)
+        self.grid_limit_order_stop_loss_enabled = bool(grid_limit_order_stop_loss_enabled)
+        self.grid_reduce_only_exit_orders_enabled = bool(grid_reduce_only_exit_orders_enabled)
         self.state = self._load_state()
 
     def _load_state(self) -> dict[str, Any]:
@@ -77,8 +83,11 @@ class GridManager:
         if action != "UPDATE_GRID":
             # AI 不更新网格时，只保底减仓保护单，不再补基础开仓单
             self.logger.print_section(f"🛡️ 减仓保底模式 - {symbol}", style="bold yellow")
-            self.logger.print_info("AI 未触发 UPDATE_GRID，本轮仅检查减仓保护单（reduce_only）")
-            self._ensure_min_orders(symbol=symbol)
+            if self.grid_reduce_only_exit_orders_enabled:
+                self.logger.print_info("AI 未触发 UPDATE_GRID，本轮仅检查减仓保护单（reduce_only）")
+                self._ensure_min_orders(symbol=symbol)
+            else:
+                self.logger.print_info("AI 未触发 UPDATE_GRID，且已关闭分批减仓单补齐")
             return
 
         # 兼容两种格式：参数在根目录或在 parameters 下
@@ -137,7 +146,13 @@ class GridManager:
             try:
                 if p < current_price:
                     res = self.order_manager.execute_long_limit(
-                        symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio
+                        symbol,
+                        new_amount,
+                        p,
+                        tp_ratio=tp_ratio,
+                        sl_ratio=sl_ratio,
+                        with_take_profit=self.grid_limit_order_take_profit_enabled,
+                        with_stop_loss=self.grid_limit_order_stop_loss_enabled,
                     )
                     if res and res.get("success"):
                         oid = self._extract_oid(res["limit_order"])
@@ -150,7 +165,13 @@ class GridManager:
                         )
                 elif p > current_price:
                     res = self.order_manager.execute_short_limit(
-                        symbol, new_amount, p, tp_ratio=tp_ratio, sl_ratio=sl_ratio
+                        symbol,
+                        new_amount,
+                        p,
+                        tp_ratio=tp_ratio,
+                        sl_ratio=sl_ratio,
+                        with_take_profit=self.grid_limit_order_take_profit_enabled,
+                        with_stop_loss=self.grid_limit_order_stop_loss_enabled,
                     )
                     if res and res.get("success"):
                         oid = self._extract_oid(res["limit_order"])
@@ -175,7 +196,8 @@ class GridManager:
         self.logger.print_info(f"✅ {symbol} 网格调整完成。")
 
         # 无论 AI 如何，始终检查减仓保护单（不强制补基础开仓单）
-        self._ensure_min_orders(symbol=symbol)
+        if self.grid_reduce_only_exit_orders_enabled:
+            self._ensure_min_orders(symbol=symbol)
 
         # 发送通知
         if self.notifier:

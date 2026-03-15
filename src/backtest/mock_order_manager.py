@@ -292,6 +292,8 @@ class MockOrderManager:
         leverage: int | None = None,
         tp_ratio: float | None = None,
         sl_ratio: float | None = None,
+        with_take_profit: bool = True,
+        with_stop_loss: bool = True,
     ) -> dict[str, Any] | None:
         """
         执行限价开多（模拟）
@@ -320,8 +322,16 @@ class MockOrderManager:
 
             use_tp = tp_ratio if tp_ratio is not None else self.take_profit_ratio
             use_sl = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
-            tp_px = self.client.format_price(symbol, limit_price * (1 + use_tp))
-            sl_px = self.client.format_price(symbol, limit_price * (1 - use_sl))
+            tp_px = (
+                self.client.format_price(symbol, limit_price * (1 + use_tp))
+                if with_take_profit
+                else None
+            )
+            sl_px = (
+                self.client.format_price(symbol, limit_price * (1 - use_sl))
+                if with_stop_loss
+                else None
+            )
 
             limit_order = self.client.place_limit_order(
                 symbol=symbol,
@@ -356,6 +366,8 @@ class MockOrderManager:
         leverage: int | None = None,
         tp_ratio: float | None = None,
         sl_ratio: float | None = None,
+        with_take_profit: bool = True,
+        with_stop_loss: bool = True,
     ) -> dict[str, Any] | None:
         """
         执行限价开空（模拟）
@@ -384,8 +396,16 @@ class MockOrderManager:
 
             use_tp = tp_ratio if tp_ratio is not None else self.take_profit_ratio
             use_sl = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
-            tp_px = self.client.format_price(symbol, limit_price * (1 - use_tp))
-            sl_px = self.client.format_price(symbol, limit_price * (1 + use_sl))
+            tp_px = (
+                self.client.format_price(symbol, limit_price * (1 - use_tp))
+                if with_take_profit
+                else None
+            )
+            sl_px = (
+                self.client.format_price(symbol, limit_price * (1 + use_sl))
+                if with_stop_loss
+                else None
+            )
 
             limit_order = self.client.place_limit_order(
                 symbol=symbol,

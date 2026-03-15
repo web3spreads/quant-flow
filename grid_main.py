@@ -45,11 +45,19 @@ class GridFlowBot:
         )
 
         self.market_fetcher = MarketDataFetcher(testnet=is_testnet)
-        self.order_manager = OrderManager(self.hyperliquid_client)
+        self.order_manager = OrderManager(
+            client=self.hyperliquid_client,
+            take_profit_ratio=self.config.take_profit_ratio,
+            stop_loss_ratio=self.config.stop_loss_ratio,
+            default_leverage=self.config.default_leverage,
+        )
         self.grid_manager = GridManager(
             self.order_manager,
             self.logger,
             notifier=self.notifier,
+            grid_limit_order_take_profit_enabled=self.config.grid_limit_order_take_profit_enabled,
+            grid_limit_order_stop_loss_enabled=self.config.grid_limit_order_stop_loss_enabled,
+            grid_reduce_only_exit_orders_enabled=self.config.grid_reduce_only_exit_orders_enabled,
         )
 
         self.logger.print_info("初始化 LLM 客户端管理器...")

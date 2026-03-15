@@ -34,6 +34,17 @@ trading:
   # 最大杠杆倍数
   max_leverage: 10
 
+  # 网格限价单成交后是否自动补挂止盈触发单
+  # 建议网格场景先关闭，避免每单都挂 TP 导致过度碎片化
+  grid_limit_order_take_profit_enabled: false
+
+  # 网格限价单成交后是否自动补挂止损触发单
+  # 建议保持开启，提供硬止损保护
+  grid_limit_order_stop_loss_enabled: true
+
+  # 是否启用 reduce_only 分层减仓单（分批止盈）
+  grid_reduce_only_exit_orders_enabled: true
+
 # 调度配置
 scheduler:
   # 网格决策间隔（分钟）

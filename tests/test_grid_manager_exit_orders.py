@@ -86,7 +86,16 @@ class FakeOrderManager:
         self._oid_seed += 1
         return self._oid_seed
 
-    def execute_long_limit(self, symbol, usdt_amount, limit_price, tp_ratio=None, sl_ratio=None):
+    def execute_long_limit(
+        self,
+        symbol,
+        usdt_amount,
+        limit_price,
+        tp_ratio=None,
+        sl_ratio=None,
+        with_take_profit=True,
+        with_stop_loss=True,
+    ):
         self.long_calls.append((symbol, usdt_amount, limit_price))
         oid = self._next_oid()
         self.client.open_orders.append(
@@ -103,7 +112,16 @@ class FakeOrderManager:
             "limit_order": {"response": {"data": {"statuses": [{"resting": {"oid": oid}}]}}},
         }
 
-    def execute_short_limit(self, symbol, usdt_amount, limit_price, tp_ratio=None, sl_ratio=None):
+    def execute_short_limit(
+        self,
+        symbol,
+        usdt_amount,
+        limit_price,
+        tp_ratio=None,
+        sl_ratio=None,
+        with_take_profit=True,
+        with_stop_loss=True,
+    ):
         self.short_calls.append((symbol, usdt_amount, limit_price))
         oid = self._next_oid()
         self.client.open_orders.append(
@@ -235,6 +253,22 @@ class TestGridManagerExitOrders(unittest.TestCase):
         self.assertGreaterEqual(len(reduce_only_sell_calls), 1)
         self.assertEqual(len(order_manager.long_calls), 0)
         self.assertEqual(len(order_manager.short_calls), 0)
+
+    def test_keep_grid_with_reduce_only_switch_off_does_not_add_exit_orders(self):
+        client = FakeClient()
+        order_manager = FakeOrderManager(client, positions=[{"coin": "ETH", "szi": "1.0"}])
+        grid_manager = GridManager(
+            order_manager=order_manager,
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_limit_order_take_profit_enabled=False,
+            grid_limit_order_stop_loss_enabled=True,
+            grid_reduce_only_exit_orders_enabled=False,
+        )
+
+        grid_manager.sync_grid("ETH", {"action": "KEEP_GRID"})
+
+        self.assertEqual(len(client.place_limit_calls), 0)
 
 
 if __name__ == "__main__":

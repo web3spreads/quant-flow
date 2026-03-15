@@ -95,6 +95,9 @@ class BacktestEngine:
                     logger=self.logger,
                     state_file=self.grid_state_file,
                     notifier=None,
+                    grid_limit_order_take_profit_enabled=config.grid_limit_order_take_profit_enabled,
+                    grid_limit_order_stop_loss_enabled=config.grid_limit_order_stop_loss_enabled,
+                    grid_reduce_only_exit_orders_enabled=config.grid_reduce_only_exit_orders_enabled,
                 )
             else:
                 self.agent = SingleSymbolAgent(

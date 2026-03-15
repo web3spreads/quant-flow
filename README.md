@@ -115,6 +115,9 @@ trading:
   max_trade_amount: 100           # 单笔上限（美元）
   max_leverage: 10
   limit_order_enabled: false      # 是否允许限价单动作
+  grid_limit_order_take_profit_enabled: true   # 仅 grid 模式：成交后是否补止盈
+  grid_limit_order_stop_loss_enabled: true     # 仅 grid 模式：成交后是否补止损
+  grid_reduce_only_exit_orders_enabled: true   # 仅 grid 模式：是否启用分批止盈减仓单
 
 scheduler:
   interval_minutes: 3             # 决策间隔
