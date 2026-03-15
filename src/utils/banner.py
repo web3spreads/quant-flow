@@ -81,5 +81,3 @@ def print_startup_banner(config: object | None = None, console: Console | None =
     if config:
         console.print(config, style="cyan")
         console.print("\n")
-
-
