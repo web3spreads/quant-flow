@@ -41,7 +41,7 @@ def mock_callback():
 @pytest.fixture
 def monitor(monitor_config, mock_callback):
     """创建 MarketMonitor 实例（不启动线程）"""
-    with patch("src.data.market_monitor.Info") as mock_info_cls:
+    with patch("src.data.market_monitor.create_info") as mock_info_cls:
         mock_info = MagicMock()
         mock_info.all_mids.return_value = {"BTC": "50000.0", "ETH": "3000.0"}
         mock_info_cls.return_value = mock_info
@@ -332,7 +332,7 @@ class TestMonitorStartStop:
     def test_start_disabled(self, mock_callback):
         """未启用时 start 应跳过"""
         config = MonitorConfig(enabled=False)
-        with patch("src.data.market_monitor.Info"):
+        with patch("src.data.market_monitor.create_info"):
             m = MarketMonitor(
                 symbols=["BTC"],
                 config=config,

@@ -11,10 +11,10 @@ from typing import Any
 import eth_account
 from eth_account.signers.local import LocalAccount
 from hyperliquid.exchange import Exchange
-from hyperliquid.info import Info
 from hyperliquid.utils import constants
 
 from src.fees import FeeRates, calculate_fee_rates
+from src.utils.hyperliquid import create_info, safe_spot_meta
 
 
 class HyperliquidClient:
@@ -78,8 +78,11 @@ class HyperliquidClient:
             print("👤 模式: 单钱包")
             print(f"📍 钱包地址: {self.address}")
 
+        # 预先获取安全的 spot_meta，Info 和 Exchange 共享，避免重复请求和越界崩溃
+        self._spot_meta = safe_spot_meta(self.base_url)
+
         # 初始化 Info API（市场数据查询）
-        self.info = Info(self.base_url, skip_ws=True)
+        self.info = create_info(self.base_url, skip_ws=True)
 
         # 初始化 Exchange API（交易执行）
         # 在 API 钱包模式下，account_address 参数告诉 Exchange 代理哪个主钱包
@@ -87,6 +90,7 @@ class HyperliquidClient:
             self.account,
             self.base_url,
             account_address=self.address if self.is_api_wallet_mode else None,
+            spot_meta=self._spot_meta,
         )
 
     def _rotate_api(self):
@@ -99,11 +103,13 @@ class HyperliquidClient:
         print(f"⚠️ API 请求失败，正在切换至备用节点: {self.base_url}")
 
         # 重新实例化 SDK 组件
-        self.info = Info(self.base_url, skip_ws=True)
+        self._spot_meta = safe_spot_meta(self.base_url)
+        self.info = create_info(self.base_url, skip_ws=True)
         self.exchange = Exchange(
             self.account,
             self.base_url,
             account_address=self.address if self.is_api_wallet_mode else None,
+            spot_meta=self._spot_meta,
         )
         return True
 
