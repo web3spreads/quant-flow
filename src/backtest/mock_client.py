@@ -351,41 +351,6 @@ class MockHyperliquidClient:
 
         return {"status": "ok", "message": "平仓成功（模拟）", "symbol": symbol, "size": size}
 
-    def get_spot_balances(self) -> list[dict[str, Any]]:
-        """
-        获取现货余额（模拟，回测中暂不支持现货）
-
-        Returns:
-            空列表
-        """
-        return []
-
-    def buy_spot(self, symbol: str, usdt_amount: float) -> dict[str, Any]:
-        """
-        买入现货（模拟，回测中暂不支持）
-
-        Args:
-            symbol: 交易对符号
-            usdt_amount: 投入金额
-
-        Returns:
-            错误结果
-        """
-        return {"status": "error", "message": "回测中暂不支持现货交易"}
-
-    def sell_spot(self, symbol: str, size: float | None = None) -> dict[str, Any]:
-        """
-        卖出现货（模拟，回测中暂不支持）
-
-        Args:
-            symbol: 交易对符号
-            size: 卖出数量
-
-        Returns:
-            错误结果
-        """
-        return {"status": "error", "message": "回测中暂不支持现货交易"}
-
     def add_position(
         self,
         symbol: str,

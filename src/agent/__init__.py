@@ -1,8 +1,7 @@
 """
 Agent 模块
 
-注意：大部分 Agent 已迁移到 src.agents 目录。
-此模块保留用于向后兼容，使用延迟导入避免依赖问题。
+使用延迟导入避免循环依赖问题。
 """
 
 
@@ -26,11 +25,6 @@ def __getattr__(name):
 
         return create_enhanced_agent
 
-    if name == "SpotAgent":
-        from src.agent.spot_agent import SpotAgent
-
-        return SpotAgent
-
     # Summary agent
     if name in ("SummaryAgentV2", "DecisionHistory"):
         from src.agent import summary_agent_v2
@@ -43,7 +37,7 @@ def __getattr__(name):
 
         return TradingTools
 
-    # Prompts (已迁移到 src.agents.common.prompts)
+    # Prompts
     if name == "SYSTEM_PROMPT":
         from src.agent.prompts import SYSTEM_PROMPT
 
@@ -60,7 +54,7 @@ def __getattr__(name):
 
         return ReviewMemoryStore
 
-    # Utils (已迁移到 src.agents.common.utils)
+    # Utils
     if name == "ContextExtractor":
         from src.agent.context_extractor import ContextExtractor
 
@@ -71,13 +65,13 @@ def __getattr__(name):
 
         return SimilarityScorer
 
-    # External info (已迁移到 src.agents.external_info)
+    # External info
     if name in ("ExternalInfoAgent", "ExternalInfoScheduler", "get_external_info_agent"):
         from src.agent import external_info_agent
 
         return getattr(external_info_agent, name)
 
-    # Market info store (已迁移到 src.agents.common.utils)
+    # Market info store
     if name in ("MarketInfoStore", "get_market_info_store"):
         from src.agent import market_info_store
 
@@ -90,7 +84,6 @@ __all__ = [
     "SingleSymbolAgent",
     "EnhancedSingleSymbolAgent",
     "create_enhanced_agent",
-    "SpotAgent",
     "SummaryAgentV2",
     "DecisionHistory",
     "TradingTools",

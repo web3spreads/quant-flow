@@ -53,8 +53,5 @@
       "support_count": 1,
       "context_features": {{ context_features_json }}
     }
-  ],
-  "spot_checks": [
-    {"timestamp": "可选，指出具体异常", "issue": "问题", "fix": "建议修复或过滤阈值"}
   ]
 }

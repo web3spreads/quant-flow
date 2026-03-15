@@ -14,7 +14,7 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
 
 from src.fees import FeeRates, calculate_fee_rates
-from src.utils.hyperliquid import create_info, get_safe_spot_meta
+from src.utils.hyperliquid import create_info, safe_spot_meta
 
 
 class HyperliquidClient:
@@ -79,10 +79,10 @@ class HyperliquidClient:
             print(f"📍 钱包地址: {self.address}")
 
         # 预先获取安全的 spot_meta，Info 和 Exchange 共享，避免重复请求和越界崩溃
-        safe_spot_meta = get_safe_spot_meta(self.base_url)
+        self._spot_meta = safe_spot_meta(self.base_url)
 
         # 初始化 Info API（市场数据查询）
-        self.info = create_info(self.base_url, skip_ws=True, spot_meta=safe_spot_meta)
+        self.info = create_info(self.base_url, skip_ws=True)
 
         # 初始化 Exchange API（交易执行）
         # 在 API 钱包模式下，account_address 参数告诉 Exchange 代理哪个主钱包
@@ -90,7 +90,7 @@ class HyperliquidClient:
             self.account,
             self.base_url,
             account_address=self.address if self.is_api_wallet_mode else None,
-            spot_meta=safe_spot_meta,
+            spot_meta=self._spot_meta,
         )
 
     def _rotate_api(self):
@@ -103,13 +103,13 @@ class HyperliquidClient:
         print(f"⚠️ API 请求失败，正在切换至备用节点: {self.base_url}")
 
         # 重新实例化 SDK 组件
-        safe_spot_meta = get_safe_spot_meta(self.base_url)
-        self.info = create_info(self.base_url, skip_ws=True, spot_meta=safe_spot_meta)
+        self._spot_meta = safe_spot_meta(self.base_url)
+        self.info = create_info(self.base_url, skip_ws=True)
         self.exchange = Exchange(
             self.account,
             self.base_url,
             account_address=self.address if self.is_api_wallet_mode else None,
-            spot_meta=safe_spot_meta,
+            spot_meta=self._spot_meta,
         )
         return True
 
@@ -147,20 +147,16 @@ class HyperliquidClient:
         self,
         *,
         is_aligned_quote_token: bool = False,
-        is_stable_pair: bool = False,
         deployer_fee_scale: float = 0.0,
         growth_mode: bool = False,
-        market_type: str = "perp",
     ) -> FeeRates:
         """
         获取用户当前的实际费率（maker/taker），按 Hyperliquid 官方公式计算。
 
         Args:
             is_aligned_quote_token: 是否为 aligned quote 资产
-            is_stable_pair: 是否为稳定币对（仅 spot）
             deployer_fee_scale: HIP-3 部署者费率缩放（0-3，非 HIP-3=0）
             growth_mode: HIP-3 growth mode
-            market_type: "perp" 或 "spot"
 
         Returns:
             FeeRates(maker_rate, taker_rate) 小数形式（0.00045 = 0.045%）
@@ -174,8 +170,6 @@ class HyperliquidClient:
             FeeRates(maker_rate=maker_rate, taker_rate=taker_rate),
             active_referral_discount=active_referral_discount,
             is_aligned_quote_token=is_aligned_quote_token,
-            market_type=market_type,
-            is_stable_pair=is_stable_pair,
             deployer_fee_scale=deployer_fee_scale,
             growth_mode=growth_mode,
         )
@@ -1179,269 +1173,3 @@ class HyperliquidClient:
         except Exception as e:
             print(f"❌ 平仓失败: {e}")
             return {"status": "error", "message": str(e)}
-
-    # ==================== 现货交易方法 ====================
-
-    def get_spot_asset_index(self, symbol: str) -> int | None:
-        """
-        获取现货资产索引（用于计算真正的现货资产 ID）
-
-        Hyperliquid 现货资产 ID = 10000 + index（index 来自 spotMeta.universe）
-
-        Args:
-            symbol: 币种符号（如 'BTC', 'ETH', 'PURR'）
-
-        Returns:
-            现货资产索引，失败返回 None
-        """
-        try:
-            spot_meta = self._request_with_fallback("spot_meta")
-            universe = spot_meta.get("universe", [])
-
-            # 构造现货交易对名称（如 "BTC/USDC"）
-            spot_pair = f"{symbol}/USDC"
-
-            # 在 spotMeta.universe 中查找
-            for idx, spot in enumerate(universe):
-                if spot.get("name") == spot_pair:
-                    print(f"✓ 找到现货交易对 {spot_pair}，索引 = {idx}")
-                    return idx
-
-            print(f"❌ 未找到现货交易对: {spot_pair}")
-            print(f"   可用的现货交易对: {[s.get('name') for s in universe[:5]]}...")
-            return None
-
-        except Exception as e:
-            print(f"❌ 获取现货资产索引失败: {e}")
-            traceback.print_exc()
-            return None
-
-    def buy_spot(self, symbol: str, usdt_amount: float, slippage: float = 0.01) -> dict[str, Any]:
-        """
-        买入现货（真正的无杠杆现货持有）
-
-        使用 Hyperliquid 真现货 API，资产 ID = 10000 + spotMeta.universe.index
-
-        Args:
-            symbol: 币种符号（如 'BTC', 'ETH'）
-            usdt_amount: 投入的 USDT 金额
-            slippage: 滑点容忍度（默认 1%）
-
-        Returns:
-            订单结果 {'status': 'ok'/'error', 'message': str, 'data': dict}
-        """
-        try:
-            # 1. 获取现货资产索引
-            spot_index = self.get_spot_asset_index(symbol)
-            if spot_index is None:
-                return {"status": "error", "message": f"无法获取 {symbol} 现货资产索引"}
-
-            # 2. 计算现货资产 ID（10000 + index）
-            asset_id = 10000 + spot_index
-            print(f"📦 现货资产 ID: {asset_id} (10000 + {spot_index})")
-
-            # 3. 获取当前价格
-            current_price = self.get_current_price(symbol)
-            if not current_price:
-                return {"status": "error", "message": f"无法获取 {symbol} 当前价格"}
-
-            # 4. 计算购买数量
-            buy_size = usdt_amount / current_price
-
-            # 5. 获取资产精度信息
-            asset_info = self.get_asset_info(symbol)
-            if asset_info and "szDecimals" in asset_info:
-                decimals = asset_info["szDecimals"]
-                buy_size = round(buy_size, decimals)
-            else:
-                buy_size = round(buy_size, 4)  # 默认精度
-
-            print(f"📦 现货买入 {symbol}")
-            print(f"   投入金额: ${usdt_amount:.2f}")
-            print(f"   当前价格: ${current_price:.2f}")
-            print(f"   购买数量: {buy_size} {symbol}")
-            print("   杠杆倍数: 1x（真现货，无杠杆）")
-
-            # 6. 计算限价（买入时设置稍高价格，确保快速成交）
-            limit_price = current_price * (1 + slippage)
-            limit_price_str = str(round(limit_price, 2))
-            buy_size_str = str(buy_size)
-
-            # 7. 使用真正的现货 order API
-            # 注意：这里使用数字资产 ID，不是字符串交易对
-            print(
-                f"   正在下单: asset={asset_id}, is_buy=True, size={buy_size_str}, price={limit_price_str}"
-            )
-
-            result = self.exchange.order(
-                asset=asset_id,  # 数字资产 ID (10000+)
-                is_buy=True,
-                sz=float(buy_size_str),
-                limit_px=float(limit_price_str),
-                order_type={"limit": {"tif": "Ioc"}},  # Immediate-or-Cancel 立即成交或取消
-                reduce_only=False,
-            )
-
-            print(f"   订单结果: {result}")
-
-            if result and result.get("status") == "ok":
-                print("✅ 现货买入成功（无杠杆，真现货持有）")
-                return {
-                    "status": "ok",
-                    "message": f"买入 {buy_size} {symbol} 现货",
-                    "data": {
-                        "symbol": symbol,
-                        "asset_id": asset_id,
-                        "spot_index": spot_index,
-                        "size": buy_size,
-                        "price": current_price,
-                        "usdt_amount": usdt_amount,
-                        "leverage": 1,  # 现货永远是 1x
-                        "result": result,
-                    },
-                }
-            else:
-                error_msg = result.get("response", "未知错误") if result else "未知错误"
-                print(f"❌ 现货买入失败: {error_msg}")
-                return {"status": "error", "message": error_msg, "result": result}
-
-        except Exception as e:
-            print(f"❌ 现货买入异常: {e}")
-            traceback.print_exc()
-            return {"status": "error", "message": str(e)}
-
-    def sell_spot(
-        self, symbol: str, size: float | None = None, slippage: float = 0.01
-    ) -> dict[str, Any]:
-        """
-        卖出现货（真正的无杠杆现货）
-
-        使用 Hyperliquid 真现货 API，资产 ID = 10000 + spotMeta.universe.index
-
-        Args:
-            symbol: 币种符号（如 'BTC', 'ETH'）
-            size: 卖出数量（None=全部卖出）
-            slippage: 滑点容忍度（默认 1%）
-
-        Returns:
-            订单结果
-        """
-        try:
-            # 1. 获取现货资产索引
-            spot_index = self.get_spot_asset_index(symbol)
-            if spot_index is None:
-                return {"status": "error", "message": f"无法获取 {symbol} 现货资产索引"}
-
-            # 2. 计算现货资产 ID（10000 + index）
-            asset_id = 10000 + spot_index
-            print(f"💰 现货资产 ID: {asset_id} (10000 + {spot_index})")
-
-            # 3. 如果未指定数量，查询现货余额
-            if size is None:
-                spot_balances = self.get_spot_balances()
-                balance = next((b for b in spot_balances if b["coin"] == symbol), None)
-                if not balance:
-                    return {"status": "error", "message": f"没有 {symbol} 的现货持仓"}
-
-                size = float(balance["total"])
-                if size <= 0:
-                    return {"status": "error", "message": f"{symbol} 余额为 0"}
-
-            # 4. 获取当前价格
-            current_price = self.get_current_price(symbol)
-            if not current_price:
-                return {"status": "error", "message": f"无法获取 {symbol} 当前价格"}
-
-            print(f"💰 现货卖出 {symbol}")
-            print(f"   卖出数量: {size} {symbol}")
-            print(f"   当前价格: ${current_price:.2f}")
-            print(f"   预计收益: ${size * current_price:.2f}")
-
-            # 5. 计算限价（卖出时设置稍低价格，确保快速成交）
-            limit_price = current_price * (1 - slippage)
-            limit_price_str = str(round(limit_price, 2))
-            size_str = str(size)
-
-            # 6. 使用真正的现货 order API
-            print(
-                f"   正在下单: asset={asset_id}, is_buy=False, size={size_str}, price={limit_price_str}"
-            )
-
-            result = self.exchange.order(
-                asset=asset_id,  # 数字资产 ID (10000+)
-                is_buy=False,
-                sz=float(size_str),
-                limit_px=float(limit_price_str),
-                order_type={"limit": {"tif": "Ioc"}},  # Immediate-or-Cancel
-                reduce_only=False,
-            )
-
-            print(f"   订单结果: {result}")
-
-            if result and result.get("status") == "ok":
-                print("✅ 现货卖出成功")
-                return {
-                    "status": "ok",
-                    "message": f"卖出 {size} {symbol} 现货",
-                    "data": {
-                        "symbol": symbol,
-                        "asset_id": asset_id,
-                        "spot_index": spot_index,
-                        "size": size,
-                        "price": current_price,
-                        "result": result,
-                    },
-                }
-            else:
-                error_msg = result.get("response", "未知错误") if result else "未知错误"
-                print(f"❌ 现货卖出失败: {error_msg}")
-                return {"status": "error", "message": error_msg, "result": result}
-
-        except Exception as e:
-            print(f"❌ 现货卖出异常: {e}")
-            traceback.print_exc()
-            return {"status": "error", "message": str(e)}
-
-    def get_spot_balances(self) -> list[dict[str, Any]]:
-        """
-        获取所有现货余额
-
-        Returns:
-            现货余额列表 [{'coin': 'BTC', 'total': '0.5', 'hold': '0.1'}, ...]
-        """
-        try:
-            user_state = self._request_with_fallback("user_state", self.address)
-
-            # 提取现货余额
-            balances = user_state.get("balances", [])
-
-            # 过滤出有余额的币种
-            spot_balances = []
-            for balance in balances:
-                coin = balance.get("coin", "")
-                total = float(balance.get("total", 0))
-                hold = float(balance.get("hold", 0))
-
-                if total > 0:
-                    spot_balances.append(
-                        {"coin": coin, "total": total, "hold": hold, "available": total - hold}
-                    )
-
-            return spot_balances
-
-        except Exception as e:
-            print(f"❌ 获取现货余额失败: {e}")
-            return []
-
-    def get_spot_balance(self, symbol: str) -> dict[str, Any] | None:
-        """
-        获取指定币种的现货余额
-
-        Args:
-            symbol: 币种符号（如 'BTC', 'ETH'）
-
-        Returns:
-            {'coin': str, 'total': float, 'hold': float, 'available': float}
-        """
-        balances = self.get_spot_balances()
-        return next((b for b in balances if b["coin"] == symbol), None)

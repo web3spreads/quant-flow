@@ -32,7 +32,6 @@ class DecisionType(StrEnum):
     SELL_SHORT = "SELL_SHORT"
     BUY_TO_COVER = "BUY_TO_COVER"
     DO_NOTHING = "DO_NOTHING"
-    BUY_SPOT = "BUY_SPOT"
     BUY_LIMIT = "BUY_LIMIT"
     SELL_SHORT_LIMIT = "SELL_SHORT_LIMIT"
     CANCEL_LIMIT_ORDER = "CANCEL_LIMIT_ORDER"
@@ -54,7 +53,7 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 
 你的任务：
 1. 读取交易 Agent 的决策分析文本
-2. 识别决策意图（开多、平多、开空、平空、现货买入、观望）
+2. 识别决策意图（开多、平多、开空、平空、观望）
 3. 提取关键参数（交易对、金额、杠杆等）
 4. 输出结构化的执行计划
 
@@ -64,7 +63,6 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 - SELL_SHORT (开空/卖空开空) → 调用 sell_short() 工具
 - BUY_TO_COVER (平空/买入平空/CLOSE) → 调用 buy_to_cover() 工具
 - DO_NOTHING (观望/HOLD/不操作) → 调用 do_nothing() 工具
-- BUY_SPOT (现货买入/定投) → 调用 buy_spot() 工具
 - BUY_LIMIT (限价开多) → 调用 buy_limit() 工具，需要提供 price 字段
 - SELL_SHORT_LIMIT (限价开空) → 调用 sell_short_limit() 工具，需要提供 price 字段
 - CANCEL_LIMIT_ORDER (取消限价单) → 调用 cancel_limit_order() 工具，需要提供 order_id 字段
@@ -218,7 +216,7 @@ class ExecutionAgent:
 {decision_text}
 
 请识别：
-1. 决策类型（BUY/SELL/SELL_SHORT/BUY_TO_COVER/DO_NOTHING/BUY_SPOT/BUY_LIMIT/SELL_SHORT_LIMIT/CANCEL_LIMIT_ORDER）
+1. 决策类型（BUY/SELL/SELL_SHORT/BUY_TO_COVER/DO_NOTHING/BUY_LIMIT/SELL_SHORT_LIMIT/CANCEL_LIMIT_ORDER）
 2. 交易金额（如果提到，限价单也需要）
 3. 杠杆倍数（如果提到，限价单也需要）
 4. 限价价格（如果是限价单，必须提供 price 字段）
@@ -415,13 +413,6 @@ class ExecutionAgent:
                     return callback(symbol=symbol)
                 else:
                     return "❌ 未找到 BUY_TO_COVER 工具回调"
-
-            elif decision == DecisionType.BUY_SPOT:
-                callback = tools_callbacks.get("buy_spot")
-                if callback:
-                    return callback(symbol=symbol, amount=execution_plan.amount)
-                else:
-                    return "❌ 未找到 BUY_SPOT 工具回调"
 
             elif decision == DecisionType.DO_NOTHING:
                 callback = tools_callbacks.get("do_nothing")

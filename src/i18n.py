@@ -46,8 +46,6 @@ LANGUAGE_RESOURCES = {
         "balance_check_notice": "你必须根据可用余额决定是否开仓",
         "insufficient_balance_notice": "如果可用余额不足以支持交易，必须选择 do_nothing",
         "large_loss_notice": "关注未实现盈亏，如果亏损较大应更谨慎",
-        "balance_check_for_dca": "你必须根据可用余额决定是否定投",
-        "insufficient_balance_dca": "如果可用余额不足，必须选择 do_nothing",
         # 历史决策相关
         "historical_summary": "历史决策汇总",
         "historical_hint": "以上是你过去的决策记录汇总，可以帮助你理解市场演变和之前的策略。但请基于当前市场数据做出独立判断。",
@@ -58,9 +56,6 @@ LANGUAGE_RESOURCES = {
         "1h": "1小时",
         "15m": "15分钟",
         "1m": "1分钟",
-        # 现货相关
-        "has_spot": "已持有 ✅",
-        "no_spot": "未持有 ❌",
         # Recommendation related
         "recommendation_reason_default": "未提供原因",
         "recommendation_timestamp_default": "未知时间",
@@ -164,8 +159,6 @@ LANGUAGE_RESOURCES = {
         "balance_check_notice": "You must decide whether to open positions based on available balance",
         "insufficient_balance_notice": "If available balance is insufficient to support trading, you must choose do_nothing",
         "large_loss_notice": "Monitor unrealized P&L; be more cautious if losses are significant",
-        "balance_check_for_dca": "You must decide whether to invest based on available balance",
-        "insufficient_balance_dca": "If available balance is insufficient, you must choose do_nothing",
         # Historical decisions related
         "historical_summary": "Historical Decision Summary",
         "historical_hint": "The above is a summary of your past decision records, which can help you understand market evolution and previous strategies. However, please make independent judgments based on current market data.",
@@ -176,9 +169,6 @@ LANGUAGE_RESOURCES = {
         "1h": "1-Hour",
         "15m": "15-Minute",
         "1m": "1-Minute",
-        # Spot related
-        "has_spot": "Held ✅",
-        "no_spot": "Not Held ❌",
         # Recommendation related
         "recommendation_reason_default": "No reason provided",
         "recommendation_timestamp_default": "Unknown time",
