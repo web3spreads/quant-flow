@@ -31,7 +31,7 @@ from src.utils.logger import TradingLogger
 
 # 抗过拟合泛化模块（可选依赖）
 try:
-    from src.agents.review.generalization import enhance_lessons_with_generalization
+    from src.agent.generalization import enhance_lessons_with_generalization
 
     HAS_GENERALIZATION = True
 except ImportError:

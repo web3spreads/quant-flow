@@ -26,7 +26,7 @@ from src.agent.single_symbol_agent import SingleSymbolAgent
 
 # RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
 from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
-from src.agents.common.utils.helpers import send_error_notification
+from src.agent.helpers import send_error_notification
 from src.config import DEFAULT_PERP_FEE_RATES, get_config
 from src.data.data_enricher import MarketDataEnricher
 from src.data.indicators import TechnicalIndicators

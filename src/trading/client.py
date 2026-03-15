@@ -141,20 +141,16 @@ class HyperliquidClient:
         self,
         *,
         is_aligned_quote_token: bool = False,
-        is_stable_pair: bool = False,
         deployer_fee_scale: float = 0.0,
         growth_mode: bool = False,
-        market_type: str = "perp",
     ) -> FeeRates:
         """
         获取用户当前的实际费率（maker/taker），按 Hyperliquid 官方公式计算。
 
         Args:
             is_aligned_quote_token: 是否为 aligned quote 资产
-            is_stable_pair: 是否为稳定币对（仅 spot）
             deployer_fee_scale: HIP-3 部署者费率缩放（0-3，非 HIP-3=0）
             growth_mode: HIP-3 growth mode
-            market_type: "perp" 或 "spot"
 
         Returns:
             FeeRates(maker_rate, taker_rate) 小数形式（0.00045 = 0.045%）
@@ -168,8 +164,6 @@ class HyperliquidClient:
             FeeRates(maker_rate=maker_rate, taker_rate=taker_rate),
             active_referral_discount=active_referral_discount,
             is_aligned_quote_token=is_aligned_quote_token,
-            market_type=market_type,
-            is_stable_pair=is_stable_pair,
             deployer_fee_scale=deployer_fee_scale,
             growth_mode=growth_mode,
         )

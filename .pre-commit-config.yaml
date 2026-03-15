@@ -11,10 +11,10 @@ repos:
         name: ruff lint
         args: [--fix, --exit-non-zero-on-fix]
         # 只检查重构后的新模块，避免历史遗留问题阻塞 CI
-        files: ^(src/agents/|src/backtest/|src/llm/|src/agent/review_agent\.py)
+        files: ^(src/agent/|src/backtest/|src/llm/)
       - id: ruff-format
         name: ruff format
-        files: ^(src/agents/|src/backtest/|src/llm/|src/agent/review_agent\.py)
+        files: ^(src/agent/|src/backtest/|src/llm/)
 
   # 基本代码检查
   - repo: https://github.com/pre-commit/pre-commit-hooks
