@@ -17,8 +17,8 @@ from typing import Any
 import pandas as pd
 
 from src.agent.debate import run_bull_bear_debate
-from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.helpers import send_error_notification
+from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.data.regime_adapter import format_regime_hint, get_regime_params
 from src.data.signal_scorer import SignalQuality
 from src.fees import FeeRates

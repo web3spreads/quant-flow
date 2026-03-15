@@ -10,9 +10,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 from src.agent.execution_agent import ExecutionAgent
+from src.agent.helpers import send_error_notification
 from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.tools import TradingTools
-from src.agent.helpers import send_error_notification
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
 from src.llm import LLMClientManager

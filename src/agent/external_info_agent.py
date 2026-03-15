@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
-from src.agent.market_info_store import MarketInfoStore, get_market_info_store
+from src.agent.market_info_store import MarketInfoStore
 from src.llm import LLMClientManager
 
 
