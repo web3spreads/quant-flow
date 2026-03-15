@@ -51,7 +51,11 @@ class GridManager:
         self.grid_reduce_only_exit_orders_enabled = bool(grid_reduce_only_exit_orders_enabled)
         self.grid_rebuild_cooldown_seconds = max(
             0,
-            int(self._safe_float(grid_rebuild_cooldown_seconds, DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS)),
+            int(
+                self._safe_float(
+                    grid_rebuild_cooldown_seconds, DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS
+                )
+            ),
         )
         self.grid_rebuild_min_price_change_ratio = max(
             0.0,
@@ -260,7 +264,9 @@ class GridManager:
         return {
             "lower_price": self._safe_float(params.get("lower_price"), 0.0),
             "upper_price": self._safe_float(params.get("upper_price"), 0.0),
-            "grid_num": int(self._safe_float(params.get("grid_num", DEFAULT_GRID_NUM), DEFAULT_GRID_NUM)),
+            "grid_num": int(
+                self._safe_float(params.get("grid_num", DEFAULT_GRID_NUM), DEFAULT_GRID_NUM)
+            ),
             "amount_per_grid": self._safe_float(params.get("amount_per_grid"), 0.0),
             "grid_type": grid_type,
             "mode": mode,
@@ -305,10 +311,7 @@ class GridManager:
         if old_amount > 0 and new_amount > 0:
             amount_change = abs(new_amount - old_amount) / max(abs(old_amount), 1e-9)
 
-        if (
-            price_change < self.grid_rebuild_min_price_change_ratio
-            and amount_change < 0.20
-        ):
+        if price_change < self.grid_rebuild_min_price_change_ratio and amount_change < 0.20:
             return (
                 False,
                 f"区间变化 {price_change * 100:.3f}% / 单格资金变化 {amount_change * 100:.2f}% 低于阈值",

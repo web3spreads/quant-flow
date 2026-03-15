@@ -258,12 +258,12 @@ class HyperliquidClient:
             raw_orders = self._request_with_fallback("frontend_open_orders", self.address)
             if not isinstance(raw_orders, list):
                 user_state = self._request_with_fallback("user_state", self.address)
-                raw_orders = user_state.get("openOrders", []) if isinstance(user_state, dict) else []
+                raw_orders = (
+                    user_state.get("openOrders", []) if isinstance(user_state, dict) else []
+                )
 
             normalized_orders = [
-                self._normalize_open_order(order)
-                for order in raw_orders
-                if isinstance(order, dict)
+                self._normalize_open_order(order) for order in raw_orders if isinstance(order, dict)
             ]
             if include_trigger:
                 return normalized_orders
