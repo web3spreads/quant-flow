@@ -3,6 +3,7 @@
 负责时间推进、交易执行、盈亏跟踪等核心逻辑
 """
 
+import traceback
 from contextlib import suppress
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -415,8 +416,6 @@ class BacktestEngine:
         except Exception as e:
             print(f"   ⚠️ 状态恢复过程中出现错误: {e}")
             print("   将从头开始回测")
-            import traceback
-
             traceback.print_exc()
             return 0
 
@@ -634,8 +633,6 @@ class BacktestEngine:
 
             except Exception as e:
                 print(f"⚠️ 决策点 {i + 1}/{len(decision_timestamps)} 处理失败: {e}")
-                import traceback
-
                 traceback.print_exc()
                 continue
 
@@ -761,8 +758,6 @@ class BacktestEngine:
                 )
             except Exception as e:
                 print(f"⚠️ 决策点 {i + 1}/{len(decision_timestamps)} 处理失败: {e}")
-                import traceback
-
                 traceback.print_exc()
                 continue
 
@@ -1296,8 +1291,6 @@ class BacktestEngine:
 
         except Exception as e:
             self.logger.print_warning(f"复盘 Agent 运行失败: {e}")
-            import traceback
-
             traceback.print_exc()
 
     def _close_all_positions(self, timestamp: datetime, price: float):
