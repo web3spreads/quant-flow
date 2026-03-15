@@ -10,12 +10,16 @@ from contextlib import suppress
 from typing import Any
 
 from src.trading.order_manager import OrderManager
+from src.utils.grid_math import extract_order_id
 from src.utils.logger import TradingLogger
 
 DEFAULT_MIN_ORDERS = 4
 DEFAULT_AMOUNT_PER_ORDER = 10.0
 DEFAULT_GRID_NUM = 10
 DEFAULT_GRID_TYPE = "GEOMETRIC"
+DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS = 900
+DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO = 0.004
+DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS = 2
 
 EXIT_MIN_ORDERS = 3
 EXIT_MAX_ORDERS = 8
@@ -35,6 +39,8 @@ class GridManager:
         grid_limit_order_take_profit_enabled: bool = True,
         grid_limit_order_stop_loss_enabled: bool = True,
         grid_reduce_only_exit_orders_enabled: bool = True,
+        grid_rebuild_cooldown_seconds: int = DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS,
+        grid_rebuild_min_price_change_ratio: float = DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO,
     ):
         self.order_manager = order_manager
         self.logger = logger
@@ -43,6 +49,17 @@ class GridManager:
         self.grid_limit_order_take_profit_enabled = bool(grid_limit_order_take_profit_enabled)
         self.grid_limit_order_stop_loss_enabled = bool(grid_limit_order_stop_loss_enabled)
         self.grid_reduce_only_exit_orders_enabled = bool(grid_reduce_only_exit_orders_enabled)
+        self.grid_rebuild_cooldown_seconds = max(
+            0,
+            int(self._safe_float(grid_rebuild_cooldown_seconds, DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS)),
+        )
+        self.grid_rebuild_min_price_change_ratio = max(
+            0.0,
+            self._safe_float(
+                grid_rebuild_min_price_change_ratio,
+                DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO,
+            ),
+        )
         self.state = self._load_state()
 
     def _load_state(self) -> dict[str, Any]:
@@ -126,8 +143,24 @@ class GridManager:
             f"AI 新区间: ${new_lower} - ${new_upper} | TP: {tp_ratio} SL: {sl_ratio}"
         )
 
+        should_rebuild, skip_reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+        if not should_rebuild:
+            self.logger.print_info(f"   [Grid] ⏸️ 跳过重建: {skip_reason}")
+            if self.grid_reduce_only_exit_orders_enabled:
+                self._ensure_min_orders(symbol=symbol)
+            return
+
         # 1. 彻底清理旧订单
         self._cancel_all_orders(symbol)
+
+        # 撤单后轮询确认挂单清空，若仍残留则停止本轮重建，避免新旧订单叠加
+        remaining_orders = self._drain_open_orders_before_rebuild(symbol=symbol)
+        if remaining_orders:
+            self.logger.print_warning(
+                f"   [Grid] ⚠️ 撤单后仍有 {len(remaining_orders)} 个挂单残留，跳过本轮重建"
+            )
+            self._sync_local_state_with_orders(symbol, remaining_orders)
+            return
 
         # 2. 计算新价格分布
         prices = self._calculate_grid_prices(
@@ -217,6 +250,86 @@ class GridManager:
                 reason=ai_config.get("reason", "N/A"),
             )
 
+    def _extract_grid_params(self, config: dict[str, Any]) -> dict[str, Any]:
+        payload = config or {}
+        params = payload.get("parameters", payload)
+        grid_type = str(
+            payload.get("grid_type", params.get("grid_type", DEFAULT_GRID_TYPE))
+        ).upper()
+        mode = str(payload.get("mode", params.get("mode", "NEUTRAL"))).upper()
+        return {
+            "lower_price": self._safe_float(params.get("lower_price"), 0.0),
+            "upper_price": self._safe_float(params.get("upper_price"), 0.0),
+            "grid_num": int(self._safe_float(params.get("grid_num", DEFAULT_GRID_NUM), DEFAULT_GRID_NUM)),
+            "amount_per_grid": self._safe_float(params.get("amount_per_grid"), 0.0),
+            "grid_type": grid_type,
+            "mode": mode,
+        }
+
+    def _has_sufficient_open_orders(self, symbol: str, min_orders: int) -> bool:
+        open_orders = self._get_symbol_open_orders(symbol=symbol)
+        return len(open_orders) >= max(min_orders, 0)
+
+    def _should_rebuild_grid(self, symbol: str, new_config: dict[str, Any]) -> tuple[bool, str]:
+        current_grid = self.state["active_grids"].get(symbol)
+        if not current_grid:
+            return True, "首次建网格"
+
+        if not self._has_sufficient_open_orders(symbol, DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS):
+            return True, "当前挂单数量不足，允许重建补网格"
+
+        old_params = self._extract_grid_params(current_grid.get("config", {}))
+        new_params = self._extract_grid_params(new_config)
+        old_lower = old_params["lower_price"]
+        old_upper = old_params["upper_price"]
+        new_lower = new_params["lower_price"]
+        new_upper = new_params["upper_price"]
+        old_amount = old_params["amount_per_grid"]
+        new_amount = new_params["amount_per_grid"]
+
+        if min(old_lower, old_upper, new_lower, new_upper) <= 0:
+            return True, "网格参数异常，强制重建"
+
+        if (
+            old_params["grid_num"] != new_params["grid_num"]
+            or old_params["grid_type"] != new_params["grid_type"]
+            or old_params["mode"] != new_params["mode"]
+        ):
+            return True, "网格结构变化（层数/类型/方向），需要重建"
+
+        lower_change = abs(new_lower - old_lower) / max(abs(old_lower), 1e-9)
+        upper_change = abs(new_upper - old_upper) / max(abs(old_upper), 1e-9)
+        price_change = max(lower_change, upper_change)
+
+        amount_change = 0.0
+        if old_amount > 0 and new_amount > 0:
+            amount_change = abs(new_amount - old_amount) / max(abs(old_amount), 1e-9)
+
+        if (
+            price_change < self.grid_rebuild_min_price_change_ratio
+            and amount_change < 0.20
+        ):
+            return (
+                False,
+                f"区间变化 {price_change * 100:.3f}% / 单格资金变化 {amount_change * 100:.2f}% 低于阈值",
+            )
+
+        last_sync = self._safe_float(current_grid.get("last_sync"), 0.0)
+        elapsed = max(0.0, time.time() - last_sync)
+        hard_rebuild_threshold = self.grid_rebuild_min_price_change_ratio * 3
+        if (
+            self.grid_rebuild_cooldown_seconds > 0
+            and elapsed < self.grid_rebuild_cooldown_seconds
+            and price_change < hard_rebuild_threshold
+            and amount_change < 0.35
+        ):
+            return (
+                False,
+                f"冷却中（{elapsed:.0f}s/{self.grid_rebuild_cooldown_seconds}s），跳过重建",
+            )
+
+        return True, "满足重建条件"
+
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
         try:
@@ -280,6 +393,34 @@ class GridManager:
                 time.sleep(retry_delay_sec)
 
         return False
+
+    def _drain_open_orders_before_rebuild(
+        self,
+        symbol: str,
+        max_rounds: int = 5,
+        round_sleep_sec: float = 0.4,
+    ) -> list[dict[str, Any]]:
+        """重建前尽量把残留限价单撤净；超时后返回剩余订单。"""
+        remaining_orders = self._get_symbol_open_orders(symbol=symbol)
+        if not remaining_orders:
+            return []
+
+        for round_idx in range(1, max_rounds + 1):
+            for order in remaining_orders:
+                oid = order.get("oid")
+                if oid is None:
+                    continue
+                self._cancel_order_with_retry(symbol, oid)
+
+            if round_idx < max_rounds:
+                time.sleep(round_sleep_sec)
+            remaining_orders = self._get_symbol_open_orders(symbol=symbol)
+            if not remaining_orders:
+                if round_idx > 1:
+                    self.logger.print_info(f"   [Grid] ✅ 残留挂单已清空（重试 {round_idx} 轮）")
+                return []
+
+        return remaining_orders
 
     def _cleanup_orphan_trigger_orders(self, symbol: str):
         """清理与当前持仓不匹配的 trigger 单（无仓或方向错误）。"""
@@ -503,13 +644,7 @@ class GridManager:
         return open_orders
 
     def _extract_oid(self, limit_order_res: dict[str, Any]) -> int | None:
-        try:
-            # 兼容 SDK 原始返回格式
-            if "response" in limit_order_res:
-                return limit_order_res["response"]["data"]["statuses"][0]["resting"]["oid"]
-            return None
-        except Exception:
-            return None
+        return extract_order_id(limit_order_res)
 
     def _calculate_grid_prices(
         self, lower: float, upper: float, num: int, grid_type: str

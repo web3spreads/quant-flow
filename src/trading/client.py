@@ -259,28 +259,61 @@ class HyperliquidClient:
             }]
         """
         try:
-            user_state = self._request_with_fallback("user_state", self.address)
-            open_orders = user_state.get("openOrders", [])
+            # 优先使用 frontend_open_orders：包含 Trigger 单（Stop Market / TP Market）
+            # 仅使用 user_state.openOrders 会在部分账户模式下漏掉触发单，导致清理逻辑失效。
+            raw_orders = self._request_with_fallback("frontend_open_orders", self.address)
+            if not isinstance(raw_orders, list):
+                user_state = self._request_with_fallback("user_state", self.address)
+                raw_orders = user_state.get("openOrders", []) if isinstance(user_state, dict) else []
 
+            normalized_orders = [
+                self._normalize_open_order(order)
+                for order in raw_orders
+                if isinstance(order, dict)
+            ]
             if include_trigger:
-                return open_orders
+                return normalized_orders
 
-            # 过滤出限价单（非触发单、非市价单）
-            limit_orders = []
-            for order in open_orders:
-                order_type = order.get("orderType", {})
-                # 限价单的orderType通常是 {"limit": {"tif": "Gtc"}} 或类似结构
-                # 触发单的orderType是 {"trigger": {...}}
-                # 市价单通常没有limitPx或orderType不同
-                if "limit" in order_type or "limitPx" in order:
-                    # 确保不是触发单
-                    if "trigger" not in order_type:
-                        limit_orders.append(order)
-
-            return limit_orders
+            return [o for o in normalized_orders if not self._is_trigger_like_order(o)]
         except Exception as e:
             print(f"❌ 获取待处理订单失败: {e}")
             return []
+
+    @staticmethod
+    def _is_trigger_like_order(order: dict[str, Any]) -> bool:
+        order_type = order.get("orderType")
+        if isinstance(order_type, dict):
+            return "trigger" in order_type
+
+        if bool(order.get("isTrigger")):
+            return True
+
+        if isinstance(order_type, str):
+            lowered = order_type.lower()
+            return "stop" in lowered or "take profit" in lowered or "trigger" in lowered
+
+        trigger_condition = str(order.get("triggerCondition", "")).strip()
+        return trigger_condition not in {"", "N/A"}
+
+    @staticmethod
+    def _normalize_open_order(order: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(order)
+        order_type = normalized.get("orderType")
+        if isinstance(order_type, dict):
+            return normalized
+
+        if HyperliquidClient._is_trigger_like_order(order):
+            normalized["orderType"] = {
+                "trigger": {
+                    "triggerPx": normalized.get("triggerPx"),
+                    "triggerCondition": normalized.get("triggerCondition"),
+                    "kind": order_type,
+                }
+            }
+        else:
+            normalized["orderType"] = {"limit": {"tif": normalized.get("tif") or "Gtc"}}
+
+        return normalized
 
     def get_asset_info(self, symbol: str) -> dict[str, Any] | None:
         """

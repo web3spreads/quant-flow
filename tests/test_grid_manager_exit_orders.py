@@ -1,5 +1,6 @@
 import copy
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -400,6 +401,116 @@ class TestGridManagerExitOrders(unittest.TestCase):
         grid_manager.sync_grid("ETH", {"action": "KEEP_GRID"})
 
         self.assertEqual(len(client.place_limit_calls), 0)
+
+    def test_update_grid_skips_rebuild_when_delta_is_small(self):
+        client = FakeClient()
+        client.open_orders = [
+            {"oid": 701, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "98.0"},
+            {"oid": 702, "coin": "ETH", "side": "A", "sz": "0.1", "limitPx": "102.0"},
+        ]
+        order_manager = FakeOrderManager(client, positions=[])
+        grid_manager = GridManager(
+            order_manager=order_manager,
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_rebuild_cooldown_seconds=900,
+            grid_rebuild_min_price_change_ratio=0.004,
+        )
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+            "buy_orders": [{"oid": 701, "px": 98.0}],
+            "sell_orders": [{"oid": 702, "px": 102.0}],
+            "last_sync": time.time(),
+        }
+
+        grid_manager.sync_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.2,
+                "upper_price": 105.3,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+        )
+
+        self.assertEqual(len(client.cancel_calls), 0)
+        self.assertEqual(len(order_manager.long_calls), 0)
+        self.assertEqual(len(order_manager.short_calls), 0)
+
+    def test_update_grid_rebuilds_when_open_orders_are_insufficient(self):
+        client = FakeClient()
+        client.open_orders = [
+            {"oid": 801, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "98.0"},
+        ]
+        order_manager = FakeOrderManager(client, positions=[])
+        grid_manager = GridManager(
+            order_manager=order_manager,
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_rebuild_cooldown_seconds=900,
+            grid_rebuild_min_price_change_ratio=0.004,
+        )
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 1,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+            "buy_orders": [{"oid": 801, "px": 98.0}],
+            "sell_orders": [],
+            "last_sync": time.time(),
+        }
+
+        grid_manager.sync_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.2,
+                "upper_price": 105.3,
+                "grid_num": 1,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+        )
+
+        canceled_ids = [oid for symbol, oid in client.cancel_calls if symbol == "ETH"]
+        self.assertIn(801, canceled_ids)
+        self.assertGreaterEqual(len(order_manager.long_calls), 1)
+
+    def test_extract_oid_supports_filled_status(self):
+        client = FakeClient()
+        order_manager = FakeOrderManager(client, positions=[])
+        grid_manager = GridManager(
+            order_manager=order_manager,
+            logger=DummyLogger(),
+            state_file=self.state_file,
+        )
+
+        oid = grid_manager._extract_oid(
+            {
+                "status": "ok",
+                "response": {
+                    "data": {
+                        "statuses": [
+                            {"filled": {"oid": 123456, "totalSz": "0.1", "avgPx": "100.0"}}
+                        ]
+                    }
+                },
+            }
+        )
+        self.assertEqual(oid, 123456)
 
 
 if __name__ == "__main__":
