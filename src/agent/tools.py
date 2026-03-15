@@ -46,13 +46,6 @@ class SellShortInput(BaseModel):
         return v
 
 
-class BuySpotInput(BaseModel):
-    """现货买入工具的输入模式"""
-
-    symbol: str = Field(description="交易对符号，如 'BTC' 或 'ETH'")
-    amount: float | None = Field(default=None, description="定投金额（USD），不填则使用配置上限")
-
-
 class BuyLimitInput(BaseModel):
     """限价开多工具的输入模式"""
 
@@ -108,7 +101,6 @@ class TradingTools:
         sell_short_callback: Callable[[str, float | None, int | None], str],
         buy_to_cover_callback: Callable[[str], str],
         do_nothing_callback: Callable[[str], str],
-        buy_spot_callback: Callable[[str, float | None], str] | None = None,
         buy_limit_callback: Callable[[str, float | None, int | None, float], str] | None = None,
         sell_short_limit_callback: Callable[[str, float | None, int | None, float], str]
         | None = None,
@@ -123,7 +115,6 @@ class TradingTools:
             sell_short_callback: 卖空开空回调函数，接收 (symbol, amount, leverage)，返回执行结果
             buy_to_cover_callback: 买入平空回调函数，接收 symbol，返回执行结果
             do_nothing_callback: 不操作回调函数，接收 reason，返回确认信息
-            buy_spot_callback: 现货买入回调函数（可选），接收 (symbol, amount)，返回执行结果
             buy_limit_callback: 限价开多回调函数（可选），接收 (symbol, amount, leverage, price)，返回执行结果
             sell_short_limit_callback: 限价开空回调函数（可选），接收 (symbol, amount, leverage, price)，返回执行结果
             cancel_limit_order_callback: 取消限价单回调函数（可选），接收 (symbol, order_id)，返回执行结果
@@ -133,7 +124,6 @@ class TradingTools:
         self.sell_short_callback = sell_short_callback
         self.buy_to_cover_callback = buy_to_cover_callback
         self.do_nothing_callback = do_nothing_callback
-        self.buy_spot_callback = buy_spot_callback
         self.buy_limit_callback = buy_limit_callback
         self.sell_short_limit_callback = sell_short_limit_callback
         self.cancel_limit_order_callback = cancel_limit_order_callback
@@ -316,64 +306,6 @@ class TradingTools:
             func=self.do_nothing_callback,
         )
 
-    def create_buy_spot_tool(self) -> StructuredTool:
-        """
-        创建现货买入工具（用于长期持有）
-
-        Returns:
-            LangChain StructuredTool 对象
-        """
-        if not self.buy_spot_callback:
-            # 如果没有提供回调，返回一个空操作工具
-            def disabled_func(symbol: str, amount: float | None = None) -> str:
-                return "现货买入功能未启用"
-
-            return StructuredTool.from_function(
-                func=disabled_func,
-                name="buy_spot",
-                description="现货买入功能未启用",
-                args_schema=BuySpotInput,
-            )
-
-        def buy_spot_func(symbol: str, amount: float | None = None) -> str:
-            """执行现货买入操作"""
-            return self.buy_spot_callback(symbol, amount)
-
-        return StructuredTool.from_function(
-            func=buy_spot_func,
-            name="buy_spot",
-            description="""执行现货买入操作（长期持有策略）。当市场出现长期阴跌趋势，发现优质定投点位时使用此工具。
-
-使用条件:
-- 检测到市场处于持续阴跌趋势（多周期下跌）
-- 资产价格已从高点回撤显著（建议 20%+）
-- RSI 处于超卖区域（< 30）
-- 多个时间周期趋势一致向下，但出现企稳迹象
-- 成交量开始萎缩或出现底部放量
-
-定投策略特点:
-- 现货买入，无杠杆风险
-- 用于长期持有，不设置止盈止损
-- 适合优质资产的长期配置
-- 分散风险的定投点位
-
-你的权限:
-- 可以根据市场恐慌程度自主决定定投金额（不超过配置上限）
-- 极度恐慌时可以使用更大金额，一般恐慌时使用较小金额
-
-系统会自动:
-- 不设置杠杆（1x）
-- 不设置止盈止损（长期持有）
-- 记录为现货持仓
-
-注意: 这是长期投资工具，请确保:
-1. 市场处于明显的下跌趋势
-2. 价格已有充分回撤
-3. 技术指标显示超卖
-4. 资产基本面良好""",
-            args_schema=BuySpotInput,
-        )
-
     def create_buy_limit_tool(self) -> StructuredTool:
         """
         创建限价开多工具
@@ -539,7 +471,7 @@ class TradingTools:
         获取所有工具
 
         Returns:
-            工具列表（包含做多、做空和现货工具）
+            工具列表
         """
         tools = [
             self.create_buy_tool(),  # 买入开多
@@ -548,10 +480,6 @@ class TradingTools:
             self.create_buy_to_cover_tool(),  # 买入平空
             self.create_do_nothing_tool(),  # 不操作
         ]
-
-        # 如果提供了现货买入回调，添加现货工具
-        if self.buy_spot_callback:
-            tools.append(self.create_buy_spot_tool())  # 现货买入
 
         # 如果提供了限价单回调，添加限价单工具
         if self.buy_limit_callback:

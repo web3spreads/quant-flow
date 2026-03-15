@@ -368,7 +368,6 @@ notifications:
     trade_closed: true            # 平仓
     stop_loss: true               # 止损
     take_profit: true             # 止盈
-    spot_investment: true         # 现货定投
     error: true                   # 错误
     circuit_breaker: true         # 熔断
     system_shutdown: true         # 系统关闭

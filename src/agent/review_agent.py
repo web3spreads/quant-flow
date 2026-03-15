@@ -31,7 +31,7 @@ from src.utils.logger import TradingLogger
 
 # 抗过拟合泛化模块（可选依赖）
 try:
-    from src.agents.review.generalization import enhance_lessons_with_generalization
+    from src.agent.generalization import enhance_lessons_with_generalization
 
     HAS_GENERALIZATION = True
 except ImportError:
@@ -364,7 +364,7 @@ class ReviewAgent:
     ) -> dict[str, Any]:
         """执行复盘（增强版）"""
         if not decision_records:
-            return {"lessons": [], "summary": "", "spot_checks": [], "effectiveness": {}}
+            return {"lessons": [], "summary": "", "effectiveness": {}}
 
         records = decision_records[-self.lookback_decisions :]
         digest = self._build_decision_digest(records)
@@ -481,7 +481,6 @@ class ReviewAgent:
                     stats=enhanced_stats,
                     fills_summary=fills_summary,
                     existing_lessons=existing_lessons,
-                    spot_checks=parsed.get("spot_checks", []),
                 )
             except Exception as e:
                 self.logger.print_warning(f"记录每日日志失败: {e}")
@@ -489,7 +488,6 @@ class ReviewAgent:
         result = {
             "summary": parsed.get("summary", ""),
             "lessons": filtered_lessons,
-            "spot_checks": parsed.get("spot_checks", []),
             "raw_output": raw_text,
             "prompt": prompt,
             "context_features": current_context,
@@ -911,18 +909,17 @@ class ReviewAgent:
             text: LLM 返回的原始文本，期望为 JSON 格式
 
         Returns:
-            解析后的字典，包含 summary, lessons, spot_checks 字段。
-            如果解析失败，返回默认结构: {"summary": text[:200], "lessons": [], "spot_checks": []}
+            解析后的字典，包含 summary, lessons 字段。
+            如果解析失败，返回默认结构: {"summary": text[:200], "lessons": []}
         """
         json_block = self._extract_json_block(text)
         if not json_block:
-            return {"summary": text[:200], "lessons": [], "spot_checks": []}
+            return {"summary": text[:200], "lessons": []}
 
         try:
             data = json.loads(json_block)
             if isinstance(data, dict):
                 return data
         except json.JSONDecodeError:
-            # If JSON parsing fails, fall back to default summary/lessons/spot_checks.
             pass
-        return {"summary": text[:200], "lessons": [], "spot_checks": []}
+        return {"summary": text[:200], "lessons": []}

@@ -10,9 +10,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 from src.agent.execution_agent import ExecutionAgent
+from src.agent.helpers import send_error_notification
 from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.tools import TradingTools
-from src.agents.common.utils.helpers import send_error_notification
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
 from src.llm import LLMClientManager
@@ -632,20 +632,6 @@ class SingleSymbolAgent:
                 self._executed_callbacks.add(callback_key)
             return f"⏸️  确认：不执行操作。原因：{reason}"
 
-        def buy_spot_callback(symbol: str, amount: float | None = None) -> str:
-            """现货定投推荐回调（仅推荐，不直接执行）"""
-            # 检查是否允许开新仓
-            if self.trade_amount <= 0:
-                return "❌ 当前余额不足，无法进行现货定投。"
-
-            actual_amount = amount if amount is not None else self.trade_amount
-            if actual_amount > self.trade_amount:
-                return f"❌ 定投金额 ${actual_amount} 超过上限 ${self.trade_amount}"
-            self.logger.print_info(
-                f"[{self.symbol}Agent] 推荐现货定投 (建议金额: ${actual_amount})，将交给现货 Agent 评估"
-            )
-            return f"📝 已推荐 {symbol} 现货定投 (建议金额: ${actual_amount})，等待现货 Agent 评估"
-
         # 限价单回调（仅在启用时创建）
         buy_limit_callback = None
         sell_short_limit_callback = None
@@ -805,7 +791,6 @@ class SingleSymbolAgent:
             sell_short_callback,
             buy_to_cover_callback,
             do_nothing_callback,
-            buy_spot_callback,
             buy_limit_callback if self.limit_order_enabled else None,
             sell_short_limit_callback if self.limit_order_enabled else None,
             cancel_limit_order_callback if self.limit_order_enabled else None,
@@ -817,7 +802,6 @@ class SingleSymbolAgent:
         self._sell_short_callback = sell_short_callback
         self._buy_to_cover_callback = buy_to_cover_callback
         self._do_nothing_callback = do_nothing_callback
-        self._buy_spot_callback = buy_spot_callback
         if self.limit_order_enabled:
             self._buy_limit_callback = buy_limit_callback
             self._sell_short_limit_callback = sell_short_limit_callback
@@ -842,7 +826,6 @@ class SingleSymbolAgent:
             "sell_short": self._sell_short_callback,
             "buy_to_cover": self._buy_to_cover_callback,
             "do_nothing": self._do_nothing_callback,
-            "buy_spot": self._buy_spot_callback,
         }
 
         # 如果限价单功能启用，添加限价单回调
@@ -1087,8 +1070,6 @@ class SingleSymbolAgent:
                                 return "SELL_SHORT"
                             elif tool_name == "buy_to_cover":
                                 return "BUY_TO_COVER"
-                            elif tool_name == "buy_spot":
-                                return "BUY_SPOT_RECOMMEND"
                             elif tool_name == "do_nothing":
                                 return "DO_NOTHING"
 
@@ -1101,8 +1082,6 @@ class SingleSymbolAgent:
                             return "SELL_SHORT"
                         elif message.name == "buy_to_cover":
                             return "BUY_TO_COVER"
-                        elif message.name == "buy_spot":
-                            return "BUY_SPOT_RECOMMEND"
                         elif message.name == "do_nothing":
                             return "DO_NOTHING"
 
@@ -1156,7 +1135,6 @@ class SingleSymbolAgent:
                     "SELL": "SELL",
                     "SELL_SHORT": "SELL_SHORT",
                     "BUY_TO_COVER": "BUY_TO_COVER",
-                    "BUY_SPOT": "BUY_SPOT_RECOMMEND",
                     "DO_NOTHING": "DO_NOTHING",
                 }
                 return decision_map.get(execution_plan.decision.value, "DO_NOTHING")

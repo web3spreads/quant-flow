@@ -386,38 +386,3 @@ class MockOrderManager:
 
         except Exception as e:
             return {"can_trade": False, "suggested_amount": 0, "reason": f"计算建议金额失败: {e}"}
-
-    def get_spot_holdings(self) -> list[dict[str, Any]]:
-        """
-        获取现货持仓列表（回测中暂不支持）
-
-        Returns:
-            空列表
-        """
-        return []
-
-    def buy_spot_for_dca(self, symbol: str, usdt_amount: float) -> dict[str, Any] | None:
-        """
-        现货定投买入（回测中暂不支持）
-
-        Args:
-            symbol: 交易对符号
-            usdt_amount: 投入金额
-
-        Returns:
-            None
-        """
-        return None
-
-    def sell_spot(self, symbol: str, size: float | None = None) -> dict[str, Any] | None:
-        """
-        卖出现货（回测中暂不支持）
-
-        Args:
-            symbol: 交易对符号
-            size: 卖出数量
-
-        Returns:
-            None
-        """
-        return None

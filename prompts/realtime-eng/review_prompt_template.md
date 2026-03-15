@@ -53,8 +53,5 @@ Please output JSON (Only the following structure, no extra text):
       "support_count": 1,
       "context_features": {{ context_features_json }}
     }
-  ],
-  "spot_checks": [
-    {"timestamp": "Optional, point out specific anomaly", "issue": "Issue", "fix": "Suggested Fix or Filter Threshold"}
   ]
 }

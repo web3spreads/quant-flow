@@ -50,7 +50,7 @@ class TestReviewDailyLogger:
         return {
             "symbol": "BTC",
             "prompt": "请分析以下交易决策记录...",
-            "raw_output": '{"summary": "测试摘要", "lessons": [{"rule": "测试规则", "action": "测试动作", "confidence": 0.8}], "spot_checks": []}',
+            "raw_output": '{"summary": "测试摘要", "lessons": [{"rule": "测试规则", "action": "测试动作", "confidence": 0.8}]}',
             "lessons": [
                 {
                     "rule": "当 RSI 超过 70 时考虑卖出",
@@ -91,7 +91,6 @@ class TestReviewDailyLogger:
             },
             "fills_summary": {"total_fills": 3, "total_pnl": 150.0},
             "existing_lessons": [],
-            "spot_checks": [],
         }
 
     def test_init_creates_directory(self, temp_dir):
