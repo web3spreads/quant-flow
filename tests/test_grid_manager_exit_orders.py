@@ -27,8 +27,17 @@ class FakeClient:
         self.place_limit_calls = []
         self.cancel_calls = []
 
-    def get_open_orders(self):
-        return copy.deepcopy(self.open_orders)
+    def get_open_orders(self, include_trigger=False):
+        if include_trigger:
+            return copy.deepcopy(self.open_orders)
+
+        limit_orders = []
+        for order in self.open_orders:
+            order_type = order.get("orderType", {})
+            if isinstance(order_type, dict) and "trigger" in order_type:
+                continue
+            limit_orders.append(order)
+        return copy.deepcopy(limit_orders)
 
     def get_current_price(self, symbol):
         return self.current_price
@@ -57,6 +66,7 @@ class FakeClient:
                 "side": "B" if is_buy else "A",
                 "sz": str(size),
                 "limitPx": str(price),
+                "orderType": {"limit": {"tif": "Gtc"}},
             }
         )
         return {
@@ -150,10 +160,38 @@ class TestGridManagerExitOrders(unittest.TestCase):
     def test_ensure_min_orders_adds_reduce_only_exit_orders_for_existing_long_position(self):
         client = FakeClient()
         client.open_orders = [
-            {"oid": 1, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "98.0"},
-            {"oid": 2, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "97.0"},
-            {"oid": 3, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "96.0"},
-            {"oid": 4, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "95.0"},
+            {
+                "oid": 1,
+                "coin": "ETH",
+                "side": "B",
+                "sz": "0.1",
+                "limitPx": "98.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
+            {
+                "oid": 2,
+                "coin": "ETH",
+                "side": "B",
+                "sz": "0.1",
+                "limitPx": "97.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
+            {
+                "oid": 3,
+                "coin": "ETH",
+                "side": "B",
+                "sz": "0.1",
+                "limitPx": "96.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
+            {
+                "oid": 4,
+                "coin": "ETH",
+                "side": "B",
+                "sz": "0.1",
+                "limitPx": "95.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
         ]
         order_manager = FakeOrderManager(client, positions=[{"coin": "ETH", "szi": "1.2"}])
         grid_manager = GridManager(
@@ -192,9 +230,30 @@ class TestGridManagerExitOrders(unittest.TestCase):
     def test_cancel_all_orders_cancels_exchange_orders_even_without_local_state(self):
         client = FakeClient()
         client.open_orders = [
-            {"oid": 101, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "99.0"},
-            {"oid": 102, "coin": "ETH", "side": "A", "sz": "0.1", "limitPx": "101.0"},
-            {"oid": 103, "coin": "BTC", "side": "B", "sz": "0.1", "limitPx": "99000.0"},
+            {
+                "oid": 101,
+                "coin": "ETH",
+                "side": "B",
+                "sz": "0.1",
+                "limitPx": "99.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
+            {
+                "oid": 102,
+                "coin": "ETH",
+                "side": "A",
+                "sz": "0.1",
+                "limitPx": "101.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
+            {
+                "oid": 103,
+                "coin": "BTC",
+                "side": "B",
+                "sz": "0.1",
+                "limitPx": "99000.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
         ]
         order_manager = FakeOrderManager(client, positions=[])
         grid_manager = GridManager(
@@ -207,6 +266,78 @@ class TestGridManagerExitOrders(unittest.TestCase):
 
         canceled_ids = [oid for symbol, oid in client.cancel_calls if symbol == "ETH"]
         self.assertEqual(set(canceled_ids), {101, 102})
+
+    def test_cancel_all_orders_also_cancels_trigger_orders(self):
+        client = FakeClient()
+        client.open_orders = [
+            {
+                "oid": 201,
+                "coin": "ETH",
+                "side": "A",
+                "sz": "0.2",
+                "limitPx": "101.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
+            {
+                "oid": 202,
+                "coin": "ETH",
+                "side": "A",
+                "sz": "0.2",
+                "limitPx": "95.0",
+                "orderType": {"trigger": {"tpsl": "sl", "triggerPx": 95.0}},
+            },
+            {
+                "oid": 203,
+                "coin": "BTC",
+                "side": "A",
+                "sz": "0.2",
+                "limitPx": "95000.0",
+                "orderType": {"trigger": {"tpsl": "sl", "triggerPx": 95000.0}},
+            },
+        ]
+        order_manager = FakeOrderManager(client, positions=[{"coin": "ETH", "szi": "1.0"}])
+        grid_manager = GridManager(
+            order_manager=order_manager,
+            logger=DummyLogger(),
+            state_file=self.state_file,
+        )
+
+        grid_manager._cancel_all_orders("ETH")
+
+        canceled_ids = [oid for symbol, oid in client.cancel_calls if symbol == "ETH"]
+        self.assertEqual(set(canceled_ids), {201, 202})
+
+    def test_cleanup_orphan_trigger_orders_cancels_trigger_when_no_position(self):
+        client = FakeClient()
+        client.open_orders = [
+            {
+                "oid": 301,
+                "coin": "ETH",
+                "side": "A",
+                "sz": "0.2",
+                "limitPx": "99.0",
+                "orderType": {"trigger": {"tpsl": "sl", "triggerPx": 99.0}},
+            },
+            {
+                "oid": 302,
+                "coin": "ETH",
+                "side": "A",
+                "sz": "0.2",
+                "limitPx": "101.0",
+                "orderType": {"trigger": {"tpsl": "tp", "triggerPx": 101.0}},
+            },
+        ]
+        order_manager = FakeOrderManager(client, positions=[{"coin": "ETH", "szi": "0"}])
+        grid_manager = GridManager(
+            order_manager=order_manager,
+            logger=DummyLogger(),
+            state_file=self.state_file,
+        )
+
+        grid_manager._cleanup_orphan_trigger_orders("ETH")
+
+        canceled_ids = [oid for symbol, oid in client.cancel_calls if symbol == "ETH"]
+        self.assertEqual(set(canceled_ids), {301, 302})
 
     def test_exit_orders_are_filled_by_coverage_ratio_not_only_count(self):
         client = FakeClient()

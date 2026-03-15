@@ -239,9 +239,12 @@ class HyperliquidClient:
             print(f"❌ 获取持仓失败: {e}")
             return []
 
-    def get_open_orders(self) -> list[dict[str, Any]]:
+    def get_open_orders(self, include_trigger: bool = False) -> list[dict[str, Any]]:
         """
         获取待处理的订单列表
+
+        Args:
+            include_trigger: 是否包含 trigger 触发单（TP/SL）
 
         Returns:
             List of open orders:
@@ -258,6 +261,9 @@ class HyperliquidClient:
         try:
             user_state = self._request_with_fallback("user_state", self.address)
             open_orders = user_state.get("openOrders", [])
+
+            if include_trigger:
+                return open_orders
 
             # 过滤出限价单（非触发单、非市价单）
             limit_orders = []

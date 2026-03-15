@@ -108,13 +108,17 @@ class MockHyperliquidClient:
         """
         return self.positions.copy()
 
-    def get_open_orders(self) -> list[dict[str, Any]]:
+    def get_open_orders(self, include_trigger: bool = False) -> list[dict[str, Any]]:
         """
         获取当前挂单
+
+        Args:
+            include_trigger: 回测中保留此参数以对齐真实客户端接口
 
         Returns:
             挂单列表
         """
+        _ = include_trigger
         return deepcopy(self.open_orders)
 
     def get_asset_info(self, symbol: str) -> dict[str, Any] | None:

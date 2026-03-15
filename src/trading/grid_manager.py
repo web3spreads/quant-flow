@@ -79,6 +79,9 @@ class GridManager:
         """
         核心逻辑：根据 AI 最新的决策，同步现实中的网格状态。
         """
+        # 周期性清理孤儿 trigger 单（如历史遗留 TPSL），防止主网订单长期累积
+        self._cleanup_orphan_trigger_orders(symbol)
+
         action = ai_config.get("action")
         if action != "UPDATE_GRID":
             # AI 不更新网格时，只保底减仓保护单，不再补基础开仓单
@@ -231,13 +234,84 @@ class GridManager:
         side = str(order.get("side", "")).strip().upper()
         return side in {"A", "ASK", "SELL"}
 
-    def _get_symbol_open_orders(self, symbol: str) -> list[dict[str, Any]]:
+    @staticmethod
+    def _is_trigger_order(order: dict[str, Any]) -> bool:
+        order_type = order.get("orderType") or {}
+        return isinstance(order_type, dict) and "trigger" in order_type
+
+    def _get_symbol_open_orders(
+        self,
+        symbol: str,
+        include_trigger: bool = False,
+    ) -> list[dict[str, Any]]:
         try:
-            orders = self.order_manager.client.get_open_orders() or []
+            try:
+                orders = (
+                    self.order_manager.client.get_open_orders(include_trigger=include_trigger) or []
+                )
+            except TypeError:
+                # 向后兼容不支持 include_trigger 参数的客户端
+                orders = self.order_manager.client.get_open_orders() or []
             return [o for o in orders if o.get("coin") == symbol]
         except Exception as e:
             self.logger.print_error(f"   [Grid] ❌ 查询 {symbol} 挂单失败: {e}")
             return []
+
+    def _cancel_order_with_retry(
+        self,
+        symbol: str,
+        oid: int,
+        max_retries: int = 3,
+        retry_delay_sec: float = 0.2,
+    ) -> bool:
+        for attempt in range(1, max_retries + 1):
+            result = self.order_manager.client.cancel_order(symbol, oid)
+            status = ""
+            if isinstance(result, dict):
+                status = str(result.get("status", "")).strip().lower()
+
+            if status == "ok":
+                return True
+
+            self.logger.print_warning(
+                f"   [Grid] ⚠️ 撤单失败 oid={oid} (第 {attempt}/{max_retries} 次): {result}"
+            )
+            if attempt < max_retries:
+                time.sleep(retry_delay_sec)
+
+        return False
+
+    def _cleanup_orphan_trigger_orders(self, symbol: str):
+        """清理与当前持仓不匹配的 trigger 单（无仓或方向错误）。"""
+        try:
+            open_orders = self._get_symbol_open_orders(symbol, include_trigger=True)
+            trigger_orders = [o for o in open_orders if self._is_trigger_order(o)]
+            if not trigger_orders:
+                return
+
+            position_size = self._get_symbol_position_size(symbol)
+            has_position = abs(position_size) > 0
+            close_with_buy = position_size < 0  # 空仓平仓要买；多仓平仓要卖
+            canceled = 0
+
+            for order in trigger_orders:
+                oid = order.get("oid")
+                if oid is None:
+                    continue
+
+                should_cancel = (not has_position) or (self._is_buy_side(order) != close_with_buy)
+                if not should_cancel:
+                    continue
+
+                if self._cancel_order_with_retry(symbol, oid):
+                    canceled += 1
+
+            if canceled:
+                self.logger.print_warning(
+                    f"   [Grid] 🧹 已清理孤儿 trigger 单 {canceled} 个（{symbol}）"
+                )
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] ❌ 清理孤儿 trigger 单失败: {e}")
 
     def _get_symbol_position_size(self, symbol: str) -> float:
         try:
@@ -466,18 +540,18 @@ class GridManager:
         return prices
 
     def _cancel_all_orders(self, symbol: str):
-        # 优先用交易所真实挂单清理，避免本地 state 漂移导致漏撤单
+        # 优先用交易所真实挂单清理（含 trigger），避免本地 state 漂移导致漏撤单
         canceled_oids = set()
-        open_orders = self._get_symbol_open_orders(symbol)
+        open_orders = self._get_symbol_open_orders(symbol, include_trigger=True)
         for order in open_orders:
             oid = order.get("oid")
             if oid is None:
                 continue
             try:
-                self.order_manager.client.cancel_order(symbol, oid)
-                canceled_oids.add(oid)
+                if self._cancel_order_with_retry(symbol, oid):
+                    canceled_oids.add(oid)
             except Exception as e:
-                self.logger.print_warning(f"   [Grid] ⚠️ 撤单失败 oid={oid}: {e}")
+                self.logger.print_warning(f"   [Grid] ⚠️ 撤单异常 oid={oid}: {e}")
 
         # 回退：补撤 state 中仍记录但交易所列表里未返回的 oid
         grid = self.state["active_grids"].get(symbol)
@@ -489,7 +563,8 @@ class GridManager:
                 if oid is None or oid in canceled_oids:
                     continue
                 with suppress(Exception):
-                    self.order_manager.client.cancel_order(symbol, oid)
+                    if self._cancel_order_with_retry(symbol, oid):
+                        canceled_oids.add(oid)
 
         if symbol in self.state["active_grids"]:
             del self.state["active_grids"][symbol]
