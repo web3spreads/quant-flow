@@ -122,7 +122,7 @@ class TestTradingToolFactory:
     def test_create_mock_callbacks(self):
         """测试创建模拟回调"""
         callbacks = create_mock_callbacks()
-        assert len(callbacks) == 9  # 现在包含限价单回调
+        assert len(callbacks) == 8  # 永续基础 + 限价单回调
 
         (
             buy_cb,
@@ -165,7 +165,7 @@ class TestTradingToolFactory:
         factory = TradingToolFactory(*callbacks)
 
         tools = factory.get_all_tools()
-        assert len(tools) == 9  # 包含现货工具和限价单工具
+        assert len(tools) == 8  # 永续基础工具 + 限价单工具
 
         # 检查工具名称
         tool_names = [t.name for t in tools]

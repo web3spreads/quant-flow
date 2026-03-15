@@ -386,4 +386,3 @@ class MockOrderManager:
 
         except Exception as e:
             return {"can_trade": False, "suggested_amount": 0, "reason": f"计算建议金额失败: {e}"}
-
