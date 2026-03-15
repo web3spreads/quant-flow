@@ -31,7 +31,12 @@
 
 ## 项目概述
 
-Quant Flow 是一个基于 LangChain/LangGraph 的 AI 永续合约自动交易机器人，专为 Hyperliquid DEX 设计。采用多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本。
+Quant Flow 是一个基于 LangChain/LangGraph 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
+
+- **永续合约 Agent**（`main.py`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
+- **网格交易 Grid Flow**（`grid_main.py`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
+
+两种策略完全解耦，可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
 
 **技术栈**: Python 3.11+, LangChain, LangGraph, Hyperliquid SDK, Pydantic
 
@@ -42,11 +47,14 @@ Quant Flow 是一个基于 LangChain/LangGraph 的 AI 永续合约自动交易�
 uv sync                       # 安装所有依赖
 uv sync --group dev           # 安装开发依赖
 
-# 运行主程序
+# 运行主程序（永续合约 Agent）
 uv run python main.py
 
 # 指定配置文件运行
 uv run python main.py --config config.yaml --env .env
+
+# 运行网格交易
+uv run python grid_main.py --config config.grid.yaml --env-file .env
 
 # 运行测试
 uv run pytest tests/
@@ -65,6 +73,11 @@ uv add --group dev <package>  # 添加开发依赖
 # RUN_MODE=all      同时运行主交易和网格交易
 docker compose up -d
 docker compose logs -f
+
+# 回测（支持 single/grid 策略）
+uv run python backtest.py --symbol BTC --strategy single --start-date 2024-01-01 --end-date 2024-12-01
+uv run python backtest.py --symbol BTC --strategy grid --start-date 2024-01-01 --end-date 2024-12-01
+uv run python backtest.py --symbol BTC --resume-from workspace/BTC_xxx/live_report.json  # 中断恢复
 
 # A/B 回测对比（对比不同功能配置的效果差异）
 uv run python backtest_comparison.py --symbol BTC --compare all
@@ -128,6 +141,37 @@ tail -f logs/grid.log          # 网格交易日志
                   └──────────────┘                                     └───────────────┘
 ```
 
+### 网格交易数据流（Grid Flow，独立入口 `grid_main.py`）
+
+```
+┌──────────────┐    ┌─────────────────────────────────────┐
+│  MarketData  │───→│  GridAgent (AI 决策)                 │
+│  (K线/指标)   │    │  判断方向 LONG/SHORT/NEUTRAL         │
+└──────────────┘    │  + 网格宽度/层数                     │
+                    └──────────────────┬──────────────────┘
+                                       ↓
+                    ┌──────────────────────────────────────┐
+                    │  calculate_grid_config (数学引擎)     │
+                    │  65% 市场数据 + 35% AI 融合计算       │
+                    └──────────────────┬───────────────────┘
+                                       ↓
+                    ┌──────────────────────────────────────┐
+                    │  GridManager (网格管理器)              │
+                    │  ┌────────────────────────────────┐  │
+                    │  │ 安全机制：                       │  │
+                    │  │ • 孤儿 trigger 单清理            │  │
+                    │  │ • reduce-only 分层减仓           │  │
+                    │  │ • 撤单硬超时保护 (20s)           │  │
+                    │  │ • 状态文件原子写入               │  │
+                    │  └────────────────────────────────┘  │
+                    └──────────────────┬───────────────────┘
+                                       ↓
+                    ┌──────────────────────────────────────┐
+                    │  HyperliquidClient + OrderManager    │
+                    │  (共享组件，限价单布置/撤销)          │
+                    └──────────────────────────────────────┘
+```
+
 ### 目录结构
 
 ```
@@ -135,21 +179,20 @@ src/
 ├── agent/                    # Agent 实现
 │   ├── single_symbol_agent.py      # 单币种交易决策
 │   ├── enhanced_single_symbol_agent.py  # 增强版 Agent (集成风控+辩论+Regime)
-│   ├── debate.py                   # 多空辩论引擎 🆕
+│   ├── grid_agent.py               # 网格交易 AI 决策引擎
+│   ├── debate.py                   # 多空辩论引擎
 │   ├── summary_agent_v2.py         # 历史压缩
 │   ├── review_agent.py             # 复盘学习
+│   ├── generalization.py           # 经验泛化器（抗过拟合）
+│   ├── helpers.py                  # 通用辅助函数
 │   ├── instant_reflection.py       # 即时反思（每笔平仓后）
 │   ├── weekly_reflection.py        # 每周策略级反思
 │   ├── prompt_meta_reflection.py   # Prompt 自优化元反思
 │   └── execution_agent.py          # 执行计划生成
-├── agents/                   # Agent 实现 (新版 LangGraph)
-│   ├── trading/                    # 交易 Agent workflow
-│   ├── execution/                  # 执行 Agent workflow
-│   ├── review/                     # 复盘 Agent workflow
-│   └── common/                     # 共享组件 (state, tools, utils)
 ├── trading/                  # 交易核心模块
 │   ├── client.py                   # Hyperliquid SDK 封装
-│   ├── order_manager.py            # 订单管理
+│   ├── order_manager.py            # 订单管理（支持限价单 TP/SL 开关）
+│   ├── grid_manager.py             # 网格交易管理器（布单/同步/安全机制）
 │   ├── decision_validator.py       # 决策多维度验证
 │   ├── position_sizer.py           # 凯利公式仓位计算
 │   ├── risk_manager.py             # ATR动态止盈止损
@@ -158,14 +201,18 @@ src/
 ├── data/                     # 数据模块
 │   ├── market_data.py              # K线和市场数据
 │   ├── indicators.py               # 技术指标 (MA, RSI, MACD, Bollinger)
-│   ├── data_enricher.py            # 数据增强 (CEX费率/链上数据/恐惧贪婪) 🆕
-│   ├── market_monitor.py           # 市场主动监控 (异常波动触发决策) 🆕
+│   ├── data_enricher.py            # 数据增强 (CEX费率/链上数据/恐惧贪婪)
+│   ├── market_monitor.py           # 市场主动监控 (异常波动触发决策)
 │   ├── market_state.py             # 市场状态分析 (11种状态枚举)
-│   ├── signal_scorer.py            # 多因子信号评分 (Regime自适应权重) 🆕
-│   └── regime_adapter.py           # 市场Regime自适应参数切换 🆕
+│   ├── signal_scorer.py            # 多因子信号评分 (Regime自适应权重)
+│   └── regime_adapter.py           # 市场Regime自适应参数切换
+├── utils/                    # 工具模块
+│   ├── hyperliquid.py              # SDK 安全初始化（spotMeta 越界过滤）
+│   ├── grid_math.py                # 网格数学计算引擎
+│   └── logger.py                   # 日志工具
 ├── llm/                      # LLM 客户端
 │   └── llm_client.py               # 多供应商支持 (OpenAI/Cloudflare/Google/LiteLLM/NVIDIA)
-├── backtest/                 # 回测模块
+├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复）
 └── notification/             # 通知模块
 ```
 
@@ -595,6 +642,28 @@ review_agent:
   prompt_meta_reflection_enabled: true  # Prompt 自优化
 ```
 
+### 网格交易配置 (`config.grid.yaml`)
+
+```yaml
+trading:
+  symbols: [ETH]                          # 网格交易对
+  max_total_investment: 500               # 总投入上限（USD）
+  max_leverage: 5                         # 最大杠杆
+  grid_limit_order_take_profit_enabled: true   # 网格成交后是否补止盈单
+  grid_limit_order_stop_loss_enabled: true     # 网格成交后是否补止损单
+  grid_reduce_only_exit_orders_enabled: true   # 是否启用分层减仓单
+
+agent:
+  grid_width:
+    min_pct: 0.02            # 最小网格宽度 2%
+    max_pct: 0.15            # 最大网格宽度 15%
+    fallback_pct: 0.05       # 数据异常回退宽度
+    ai_blend_weight: 0.35    # AI 输出与市场数据融合权重
+
+scheduler:
+  interval_minutes: 5        # 网格决策间隔
+```
+
 ## 设计模式
 
 1. **工具回调模式**: `TradingTools` 通过回调函数将 LLM 决策映射到实际交易操作
@@ -603,6 +672,7 @@ review_agent:
 4. **结构化输出**: `ExecutionAgent` 使用 Pydantic 模型 (`ExecutionPlan`) 确保决策格式正确
 5. **防御性编程**: 风险管理模块默认值初始化防止空值异常
 6. **功能开关模式**: 所有增强功能通过 `config.yaml` 独立开关控制，默认关闭
+7. **原子写入**: `GridManager` 的状态文件使用 tempfile + move 实现原子写入，防止进程中断导致文件损坏
 
 ## 测试
 
@@ -637,6 +707,7 @@ uv run pytest tests/ --cov=src
 - `test_confirmation_bias_protection.py`: 确认偏差防护测试（改进6c）
 - `test_fact_subjective_split.py`: 事实-主观分离测试（改进6d）
 - `test_prompt_meta_reflection.py`: Prompt 自优化测试（改进6e）
+- `test_grid_manager_exit_orders.py`: 网格交易分层减仓单测试
 
 ## 注意事项
 

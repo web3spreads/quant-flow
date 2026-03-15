@@ -5,6 +5,8 @@
 
 import json
 import os
+import shutil
+import tempfile
 import time
 from contextlib import suppress
 from typing import Any
@@ -79,8 +81,20 @@ class GridManager:
         return {"active_grids": {}}
 
     def _save_state(self):
-        with open(self.state_file, "w", encoding="utf-8") as f:
-            json.dump(self.state, f, indent=2)
+        """原子写入状态文件，防止进程中断导致文件截断损坏。"""
+        state_dir = os.path.dirname(self.state_file) or "."
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=state_dir, suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self.state, f, indent=2)
+            shutil.move(tmp_path, self.state_file)
+        except Exception:
+            # 临时文件写入失败时回退到直接写入
+            with suppress(OSError):
+                if "tmp_path" in locals():
+                    os.unlink(tmp_path)
+            with open(self.state_file, "w", encoding="utf-8") as f:
+                json.dump(self.state, f, indent=2)
 
     def update_grid(
         self,
@@ -388,14 +402,22 @@ class GridManager:
         symbol: str,
         max_rounds: int = 5,
         round_sleep_sec: float = 0.4,
+        hard_timeout_sec: float = 20.0,
     ) -> list[dict[str, Any]]:
         """重建前尽量把残留限价单撤净；超时后返回剩余订单。"""
         remaining_orders = self._get_symbol_open_orders(symbol=symbol)
         if not remaining_orders:
             return []
 
+        start_time = time.monotonic()
+
         for round_idx in range(1, max_rounds + 1):
             for order in remaining_orders:
+                if time.monotonic() - start_time >= hard_timeout_sec:
+                    self.logger.print_warning(
+                        f"   [Grid] ⏱️ 撤单硬超时 {hard_timeout_sec}s，剩余 {len(remaining_orders)} 单未清"
+                    )
+                    return remaining_orders
                 oid = order.get("oid")
                 if oid is None:
                     continue
