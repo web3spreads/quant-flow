@@ -8,9 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from hyperliquid.info import Info
 from hyperliquid.utils import constants
-
-from src.utils.hyperliquid import create_info
 
 
 class BacktestDataLoader:
@@ -25,7 +24,7 @@ class BacktestDataLoader:
         """
         self.testnet = testnet
         self.base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
-        self.info = create_info(self.base_url, skip_ws=True)
+        self.info = Info(self.base_url, skip_ws=True)
 
     def load_from_api(
         self, symbol: str, timeframe: str, start_date: datetime, end_date: datetime

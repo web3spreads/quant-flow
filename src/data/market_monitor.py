@@ -14,9 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from hyperliquid.info import Info
 from hyperliquid.utils import constants
-
-from src.utils.hyperliquid import create_info
 
 
 class AlertLevel(StrEnum):
@@ -101,7 +100,7 @@ class MarketMonitor:
 
         # 初始化 Hyperliquid Info API（轻量级，仅用于获取价格）
         self.base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
-        self.info = create_info(self.base_url, skip_ws=True)
+        self.info = Info(self.base_url, skip_ws=True)
 
         # 价格历史记录（每个 symbol 保存最近 N 个快照）
         self._price_history: dict[str, list[PriceSnapshot]] = {s: [] for s in symbols}

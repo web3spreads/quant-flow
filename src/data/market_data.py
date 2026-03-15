@@ -6,9 +6,8 @@ Hyperliquid 市场数据获取模块
 from datetime import datetime
 
 import pandas as pd
+from hyperliquid.info import Info
 from hyperliquid.utils import constants
-
-from src.utils.hyperliquid import create_info
 
 
 class MarketDataFetcher:
@@ -25,7 +24,7 @@ class MarketDataFetcher:
         self.base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
 
         # 初始化 Info API
-        self.info = create_info(self.base_url, skip_ws=True)
+        self.info = Info(self.base_url, skip_ws=True)
 
         print(f"📊 市场数据获取器初始化完成 ({'测试网' if testnet else '主网'})")
 
