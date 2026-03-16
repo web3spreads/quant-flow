@@ -52,8 +52,8 @@ class LimitOrderMonitor:
         is_buy: bool,
         size: float,
         entry_price: float,
-        take_profit_price: float,
-        stop_loss_price: float,
+        take_profit_price: float | None,
+        stop_loss_price: float | None,
         on_tpsl_set: Callable | None = None,
     ) -> None:
         """
@@ -65,8 +65,8 @@ class LimitOrderMonitor:
             is_buy: 是否做多
             size: 仓位大小
             entry_price: 入场价格
-            take_profit_price: 止盈价格
-            stop_loss_price: 止损价格
+            take_profit_price: 止盈价格（可选）
+            stop_loss_price: 止损价格（可选）
             on_tpsl_set: 止盈止损设置成功后的回调
         """
         with self._lock:
@@ -895,6 +895,8 @@ class OrderManager:
         leverage: int | None = None,
         tp_ratio: float | None = None,
         sl_ratio: float | None = None,
+        with_take_profit: bool = True,
+        with_stop_loss: bool = True,
     ) -> dict[str, Any] | None:
         """
         执行限价开多操作（带止盈止损计算）
@@ -906,6 +908,8 @@ class OrderManager:
             leverage: 杠杆倍数
             tp_ratio: 自定义止盈比例（覆盖默认值）
             sl_ratio: 自定义止损比例（覆盖默认值）
+            with_take_profit: 是否启用止盈触发单
+            with_stop_loss: 是否启用止损触发单
 
         Returns:
             订单信息（包含止盈止损价格）
@@ -941,17 +945,16 @@ class OrderManager:
                     return None
 
             # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
+            tp_price = None
+            sl_price = None
             actual_tp_ratio = tp_ratio if tp_ratio is not None else self.take_profit_ratio
             actual_sl_ratio = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
-            tp_price = limit_price * (1 + actual_tp_ratio)
-            sl_price = limit_price * (1 - actual_sl_ratio)
-
-            # 格式化价格
-            tp_price = self.client.format_price(symbol, tp_price)
-            sl_price = self.client.format_price(symbol, sl_price)
-
-            print(f"   止盈价: ${tp_price:.2f} (+{actual_tp_ratio * 100:.3f}%)")
-            print(f"   止损价: ${sl_price:.2f} (-{actual_sl_ratio * 100:.3f}%)")
+            if with_take_profit:
+                tp_price = self.client.format_price(symbol, limit_price * (1 + actual_tp_ratio))
+                print(f"   止盈价: ${tp_price:.2f} (+{actual_tp_ratio * 100:.3f}%)")
+            if with_stop_loss:
+                sl_price = self.client.format_price(symbol, limit_price * (1 - actual_sl_ratio))
+                print(f"   止损价: ${sl_price:.2f} (-{actual_sl_ratio * 100:.3f}%)")
 
             # 4. 下限价单
             limit_order = self.client.place_limit_order(
@@ -967,11 +970,11 @@ class OrderManager:
                     "leverage": lev,
                     "take_profit_price": tp_price,
                     "stop_loss_price": sl_price,
-                    "message": "限价单已提交，成交后将自动设置止盈止损",
+                    "message": "限价单已提交，成交后将按配置自动设置风控单",
                 }
 
                 # 5. 注册到 LimitOrderMonitor，成交后自动设置止盈止损
-                if self.limit_order_monitor:
+                if self.limit_order_monitor and (with_take_profit or with_stop_loss):
                     order_id = extract_order_id(limit_order)
                     if order_id:
                         self.limit_order_monitor.add_order(
@@ -1003,6 +1006,8 @@ class OrderManager:
         leverage: int | None = None,
         tp_ratio: float | None = None,
         sl_ratio: float | None = None,
+        with_take_profit: bool = True,
+        with_stop_loss: bool = True,
     ) -> dict[str, Any] | None:
         """
         执行限价开空操作（带止盈止损计算）
@@ -1014,6 +1019,8 @@ class OrderManager:
             leverage: 杠杆倍数
             tp_ratio: 自定义止盈比例（覆盖默认值）
             sl_ratio: 自定义止损比例（覆盖默认值）
+            with_take_profit: 是否启用止盈触发单
+            with_stop_loss: 是否启用止损触发单
 
         Returns:
             订单信息（包含止盈止损价格）
@@ -1050,17 +1057,16 @@ class OrderManager:
 
             # 3. 计算止盈止损价格（基于限价单价格按百分比计算）
             # 做空：止盈价 = 限价 * (1 - take_profit_ratio)，止损价 = 限价 * (1 + stop_loss_ratio)
+            tp_price = None
+            sl_price = None
             actual_tp_ratio = tp_ratio if tp_ratio is not None else self.take_profit_ratio
             actual_sl_ratio = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
-            tp_price = limit_price * (1 - actual_tp_ratio)
-            sl_price = limit_price * (1 + actual_sl_ratio)
-
-            # 格式化价格
-            tp_price = self.client.format_price(symbol, tp_price)
-            sl_price = self.client.format_price(symbol, sl_price)
-
-            print(f"   止盈价: ${tp_price:.2f} (-{actual_tp_ratio * 100:.3f}%)")
-            print(f"   止损价: ${sl_price:.2f} (+{actual_sl_ratio * 100:.3f}%)")
+            if with_take_profit:
+                tp_price = self.client.format_price(symbol, limit_price * (1 - actual_tp_ratio))
+                print(f"   止盈价: ${tp_price:.2f} (-{actual_tp_ratio * 100:.3f}%)")
+            if with_stop_loss:
+                sl_price = self.client.format_price(symbol, limit_price * (1 + actual_sl_ratio))
+                print(f"   止损价: ${sl_price:.2f} (+{actual_sl_ratio * 100:.3f}%)")
 
             # 4. 下限价单
             limit_order = self.client.place_limit_order(
@@ -1076,11 +1082,11 @@ class OrderManager:
                     "leverage": lev,
                     "take_profit_price": tp_price,
                     "stop_loss_price": sl_price,
-                    "message": "限价单已提交，成交后将自动设置止盈止损",
+                    "message": "限价单已提交，成交后将按配置自动设置风控单",
                 }
 
                 # 5. 注册到 LimitOrderMonitor，成交后自动设置止盈止损
-                if self.limit_order_monitor:
+                if self.limit_order_monitor and (with_take_profit or with_stop_loss):
                     order_id = extract_order_id(limit_order)
                     if order_id:
                         self.limit_order_monitor.add_order(

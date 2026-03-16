@@ -21,6 +21,17 @@ MAKER_FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.maker_rate
 class Config:
     """配置管理类"""
 
+    @staticmethod
+    def _as_bool(value: Any, default: bool) -> bool:
+        """宽松解析布尔配置，兼容 YAML 布尔和字符串。"""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
     def __init__(
         self,
         config_path: str = "config.yaml",
@@ -165,6 +176,19 @@ class Config:
         self.stop_loss_ratio: float = float(trading.get("stop_loss_ratio", 0.02))
         self.max_positions: int = int(trading.get("max_positions", 2))
         self.limit_order_enabled: bool = trading.get("limit_order_enabled", False)
+        # 网格限价单是否在成交后自动挂止盈/止损触发单（默认保持历史行为：都开启）
+        self.grid_limit_order_take_profit_enabled: bool = self._as_bool(
+            trading.get("grid_limit_order_take_profit_enabled"),
+            True,
+        )
+        self.grid_limit_order_stop_loss_enabled: bool = self._as_bool(
+            trading.get("grid_limit_order_stop_loss_enabled"),
+            True,
+        )
+        self.grid_reduce_only_exit_orders_enabled: bool = self._as_bool(
+            trading.get("grid_reduce_only_exit_orders_enabled"),
+            True,
+        )
 
         # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
         # 向后兼容：支持旧字段名 default_leverage
@@ -212,6 +236,12 @@ class Config:
         self.agent_temperature: float = float(agent.get("temperature", 0.1))
         self.agent_max_iterations: int = int(agent.get("max_iterations", 5))
         self.agent_timeout: int = int(agent.get("timeout", 60))
+
+        grid_width = agent.get("grid_width", {})
+        self.grid_width_min_pct: float = float(grid_width.get("min_pct", 0.02))
+        self.grid_width_max_pct: float = float(grid_width.get("max_pct", 0.15))
+        self.grid_width_fallback_pct: float = float(grid_width.get("fallback_pct", 0.05))
+        self.grid_ai_blend_weight: float = float(grid_width.get("ai_blend_weight", 0.35))
 
     def _init_prompt_config(self):
         """初始化 Prompt 配置"""
@@ -393,6 +423,16 @@ class Config:
         valid_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
         if self.timeframe not in valid_timeframes:
             errors.append(f"timeframe 必须是以下之一: {valid_timeframes}")
+
+        # 验证网格宽度参数
+        if self.grid_width_min_pct <= 0:
+            errors.append("agent.grid_width.min_pct 必须大于 0")
+        if self.grid_width_max_pct <= self.grid_width_min_pct:
+            errors.append("agent.grid_width.max_pct 必须大于 min_pct")
+        if not (self.grid_width_min_pct <= self.grid_width_fallback_pct <= self.grid_width_max_pct):
+            errors.append("agent.grid_width.fallback_pct 必须在 [min_pct, max_pct] 区间内")
+        if not (0.0 <= self.grid_ai_blend_weight <= 1.0):
+            errors.append("agent.grid_width.ai_blend_weight 必须在 [0,1] 区间内")
 
         if errors:
             raise ValueError("配置验证失败:\n" + "\n".join(f"- {err}" for err in errors))

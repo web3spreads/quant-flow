@@ -10,6 +10,7 @@
 - ✅ 支持从Hyperliquid API获取历史数据（主网/测试网）
 - ✅ 支持从本地CSV/JSON文件加载数据
 - ✅ 模拟完整的交易流程（开仓、平仓、止盈止损）
+- ✅ 支持两种策略模式：`single`（默认单币Agent）/ `grid`（网格策略）
 - ✅ 计算手续费和滑点
 - ✅ **独立的工作空间**：每次回测创建独立目录，包含配置和环境文件
 - ✅ **Review Agent 支持**：自动复盘和学习交易经验
@@ -83,6 +84,15 @@ python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-12-01 --
 python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-12-01 --live-report-interval 0
 ```
 
+### 8. 使用网格策略回测
+
+```bash
+python backtest.py --symbol BTC \
+    --start-date 2024-01-01 \
+    --end-date 2024-12-01 \
+    --strategy grid
+```
+
 ## 命令行参数
 
 ### 必需参数
@@ -99,7 +109,8 @@ python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-12-01 --
 
 #### 交易参数
 - `--initial-balance`: 初始余额（USD，默认: 10000）
-- `--interval`: 决策间隔（分钟，默认: 15）
+- `--interval`: 决策间隔（分钟，默认: 5）
+- `--strategy`: 策略模式（`single` 或 `grid`，默认: `single`）
 
 #### 输出参数
 - `--output-dir`: 报告输出目录（默认: backtest_results）
@@ -129,7 +140,6 @@ backtest_results/
     ├── pnl_history.csv          # 盈亏历史记录（用于图表展示）
     ├── metadata.json            # 回测参数和配置信息
     ├── README.md                # 报告说明文档
-    └── config.yaml              # 配置文件副本
 ```
 
 ### 工作空间特点

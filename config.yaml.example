@@ -35,6 +35,14 @@ trading:
   # 启用后，AI 可以使用限价单提前埋伏，等待价格回调成交
   limit_order_enabled: false
 
+  # 以下两个开关仅在 grid 模式下生效：
+  # 网格限价单成交后是否自动补挂止盈触发单
+  grid_limit_order_take_profit_enabled: true
+  # 网格限价单成交后是否自动补挂止损触发单
+  grid_limit_order_stop_loss_enabled: true
+  # 仅 grid 模式：是否启用 reduce_only 分层减仓单（分批止盈）
+  grid_reduce_only_exit_orders_enabled: true
+
 # 调度配置
 scheduler:
   # 决策间隔（分钟）
@@ -91,6 +99,17 @@ agent:
 
   # Agent 超时时间（秒）
   timeout: 60
+
+  # 网格宽度参数（用于 grid_agent 动态区间计算）
+  grid_width:
+    # 最小网格宽度（2%）
+    min_pct: 0.02
+    # 最大网格宽度（15%）
+    max_pct: 0.15
+    # 市场数据异常时的回退宽度（5%）
+    fallback_pct: 0.05
+    # AI 输出与市场波动的融合权重（0~1）
+    ai_blend_weight: 0.35
 
 # LLM 配置
 llm:

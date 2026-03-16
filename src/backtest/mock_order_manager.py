@@ -284,6 +284,165 @@ class MockOrderManager:
             print(f"❌ 执行做空失败: {e}")
             return None
 
+    def execute_long_limit(
+        self,
+        symbol: str,
+        usdt_amount: float,
+        limit_price: float,
+        leverage: int | None = None,
+        tp_ratio: float | None = None,
+        sl_ratio: float | None = None,
+        with_take_profit: bool = True,
+        with_stop_loss: bool = True,
+    ) -> dict[str, Any] | None:
+        """
+        执行限价开多（模拟）
+        """
+        try:
+            if limit_price <= 0:
+                return {"success": False, "message": "limit_price 必须大于 0"}
+
+            lev = leverage if leverage else self.default_leverage
+            balance_info = self.get_available_balance_info()
+            suggested = self.calculate_suggested_trade_amount(
+                desired_amount=usdt_amount,
+                min_trade_amount=10.0,
+                balance_info=balance_info,
+            )
+            if not suggested.get("can_trade"):
+                return {"success": False, "message": suggested.get("reason", "余额不足")}
+
+            actual_amount = float(suggested.get("suggested_amount", usdt_amount))
+            size = (actual_amount * lev) / limit_price
+            asset_info = self.client.get_asset_info(symbol)
+            if asset_info and "szDecimals" in asset_info:
+                size = round(size, asset_info["szDecimals"])
+            else:
+                size = round(size, 3)
+
+            use_tp = tp_ratio if tp_ratio is not None else self.take_profit_ratio
+            use_sl = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
+            tp_px = (
+                self.client.format_price(symbol, limit_price * (1 + use_tp))
+                if with_take_profit
+                else None
+            )
+            sl_px = (
+                self.client.format_price(symbol, limit_price * (1 - use_sl))
+                if with_stop_loss
+                else None
+            )
+
+            limit_order = self.client.place_limit_order(
+                symbol=symbol,
+                is_buy=True,
+                size=size,
+                price=limit_price,
+                reduce_only=False,
+                metadata={
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "leverage": lev,
+                },
+            )
+
+            if isinstance(limit_order, dict) and limit_order.get("status") == "ok":
+                return {
+                    "success": True,
+                    "limit_order": limit_order,
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "quantity": size,
+                }
+            return {"success": False, "message": str(limit_order)}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def execute_short_limit(
+        self,
+        symbol: str,
+        usdt_amount: float,
+        limit_price: float,
+        leverage: int | None = None,
+        tp_ratio: float | None = None,
+        sl_ratio: float | None = None,
+        with_take_profit: bool = True,
+        with_stop_loss: bool = True,
+    ) -> dict[str, Any] | None:
+        """
+        执行限价开空（模拟）
+        """
+        try:
+            if limit_price <= 0:
+                return {"success": False, "message": "limit_price 必须大于 0"}
+
+            lev = leverage if leverage else self.default_leverage
+            balance_info = self.get_available_balance_info()
+            suggested = self.calculate_suggested_trade_amount(
+                desired_amount=usdt_amount,
+                min_trade_amount=10.0,
+                balance_info=balance_info,
+            )
+            if not suggested.get("can_trade"):
+                return {"success": False, "message": suggested.get("reason", "余额不足")}
+
+            actual_amount = float(suggested.get("suggested_amount", usdt_amount))
+            size = (actual_amount * lev) / limit_price
+            asset_info = self.client.get_asset_info(symbol)
+            if asset_info and "szDecimals" in asset_info:
+                size = round(size, asset_info["szDecimals"])
+            else:
+                size = round(size, 3)
+
+            use_tp = tp_ratio if tp_ratio is not None else self.take_profit_ratio
+            use_sl = sl_ratio if sl_ratio is not None else self.stop_loss_ratio
+            tp_px = (
+                self.client.format_price(symbol, limit_price * (1 - use_tp))
+                if with_take_profit
+                else None
+            )
+            sl_px = (
+                self.client.format_price(symbol, limit_price * (1 + use_sl))
+                if with_stop_loss
+                else None
+            )
+
+            limit_order = self.client.place_limit_order(
+                symbol=symbol,
+                is_buy=False,
+                size=size,
+                price=limit_price,
+                reduce_only=False,
+                metadata={
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "leverage": lev,
+                },
+            )
+
+            if isinstance(limit_order, dict) and limit_order.get("status") == "ok":
+                return {
+                    "success": True,
+                    "limit_order": limit_order,
+                    "tp_price": tp_px,
+                    "sl_price": sl_px,
+                    "quantity": size,
+                }
+            return {"success": False, "message": str(limit_order)}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def cancel_limit_order(self, symbol: str, order_id: int) -> dict[str, Any]:
+        """取消限价单（模拟）"""
+        return self.client.cancel_order(symbol, order_id)
+
+    def get_open_limit_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        """获取限价挂单（模拟）"""
+        orders = self.client.get_open_orders()
+        if symbol:
+            return [o for o in orders if o.get("coin") == symbol]
+        return orders
+
     def close_position(self, symbol: str, size: float | None = None) -> dict[str, Any] | None:
         """
         平仓操作（模拟）

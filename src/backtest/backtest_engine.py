@@ -3,12 +3,15 @@
 负责时间推进、交易执行、盈亏跟踪等核心逻辑
 """
 
+import traceback
+from contextlib import suppress
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from src.agent.grid_agent import GridAgent
 from src.agent.review_agent import ReviewAgent
 from src.agent.review_memory import ReviewMemoryStore
 from src.agent.single_symbol_agent import SingleSymbolAgent
@@ -17,6 +20,7 @@ from src.config import FEE_RATE_PER_SIDE
 from src.data.indicators import TechnicalIndicators
 from src.i18n import get_text
 from src.prompt_manager import PromptManager
+from src.trading.grid_manager import GridManager
 from src.utils.logger import TradingLogger
 
 from .mock_client import MockHyperliquidClient
@@ -35,9 +39,8 @@ class BacktestEngine:
         config: Any = None,
         logger: TradingLogger | None = None,
         prompt_manager: PromptManager | None = None,
-        # 增强版 Agent 参数
-        use_enhanced_agent: bool = False,
-        enhanced_config: dict | None = None,
+        strategy: str = "single",
+        grid_state_file: str | None = None,
     ):
         """
         初始化回测引擎
@@ -49,8 +52,8 @@ class BacktestEngine:
             config: 配置对象
             logger: 日志记录器
             prompt_manager: Prompt管理器
-            use_enhanced_agent: 是否使用增强版 Agent（支持 debate/regime/enriched_data）
-            enhanced_config: 增强版 Agent 配置字典，含 debate、regime_adaptive 等配置
+            strategy: 回测策略（single/grid）
+            grid_state_file: 网格状态文件路径（仅 grid 策略使用）
         """
         self.symbol = symbol
         self.historical_data = historical_data.copy()
@@ -59,8 +62,8 @@ class BacktestEngine:
         self.config = config
         self.logger = logger or TradingLogger()
         self.prompt_manager = prompt_manager
-        self.use_enhanced_agent = use_enhanced_agent
-        self.enhanced_config = enhanced_config or {}
+        self.strategy = str(strategy or "single").lower()
+        self.grid_state_file = grid_state_file or "grid_state.backtest.json"
 
         # 初始化模拟客户端和订单管理器
         self.client = MockHyperliquidClient(historical_data, initial_balance)
@@ -72,9 +75,31 @@ class BacktestEngine:
         )
 
         # 初始化Agent（需要配置信息）
+        self.grid_manager: GridManager | None = None
         if config:
-            if use_enhanced_agent:
-                self.agent = self._create_enhanced_agent(config, prompt_manager)
+            if self.strategy == "grid":
+                self.agent = GridAgent(
+                    symbol=symbol,
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    openai_api_base=config.openai_api_base,
+                    openai_api_key=config.openai_api_key,
+                    openai_model=config.openai_model,
+                    trade_amount=config.max_trade_amount,
+                    width_pct_min=config.grid_width_min_pct,
+                    width_pct_max=config.grid_width_max_pct,
+                    width_pct_fallback=config.grid_width_fallback_pct,
+                    ai_width_blend_weight=config.grid_ai_blend_weight,
+                )
+                self.grid_manager = GridManager(
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    state_file=self.grid_state_file,
+                    notifier=None,
+                    grid_limit_order_take_profit_enabled=config.grid_limit_order_take_profit_enabled,
+                    grid_limit_order_stop_loss_enabled=config.grid_limit_order_stop_loss_enabled,
+                    grid_reduce_only_exit_orders_enabled=config.grid_reduce_only_exit_orders_enabled,
+                )
             else:
                 self.agent = SingleSymbolAgent(
                     symbol=symbol,
@@ -169,54 +194,10 @@ class BacktestEngine:
         self.language = "zh"  # 默认中文，可以从config读取
 
         print("✅ 回测引擎初始化完成")
+        print(f"   策略模式: {self.strategy}")
         print(f"   交易对: {symbol}")
         print(f"   初始余额: ${initial_balance:.2f}")
         print(f"   数据点数: {len(historical_data)}")
-        if use_enhanced_agent:
-            print("   模式: 增强版 Agent (EnhancedSingleSymbolAgent)")
-
-    def _create_enhanced_agent(self, config, prompt_manager):
-        """
-        创建增强版 Agent 实例
-
-        使用 create_enhanced_agent 工厂函数，需要 LLMClientManager 实例。
-        将 enhanced_config 与 config 对象中的基础配置合并后传入。
-
-        Args:
-            config: 配置对象
-            prompt_manager: Prompt 管理器
-
-        Returns:
-            EnhancedSingleSymbolAgent 实例
-        """
-        from src.agent.enhanced_single_symbol_agent import create_enhanced_agent
-        from src.llm.llm_client import LLMClientManager
-
-        # 获取 LLMClientManager 单例
-        llm_manager = LLMClientManager.get_instance()
-
-        # 构建配置字典：基础配置 + 增强配置覆盖
-        agent_config = {
-            "agent_temperature": getattr(config, "agent_temperature", 0.1),
-            "agent_max_iterations": getattr(config, "agent_max_iterations", 5),
-            "max_trade_amount": getattr(config, "max_trade_amount", 100.0),
-            "max_leverage": getattr(config, "max_leverage", 10),
-            "take_profit_ratio": getattr(config, "take_profit_ratio", 0.05),
-            "stop_loss_ratio": getattr(config, "stop_loss_ratio", 0.02),
-            "limit_order_enabled": getattr(config, "limit_order_enabled", False),
-        }
-        # 合并增强配置（debate、regime_adaptive、enhanced_analysis 等）
-        agent_config.update(self.enhanced_config)
-
-        return create_enhanced_agent(
-            symbol=self.symbol,
-            order_manager=self.order_manager,
-            logger=self.logger,
-            llm_manager=llm_manager,
-            config=agent_config,
-            notifier=None,  # 回测不需要通知
-            prompt_manager=prompt_manager,
-        )
 
     def _restore_from_live_report(
         self, resume_info: dict[str, Any], decision_timestamps: list[datetime]
@@ -435,8 +416,6 @@ class BacktestEngine:
         except Exception as e:
             print(f"   ⚠️ 状态恢复过程中出现错误: {e}")
             print("   将从头开始回测")
-            import traceback
-
             traceback.print_exc()
             return 0
 
@@ -461,6 +440,14 @@ class BacktestEngine:
 
         if not self.agent:
             raise ValueError("Agent未初始化，无法运行回测")
+
+        if self.strategy == "grid":
+            return self._run_grid_backtest(
+                decision_interval_minutes=decision_interval_minutes,
+                live_report_path=live_report_path,
+                live_report_interval=live_report_interval,
+                resume_from=resume_from,
+            )
 
         # 配置实时报告
         if resume_from and resume_from.get("resume_file"):
@@ -493,6 +480,9 @@ class BacktestEngine:
             )
         else:
             df = TechnicalIndicators.calculate_all_indicators(self.historical_data.copy())
+
+        # 预计算完整 4h 数据，避免每个决策点重复 resample 和指标计算
+        precomputed_4h = self._prepare_4h_dataframe(df)
 
         # 按决策间隔选择时间点
         decision_timestamps = self._get_decision_timestamps(df, decision_interval_minutes)
@@ -577,38 +567,22 @@ class BacktestEngine:
 
                 # 生成增强数据（为nof1策略提供额外指标）
                 enriched_data = self._enrich_market_data_for_backtest(
-                    df=df, timestamp=timestamp, market_data=market_data, balance_info=balance_info
+                    df=df,
+                    timestamp=timestamp,
+                    market_data=market_data,
+                    balance_info=balance_info,
+                    precomputed_4h=precomputed_4h,
                 )
 
                 # 调用Agent做出决策
-                if self.use_enhanced_agent:
-                    # 增强版 Agent：使用增强分析决策，传入 df 和 account_balance
-                    # 截取到当前时间点的历史数据子集
-                    current_df = df.loc[df["timestamp"] <= timestamp].copy()
-                    current_balance = (
-                        balance_info.get("total", self.initial_balance)
-                        if balance_info
-                        else self.initial_balance
-                    )
-                    decision, details = self.agent.make_decision_with_enhanced_analysis(
-                        market_data=market_data,
-                        multi_timeframe_trends=multi_timeframe_trends,
-                        current_positions=current_positions,
-                        max_positions=self.config.max_positions if self.config else 2,
-                        historical_summary=historical_summary,
-                        enriched_data=enriched_data,
-                        df=current_df,
-                        account_balance=current_balance,
-                    )
-                else:
-                    decision, details = self.agent.make_decision(
-                        market_data=market_data,
-                        multi_timeframe_trends=multi_timeframe_trends,
-                        current_positions=current_positions,
-                        max_positions=self.config.max_positions if self.config else 2,
-                        historical_summary=historical_summary,
-                        enriched_data=enriched_data,
-                    )
+                decision, details = self.agent.make_decision(
+                    market_data=market_data,
+                    multi_timeframe_trends=multi_timeframe_trends,
+                    current_positions=current_positions,
+                    max_positions=self.config.max_positions if self.config else 2,
+                    historical_summary=historical_summary,
+                    enriched_data=enriched_data,
+                )
 
                 # 记录决策历史
                 self.decision_history.add_decision(
@@ -624,11 +598,9 @@ class BacktestEngine:
                 if self.review_agent and self.config:
                     # 检查是否有足够的决策记录
                     decision_count = self.decision_history.get_history_count(self.symbol)
-                    if (
-                        decision_count >= self.config.review_lookback_decisions
-                        and self.cycle_counter % max(1, self.config.review_run_every_cycles) == 0
-                    ):
-                        self._run_review_agent()
+                    if decision_count >= self.config.review_lookback_decisions:
+                        if self.cycle_counter % max(1, self.config.review_run_every_cycles) == 0:
+                            self._run_review_agent()
 
                 # 执行决策（Agent的工具回调会自动调用order_manager）
                 # 对于平仓决策，需要检测持仓变化并记录交易
@@ -661,8 +633,6 @@ class BacktestEngine:
 
             except Exception as e:
                 print(f"⚠️ 决策点 {i + 1}/{len(decision_timestamps)} 处理失败: {e}")
-                import traceback
-
                 traceback.print_exc()
                 continue
 
@@ -687,6 +657,248 @@ class BacktestEngine:
         )
 
         return result
+
+    def _run_grid_backtest(
+        self,
+        decision_interval_minutes: int = 15,
+        live_report_path: str | None = None,
+        live_report_interval: int = 1,
+        resume_from: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        运行网格策略回测
+        """
+        if not self.grid_manager:
+            raise ValueError("GridManager未初始化，无法运行网格回测")
+
+        # 配置实时报告
+        if resume_from and resume_from.get("resume_file"):
+            self.live_report_path = Path(resume_from["resume_file"])
+            self.live_report_interval = max(1, live_report_interval)
+            self._last_live_report_index = -1
+        elif live_report_path:
+            self.live_report_path = Path(live_report_path)
+            self.live_report_interval = max(1, live_report_interval)
+            self._last_live_report_index = -1
+        else:
+            self.live_report_path = None
+
+        # 计算技术指标
+        if self.config:
+            df = TechnicalIndicators.calculate_all_indicators(
+                self.historical_data.copy(),
+                ma_periods=self.config.ma_periods,
+                rsi_period=self.config.rsi_period,
+                macd_params={
+                    "fast": self.config.macd_fast,
+                    "slow": self.config.macd_slow,
+                    "signal": self.config.macd_signal,
+                },
+                bollinger_params={
+                    "period": self.config.bollinger_period,
+                    "std_dev": self.config.bollinger_std,
+                },
+            )
+        else:
+            df = TechnicalIndicators.calculate_all_indicators(self.historical_data.copy())
+
+        decision_timestamps = self._get_decision_timestamps(df, decision_interval_minutes)
+        self._total_decision_points = len(decision_timestamps)
+        print(f"   决策点数量: {len(decision_timestamps)}")
+
+        start_index = 0
+        if resume_from:
+            start_index = self._restore_from_live_report(resume_from, decision_timestamps)
+            self._last_live_report_index = start_index - 1 if start_index > 0 else -1
+
+        self._maybe_write_live_report(
+            processed_decisions=start_index,
+            total_decisions=self._total_decision_points,
+            force=True,
+            status="running" if start_index > 0 else "initializing",
+        )
+
+        for i in range(start_index, len(decision_timestamps)):
+            timestamp = decision_timestamps[i]
+            try:
+                if i > 0:
+                    prev_timestamp = decision_timestamps[i - 1]
+                    self._process_grid_fills_between_decisions(prev_timestamp, timestamp, df)
+
+                self.client.set_current_time(timestamp)
+                market_data = self._get_market_data_at_time(df, timestamp)
+                if not market_data:
+                    continue
+
+                # 决策点也撮合一次，避免边界遗漏
+                self._process_grid_fills_for_candle(df, timestamp)
+
+                trends = {"15m": "NEUTRAL"}
+                summary = self.grid_manager.get_grid_summary(self.symbol)
+                ai_config = self.agent.make_decision(market_data, trends, summary) or {}
+                if not isinstance(ai_config, dict):
+                    ai_config = {
+                        "action": "KEEP_GRID",
+                        "reason": f"AI返回异常类型: {type(ai_config).__name__}",
+                    }
+                self.grid_manager.sync_grid(self.symbol, ai_config)
+
+                self.decision_history.add_decision(
+                    symbol=self.symbol,
+                    decision=ai_config.get("action", "KEEP_GRID"),
+                    market_data=market_data,
+                    reason=str(ai_config.get("reason", "")),
+                    action_details=self._sanitize_action_details(ai_config),
+                )
+
+                self._update_positions_pnl(timestamp, df)
+                self._update_account_value()
+                self._maybe_write_live_report(
+                    processed_decisions=i + 1, total_decisions=self._total_decision_points
+                )
+            except Exception as e:
+                print(f"⚠️ 决策点 {i + 1}/{len(decision_timestamps)} 处理失败: {e}")
+                traceback.print_exc()
+                continue
+
+        # 回测结束：先撤掉残余网格挂单，再平仓
+        with suppress(Exception):
+            self.grid_manager._cancel_all_orders(self.symbol)
+        self._close_all_positions(df.iloc[-1]["timestamp"], df.iloc[-1]["close"])
+
+        result = self._generate_result()
+        result["status"] = "completed"
+        print("\n✅ 回测完成")
+        print(f"   总交易数: {len(self.closed_trades)}")
+        print(f"   最终余额: ${result['final_balance']:.2f}")
+        print(f"   总收益率: {result['total_return'] * 100:.2f}%")
+
+        self._maybe_write_live_report(
+            processed_decisions=self._total_decision_points,
+            total_decisions=self._total_decision_points,
+            force=True,
+            status="completed",
+            base_result=result,
+        )
+        return result
+
+    def _process_grid_fills_between_decisions(
+        self,
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+        df: pd.DataFrame,
+    ):
+        """
+        在两个决策点之间按K线撮合网格挂单
+        """
+        mask = (df["timestamp"] > start_timestamp) & (df["timestamp"] <= end_timestamp)
+        between_candles = df[mask].sort_values("timestamp")
+        for _, row in between_candles.iterrows():
+            candle_timestamp = row["timestamp"]
+            self.client.set_current_time(candle_timestamp)
+            self._process_grid_fills_for_candle(df, candle_timestamp)
+            self._update_positions_pnl(candle_timestamp, df)
+
+    def _process_grid_fills_for_candle(self, df: pd.DataFrame, timestamp: datetime):
+        """
+        在指定K线上撮合限价挂单并执行成交
+        """
+        time_diffs = (df["timestamp"] - timestamp).abs()
+        closest_idx = time_diffs.idxmin()
+        row = df.iloc[closest_idx]
+        candle_low = float(row["low"])
+        candle_high = float(row["high"])
+
+        filled_orders = self.client.match_limit_orders(
+            symbol=self.symbol,
+            candle_low=candle_low,
+            candle_high=candle_high,
+        )
+        if not filled_orders:
+            return
+
+        for order in filled_orders:
+            self._handle_filled_grid_order(order)
+
+        # 成交后也检查一次止盈止损，模拟同一根K线内触发风控
+        self._check_take_profit_stop_loss(timestamp, df)
+        self._update_account_value()
+
+    def _handle_filled_grid_order(self, order: dict[str, Any]):
+        """
+        处理网格挂单成交后的持仓与交易记录
+        """
+        side = str(order.get("side", "")).upper()
+        is_buy = side in {"B", "BUY", "BID"}
+        reduce_only = bool(order.get("reduceOnly", False))
+        try:
+            size = abs(float(order.get("sz", 0)))
+            fill_price = float(order.get("limitPx", 0))
+        except (TypeError, ValueError):
+            return
+
+        if size <= 0 or fill_price <= 0:
+            return
+
+        if reduce_only:
+            self._handle_reduce_only_fill(
+                is_buy=is_buy,
+                fill_size=size,
+                fill_price=fill_price,
+            )
+            return
+
+        leverage = int(order.get("leverage", self.order_manager.default_leverage))
+        tp_price = order.get("tp_price")
+        sl_price = order.get("sl_price")
+        self.client.add_position(
+            symbol=self.symbol,
+            size=size,
+            entry_price=fill_price,
+            leverage=max(leverage, 1),
+            is_long=is_buy,
+            take_profit_price=tp_price,
+            stop_loss_price=sl_price,
+        )
+        margin_add = fill_price * size / max(leverage, 1)
+        self.client.update_account_value(
+            account_value=self.client.account_value,
+            margin_used=self.client.total_margin_used + margin_add,
+        )
+
+    def _handle_reduce_only_fill(self, is_buy: bool, fill_size: float, fill_price: float):
+        """
+        执行 reduce_only 成交：只对冲已有反向持仓，不开新仓
+        """
+        remaining = fill_size
+        positions = self.client.get_positions()
+        if is_buy:
+            candidates = [
+                p for p in positions if p.get("coin") == self.symbol and float(p.get("szi", 0)) < 0
+            ]
+        else:
+            candidates = [
+                p for p in positions if p.get("coin") == self.symbol and float(p.get("szi", 0)) > 0
+            ]
+
+        # FIFO 关闭
+        candidates.sort(key=lambda p: str(p.get("entry_time") or ""))
+        for position in candidates:
+            if remaining <= 0:
+                break
+            pos_size = abs(float(position.get("szi", 0)))
+            if pos_size <= 0:
+                continue
+
+            close_size = min(pos_size, remaining)
+            self._close_position(
+                symbol=self.symbol,
+                price=fill_price,
+                reason="reduce_only 成交平仓",
+                size=close_size,
+                position_id=position.get("position_id"),
+            )
+            remaining -= close_size
 
     def _get_decision_timestamps(self, df: pd.DataFrame, interval_minutes: int) -> list[datetime]:
         """
@@ -847,12 +1059,24 @@ class BacktestEngine:
 
             if should_close:
                 # 平仓
-                self._close_position(symbol, current_price, close_reason)
+                self._close_position(
+                    symbol=symbol,
+                    price=current_price,
+                    reason=close_reason,
+                    position_id=position.get("position_id"),
+                )
                 position_closed = True
 
         return position_closed
 
-    def _close_position(self, symbol: str, price: float, reason: str = "手动平仓"):
+    def _close_position(
+        self,
+        symbol: str,
+        price: float,
+        reason: str = "手动平仓",
+        size: float | None = None,
+        position_id: int | None = None,
+    ):
         """
         平仓
 
@@ -860,26 +1084,45 @@ class BacktestEngine:
             symbol: 交易对符号
             price: 平仓价格
             reason: 平仓原因
+            size: 平仓数量（None=全平）
+            position_id: 指定持仓ID（None=按symbol取第一笔）
         """
         positions = self.client.get_positions()
-        position = next((p for p in positions if p.get("coin") == symbol), None)
+        if position_id is not None:
+            position = next(
+                (
+                    p
+                    for p in positions
+                    if p.get("coin") == symbol and p.get("position_id") == position_id
+                ),
+                None,
+            )
+        else:
+            position = next((p for p in positions if p.get("coin") == symbol), None)
         if not position:
             return
 
         entry_price = float(position.get("entryPx", 0))
-        size = abs(float(position.get("szi", 0)))
+        full_size = abs(float(position.get("szi", 0)))
+        close_size = full_size if size is None else min(abs(float(size)), full_size)
+        if close_size <= 0:
+            return
         is_long = position.get("is_long", True)
-        leverage = position.get("leverage", {}).get("value", 1)
+        leverage_data = position.get("leverage", {})
+        leverage = (
+            leverage_data.get("value", 1) if isinstance(leverage_data, dict) else leverage_data
+        )
+        leverage = max(int(leverage), 1)
 
         # 计算盈亏
         if is_long:
-            pnl = (price - entry_price) * size
+            pnl = (price - entry_price) * close_size
         else:
-            pnl = (entry_price - price) * size
+            pnl = (entry_price - price) * close_size
 
         # 计算手续费
-        entry_fee = entry_price * size * self.fee_rate
-        exit_fee = price * size * self.fee_rate
+        entry_fee = entry_price * close_size * self.fee_rate
+        exit_fee = price * close_size * self.fee_rate
         total_fee = entry_fee + exit_fee
 
         # 净盈亏
@@ -895,27 +1138,43 @@ class BacktestEngine:
             "exit_time": current_timestamp,
             "entry_price": entry_price,
             "exit_price": price,
-            "size": size,
+            "size": close_size,
             "leverage": leverage,
             "is_long": is_long,
             "pnl": pnl,
             "fee": total_fee,
             "net_pnl": net_pnl,
-            "return_pct": (net_pnl / (entry_price * size / leverage)) * 100 if leverage > 0 else 0,
+            "return_pct": (net_pnl / (entry_price * close_size / leverage)) * 100
+            if leverage > 0
+            else 0,
             "reason": reason,
         }
 
         self.closed_trades.append(trade)
 
         # 更新账户余额
-        margin_used = entry_price * size / leverage
+        margin_used = entry_price * close_size / leverage
         new_account_value = self.client.account_value + net_pnl
         new_margin_used = max(0, self.client.total_margin_used - margin_used)
 
         self.client.update_account_value(new_account_value, new_margin_used)
 
-        # 移除持仓
-        self.client.remove_position(symbol)
+        # 更新或移除持仓
+        if close_size >= full_size - 1e-12:
+            self.client.remove_position(symbol, position_id=position.get("position_id"))
+            return
+
+        remaining_size = full_size - close_size
+        direction = 1 if float(position.get("szi", 0)) >= 0 else -1
+        target_id = position.get("position_id")
+        for open_pos in self.client.positions:
+            if open_pos.get("coin") != symbol:
+                continue
+            if target_id is not None and open_pos.get("position_id") != target_id:
+                continue
+            open_pos["szi"] = str(direction * remaining_size)
+            open_pos["positionValue"] = str(abs(remaining_size * entry_price))
+            break
 
     def _update_positions_pnl(self, timestamp: datetime, df: pd.DataFrame):
         """
@@ -1032,8 +1291,6 @@ class BacktestEngine:
 
         except Exception as e:
             self.logger.print_warning(f"复盘 Agent 运行失败: {e}")
-            import traceback
-
             traceback.print_exc()
 
     def _close_all_positions(self, timestamp: datetime, price: float):
@@ -1047,7 +1304,12 @@ class BacktestEngine:
         positions = self.client.get_positions()
         for position in positions[:]:
             symbol = position.get("coin")
-            self._close_position(symbol, price, "回测结束平仓")
+            self._close_position(
+                symbol=symbol,
+                price=price,
+                reason="回测结束平仓",
+                position_id=position.get("position_id"),
+            )
 
     def _generate_result(self) -> dict[str, Any]:
         """
@@ -1061,6 +1323,7 @@ class BacktestEngine:
         if total_trades == 0:
             return {
                 "symbol": self.symbol,
+                "strategy": self.strategy,
                 "total_trades": 0,
                 "profitable_trades": 0,
                 "losing_trades": 0,
@@ -1107,6 +1370,7 @@ class BacktestEngine:
 
         return {
             "symbol": self.symbol,
+            "strategy": self.strategy,
             "total_trades": total_trades,
             "profitable_trades": len(profitable_trades),
             "losing_trades": len(losing_trades),
@@ -1166,12 +1430,10 @@ class BacktestEngine:
         if not self.live_report_path:
             return
 
-        if (
-            not force
-            and self._last_live_report_index >= 0
-            and (processed_decisions - self._last_live_report_index) < self.live_report_interval
-        ):
-            return
+        if not force:
+            if self._last_live_report_index >= 0:
+                if (processed_decisions - self._last_live_report_index) < self.live_report_interval:
+                    return
 
         snapshot = self._build_live_result_snapshot(
             processed_decisions=processed_decisions,
@@ -1295,6 +1557,7 @@ class BacktestEngine:
         timestamp: datetime,
         market_data: dict[str, Any],
         balance_info: dict[str, float] | None = None,
+        precomputed_4h: pd.DataFrame | None = None,
     ) -> dict[str, Any]:
         """
         为回测环境生成增强的市场数据（用于nof1策略）
@@ -1382,27 +1645,13 @@ class BacktestEngine:
         enriched["current_macd"] = market_data.get("macd", 0)
 
         # 5. 生成4小时K线数据
-        df_4h = self._generate_4h_dataframe(df.iloc[: closest_idx + 1])
-        if df_4h is not None and not df_4h.empty:
-            # 计算4小时数据的指标
-            if self.config:
-                df_4h = TechnicalIndicators.calculate_all_indicators(
-                    df_4h,
-                    ema_periods=[20, 50],
-                    atr_periods=[3, 14],
-                    ma_periods=self.config.ma_periods,
-                    rsi_period=self.config.rsi_period,
-                    macd_params={
-                        "fast": self.config.macd_fast,
-                        "slow": self.config.macd_slow,
-                        "signal": self.config.macd_signal,
-                    },
-                    bollinger_params={
-                        "period": self.config.bollinger_period,
-                        "std_dev": self.config.bollinger_std,
-                    },
-                )
+        if precomputed_4h is not None and not precomputed_4h.empty:
+            df_4h = precomputed_4h[precomputed_4h["timestamp"] <= timestamp].copy()
+        else:
+            # 回退路径：未传入预计算数据时，按当前窗口生成
+            df_4h = self._prepare_4h_dataframe(df.iloc[: closest_idx + 1])
 
+        if df_4h is not None and not df_4h.empty:
             # 提取4小时数据
             latest_4h = df_4h.iloc[-1]
             recent_4h = df_4h.tail(10)
@@ -1477,33 +1726,7 @@ class BacktestEngine:
                 }
             )
 
-        # 9. 增强版 Agent 额外数据：CEX/链上数据模拟默认值
-        # 回测环境无法调用实时 API，提供合理的默认值确保 prompt 模板变量不为空
-        if self.use_enhanced_agent:
-            current_price = market_data.get("current_price", 0)
-            enriched.setdefault("cex_spot_price", current_price)
-            enriched.setdefault("cex_futures_price", current_price)
-            enriched.setdefault("cex_spot_futures_spread", 0.0)
-            enriched.setdefault("cex_order_book_imbalance", 0.0)
-            enriched.setdefault("cex_top_bid", current_price * 0.999)
-            enriched.setdefault("cex_top_ask", current_price * 1.001)
-            enriched.setdefault("cex_24h_volume", 0)
-            enriched.setdefault("onchain_whale_flow", "无数据（回测模式）")
-            enriched.setdefault("onchain_exchange_netflow", 0.0)
-            enriched.setdefault("onchain_active_addresses", 0)
-            enriched.setdefault("onchain_nvt_ratio", 0.0)
-            enriched.setdefault("fear_greed_index", 50)
-            enriched.setdefault("fear_greed_label", "中性")
-            enriched.setdefault("social_sentiment", "中性")
-            enriched.setdefault("news_summary", "无实时新闻（回测模式）")
-            # debate 和 regime 相关默认值
-            enriched.setdefault("regime_label", "未知")
-            enriched.setdefault("regime_confidence", 0.0)
-            enriched.setdefault("debate_bull_score", 0.0)
-            enriched.setdefault("debate_bear_score", 0.0)
-            enriched.setdefault("debate_consensus", "无辩论数据（回测模式）")
-
-        # 10. 格式化数据为模板友好的字符串格式
+        # 9. 格式化数据为模板友好的字符串格式
         enriched = self._format_enriched_data(enriched)
 
         return enriched
@@ -1536,6 +1759,34 @@ class BacktestEngine:
 
         return df_4h
 
+    def _prepare_4h_dataframe(self, df_15m: pd.DataFrame) -> pd.DataFrame | None:
+        """生成并计算 4h 指标，供回测循环复用。"""
+        df_4h = self._generate_4h_dataframe(df_15m)
+        if df_4h is None or df_4h.empty:
+            return None
+
+        if self.config:
+            return TechnicalIndicators.calculate_all_indicators(
+                df_4h,
+                ema_periods=[20, 50],
+                atr_periods=[3, 14],
+                ma_periods=self.config.ma_periods,
+                rsi_period=self.config.rsi_period,
+                macd_params={
+                    "fast": self.config.macd_fast,
+                    "slow": self.config.macd_slow,
+                    "signal": self.config.macd_signal,
+                },
+                bollinger_params={
+                    "period": self.config.bollinger_period,
+                    "std_dev": self.config.bollinger_std,
+                },
+            )
+
+        return TechnicalIndicators.calculate_all_indicators(
+            df_4h, ema_periods=[20, 50], atr_periods=[3, 14]
+        )
+
     def _analyze_indicators_for_backtest(
         self, enriched: dict[str, Any], df_15m: pd.DataFrame, df_4h: pd.DataFrame | None = None
     ) -> dict[str, str]:
@@ -1544,7 +1795,7 @@ class BacktestEngine:
         """
         analysis = {}
 
-        def t(key, **kwargs):
+        def t(key: str, **kwargs: Any) -> str:
             return get_text(self.language, key, **kwargs)
 
         # 1. 分析价格趋势

@@ -7,10 +7,14 @@
 ### 核心能力
 - 多 Agent 架构，每个交易对独立决策
 - 支持多种 LLM 供应商（OpenAI、Cloudflare、Google、LiteLLM、NVIDIA）
+- Grid Flow 动态网格策略（AI 决策 + 本地/交易所挂单对齐）
 - 凯利公式动态仓位管理
 - ATR 动态止盈止损
+- 限价单下单/撤单能力（可配置开关）
 - 账户保护（最大回撤限制、持仓超时）
 - 决策验证（多周期趋势共振、信号质量评估）
+- 回测支持 `single/grid` 双策略与中断恢复
+- LLM 与 Hyperliquid API 回退机制，提升运行稳定性
 - 上下文压缩，降低 Token 成本
 
 ### LLM 决策增强（基于论文研究）
@@ -34,11 +38,19 @@
 bash init-deployment.sh
 
 # 编辑配置
+cp config.grid.yaml.example config.grid.yaml  # 可选：启用网格模式时需要
 vim .env           # 填入 API 密钥和私钥
 vim config.yaml    # 配置交易参数
+vim config.grid.yaml  # 可选：网格模式配置
 
-# 启动
+# 启动（默认 main）
 docker compose up -d
+
+# 仅运行网格策略
+RUN_MODE=grid docker compose up -d
+
+# 同时运行主策略 + 网格策略
+RUN_MODE=all docker compose up -d
 
 # 查看日志
 docker compose logs -f
@@ -56,10 +68,14 @@ uv sync
 # 配置
 cp .env.example .env
 cp config.yaml.example config.yaml
-# 编辑 .env 和 config.yaml
+cp config.grid.yaml.example config.grid.yaml  # 可选：启用网格模式时需要
+# 编辑 .env / config.yaml / config.grid.yaml
 
-# 运行
+# 运行主策略
 uv run python main.py
+
+# 运行网格策略
+uv run python grid_main.py --config config.grid.yaml --env-file .env
 ```
 
 ## 配置
@@ -71,10 +87,14 @@ uv run python main.py
 NVIDIA_API_KEY=xxx              # NVIDIA AI Endpoints
 OPENAI_API_BASE=xxx             # OpenAI 兼容 API
 OPENAI_API_KEY=xxx
+LLM_FALLBACK_API_BASE=xxx       # LLM 回退地址（可选）
+LLM_FALLBACK_API_KEY=xxx        # LLM 回退密钥（可选）
+LLM_FALLBACK_MODEL=xxx          # LLM 回退模型（可选）
 
 # Hyperliquid
 HYPERLIQUID_PRIVATE_KEY=0x...   # 钱包私钥
 HYPERLIQUID_TESTNET=true        # true=测试网，false=主网
+HYPERLIQUID_API_FALLBACKS=...   # 逗号分隔的 API 回退地址（可选）
 ```
 
 **钱包模式说明：**
@@ -94,12 +114,23 @@ trading:
   symbols: [BTC, ETH]            # 交易对，使用简单符号
   max_trade_amount: 100           # 单笔上限（美元）
   max_leverage: 10
+  limit_order_enabled: false      # 是否允许限价单动作
+  grid_limit_order_take_profit_enabled: true   # 仅 grid 模式：成交后是否补止盈
+  grid_limit_order_stop_loss_enabled: true     # 仅 grid 模式：成交后是否补止损
+  grid_reduce_only_exit_orders_enabled: true   # 仅 grid 模式：是否启用分批止盈减仓单
 
 scheduler:
   interval_minutes: 3             # 决策间隔
 
 prompt:
   set: nof1-improved              # 推荐使用集成 FinCoT 的增强 Prompt
+
+agent:
+  grid_width:
+    min_pct: 0.02                 # 网格最小宽度（2%）
+    max_pct: 0.15                 # 网格最大宽度（15%）
+    fallback_pct: 0.05            # 数据异常时回退宽度
+    ai_blend_weight: 0.35         # AI 输出与波动数据融合权重
 
 # 增强分析（启用后自动采集 CEX/链上/恐惧贪婪数据）
 enhanced_analysis:
@@ -138,6 +169,41 @@ market_monitor:
 ```
 
 完整配置参考 `config.yaml.example`。
+
+## 网格模式与回测
+
+### 网格模式运行（Grid Flow）
+
+```bash
+# 本地运行网格模式
+uv run python grid_main.py --config config.grid.yaml --env-file .env
+
+# Docker 运行网格模式
+RUN_MODE=grid docker compose up -d
+
+# Docker 同时运行主策略 + 网格策略
+RUN_MODE=all docker compose up -d
+```
+
+说明：
+- 网格模式入口为 `grid_main.py`
+- 网格宽度参数在 `agent.grid_width` 下配置
+- Docker 通过 `RUN_MODE=main|grid|all` 控制运行模式
+
+### 回测模式（single / grid）
+
+```bash
+# 单币 Agent 回测（默认）
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-12-01
+
+# 网格策略回测
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-12-01 --strategy grid
+
+# 从 live_report.json 恢复回测
+uv run python backtest.py --resume-from backtest_results/backtest_BTC_xxx/live_report.json
+```
+
+更多参数与报告结构请参考 `BACKTEST_README.md`。
 
 ## 增强功能使用指南
 
@@ -244,30 +310,37 @@ uv run python backtest_comparison.py --symbol BTC --compare regime   # Regime �
 
 ```
 quant-flow/
-├── main.py                        # 入口
+├── main.py                        # 主策略入口
+├── grid_main.py                   # 网格策略入口
+├── backtest.py                    # 回测入口（single/grid）
 ├── backtest_comparison.py         # A/B 回测对比工具
+├── config.yaml.example
+├── config.grid.yaml.example
 ├── src/
 │   ├── agent/                     # Agent 实现
-│   │   ├── enhanced_single_symbol_agent.py  # 增强版 Agent（主决策）
-│   │   └── debate.py              # 多空辩论引擎
-│   ├── agents/                    # LangGraph Agent
+│   │   ├── single_symbol_agent.py
+│   │   ├── grid_agent.py
+│   │   ├── enhanced_single_symbol_agent.py
+│   │   └── debate.py
 │   ├── trading/                   # 交易模块
 │   │   ├── client.py              # Hyperliquid 客户端
+│   │   ├── order_manager.py
+│   │   ├── grid_manager.py
 │   │   ├── enhanced_engine.py     # 增强交易引擎
-│   │   ├── decision_validator.py  # 决策验证
-│   │   ├── position_sizer.py      # 仓位计算
-│   │   ├── risk_manager.py        # 风险管理
 │   │   └── account_protector.py   # 账户保护
+│   ├── backtest/                  # 回测实现
+│   │   ├── backtest_engine.py
+│   │   ├── mock_client.py
+│   │   └── mock_order_manager.py
 │   ├── data/                      # 数据处理
-│   │   ├── data_enricher.py       # 数据增强（CEX/链上/恐惧贪婪）
-│   │   ├── market_monitor.py      # 市场主动监控（异常波动触发决策）
-│   │   ├── signal_scorer.py       # 多因子信号评分
-│   │   ├── regime_adapter.py      # Regime 自适应
-│   │   ├── market_state.py        # 市场状态分析
-│   │   └── market_data.py         # K线数据
+│   │   ├── indicators.py
+│   │   ├── market_data.py
+│   │   ├── market_monitor.py
+│   │   └── data_enricher.py
 │   └── llm/                       # LLM 客户端
 ├── prompts/                       # Prompt 模板（8 套策略）
-├── tests/                         # 测试（257 个用例）
+├── tests/
+│   └── test_grid_manager_exit_orders.py
 └── logs/                          # 日志
 ```
 
@@ -299,6 +372,9 @@ uv run pytest tests/
 
 # 单个测试
 uv run pytest tests/test_decision_validator.py -v
+
+# 网格管理器关键用例
+uv run pytest tests/test_grid_manager_exit_orders.py -v
 
 # 带覆盖率
 uv run pytest tests/ --cov=src
@@ -333,6 +409,7 @@ uv run pytest tests/ --cov=src
 - [Hyperliquid](https://hyperliquid.xyz/)
 - [测试网水龙头](https://app.hyperliquid-testnet.xyz/faucet)
 - [LangChain](https://python.langchain.com/)
+- [回测文档](BACKTEST_README.md)
 
 ---
 
