@@ -13,7 +13,6 @@ import re
 import pytest
 import yaml
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(REPO_ROOT, "_config.yml")
 
