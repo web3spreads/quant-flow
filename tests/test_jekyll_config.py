@@ -25,6 +25,19 @@ JINJA2_ONLY_TAGS = re.compile(
 )
 
 
+@pytest.fixture(scope="module")
+def jekyll_config():
+    """读取并解析 _config.yml，模块内所有测试共享同一次 I/O。"""
+    assert os.path.isfile(CONFIG_PATH), (
+        "_config.yml 不存在，GitHub Pages 构建时 Jekyll 会处理所有 .md 文件，"
+        "导致 prompts/ 下的 Jinja2 模板报 Liquid 语法错误"
+    )
+    with open(CONFIG_PATH, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    assert config is not None, "_config.yml 内容为空"
+    return config
+
+
 class TestJekyllConfig:
     """验证 _config.yml 正确排除含 Jinja2 语法的目录"""
 
@@ -35,25 +48,19 @@ class TestJekyllConfig:
             "导致 prompts/ 下的 Jinja2 模板报 Liquid 语法错误"
         )
 
-    def test_config_is_valid_yaml(self):
+    def test_config_is_valid_yaml(self, jekyll_config):
         """_config.yml 必须是合法的 YAML"""
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            content = yaml.safe_load(f)
-        assert content is not None, "_config.yml 内容为空"
+        assert jekyll_config is not None, "_config.yml 内容为空"
 
-    def test_exclude_list_exists(self):
+    def test_exclude_list_exists(self, jekyll_config):
         """_config.yml 必须包含 exclude 字段"""
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        assert "exclude" in config, "_config.yml 缺少 exclude 字段"
-        assert isinstance(config["exclude"], list), "exclude 字段必须是列表"
+        assert "exclude" in jekyll_config, "_config.yml 缺少 exclude 字段"
+        assert isinstance(jekyll_config["exclude"], list), "exclude 字段必须是列表"
 
     @pytest.mark.parametrize("directory", REQUIRED_EXCLUDES)
-    def test_required_directories_are_excluded(self, directory):
+    def test_required_directories_are_excluded(self, jekyll_config, directory):
         """prompts/ 等含 Jinja2 语法的目录必须在 exclude 列表中"""
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        excludes = config.get("exclude", [])
+        excludes = jekyll_config.get("exclude", [])
         assert directory in excludes, (
             f"'{directory}' 未在 _config.yml 的 exclude 列表中，"
             f"Jekyll 会尝试渲染其中的 .md 文件导致 Liquid 语法报错。"
@@ -90,11 +97,9 @@ class TestPromptsJinja2Syntax:
 
         assert found, "prompts/ 中未检测到任何 Jinja2 专有标签，请确认此测试仍有意义"
 
-    def test_no_jinja2_tags_outside_excluded_dirs(self):
+    def test_no_jinja2_tags_outside_excluded_dirs(self, jekyll_config):
         """website/ 等未被排除的目录中不应含 Jinja2 专有标签，否则也会导致构建失败"""
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        excludes = set(config.get("exclude", []))
+        excludes = set(jekyll_config.get("exclude", []))
 
         # 只检查 website/ 目录（GitHub Pages 实际渲染目标）
         website_dir = os.path.join(REPO_ROOT, "website")
@@ -103,9 +108,9 @@ class TestPromptsJinja2Syntax:
 
         violations = []
         for root, _, files in os.walk(website_dir):
-            rel_root = os.path.relpath(root, REPO_ROOT)
-            # 跳过已排除的目录
-            if any(rel_root.startswith(ex.rstrip("/")) for ex in excludes):
+            rel_root = os.path.relpath(root, REPO_ROOT).replace(os.sep, "/")
+            # 跳过已排除的目录，使用精确前缀匹配避免误伤同名前缀目录
+            if any(f"{rel_root}/".startswith(ex) for ex in excludes if ex.endswith("/")):
                 continue
             for fname in files:
                 if not fname.endswith(".md"):

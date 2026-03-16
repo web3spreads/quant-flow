@@ -7,9 +7,9 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![LangChain](https://img.shields.io/badge/LangChain-latest-green.svg)](https://python.langchain.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-blue)](https://loadchange.github.io/quant-flow/)
+[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-blue)](https://web3spreads.github.io/quant-flow/)
 
-[**📖 Full Documentation**](https://loadchange.github.io/quant-flow/) · [**中文**](README.zh-Hans.md)
+[**📖 Full Documentation**](https://web3spreads.github.io/quant-flow/) · [**中文**](README.zh-Hans.md)
 
 </div>
 
@@ -225,7 +225,7 @@ git pull && docker compose build && docker compose up -d
 
 ## Links
 
-- 📖 [Full Documentation](https://loadchange.github.io/quant-flow/)
+- 📖 [Full Documentation](https://web3spreads.github.io/quant-flow/)
 - 🏦 [Hyperliquid](https://hyperliquid.xyz/)
 - 🚰 [Testnet Faucet](https://app.hyperliquid-testnet.xyz/faucet)
 - ⛓️ [LangChain](https://python.langchain.com/)
