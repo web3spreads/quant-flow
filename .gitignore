@@ -92,3 +92,5 @@ grid_state*.json
 /clean_2000_orders.py
 /emergency_close_eth.py
 /grid_main_mainnet.py
+
+# Docusaurus（忽略规则由 website/.gitignore 管理）
