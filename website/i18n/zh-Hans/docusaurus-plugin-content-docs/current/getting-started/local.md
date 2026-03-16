@@ -24,7 +24,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### 1. 克隆并进入仓库
 
 ```bash
-git clone https://github.com/loadchange/quant-flow
+git clone https://github.com/web3spreads/quant-flow
 cd quant-flow
 ```
 

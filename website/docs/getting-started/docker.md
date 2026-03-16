@@ -19,7 +19,7 @@ Docker Compose is the recommended way to run Quant Flow in production. It handle
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/loadchange/quant-flow
+git clone https://github.com/web3spreads/quant-flow
 cd quant-flow
 ```
 

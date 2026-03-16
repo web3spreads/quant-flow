@@ -55,7 +55,7 @@ Both strategies are fully decoupled. You can run either or both simultaneously v
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/loadchange/quant-flow
+git clone https://github.com/web3spreads/quant-flow
 cd quant-flow
 
 # 2. Install dependencies
@@ -79,7 +79,7 @@ Always validate your configuration on Hyperliquid **testnet** before trading rea
 
 ## Repository
 
-- **GitHub**: [https://github.com/loadchange/quant-flow](https://github.com/loadchange/quant-flow)
+- **GitHub**: [https://github.com/web3spreads/quant-flow](https://github.com/web3spreads/quant-flow)
 
 ## Next Steps
 

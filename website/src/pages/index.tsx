@@ -59,7 +59,7 @@ function HomepageHeader() {
           </Link>
           <Link
             className="button button--outline button--secondary button--lg"
-            href="https://github.com/loadchange/quant-flow">
+            href="https://github.com/web3spreads/quant-flow">
             GitHub ★
           </Link>
         </div>
