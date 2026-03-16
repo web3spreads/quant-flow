@@ -4,6 +4,10 @@ title: Introduction
 description: Quant Flow — AI-powered crypto perpetual futures trading bot for Hyperliquid DEX
 ---
 
+:::info 中文文档
+查看 GitHub 上的中文说明：[README.zh-Hans.md](https://github.com/loadchange/quant-flow/blob/main/README.zh-Hans.md)
+:::
+
 # Quant Flow
 
 **Quant Flow** is an AI-powered cryptocurrency trading system built on [LangChain](https://langchain.com/) / [LangGraph](https://langchain-ai.github.io/langgraph/) for the [Hyperliquid DEX](https://hyperliquid.xyz/). It combines large language models with quantitative trading logic to make autonomous trading decisions on perpetual futures markets.
