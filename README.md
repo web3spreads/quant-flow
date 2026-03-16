@@ -42,13 +42,15 @@ Quant Flow is an AI-powered automated trading system for [Hyperliquid DEX](https
 
 ### AI Decision Enhancements (Research-Backed)
 
-| Feature | Paper | Config | Description |
-|---------|-------|--------|-------------|
-| **FinCoT Reasoning** | [arXiv:2506.16123](https://arxiv.org/abs/2506.16123) | `prompt.set: nof1-improved` | 6-step forced reasoning chain, +17% accuracy, -8.9x token cost |
-| **Bull/Bear Debate** | [arXiv:2412.20138](https://arxiv.org/abs/2412.20138) | `debate.enabled` | Two agents debate bull/bear to eliminate confirmation bias |
-| **CEX Signals + On-chain** | [MDPI 2026](https://www.mdpi.com/2227-7390/14/2/346) | `enhanced_analysis.enabled` | Binance funding rate, Fear&Greed, MVRV/SOPR signals |
-| **Regime Adaptive** | [Springer 2025](https://link.springer.com/article/10.1007/s42521-024-00123-2) | `regime_adaptive.enabled` | Dynamic params for trending/ranging/volatile market states |
+| Feature | Research Inspiration | Config | Description |
+|---------|----------------------|--------|-------------|
+| **FinCoT Reasoning** | FinCoT (arXiv:2506.16123) | `prompt.set: nof1-improved` | 6-step forced reasoning chain, +17% accuracy, -8.9x token cost |
+| **Bull/Bear Debate** | TradingAgents (arXiv:2412.20138) | `debate.enabled` | Two agents debate bull/bear to eliminate confirmation bias |
+| **CEX Signals + On-chain** | [MDPI Mathematics 14(2):346](https://www.mdpi.com/2227-7390/14/2/346) | `enhanced_analysis.enabled` | Binance funding rate, Fear&Greed, MVRV/SOPR signals |
+| **Regime Adaptive** | [Springer Digital Finance](https://link.springer.com/article/10.1007/s42521-024-00123-2) | `regime_adaptive.enabled` | Dynamic params for trending/ranging/volatile market states |
 | **Market Monitor** | — | `market_monitor.enabled` | Independent thread triggers decisions on volatility spikes |
+
+> Papers listed are the academic research that inspired each feature's implementation.
 
 All enhancements are **controlled by independent config flags** and are **off by default**.
 

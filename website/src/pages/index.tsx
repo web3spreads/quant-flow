@@ -59,8 +59,7 @@ function HomepageHeader() {
           </Link>
           <Link
             className="button button--outline button--secondary button--lg"
-            href="https://github.com/loadchange/quant-flow"
-            style={{marginLeft: '1rem'}}>
+            href="https://github.com/loadchange/quant-flow">
             GitHub ★
           </Link>
         </div>
