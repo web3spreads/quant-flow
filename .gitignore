@@ -92,3 +92,8 @@ grid_state*.json
 /clean_2000_orders.py
 /emergency_close_eth.py
 /grid_main_mainnet.py
+
+# Docusaurus
+website/node_modules/
+website/.docusaurus/
+website/build/
