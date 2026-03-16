@@ -20,7 +20,9 @@ CONFIG_PATH = os.path.join(REPO_ROOT, "_config.yml")
 REQUIRED_EXCLUDES = ["prompts/"]
 
 # Jinja2 专有标签（Liquid 不支持），扫描 prompts/ 目录时用于检测
-JINJA2_ONLY_TAGS = re.compile(r"\{%-?\s*(elif|macro|endmacro|call|endcall|filter|endfilter|set|endset|do|namespace)\b")
+JINJA2_ONLY_TAGS = re.compile(
+    r"\{%-?\s*(elif|macro|endmacro|call|endcall|filter|endfilter|set|endset|do|namespace)\b"
+)
 
 
 class TestJekyllConfig:
@@ -86,9 +88,7 @@ class TestPromptsJinja2Syntax:
                         rel = os.path.relpath(fpath, REPO_ROOT)
                         found.append(f"{rel}:{lineno}: {line.rstrip()}")
 
-        assert found, (
-            "prompts/ 中未检测到任何 Jinja2 专有标签，请确认此测试仍有意义"
-        )
+        assert found, "prompts/ 中未检测到任何 Jinja2 专有标签，请确认此测试仍有意义"
 
     def test_no_jinja2_tags_outside_excluded_dirs(self):
         """website/ 等未被排除的目录中不应含 Jinja2 专有标签，否则也会导致构建失败"""
