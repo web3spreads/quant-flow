@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![文档](https://img.shields.io/badge/文档-GitHub%20Pages-blue)](https://loadchange.github.io/quant-flow/zh-Hans/docs/intro)
 
-[**📖 完整文档**](https://loadchange.github.io/quant-flow/zh-Hans/docs/intro) · [**English README**](README.md) · [**测试网水龙头**](https://app.hyperliquid-testnet.xyz/faucet)
+[**📖 完整文档**](https://loadchange.github.io/quant-flow/zh-Hans/docs/intro) · [**English README**](README.md)
 
 </div>
 
