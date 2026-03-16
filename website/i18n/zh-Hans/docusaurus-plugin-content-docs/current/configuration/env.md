@@ -35,24 +35,39 @@ cp .env.example .env
 | `HYPERLIQUID_PRIVATE_KEY` | **必须** | 用于签署订单的以太坊私钥（`0x...`） |
 | `HYPERLIQUID_TESTNET` | 否 | `true` 使用测试网，`false` 使用主网（默认：`false`） |
 
+### API 钱包授权
+
+Hyperliquid 支持使用 **API 钱包**（子钱包）进行程序化交易。这是**推荐方式**——主钱包私钥不需要暴露，且可随时撤销权限。
+
+#### 第一步 — 创建 API 钱包
+
+1. 用**主钱包**连接并打开 [https://app.hyperliquid.xyz/API](https://app.hyperliquid.xyz/API)
+2. 点击 **Generate API Wallet**，Hyperliquid 会自动生成新的密钥对
+3. 复制并保存显示的**私钥**（该私钥只显示一次）
+4. API 钱包地址会出现在 API Wallets 列表中
+
+:::tip 测试网
+测试网请访问 [https://app.hyperliquid-testnet.xyz/API](https://app.hyperliquid-testnet.xyz/API)。测试资金可从[测试网水龙头](https://app.hyperliquid-testnet.xyz/faucet)领取。
+:::
+
+#### 第二步 — 配置 `.env`
+
+将 API 钱包的私钥填入 `.env`：
+
+```bash
+HYPERLIQUID_PRIVATE_KEY=0x<api-wallet-private-key>
+HYPERLIQUID_TESTNET=true   # 主网设为 false
+```
+
+#### 第三步 — 向 API 钱包充值
+
+在 Hyperliquid 上将 USDC 从主钱包转入 API 钱包地址，API 钱包需要有资金才能下单。
+
 :::danger 私钥安全
 - 永远不要将 `.env` 提交到任何仓库
 - 永远不要与任何人分享你的私钥
 - 私钥丢失意味着资产永久丢失
 - 建议使用专用的交易钱包，不要使用持有主要资产的钱包
-:::
-
-### API 钱包授权
-
-Hyperliquid 支持使用 API 钱包（子钱包）进行程序化交易。如果你使用 API 钱包地址：
-
-1. API 钱包可以查询余额，但**在未授权前无法交易**
-2. 用你的**主钱包**打开 Hyperliquid 网页端
-3. 进入**设置 → API 钱包**
-4. 授权 API 钱包地址
-
-:::tip
-使用 API 钱包比直接使用主钱包私钥更安全——你可以随时通过网页界面撤销 API 钱包的访问权限。
 :::
 
 ## 可选：外部数据 API

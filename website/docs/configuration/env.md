@@ -35,24 +35,39 @@ If you use `client_type: litellm`, set `OPENAI_API_KEY` or configure the LiteLLM
 | `HYPERLIQUID_PRIVATE_KEY` | **Yes** | Ethereum private key for signing orders (`0x...`) |
 | `HYPERLIQUID_TESTNET` | No | `true` to use testnet, `false` for mainnet (default: `false`) |
 
+### API Wallet Authorization
+
+Hyperliquid supports **API wallets** (sub-wallets) for programmatic trading. This is the **recommended approach** — it keeps your main wallet's private key safe and lets you revoke access at any time.
+
+#### Step 1 — Create an API Wallet
+
+1. Open [https://app.hyperliquid.xyz/API](https://app.hyperliquid.xyz/API) with your **main wallet** connected
+2. Click **Generate API Wallet** — Hyperliquid will create a new key pair
+3. Copy and save the **private key** shown (it will not be shown again)
+4. The API wallet address will now appear in your API Wallets list
+
+:::tip Testnet
+For testnet, use [https://app.hyperliquid-testnet.xyz/API](https://app.hyperliquid-testnet.xyz/API). Get free test funds from the [Testnet Faucet](https://app.hyperliquid-testnet.xyz/faucet).
+:::
+
+#### Step 2 — Configure `.env`
+
+Set the API wallet's private key in your `.env`:
+
+```bash
+HYPERLIQUID_PRIVATE_KEY=0x<api-wallet-private-key>
+HYPERLIQUID_TESTNET=true   # set to false for mainnet
+```
+
+#### Step 3 — Fund the API Wallet
+
+Transfer USDC from your main wallet to the API wallet address on Hyperliquid. The API wallet needs funds to place orders.
+
 :::danger Private Key Security
 - Never commit `.env` to any repository
 - Never share your private key with anyone
 - Loss of the private key means permanent loss of funds
 - Use a dedicated trading wallet, not your main holdings wallet
-:::
-
-### API Wallet Authorization
-
-Hyperliquid supports API wallets (sub-wallets) for programmatic trading. If you are using an API wallet address:
-
-1. The API wallet can query balances but **cannot trade** until authorized
-2. Go to the Hyperliquid web interface with your **main wallet**
-3. Navigate to **Settings → API Wallets**
-4. Authorize the API wallet address
-
-:::tip
-Using an API wallet is safer than using your main wallet's private key directly — you can revoke API wallet access at any time from the web UI.
 :::
 
 ## Optional: External Data APIs
