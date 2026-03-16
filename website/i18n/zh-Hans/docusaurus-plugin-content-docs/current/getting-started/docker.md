@@ -19,7 +19,7 @@ Docker Compose 是生产环境运行 Quant Flow 的推荐方式。它负责进�
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/loadchange/quant-flow
+git clone https://github.com/web3spreads/quant-flow
 cd quant-flow
 ```
 

@@ -224,5 +224,5 @@ Only switch to mainnet (`HYPERLIQUID_TESTNET=false`) after successful testnet va
 
 ## Getting Help
 
-- **GitHub Issues**: [https://github.com/loadchange/quant-flow/issues](https://github.com/loadchange/quant-flow/issues)
+- **GitHub Issues**: [https://github.com/web3spreads/quant-flow/issues](https://github.com/web3spreads/quant-flow/issues)
 - **Logs**: Always include relevant log excerpts when reporting issues (`logs/main.log`)

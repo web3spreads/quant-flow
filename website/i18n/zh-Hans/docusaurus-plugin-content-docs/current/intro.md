@@ -55,7 +55,7 @@ Quant Flow **不是**简单的规则型机器人。它使用 LLM 作为决策引
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/loadchange/quant-flow
+git clone https://github.com/web3spreads/quant-flow
 cd quant-flow
 
 # 2. 安装依赖
@@ -79,7 +79,7 @@ uv run python main.py
 
 ## 仓库地址
 
-- **GitHub**: [https://github.com/loadchange/quant-flow](https://github.com/loadchange/quant-flow)
+- **GitHub**: [https://github.com/web3spreads/quant-flow](https://github.com/web3spreads/quant-flow)
 
 ## 下一步
 

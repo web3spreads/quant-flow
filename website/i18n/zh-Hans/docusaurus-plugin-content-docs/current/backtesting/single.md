@@ -43,4 +43,4 @@ uv run python backtest.py \
 - `live_report.json` — 实时更新的回测状态
 - 最终绩效统计（总收益、最大回撤、胜率等）
 
-更多详情参考 [BACKTEST_README.md](https://github.com/loadchange/quant-flow/blob/main/BACKTEST_README.md)。
+更多详情参考 [BACKTEST_README.md](https://github.com/web3spreads/quant-flow/blob/main/BACKTEST_README.md)。
