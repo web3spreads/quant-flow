@@ -1,5 +1,3 @@
-📖 [完整文档](https://loadchange.github.io/quant-flow/) | 中文 | [English](README.md)
-
 <div align="center">
 
 # Quant Flow

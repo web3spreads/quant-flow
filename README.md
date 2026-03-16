@@ -1,5 +1,3 @@
-📖 [Documentation](https://loadchange.github.io/quant-flow/) | [中文](README.zh-Hans.md) | English
-
 <div align="center">
 
 # Quant Flow
@@ -11,7 +9,7 @@
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-blue)](https://loadchange.github.io/quant-flow/)
 
-[**📖 Full Documentation**](https://loadchange.github.io/quant-flow/) · [**中文说明**](README.zh-Hans.md)
+[**📖 Full Documentation**](https://loadchange.github.io/quant-flow/) · [**中文**](README.zh-Hans.md)
 
 </div>
 
