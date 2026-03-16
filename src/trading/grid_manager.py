@@ -168,8 +168,14 @@ class GridManager:
                 self._ensure_min_orders(symbol=symbol)
             return
 
-        # 1. 彻底清理旧订单
-        self._cancel_all_orders(symbol)
+        # 1. 彻底清理旧订单；若未完全撤净，停止本轮重建，避免新旧订单叠加
+        cancel_all_ok = self._cancel_all_orders(symbol)
+        if not cancel_all_ok:
+            self.logger.print_warning("   [Grid] ⚠️ 旧网格撤单未全部成功，跳过本轮重建")
+            remaining_orders = self._get_symbol_open_orders(symbol=symbol)
+            if remaining_orders:
+                self._sync_local_state_with_orders(symbol, remaining_orders)
+            return
 
         # 撤单后轮询确认挂单清空，若仍残留则停止本轮重建，避免新旧订单叠加
         remaining_orders = self._drain_open_orders_before_rebuild(symbol=symbol)
@@ -685,8 +691,9 @@ class GridManager:
                 prices.append(round(lower * (ratio**i), 1))
         return prices
 
-    def _cancel_all_orders(self, symbol: str):
+    def _cancel_all_orders(self, symbol: str) -> bool:
         # 优先用交易所真实挂单清理（含 trigger），避免本地 state 漂移导致漏撤单
+        all_canceled = True
         canceled_oids = set()
         open_orders = self._get_symbol_open_orders(symbol, include_trigger=True)
         for order in open_orders:
@@ -696,8 +703,11 @@ class GridManager:
             try:
                 if self._cancel_order_with_retry(symbol, oid):
                     canceled_oids.add(oid)
+                else:
+                    all_canceled = False
             except Exception as e:
                 self.logger.print_warning(f"   [Grid] ⚠️ 撤单异常 oid={oid}: {e}")
+                all_canceled = False
 
         # 回退：补撤 state 中仍记录但交易所列表里未返回的 oid
         grid = self.state["active_grids"].get(symbol)
@@ -711,10 +721,14 @@ class GridManager:
                 with suppress(Exception):
                     if self._cancel_order_with_retry(symbol, oid):
                         canceled_oids.add(oid)
+                    else:
+                        all_canceled = False
 
         if symbol in self.state["active_grids"]:
             del self.state["active_grids"][symbol]
             self._save_state()
+
+        return all_canceled
 
     def _ensure_min_orders(
         self,

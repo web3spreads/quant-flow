@@ -27,6 +27,7 @@ class FakeClient:
         self.open_orders = []
         self.place_limit_calls = []
         self.cancel_calls = []
+        self.cancel_fail_oids = set()
 
     def get_open_orders(self, include_trigger=False):
         if include_trigger:
@@ -77,6 +78,8 @@ class FakeClient:
 
     def cancel_order(self, symbol, oid):
         self.cancel_calls.append((symbol, oid))
+        if oid in self.cancel_fail_oids:
+            return {"status": "error", "message": "simulated cancel failure"}
         self.open_orders = [o for o in self.open_orders if o.get("oid") != oid]
         return {"status": "ok"}
 
@@ -307,6 +310,39 @@ class TestGridManagerExitOrders(unittest.TestCase):
 
         canceled_ids = [oid for symbol, oid in client.cancel_calls if symbol == "ETH"]
         self.assertEqual(set(canceled_ids), {201, 202})
+
+    def test_cancel_all_orders_returns_false_when_cancel_failed(self):
+        client = FakeClient()
+        client.open_orders = [
+            {
+                "oid": 211,
+                "coin": "ETH",
+                "side": "A",
+                "sz": "0.2",
+                "limitPx": "101.0",
+                "orderType": {"limit": {"tif": "Gtc"}},
+            },
+            {
+                "oid": 212,
+                "coin": "ETH",
+                "side": "A",
+                "sz": "0.2",
+                "limitPx": "95.0",
+                "orderType": {"trigger": {"tpsl": "sl", "triggerPx": 95.0}},
+            },
+        ]
+        client.cancel_fail_oids.add(212)
+        order_manager = FakeOrderManager(client, positions=[{"coin": "ETH", "szi": "1.0"}])
+        grid_manager = GridManager(
+            order_manager=order_manager,
+            logger=DummyLogger(),
+            state_file=self.state_file,
+        )
+
+        canceled_ok = grid_manager._cancel_all_orders("ETH")
+
+        self.assertFalse(canceled_ok)
+        self.assertTrue(any(oid == 212 for _, oid in client.cancel_calls))
 
     def test_cleanup_orphan_trigger_orders_cancels_trigger_when_no_position(self):
         client = FakeClient()
