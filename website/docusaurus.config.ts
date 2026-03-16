@@ -11,10 +11,10 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://loadchange.github.io',
+  url: 'https://web3spreads.github.io',
   baseUrl: '/quant-flow/',
 
-  organizationName: 'loadchange',
+  organizationName: 'web3spreads',
   projectName: 'quant-flow',
   trailingSlash: false,
 
@@ -40,7 +40,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/loadchange/quant-flow/edit/main/website/',
+          editUrl: 'https://github.com/web3spreads/quant-flow/edit/main/website/',
           routeBasePath: 'docs',
         },
         blog: false,
@@ -81,7 +81,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/loadchange/quant-flow',
+          href: 'https://github.com/web3spreads/quant-flow',
           label: 'GitHub',
           position: 'right',
         },
@@ -109,7 +109,7 @@ const config: Config = {
         {
           title: 'Links',
           items: [
-            { label: 'GitHub', href: 'https://github.com/loadchange/quant-flow' },
+            { label: 'GitHub', href: 'https://github.com/web3spreads/quant-flow' },
             { label: 'Hyperliquid', href: 'https://hyperliquid.xyz/' },
             { label: 'Testnet Faucet', href: 'https://app.hyperliquid-testnet.xyz/faucet' },
           ],
