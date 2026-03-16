@@ -7,9 +7,9 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![LangChain](https://img.shields.io/badge/LangChain-latest-green.svg)](https://python.langchain.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![文档](https://img.shields.io/badge/文档-GitHub%20Pages-blue)](https://loadchange.github.io/quant-flow/zh-Hans/docs/intro)
+[![文档](https://img.shields.io/badge/文档-GitHub%20Pages-blue)](https://web3spreads.github.io/quant-flow/zh-Hans/docs/intro)
 
-[**📖 完整文档**](https://loadchange.github.io/quant-flow/zh-Hans/docs/intro) · [**English README**](README.md)
+[**📖 完整文档**](https://web3spreads.github.io/quant-flow/zh-Hans/docs/intro) · [**English README**](README.md)
 
 </div>
 
@@ -231,7 +231,7 @@ git pull && docker compose build && docker compose up -d
 
 ## 相关链接
 
-- 📖 [完整文档](https://loadchange.github.io/quant-flow/zh-Hans/docs/intro)
+- 📖 [完整文档](https://web3spreads.github.io/quant-flow/zh-Hans/docs/intro)
 - 🏦 [Hyperliquid](https://hyperliquid.xyz/)
 - 🚰 [测试网水龙头](https://app.hyperliquid-testnet.xyz/faucet)
 - ⛓️ [LangChain](https://python.langchain.com/)
