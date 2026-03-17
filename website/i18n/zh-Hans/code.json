@@ -1,0 +1,66 @@
+{
+  "homepage.tagline": {
+    "message": "基于 AI 的 Hyperliquid DEX 加密货币自动交易机器人",
+    "description": "Homepage hero tagline"
+  },
+  "homepage.getStarted": {
+    "message": "开始使用 →",
+    "description": "Homepage get started button"
+  },
+  "homepage.disclaimer": {
+    "message": "⚠️ 本项目仅供学习与研究使用，请勿在生产环境中未经充分测试直接使用。",
+    "description": "Homepage disclaimer text"
+  },
+  "homepage.description": {
+    "message": "基于 LangChain/LangGraph 构建的 AI 加密货币自动交易机器人，专为 Hyperliquid DEX 设计",
+    "description": "Homepage meta description"
+  },
+  "feature.multiAgent.title": {
+    "message": "🤖 多智能体 AI",
+    "description": "Feature card title: Multi-Agent AI"
+  },
+  "feature.multiAgent.desc": {
+    "message": "基于 LangGraph 的交易对独立决策架构，支持 OpenAI、NVIDIA、Google、Cloudflare、LiteLLM 多个 LLM 提供商。",
+    "description": "Feature card description: Multi-Agent AI"
+  },
+  "feature.gridFlow.title": {
+    "message": "📊 网格做市策略",
+    "description": "Feature card title: Grid Flow Strategy"
+  },
+  "feature.gridFlow.desc": {
+    "message": "AI 驱动的动态网格做市策略。LLM 判断方向与网格宽度，数学引擎精确计算参数，GridManager 负责挂单管理。",
+    "description": "Feature card description: Grid Flow Strategy"
+  },
+  "feature.research.title": {
+    "message": "🔬 学术研究驱动",
+    "description": "Feature card title: Research-Backed"
+  },
+  "feature.research.desc": {
+    "message": "FinCoT 结构化推理链（准确率 +17%）、多空辩论引擎、CEX 领先信号、Regime 自适应策略 — 全部基于学术论文验证。",
+    "description": "Feature card description: Research-Backed"
+  },
+  "feature.backtest.title": {
+    "message": "📈 回测系统",
+    "description": "Feature card title: Backtesting"
+  },
+  "feature.backtest.desc": {
+    "message": "永续合约与网格策略全面回测支持，含 A/B 功能对比测试与中断恢复功能。",
+    "description": "Feature card description: Backtesting"
+  },
+  "feature.risk.title": {
+    "message": "🛡️ 风险管理",
+    "description": "Feature card title: Risk Management"
+  },
+  "feature.risk.desc": {
+    "message": "凯利公式仓位管理、ATR 动态止盈止损、最大回撤保护、持仓超时自动平仓。",
+    "description": "Feature card description: Risk Management"
+  },
+  "feature.docker.title": {
+    "message": "🐳 Docker 一键部署",
+    "description": "Feature card title: Docker Ready"
+  },
+  "feature.docker.desc": {
+    "message": "Docker Compose 一键部署，通过 RUN_MODE 环境变量灵活选择运行主策略、网格策略或两者并行。",
+    "description": "Feature card description: Docker Ready"
+  }
+}
