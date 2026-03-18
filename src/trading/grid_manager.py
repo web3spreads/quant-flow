@@ -121,11 +121,23 @@ class GridManager:
         if action != "UPDATE_GRID":
             # AI 不更新网格时，只保底减仓保护单，不再补基础开仓单
             self.logger.print_section(f"🛡️ 减仓保底模式 - {symbol}", style="bold yellow")
+
+            if action == "KEEP_GRID":
+                self.logger.print_info("AI 返回 KEEP_GRID，本轮仅检查减仓保护单（reduce_only）")
+            elif action == "ERROR":
+                reason = str(ai_config.get("reason", "unknown"))
+                self.logger.print_warning(f"AI 决策异常 action=ERROR，reason={reason}")
+            elif action is None:
+                self.logger.print_warning("AI 决策缺少 action 字段，按保守策略仅检查减仓保护单")
+            else:
+                self.logger.print_warning(
+                    f"AI 返回未知 action={action}，按保守策略仅检查减仓保护单"
+                )
+
             if self.grid_reduce_only_exit_orders_enabled:
-                self.logger.print_info("AI 未触发 UPDATE_GRID，本轮仅检查减仓保护单（reduce_only）")
                 self._ensure_min_orders(symbol=symbol)
             else:
-                self.logger.print_info("AI 未触发 UPDATE_GRID，且已关闭分批减仓单补齐")
+                self.logger.print_info("已关闭分批减仓单补齐，跳过 reduce_only 补齐检查")
             return
 
         # 兼容两种格式：参数在根目录或在 parameters 下
