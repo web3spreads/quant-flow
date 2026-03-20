@@ -117,7 +117,8 @@ class TradingLogger:
                 from src.utils.cloud_logger import get_cloud_logger
 
                 self._cloud_logger = get_cloud_logger()
-            except Exception:
+            except Exception as e:
+                self.logger.warning(f"无法延迟加载云端日志模块: {e}")
                 self._cloud_logger = None
         return self._cloud_logger
 

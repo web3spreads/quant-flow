@@ -204,6 +204,10 @@ class TestQueueOverflow:
         logger.send_log("第三条")  # 应丢弃第一条
 
         assert logger._log_queue.qsize() == 2
+        item1 = logger._log_queue.get_nowait()
+        item2 = logger._log_queue.get_nowait()
+        assert item1["message"] == "第二条"
+        assert item2["message"] == "第三条"
         logger._stop_event.set()
 
 

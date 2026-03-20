@@ -6,7 +6,6 @@
 aepipe 项目: https://github.com/loadchange/aepipe
 """
 
-import contextlib
 import json
 import logging
 import queue
@@ -79,12 +78,11 @@ class CloudLogger:
         self._log_url = f"{self.base_url}/v1/{self.project}/{self.logstore}/log"
 
         # 异步队列：分别存放结构化数据和原始日志
-        self._ingest_queue: queue.Queue[dict[str, Any]] = queue.Queue(
-            maxsize=_MAX_QUEUE_SIZE
-        )
-        self._log_queue: queue.Queue[dict[str, Any]] = queue.Queue(
-            maxsize=_MAX_QUEUE_SIZE
-        )
+        self._ingest_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=_MAX_QUEUE_SIZE)
+        self._log_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=_MAX_QUEUE_SIZE)
+
+        # 入队操作锁（保护队列满时的丢弃+放入原子性）
+        self._enqueue_lock = threading.Lock()
 
         # 停止信号
         self._stop_event = threading.Event()
@@ -258,14 +256,17 @@ class CloudLogger:
 
     def _enqueue(self, q: queue.Queue, item: dict) -> None:
         """安全入队，队列满时丢弃最旧消息"""
-        try:
-            q.put_nowait(item)
-        except queue.Full:
-            # 丢弃队首（最旧），放入新消息
-            with contextlib.suppress(queue.Empty):
-                q.get_nowait()
-            with contextlib.suppress(queue.Full):
+        with self._enqueue_lock:
+            if q.full():
+                try:
+                    q.get_nowait()  # 丢弃队首（最旧）
+                except queue.Empty:
+                    pass
+
+            try:
                 q.put_nowait(item)
+            except queue.Full:
+                logger.warning("云端日志队列已满，丢弃新消息")
 
     def _flush_loop(self) -> None:
         """后台线程主循环：定时批量发送"""
@@ -317,20 +318,24 @@ class CloudLogger:
 
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
-                req = urllib.request.Request(
-                    url, data=data, headers=headers, method="POST"
-                )
+                req = urllib.request.Request(url, data=data, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
-                    if resp.status >= 400:
-                        logger.warning(
-                            "云端日志发送失败 (HTTP %d), 尝试 %d/%d",
-                            resp.status,
-                            attempt,
-                            _MAX_RETRIES,
-                        )
-                        continue
-                    return  # 成功
-            except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                    if 200 <= resp.status < 300:
+                        return  # 成功
+                    logger.warning(
+                        "云端日志发送收到非成功状态码 (HTTP %d), 尝试 %d/%d",
+                        resp.status,
+                        attempt,
+                        _MAX_RETRIES,
+                    )
+            except urllib.error.HTTPError as e:
+                logger.warning(
+                    "云端日志发送失败 (HTTP %d), 尝试 %d/%d",
+                    e.code,
+                    attempt,
+                    _MAX_RETRIES,
+                )
+            except (urllib.error.URLError, OSError) as e:
                 logger.debug(
                     "云端日志发送异常 (尝试 %d/%d): %s",
                     attempt,
@@ -343,6 +348,7 @@ class CloudLogger:
 # ── 单例管理 ──────────────────────────────────────────────────
 
 _cloud_logger: CloudLogger | None = None
+_cloud_logger_lock = threading.Lock()
 
 
 def get_cloud_logger() -> CloudLogger | None:
@@ -359,7 +365,7 @@ def init_cloud_logger(
     enabled: bool = True,
 ) -> CloudLogger:
     """
-    初始化全局云端日志实例
+    初始化全局云端日志实例（线程安全，双重检查锁定）
 
     Args:
         base_url: aepipe 服务地址
@@ -374,12 +380,14 @@ def init_cloud_logger(
     """
     global _cloud_logger
     if _cloud_logger is None:
-        _cloud_logger = CloudLogger(
-            base_url=base_url,
-            token=token,
-            project=project,
-            logstore=logstore,
-            flush_interval=flush_interval,
-            enabled=enabled,
-        )
+        with _cloud_logger_lock:
+            if _cloud_logger is None:
+                _cloud_logger = CloudLogger(
+                    base_url=base_url,
+                    token=token,
+                    project=project,
+                    logstore=logstore,
+                    flush_interval=flush_interval,
+                    enabled=enabled,
+                )
     return _cloud_logger

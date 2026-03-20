@@ -388,14 +388,10 @@ class Config:
         self.cloud_logging_base_url: str = cloud.get(
             "base_url", os.getenv("CLOUD_LOGGING_BASE_URL", "")
         )
-        self.cloud_logging_token: str = cloud.get(
-            "token", os.getenv("CLOUD_LOGGING_TOKEN", "")
-        )
+        self.cloud_logging_token: str = cloud.get("token", os.getenv("CLOUD_LOGGING_TOKEN", ""))
         self.cloud_logging_project: str = cloud.get("project", "quant-flow")
         self.cloud_logging_logstore: str = cloud.get("logstore", "trading")
-        self.cloud_logging_flush_interval: float = float(
-            cloud.get("flush_interval", 5.0)
-        )
+        self.cloud_logging_flush_interval: float = float(cloud.get("flush_interval", 5.0))
 
     def _init_market_monitor_config(self):
         """初始化市场主动监控配置"""
