@@ -104,6 +104,23 @@ class TradingLogger:
         # 设置文件处理器
         self._setup_file_handlers()
 
+        # 云端日志（延迟获取，避免循环导入）
+        self._cloud_logger = None
+        self._cloud_logger_checked = False
+
+    @property
+    def _cloud(self):
+        """延迟获取云端日志实例"""
+        if not self._cloud_logger_checked:
+            self._cloud_logger_checked = True
+            try:
+                from src.utils.cloud_logger import get_cloud_logger
+
+                self._cloud_logger = get_cloud_logger()
+            except Exception:
+                self._cloud_logger = None
+        return self._cloud_logger
+
     def _setup_file_handlers(self):
         """设置文件日志处理器"""
         # 主日志文件
@@ -288,6 +305,8 @@ class TradingLogger:
             error: 错误内容
         """
         self.console.print(f"[bold red]❌ 错误: {error}[/bold red]")
+        if self._cloud:
+            self._cloud.send_log(error, level="error")
 
     def print_info(self, message: str):
         """
@@ -297,6 +316,8 @@ class TradingLogger:
             message: 信息内容
         """
         self.console.print(f"[cyan]ℹ️  {message}[/cyan]")
+        if self._cloud:
+            self._cloud.send_log(message, level="info")
 
     def print_warning(self, message: str):
         """
@@ -306,6 +327,8 @@ class TradingLogger:
             message: 警告内容
         """
         self.console.print(f"[yellow]⚠️  {message}[/yellow]")
+        if self._cloud:
+            self._cloud.send_log(message, level="warn")
 
     def log_decision(
         self,
@@ -352,6 +375,17 @@ class TradingLogger:
                 self._save_decision_csv(timestamp, log_entry)
         except OSError as e:
             self.logger.warning(f"决策日志写入失败: {e}")
+
+        # 同步到云端
+        if self._cloud:
+            self._cloud.send_decision(
+                symbol=symbol,
+                decision=decision,
+                status=status,
+                ai_response=ai_response or "",
+                current_price=float(market_data.get("current_price", 0)),
+                error_message=error_message or "",
+            )
 
     def _save_decision_json(self, timestamp: datetime, log_entry: dict[str, Any]):
         """保存决策日志为 JSON 格式"""
@@ -441,6 +475,18 @@ class TradingLogger:
             f.write(json.dumps(trade_entry, ensure_ascii=False, cls=CustomJSONEncoder) + "\n")
 
         self.logger.info(f"交易记录: {action} {amount} {symbol} @ {price}")
+
+        # 同步到云端
+        if self._cloud:
+            self._cloud.send_trade(
+                symbol=symbol,
+                action=action,
+                amount=float(amount),
+                price=float(price),
+                order_id=order_id or "",
+                pnl=float(pnl) if pnl else 0.0,
+                status=status,
+            )
 
 
 # 全局日志实例

@@ -78,6 +78,7 @@ class Config:
         self._init_logging_config()
         self._init_notifications_config()
         self._init_market_monitor_config()
+        self._init_cloud_logging_config()
 
     def _load_yaml_config(self) -> dict[str, Any]:
         """加载 YAML 配置文件"""
@@ -379,6 +380,22 @@ class Config:
     def _init_notifications_config(self):
         """初始化通知配置"""
         self.notifications = self.config_data.get("notifications", {"enabled": False})
+
+    def _init_cloud_logging_config(self):
+        """初始化云端日志配置（aepipe 服务）"""
+        cloud = self.config_data.get("cloud_logging", {})
+        self.cloud_logging_enabled: bool = cloud.get("enabled", False)
+        self.cloud_logging_base_url: str = cloud.get(
+            "base_url", os.getenv("CLOUD_LOGGING_BASE_URL", "")
+        )
+        self.cloud_logging_token: str = cloud.get(
+            "token", os.getenv("CLOUD_LOGGING_TOKEN", "")
+        )
+        self.cloud_logging_project: str = cloud.get("project", "quant-flow")
+        self.cloud_logging_logstore: str = cloud.get("logstore", "trading")
+        self.cloud_logging_flush_interval: float = float(
+            cloud.get("flush_interval", 5.0)
+        )
 
     def _init_market_monitor_config(self):
         """初始化市场主动监控配置"""
