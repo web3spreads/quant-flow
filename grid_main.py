@@ -136,7 +136,7 @@ class GridFlowBot:
                 ai_response=reason,
                 decision=action,
                 action_details=ai_decision,
-                status="SUCCESS",
+                status="SUCCESS" if action != "ERROR" else "ERROR",
                 confidence=confidence,
             )
 
