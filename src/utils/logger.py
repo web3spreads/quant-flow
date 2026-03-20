@@ -341,6 +341,7 @@ class TradingLogger:
         action_details: dict[str, Any] = None,
         status: str = "SUCCESS",
         error_message: str = None,
+        confidence: float = 0.0,
     ):
         """
         记录决策日志到文件
@@ -384,6 +385,7 @@ class TradingLogger:
                 decision=decision,
                 status=status,
                 ai_response=ai_response or "",
+                confidence=confidence,
                 current_price=float(market_data.get("current_price", 0)),
                 error_message=error_message or "",
             )
