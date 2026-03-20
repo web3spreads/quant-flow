@@ -6,6 +6,7 @@
 aepipe 项目: https://github.com/loadchange/aepipe
 """
 
+import contextlib
 import json
 import logging
 import queue
@@ -261,14 +262,10 @@ class CloudLogger:
             q.put_nowait(item)
         except queue.Full:
             # 丢弃队首（最旧），放入新消息
-            try:
+            with contextlib.suppress(queue.Empty):
                 q.get_nowait()
-            except queue.Empty:
-                pass
-            try:
+            with contextlib.suppress(queue.Full):
                 q.put_nowait(item)
-            except queue.Full:
-                pass
 
     def _flush_loop(self) -> None:
         """后台线程主循环：定时批量发送"""

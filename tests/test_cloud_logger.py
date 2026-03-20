@@ -5,15 +5,11 @@
 
 import json
 import queue
-import threading
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.utils.cloud_logger import CloudLogger, get_cloud_logger, init_cloud_logger
-
 
 # ── Fixture ──────────────────────────────────────────────────
 
