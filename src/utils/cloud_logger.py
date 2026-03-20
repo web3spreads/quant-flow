@@ -6,6 +6,7 @@
 aepipe 项目: https://github.com/loadchange/aepipe
 """
 
+import contextlib
 import json
 import logging
 import queue
@@ -258,10 +259,8 @@ class CloudLogger:
         """安全入队，队列满时丢弃最旧消息"""
         with self._enqueue_lock:
             if q.full():
-                try:
+                with contextlib.suppress(queue.Empty):
                     q.get_nowait()  # 丢弃队首（最旧）
-                except queue.Empty:
-                    pass
 
             try:
                 q.put_nowait(item)
