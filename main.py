@@ -38,6 +38,7 @@ from src.prompt_manager import PromptManager
 from src.trading.client import HyperliquidClient
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
+from src.utils.cloud_logger import init_cloud_logger
 from src.utils.logger import get_logger
 
 
@@ -67,6 +68,16 @@ class QuantFlowBot:
             console_color=self.config.console_color,
             decision_log_format=self.config.decision_log_format,
         )
+
+        # 初始化云端日志（aepipe 服务）
+        if self.config.cloud_logging_enabled:
+            init_cloud_logger(
+                base_url=self.config.cloud_logging_base_url,
+                token=self.config.cloud_logging_token,
+                project=self.config.cloud_logging_project,
+                logstore=self.config.cloud_logging_logstore,
+                flush_interval=self.config.cloud_logging_flush_interval,
+            )
 
         # 打印启动信息
         print_startup_banner(config=self.config, console=self.logger.console)

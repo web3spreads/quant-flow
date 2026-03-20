@@ -209,7 +209,8 @@ src/
 ├── utils/                    # 工具模块
 │   ├── hyperliquid.py              # SDK 安全初始化（spotMeta 越界过滤）
 │   ├── grid_math.py                # 网格数学计算引擎
-│   └── logger.py                   # 日志工具
+│   ├── logger.py                   # 日志工具
+│   └── cloud_logger.py             # 云端日志同步（aepipe 服务）
 ├── llm/                      # LLM 客户端
 │   └── llm_client.py               # 多供应商支持 (OpenAI/Cloudflare/Google/LiteLLM/NVIDIA)
 ├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复）
@@ -460,6 +461,7 @@ review_agent:                         ← 复盘系统增强（全部独立开�
   ├── bias_protection_enabled         ← 确认偏差防护
   ├── fact_subjective_split_enabled   ← 事实-主观分离
   └── prompt_meta_reflection_enabled  ← Prompt 自优化（依赖 weekly_reflection）
+cloud_logging.enabled: true          ← 独立开关，云端日志同步（aepipe 服务）
 ```
 
 ### A/B 回测对比
@@ -640,6 +642,15 @@ review_agent:
   bias_protection_enabled: true         # 确认偏差防护
   fact_subjective_split_enabled: true   # 事实-主观分离
   prompt_meta_reflection_enabled: true  # Prompt 自优化
+
+# 云端日志同步（aepipe 服务）
+cloud_logging:
+  enabled: false                        # 启用后日志异步同步到云端
+  base_url: "https://xxx.workers.dev"   # aepipe 服务地址
+  token: "your_admin_token"             # ADMIN_TOKEN 认证令牌
+  project: "quant-flow"                 # 项目名称
+  logstore: "trading"                   # 日志存储名称
+  flush_interval: 5.0                   # 批量发送间隔（秒）
 ```
 
 ### 网格交易配置 (`config.grid.yaml`)

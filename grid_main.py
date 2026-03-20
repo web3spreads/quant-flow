@@ -20,6 +20,7 @@ from src.notification.notifier import Notifier
 from src.trading.client import HyperliquidClient
 from src.trading.grid_manager import GridManager
 from src.trading.order_manager import OrderManager
+from src.utils.cloud_logger import init_cloud_logger
 from src.utils.logger import get_logger
 
 
@@ -33,6 +34,16 @@ class GridFlowBot:
         """
         self.config = get_config(config_path, env_file=env_file)
         self.logger = get_logger(log_level="INFO")
+
+        # 初始化云端日志（aepipe 服务）
+        if self.config.cloud_logging_enabled:
+            init_cloud_logger(
+                base_url=self.config.cloud_logging_base_url,
+                token=self.config.cloud_logging_token,
+                project=self.config.cloud_logging_project,
+                logstore=self.config.cloud_logging_logstore,
+                flush_interval=self.config.cloud_logging_flush_interval,
+            )
 
         is_testnet = self.config.hyperliquid_testnet
         self.notifier = Notifier(self.config.notifications, is_testnet=is_testnet)
