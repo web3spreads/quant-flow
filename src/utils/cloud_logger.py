@@ -313,6 +313,7 @@ class CloudLogger:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.token}",
+            "User-Agent": "QuantFlow-CloudLogger/1.0",
         }
 
         for attempt in range(1, _MAX_RETRIES + 1):
