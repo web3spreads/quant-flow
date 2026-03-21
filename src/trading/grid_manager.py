@@ -235,6 +235,14 @@ class GridManager:
                         if oid:
                             buy_orders.append({"oid": oid, "px": p})
                             self.logger.print_info(f"   [Grid] ✅ 买单挂载: ${p}")
+                            self.logger.log_trade(
+                                symbol=symbol,
+                                action="GRID_BUY",
+                                amount=new_amount,
+                                price=p,
+                                order_id=str(oid),
+                                status="PLACED",
+                            )
                     elif res and not res.get("success"):
                         self.logger.print_warning(
                             f"   [Grid] ⚠️ 买单跳过 @ ${p}: {res.get('message', 'unknown')}"
@@ -254,6 +262,14 @@ class GridManager:
                         if oid:
                             sell_orders.append({"oid": oid, "px": p})
                             self.logger.print_info(f"   [Grid] ✅ 卖单挂载: ${p}")
+                            self.logger.log_trade(
+                                symbol=symbol,
+                                action="GRID_SELL",
+                                amount=new_amount,
+                                price=p,
+                                order_id=str(oid),
+                                status="PLACED",
+                            )
                     elif res and not res.get("success"):
                         self.logger.print_warning(
                             f"   [Grid] ⚠️ 卖单跳过 @ ${p}: {res.get('message', 'unknown')}"
@@ -668,6 +684,14 @@ class GridManager:
                 placed += 1
                 self.logger.print_warning(
                     f"   [Grid] 🛟 补减仓{side_name}单: {order_size:.6f} @ ${limit_price} (reduce_only)"
+                )
+                self.logger.log_trade(
+                    symbol=symbol,
+                    action="GRID_REDUCE_BUY" if close_with_buy else "GRID_REDUCE_SELL",
+                    amount=order_size,
+                    price=float(limit_price),
+                    order_id=str(oid) if oid is not None else "",
+                    status="PLACED",
                 )
             else:
                 self.logger.print_warning(

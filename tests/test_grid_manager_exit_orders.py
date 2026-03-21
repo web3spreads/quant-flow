@@ -20,6 +20,12 @@ class DummyLogger:
     def print_error(self, *args, **kwargs):
         pass
 
+    def log_trade(self, *args, **kwargs):
+        pass
+
+    def log_decision(self, *args, **kwargs):
+        pass
+
 
 class FakeClient:
     def __init__(self):

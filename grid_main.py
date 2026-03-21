@@ -125,6 +125,21 @@ class GridFlowBot:
                 current_grid_summary,
             )
 
+            # 记录网格决策到本地日志 + 云端
+            action = ai_decision.get("action", "UNKNOWN")
+            reason = ai_decision.get("reason", "")
+            confidence = float(ai_decision.get("confidence", 0.0))
+            self.logger.log_decision(
+                symbol=self.config.symbols[0],
+                market_data=market_data,
+                prompt="[GridAgent]",
+                ai_response=reason,
+                decision=action,
+                action_details=ai_decision,
+                status="SUCCESS" if action != "ERROR" else "ERROR",
+                confidence=confidence,
+            )
+
             self.grid_manager.sync_grid(self.config.symbols[0], ai_decision)
             self.logger.print_header("✅ 网格交易周期完成")
 
