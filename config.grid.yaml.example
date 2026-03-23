@@ -45,6 +45,27 @@ trading:
   # 是否启用 reduce_only 分层减仓单（分批止盈）
   grid_reduce_only_exit_orders_enabled: true
 
+# Triple Barrier 网格级风控
+# 在单层 TP/SL trigger 之上提供全局兜底保护
+risk_management:
+  # 止损：整个网格的 PnL% 低于此值 -> 全部平仓
+  # 设置为 null 可禁用
+  stop_loss_pct: 0.05         # 5%
+
+  # 止盈：整个网格的净 PnL% 高于此值 -> 全部平仓获利了结
+  take_profit_pct: 0.10       # 10%
+
+  # 时间限制：网格运行超过此秒数 -> 全部平仓
+  time_limit_seconds: 14400   # 4 小时
+
+  # 追踪止损：PnL 达到激活阈值后开始追踪，从最高点回撤超过 delta 则触发
+  trailing_stop_activation_pct: 0.03  # 3% 激活
+  trailing_stop_delta_pct: 0.01       # 从最高点回撤 1% 触发
+
+  # 限价保护：价格超出此范围 -> 触发平仓（设置为 null 可禁用）
+  # price_lower_limit: null
+  # price_upper_limit: null
+
 # 调度配置
 scheduler:
   # 网格决策间隔（分钟）

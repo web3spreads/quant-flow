@@ -1,6 +1,6 @@
 """
 网格交易管理器 (动态调节版)
-支持网格同步、AI 止盈止损和状态持久化
+支持网格同步、AI 止盈止损、层级循环复用和状态持久化
 """
 
 import json
@@ -9,11 +9,15 @@ import shutil
 import tempfile
 import time
 from contextlib import suppress
+from decimal import Decimal
 from typing import Any
 
+from src.trading.grid_barrier import GridBarrierMonitor, TripleBarrierConfig
+from src.trading.grid_pnl import GridPnLTracker
 from src.trading.order_manager import OrderManager
-from src.utils.grid_math import extract_order_id
+from src.utils.grid_math import GridLevel, GridLevelState, extract_order_id
 from src.utils.logger import TradingLogger
+from src.utils.precision import to_decimal
 
 DEFAULT_MIN_ORDERS = 4
 DEFAULT_AMOUNT_PER_ORDER = 10.0
@@ -43,6 +47,7 @@ class GridManager:
         grid_reduce_only_exit_orders_enabled: bool = True,
         grid_rebuild_cooldown_seconds: int = DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS,
         grid_rebuild_min_price_change_ratio: float = DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO,
+        barrier_config: TripleBarrierConfig | None = None,
     ):
         self.order_manager = order_manager
         self.logger = logger
@@ -66,7 +71,36 @@ class GridManager:
                 DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO,
             ),
         )
+        self.barrier_config = barrier_config or TripleBarrierConfig()
         self.state = self._load_state()
+
+        # 层级循环复用：每个 symbol 对应一组 GridLevel
+        self.grid_levels: dict[str, list[GridLevel]] = {}
+        # PnL 追踪：每个 symbol 对应一个 tracker
+        self.pnl_trackers: dict[str, GridPnLTracker] = {}
+        # Triple Barrier 监控：每个 symbol 对应一个 monitor
+        self.barrier_monitors: dict[str, GridBarrierMonitor] = {}
+        # 从状态文件恢复层级和 PnL
+        self._restore_levels_from_state()
+
+    def _restore_levels_from_state(self):
+        """从持久化状态中恢复 grid_levels、pnl_trackers 和 barrier_monitors（崩溃恢复）。"""
+        for symbol, grid_data in self.state.get("active_grids", {}).items():
+            # 恢复层级
+            levels_data = grid_data.get("levels")
+            if levels_data and isinstance(levels_data, list):
+                self.grid_levels[symbol] = [
+                    GridLevel.from_dict(ld) for ld in levels_data
+                ]
+            # 恢复 PnL tracker
+            pnl_data = grid_data.get("pnl")
+            if pnl_data and isinstance(pnl_data, dict):
+                self.pnl_trackers[symbol] = GridPnLTracker.from_dict(pnl_data)
+            # 恢复 barrier monitor（使用 last_sync 作为 start_time）
+            start_time = grid_data.get("last_sync", time.time())
+            self.barrier_monitors[symbol] = GridBarrierMonitor(
+                config=self.barrier_config, start_time=start_time
+            )
 
     def _load_state(self) -> dict[str, Any]:
         if os.path.exists(self.state_file):
@@ -113,11 +147,23 @@ class GridManager:
     def sync_grid(self, symbol: str, ai_config: dict[str, Any]):
         """
         核心逻辑：根据 AI 最新的决策，同步现实中的网格状态。
+
+        当已有层级循环数据时，优先使用增量同步；
+        仅在结构性变化（层数/类型/方向改变、首次建网格）时执行全撤全建。
         """
         # 周期性清理孤儿 trigger 单（如历史遗留 TPSL），防止主网订单长期累积
         self._cleanup_orphan_trigger_orders(symbol)
 
         action = ai_config.get("action")
+
+        # 增量同步路由：如果已有层级数据且非重建场景，使用增量同步
+        if action == "UPDATE_GRID" and symbol in self.grid_levels and self.grid_levels[symbol]:
+            should_rebuild, reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+            if not should_rebuild:
+                self.logger.print_info(f"   [Grid] 增量同步模式: {reason}")
+                self.sync_grid_incremental(symbol)
+                return
+
         if action != "UPDATE_GRID":
             # AI 不更新网格时，只保底减仓保护单，不再补基础开仓单
             self.logger.print_section(f"🛡️ 减仓保底模式 - {symbol}", style="bold yellow")
@@ -277,11 +323,47 @@ class GridManager:
             except Exception as e:
                 self.logger.print_error(f"   [Grid] 下单异常 @ ${p}: {e}")
 
-        # 4. 更新状态
+        # 4. 初始化层级循环复用数据
+        levels = []
+        for i, order_info in enumerate(buy_orders):
+            level = GridLevel(
+                id=f"L{i}",
+                price=to_decimal(order_info["px"]),
+                amount=to_decimal(new_amount),
+                side="LONG",
+                state=GridLevelState.OPEN_PENDING,
+            )
+            level.open_order_id = order_info["oid"]
+            levels.append(level)
+        for i, order_info in enumerate(sell_orders):
+            level = GridLevel(
+                id=f"L{len(buy_orders) + i}",
+                price=to_decimal(order_info["px"]),
+                amount=to_decimal(new_amount),
+                side="SHORT",
+                state=GridLevelState.OPEN_PENDING,
+            )
+            level.open_order_id = order_info["oid"]
+            levels.append(level)
+
+        self.grid_levels[symbol] = levels
+
+        # 初始化 PnL tracker（全建时重置）
+        if symbol not in self.pnl_trackers:
+            self.pnl_trackers[symbol] = GridPnLTracker()
+
+        # 初始化/重置 barrier monitor
+        self.barrier_monitors[symbol] = GridBarrierMonitor(
+            config=self.barrier_config, start_time=time.time()
+        )
+
+        # 5. 更新状态（含层级和 PnL 数据）
         self.state["active_grids"][symbol] = {
             "config": ai_config,
             "buy_orders": buy_orders,
             "sell_orders": sell_orders,
+            "levels": [level.to_dict() for level in levels],
+            "pnl": self.pnl_trackers[symbol].to_dict(),
             "last_sync": time.time(),
         }
         self._save_state()
@@ -706,29 +788,28 @@ class GridManager:
     def _calculate_grid_prices(
         self, lower: float, upper: float, num: int, grid_type: str
     ) -> list[float]:
+        """计算网格价格分布，内部使用 Decimal 精确计算。"""
         if num < 2:
-            return [lower]
-        # 确保输入是实数而非复数
-        try:
-            if hasattr(lower, "real"):
-                lower = float(lower.real)
-            if hasattr(upper, "real"):
-                upper = float(upper.real)
-        except Exception:
-            pass
+            return [float(to_decimal(lower).quantize(Decimal("0.1")))]
 
-        prices = []
+        d_lower = to_decimal(lower)
+        d_upper = to_decimal(upper)
+        tick = Decimal("0.1")
+
+        prices: list[float] = []
         if grid_type == "ARITHMETIC":
-            diff = (upper - lower) / (num - 1)
+            diff = (d_upper - d_lower) / Decimal(str(num - 1))
             for i in range(num):
-                prices.append(round(lower + i * diff, 1))
+                p = d_lower + Decimal(str(i)) * diff
+                prices.append(float(p.quantize(tick)))
         else:  # GEOMETRIC
-            # 增加安全检查
-            if lower <= 0 or upper <= 0:
-                return [lower]
-            ratio = (upper / lower) ** (1 / (num - 1))
+            if d_lower <= 0 or d_upper <= 0:
+                return [float(d_lower.quantize(tick))]
+            # Decimal 不直接支持分数幂，借助 float 做幂运算再转回
+            ratio = float(d_upper / d_lower) ** (1.0 / (num - 1))
             for i in range(num):
-                prices.append(round(lower * (ratio**i), 1))
+                p = d_lower * to_decimal(ratio**i)
+                prices.append(float(p.quantize(tick)))
         return prices
 
     def _cancel_all_orders(self, symbol: str) -> bool:
@@ -801,16 +882,337 @@ class GridManager:
             self.logger.print_error(f"   [Grid] ❌ ensure_min_orders 失败: {e}")
 
     def get_grid_summary(self, symbol: str) -> str:
+        """增强版网格摘要：包含层级状态分布和 PnL 报告。"""
         grid = self.state["active_grids"].get(symbol)
         if not grid:
             return "目前无运行中的网格。"
 
         config = grid["config"]
         params = config.get("parameters", config)
-        return (
+
+        # 基础信息
+        base_info = (
             f"当前正在运行 {symbol} 天地单网格：\n"
             f"- 区间: ${params.get('lower_price', 'N/A')} - ${params.get('upper_price', 'N/A')}\n"
             f"- 止盈比例: {params.get('tp_ratio', 'N/A')}\n"
-            f"- 待成交买单: {len(grid['buy_orders'])} 个\n"
-            f"- 待成交卖单: {len(grid['sell_orders'])} 个"
+            f"- 待成交买单: {len(grid.get('buy_orders', []))} 个\n"
+            f"- 待成交卖单: {len(grid.get('sell_orders', []))} 个"
         )
+
+        # 层级状态分布
+        levels = self.grid_levels.get(symbol)
+        if levels:
+            state_counts: dict[str, int] = {}
+            for level in levels:
+                state_counts[level.state.value] = state_counts.get(level.state.value, 0) + 1
+            base_info += f"\n- 层级状态: {state_counts}"
+
+        # PnL 报告
+        tracker = self.pnl_trackers.get(symbol)
+        if tracker and levels:
+            try:
+                current_price = self.order_manager.client.get_current_price(symbol)
+                if current_price and current_price > 0:
+                    current_price_d = to_decimal(current_price)
+                    # 总投入 = 所有层的 amount 之和
+                    total_investment = sum(
+                        (level.amount for level in levels), Decimal("0")
+                    )
+                    summary = tracker.get_summary(levels, current_price_d, total_investment)
+                    base_info += (
+                        f"\n- 已实现 PnL: {summary['realized_pnl']:+.4f} USDT"
+                        f"\n- 未实现 PnL: {summary['unrealized_pnl']:+.4f} USDT"
+                        f"\n- 净 PnL: {summary['net_pnl']:+.4f} ({summary['net_pnl_pct']:.2%})"
+                        f"\n- 完成轮回: {summary['completed_round_trips']} 次"
+                        f"\n- 累计手续费: {summary['total_fees']:.4f} USDT"
+                    )
+            except Exception:
+                pass
+
+        return base_info
+
+    # ────────────────────────────────────────────────────────────────
+    # 层级循环复用：增量同步
+    # ────────────────────────────────────────────────────────────────
+
+    def _emergency_close_all(self, symbol: str, reason: str):
+        """紧急全部平仓（Triple Barrier 触发时调用）。"""
+        self.logger.print_warning(f"   [Grid] 紧急平仓: {reason}")
+
+        # 1. 撤掉所有挂单
+        self._cancel_all_orders(symbol)
+
+        # 2. 市价平仓
+        try:
+            result = self.order_manager.client.close_position(symbol)
+            if result:
+                self.logger.print_info(f"   [Grid] {symbol} 市价平仓完成: {result}")
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] {symbol} 市价平仓失败: {e}")
+
+        # 3. 清理层级数据
+        if symbol in self.grid_levels:
+            del self.grid_levels[symbol]
+        if symbol in self.barrier_monitors:
+            del self.barrier_monitors[symbol]
+
+        # 通知
+        if self.notifier:
+            try:
+                self.notifier.notify_grid_update(
+                    symbol=symbol,
+                    lower=0,
+                    upper=0,
+                    num=0,
+                    amount=0,
+                    tp=0,
+                    sl=0,
+                    buy_count=0,
+                    sell_count=0,
+                    reason=f"Triple Barrier 触发: {reason}",
+                )
+            except Exception:
+                pass
+
+    def sync_grid_incremental(self, symbol: str):
+        """增量同步：只处理需要操作的层级，不全撤全建。"""
+        levels = self.grid_levels.get(symbol)
+        if not levels:
+            self.logger.print_warning(f"   [Grid] {symbol} 无层级数据，跳过增量同步")
+            return
+
+        # Triple Barrier 屏障检查
+        monitor = self.barrier_monitors.get(symbol)
+        tracker = self.pnl_trackers.get(symbol)
+        if monitor and tracker:
+            try:
+                current_price_raw = self.order_manager.client.get_current_price(symbol)
+                if current_price_raw and current_price_raw > 0:
+                    current_price_d = to_decimal(current_price_raw)
+                    total_investment = sum(
+                        (level.amount for level in levels), Decimal("0")
+                    )
+                    net_pnl_pct = tracker.get_net_pnl_pct(
+                        levels, current_price_d, total_investment
+                    )
+                    trigger = monitor.check(
+                        current_price=current_price_d,
+                        net_pnl_pct=net_pnl_pct,
+                        current_time=time.time(),
+                    )
+                    if trigger:
+                        self.logger.print_warning(f"   [Grid] Triple Barrier 触发: {trigger}")
+                        self._emergency_close_all(symbol, reason=trigger)
+                        return
+            except Exception as e:
+                self.logger.print_error(f"   [Grid] Triple Barrier 检查异常: {e}")
+
+        exchange_orders = self._get_symbol_open_orders(symbol)
+        exchange_oids = {o["oid"] for o in exchange_orders if "oid" in o}
+
+        for level in levels:
+            try:
+                if level.state == GridLevelState.IDLE:
+                    # 空闲 -> 挂开仓单
+                    self._place_open_order(symbol, level)
+
+                elif level.state == GridLevelState.OPEN_PENDING:
+                    # 检查开仓单是否还在挂单列表中
+                    if level.open_order_id not in exchange_oids:
+                        # 不在挂单列表 -> 已成交或被撤
+                        if self._confirm_fill(symbol, level, "open"):
+                            level.state = GridLevelState.OPEN_FILLED
+                            self.logger.print_info(
+                                f"   [Grid] {level.id} 开仓成交 @ {level.open_fill_price}"
+                            )
+                        else:
+                            # 被撤销/失败 -> 回到 IDLE 重新挂
+                            level.state = GridLevelState.IDLE
+
+                elif level.state == GridLevelState.OPEN_FILLED:
+                    # 开仓已成交 -> 挂平仓单
+                    self._place_close_order(symbol, level)
+
+                elif level.state == GridLevelState.CLOSE_PENDING:
+                    if level.close_order_id not in exchange_oids:
+                        if self._confirm_fill(symbol, level, "close"):
+                            level.state = GridLevelState.COMPLETED
+                            self.logger.print_info(
+                                f"   [Grid] {level.id} 平仓成交 @ {level.close_fill_price}"
+                            )
+                        else:
+                            # 平仓单被撤 -> 回到 OPEN_FILLED 重挂
+                            level.state = GridLevelState.OPEN_FILLED
+
+                elif level.state == GridLevelState.COMPLETED:
+                    # 完成一轮 -> 记录 PnL -> 重置
+                    self._record_round_trip(symbol, level)
+                    level.reset()
+                    # reset 后变为 IDLE，下一轮 sync 会重新挂单
+
+            except Exception as e:
+                self.logger.print_error(
+                    f"   [Grid] {level.id} 同步异常: {e}"
+                )
+
+        self._save_incremental_state(symbol)
+
+    def _place_open_order(self, symbol: str, level: GridLevel):
+        """为层级挂开仓单。"""
+        current_price = self.order_manager.client.get_current_price(symbol)
+        if not current_price or current_price <= 0:
+            return
+
+        is_buy = level.side == "LONG"
+        price = float(level.price)
+
+        # 只在价格合理时挂单（买单低于市价，卖单高于市价）
+        if is_buy and price >= current_price:
+            return
+        if not is_buy and price <= current_price:
+            return
+
+        # 从 state 中获取 tp/sl 配置
+        grid_data = self.state["active_grids"].get(symbol, {})
+        config = grid_data.get("config", {})
+        params = config.get("parameters", config)
+        tp_ratio = params.get("tp_ratio")
+        sl_ratio = params.get("sl_ratio")
+
+        if is_buy:
+            res = self.order_manager.execute_long_limit(
+                symbol,
+                float(level.amount),
+                price,
+                tp_ratio=tp_ratio,
+                sl_ratio=sl_ratio,
+                with_take_profit=self.grid_limit_order_take_profit_enabled,
+                with_stop_loss=self.grid_limit_order_stop_loss_enabled,
+            )
+        else:
+            res = self.order_manager.execute_short_limit(
+                symbol,
+                float(level.amount),
+                price,
+                tp_ratio=tp_ratio,
+                sl_ratio=sl_ratio,
+                with_take_profit=self.grid_limit_order_take_profit_enabled,
+                with_stop_loss=self.grid_limit_order_stop_loss_enabled,
+            )
+
+        if res and res.get("success"):
+            oid = self._extract_oid(res.get("limit_order", {}))
+            if oid:
+                level.open_order_id = oid
+                level.state = GridLevelState.OPEN_PENDING
+                self.logger.print_info(
+                    f"   [Grid] {level.id} 挂开仓单 {'买' if is_buy else '卖'} @ ${price}"
+                )
+
+    def _confirm_fill(self, symbol: str, level: GridLevel, order_type: str) -> bool:
+        """确认订单是否已成交（非被撤销）。
+
+        通过查询交易所成交历史 (user_fills) 判断。
+        """
+        try:
+            user_address = self.order_manager.client.address
+            fills = self.order_manager.client.info.user_fills(user_address) or []
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] 查询成交记录失败: {e}")
+            return False
+
+        order_id = level.open_order_id if order_type == "open" else level.close_order_id
+
+        for fill in fills:
+            if fill.get("oid") == order_id:
+                price = to_decimal(fill.get("px", "0"))
+                amount = to_decimal(fill.get("sz", "0"))
+                timestamp = fill.get("time", time.time())
+
+                if order_type == "open":
+                    level.open_fill_price = price
+                    level.open_fill_amount = amount
+                    level.open_fill_time = timestamp
+                else:
+                    level.close_fill_price = price
+                    level.close_fill_amount = amount
+                    level.close_fill_time = timestamp
+                return True
+
+        return False
+
+    def _place_close_order(self, symbol: str, level: GridLevel):
+        """根据开仓实际成交价计算平仓价格并挂平仓单。"""
+        if level.open_fill_price is None or level.open_fill_amount is None:
+            self.logger.print_warning(
+                f"   [Grid] {level.id} 缺少开仓成交数据，无法挂平仓单"
+            )
+            return
+
+        # 从 state 获取 tp_ratio
+        grid_data = self.state["active_grids"].get(symbol, {})
+        config = grid_data.get("config", {})
+        params = config.get("parameters", config)
+        tp_ratio = to_decimal(params.get("tp_ratio", "0.005"))
+
+        if level.side == "LONG":
+            # 做多平仓 = 卖出，价格 = 开仓价 x (1 + tp_ratio)
+            close_price = level.open_fill_price * (Decimal("1") + tp_ratio)
+            is_buy = False
+        else:
+            # 做空平仓 = 买入，价格 = 开仓价 x (1 - tp_ratio)
+            close_price = level.open_fill_price * (Decimal("1") - tp_ratio)
+            is_buy = True
+
+        formatted_price = self.order_manager.client.format_price(
+            symbol, float(close_price)
+        )
+
+        result = self.order_manager.client.place_limit_order(
+            symbol=symbol,
+            is_buy=is_buy,
+            size=float(level.open_fill_amount),
+            price=formatted_price,
+            reduce_only=True,
+        )
+
+        if isinstance(result, dict) and result.get("status") == "ok":
+            oid = self._extract_oid(result)
+            if oid:
+                level.close_order_id = oid
+                level.state = GridLevelState.CLOSE_PENDING
+                self.logger.print_info(
+                    f"   [Grid] {level.id} 挂平仓单 {'买' if is_buy else '卖'} "
+                    f"@ ${formatted_price} (reduce_only)"
+                )
+        else:
+            self.logger.print_warning(
+                f"   [Grid] {level.id} 平仓单失败 @ ${formatted_price}: {result}"
+            )
+
+    def _record_round_trip(self, symbol: str, level: GridLevel):
+        """在层级完成一轮开平仓时调用，记录 PnL。"""
+        tracker = self.pnl_trackers.get(symbol)
+        if not tracker:
+            tracker = GridPnLTracker()
+            self.pnl_trackers[symbol] = tracker
+
+        pnl = tracker.record_round_trip(level)
+        self.logger.print_info(
+            f"   [Grid] {level.id} 完成第 {level.round_trip_count} 轮 | "
+            f"PnL: {pnl:+.4f} | 累计: {level.cumulative_pnl:+.4f}"
+        )
+
+    def _save_incremental_state(self, symbol: str):
+        """保存增量同步后的层级状态和 PnL 数据。"""
+        grid_data = self.state["active_grids"].get(symbol, {})
+        levels = self.grid_levels.get(symbol, [])
+        tracker = self.pnl_trackers.get(symbol)
+
+        grid_data["levels"] = [level.to_dict() for level in levels]
+        if tracker:
+            grid_data["pnl"] = tracker.to_dict()
+        grid_data["last_sync"] = time.time()
+
+        self.state["active_grids"][symbol] = grid_data
+        self._save_state()
