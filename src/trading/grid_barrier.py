@@ -7,7 +7,7 @@ Triple Barrier 网格级风控
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 from src.utils.precision import to_decimal
 
@@ -16,26 +16,26 @@ from src.utils.precision import to_decimal
 class TripleBarrierConfig:
     """三重屏障风控配置"""
 
-    # 1. 止损：整个网格的未实现+已实现 PnL% 低于此值 -> 全部平仓
-    stop_loss_pct: Optional[Decimal] = field(default_factory=lambda: Decimal("0.05"))
+    # 1. 止损：当总亏损百分比达到或超过此值时触发全部平仓（PnL <= -stop_loss_pct）
+    stop_loss_pct: Decimal | None = field(default_factory=lambda: Decimal("0.05"))
 
     # 2. 止盈：整个网格的净 PnL% 高于此值 -> 全部平仓获利了结
-    take_profit_pct: Optional[Decimal] = field(default_factory=lambda: Decimal("0.10"))
+    take_profit_pct: Decimal | None = field(default_factory=lambda: Decimal("0.10"))
 
     # 3. 时间限制：网格运行超过此秒数 -> 全部平仓
-    time_limit_seconds: Optional[int] = 14400  # 4 小时
+    time_limit_seconds: int | None = 14400  # 4 小时
 
     # 4. 追踪止损
-    trailing_stop_activation_pct: Optional[Decimal] = field(
+    trailing_stop_activation_pct: Decimal | None = field(
         default_factory=lambda: Decimal("0.03")
     )
-    trailing_stop_delta_pct: Optional[Decimal] = field(
+    trailing_stop_delta_pct: Decimal | None = field(
         default_factory=lambda: Decimal("0.01")
     )
 
     # 5. 限价保护：价格超出此范围 -> 触发平仓
-    price_lower_limit: Optional[Decimal] = None
-    price_upper_limit: Optional[Decimal] = None
+    price_lower_limit: Decimal | None = None
+    price_upper_limit: Decimal | None = None
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "TripleBarrierConfig":
@@ -45,33 +45,25 @@ class TripleBarrierConfig:
 
         barrier = cls()
 
-        if "stop_loss_pct" in config:
-            val = config["stop_loss_pct"]
-            barrier.stop_loss_pct = to_decimal(val) if val is not None else None
+        # 字段名到转换函数的映射
+        converters: dict[str, type] = {
+            "stop_loss_pct": to_decimal,
+            "take_profit_pct": to_decimal,
+            "time_limit_seconds": int,
+            "trailing_stop_activation_pct": to_decimal,
+            "trailing_stop_delta_pct": to_decimal,
+            "price_lower_limit": to_decimal,
+            "price_upper_limit": to_decimal,
+        }
 
-        if "take_profit_pct" in config:
-            val = config["take_profit_pct"]
-            barrier.take_profit_pct = to_decimal(val) if val is not None else None
-
-        if "time_limit_seconds" in config:
-            val = config["time_limit_seconds"]
-            barrier.time_limit_seconds = int(val) if val is not None else None
-
-        if "trailing_stop_activation_pct" in config:
-            val = config["trailing_stop_activation_pct"]
-            barrier.trailing_stop_activation_pct = to_decimal(val) if val is not None else None
-
-        if "trailing_stop_delta_pct" in config:
-            val = config["trailing_stop_delta_pct"]
-            barrier.trailing_stop_delta_pct = to_decimal(val) if val is not None else None
-
-        if "price_lower_limit" in config:
-            val = config["price_lower_limit"]
-            barrier.price_lower_limit = to_decimal(val) if val is not None else None
-
-        if "price_upper_limit" in config:
-            val = config["price_upper_limit"]
-            barrier.price_upper_limit = to_decimal(val) if val is not None else None
+        for field_name, converter in converters.items():
+            if field_name in config:
+                value = config[field_name]
+                setattr(
+                    barrier,
+                    field_name,
+                    converter(value) if value is not None else None,
+                )
 
         return barrier
 
@@ -82,14 +74,14 @@ class GridBarrierMonitor:
     def __init__(self, config: TripleBarrierConfig, start_time: float):
         self.config = config
         self.start_time = start_time
-        self._trailing_stop_high_water: Optional[Decimal] = None
+        self._trailing_stop_high_water: Decimal | None = None
 
     def check(
         self,
         current_price: Decimal,
         net_pnl_pct: Decimal,
         current_time: float,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         检查是否触发屏障。
         返回 None = 安全，返回字符串 = 触发原因。
@@ -130,7 +122,7 @@ class GridBarrierMonitor:
 
         return None
 
-    def _check_trailing_stop(self, net_pnl_pct: Decimal) -> Optional[str]:
+    def _check_trailing_stop(self, net_pnl_pct: Decimal) -> str | None:
         cfg = self.config
 
         if self._trailing_stop_high_water is None:

@@ -6,7 +6,7 @@ import unittest
 from decimal import Decimal
 
 from src.utils.grid_math import GridLevel, GridLevelState
-from src.utils.precision import to_decimal, quantize_price, quantize_size
+from src.utils.precision import quantize_price, quantize_size, to_decimal
 
 
 class TestGridLevelState(unittest.TestCase):

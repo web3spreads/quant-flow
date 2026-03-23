@@ -48,7 +48,8 @@ trading:
 # Triple Barrier 网格级风控
 # 在单层 TP/SL trigger 之上提供全局兜底保护
 risk_management:
-  # 止损：整个网格的 PnL% 低于此值 -> 全部平仓
+  # 止损：当总亏损百分比达到或超过此值时，触发全部平仓
+  # 例如，设置为 0.05，则当 PnL <= -5% 时触发
   # 设置为 null 可禁用
   stop_loss_pct: 0.05         # 5%
 

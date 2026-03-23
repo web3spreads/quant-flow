@@ -5,7 +5,7 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from src.utils.precision import to_decimal
 
@@ -31,15 +31,15 @@ class GridLevel:
     state: GridLevelState = GridLevelState.IDLE
 
     # 订单追踪
-    open_order_id: Optional[int] = None
-    open_fill_price: Optional[Decimal] = None
-    open_fill_amount: Optional[Decimal] = None  # base 数量
-    open_fill_time: Optional[float] = None
+    open_order_id: int | None = None
+    open_fill_price: Decimal | None = None
+    open_fill_amount: Decimal | None = None  # base 数量
+    open_fill_time: float | None = None
 
-    close_order_id: Optional[int] = None
-    close_fill_price: Optional[Decimal] = None
-    close_fill_amount: Optional[Decimal] = None
-    close_fill_time: Optional[float] = None
+    close_order_id: int | None = None
+    close_fill_price: Decimal | None = None
+    close_fill_amount: Decimal | None = None
+    close_fill_time: float | None = None
 
     # 统计
     round_trip_count: int = 0

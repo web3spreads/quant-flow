@@ -805,10 +805,10 @@ class GridManager:
         else:  # GEOMETRIC
             if d_lower <= 0 or d_upper <= 0:
                 return [float(d_lower.quantize(tick))]
-            # Decimal 不直接支持分数幂，借助 float 做幂运算再转回
-            ratio = float(d_upper / d_lower) ** (1.0 / (num - 1))
+            # 使用 Decimal 的 ln/exp 实现精确分数幂
+            log_ratio = (d_upper / d_lower).ln() / Decimal(str(num - 1))
             for i in range(num):
-                p = d_lower * to_decimal(ratio**i)
+                p = d_lower * (log_ratio * Decimal(str(i))).exp()
                 prices.append(float(p.quantize(tick)))
         return prices
 
@@ -926,8 +926,8 @@ class GridManager:
                         f"\n- 完成轮回: {summary['completed_round_trips']} 次"
                         f"\n- 累计手续费: {summary['total_fees']:.4f} USDT"
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.print_error(f"   [Grid] 获取网格摘要 PnL 时出错: {e}")
 
         return base_info
 
@@ -971,8 +971,8 @@ class GridManager:
                     sell_count=0,
                     reason=f"Triple Barrier 触发: {reason}",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] 发送 Triple Barrier 触发通知失败: {e}")
 
     def sync_grid_incremental(self, symbol: str):
         """增量同步：只处理需要操作的层级，不全撤全建。"""
