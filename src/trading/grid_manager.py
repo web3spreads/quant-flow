@@ -89,9 +89,7 @@ class GridManager:
             # 恢复层级
             levels_data = grid_data.get("levels")
             if levels_data and isinstance(levels_data, list):
-                self.grid_levels[symbol] = [
-                    GridLevel.from_dict(ld) for ld in levels_data
-                ]
+                self.grid_levels[symbol] = [GridLevel.from_dict(ld) for ld in levels_data]
             # 恢复 PnL tracker
             pnl_data = grid_data.get("pnl")
             if pnl_data and isinstance(pnl_data, dict):
@@ -915,9 +913,7 @@ class GridManager:
                 if current_price and current_price > 0:
                     current_price_d = to_decimal(current_price)
                     # 总投入 = 所有层的 amount 之和
-                    total_investment = sum(
-                        (level.amount for level in levels), Decimal("0")
-                    )
+                    total_investment = sum((level.amount for level in levels), Decimal("0"))
                     summary = tracker.get_summary(levels, current_price_d, total_investment)
                     base_info += (
                         f"\n- 已实现 PnL: {summary['realized_pnl']:+.4f} USDT"
@@ -989,12 +985,8 @@ class GridManager:
                 current_price_raw = self.order_manager.client.get_current_price(symbol)
                 if current_price_raw and current_price_raw > 0:
                     current_price_d = to_decimal(current_price_raw)
-                    total_investment = sum(
-                        (level.amount for level in levels), Decimal("0")
-                    )
-                    net_pnl_pct = tracker.get_net_pnl_pct(
-                        levels, current_price_d, total_investment
-                    )
+                    total_investment = sum((level.amount for level in levels), Decimal("0"))
+                    net_pnl_pct = tracker.get_net_pnl_pct(levels, current_price_d, total_investment)
                     trigger = monitor.check(
                         current_price=current_price_d,
                         net_pnl_pct=net_pnl_pct,
@@ -1051,9 +1043,7 @@ class GridManager:
                     # reset 后变为 IDLE，下一轮 sync 会重新挂单
 
             except Exception as e:
-                self.logger.print_error(
-                    f"   [Grid] {level.id} 同步异常: {e}"
-                )
+                self.logger.print_error(f"   [Grid] {level.id} 同步异常: {e}")
 
         self._save_incremental_state(symbol)
 
@@ -1144,9 +1134,7 @@ class GridManager:
     def _place_close_order(self, symbol: str, level: GridLevel):
         """根据开仓实际成交价计算平仓价格并挂平仓单。"""
         if level.open_fill_price is None or level.open_fill_amount is None:
-            self.logger.print_warning(
-                f"   [Grid] {level.id} 缺少开仓成交数据，无法挂平仓单"
-            )
+            self.logger.print_warning(f"   [Grid] {level.id} 缺少开仓成交数据，无法挂平仓单")
             return
 
         # 从 state 获取 tp_ratio
@@ -1164,9 +1152,7 @@ class GridManager:
             close_price = level.open_fill_price * (Decimal("1") - tp_ratio)
             is_buy = True
 
-        formatted_price = self.order_manager.client.format_price(
-            symbol, float(close_price)
-        )
+        formatted_price = self.order_manager.client.format_price(symbol, float(close_price))
 
         result = self.order_manager.client.place_limit_order(
             symbol=symbol,

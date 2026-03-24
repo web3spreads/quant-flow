@@ -23,14 +23,16 @@ class TestTripleBarrierConfig(unittest.TestCase):
 
     def test_from_config(self):
         """从字典构建配置"""
-        cfg = TripleBarrierConfig.from_config({
-            "stop_loss_pct": 0.03,
-            "take_profit_pct": 0.08,
-            "time_limit_seconds": 7200,
-            "trailing_stop_activation_pct": None,
-            "price_lower_limit": 1800,
-            "price_upper_limit": 2200,
-        })
+        cfg = TripleBarrierConfig.from_config(
+            {
+                "stop_loss_pct": 0.03,
+                "take_profit_pct": 0.08,
+                "time_limit_seconds": 7200,
+                "trailing_stop_activation_pct": None,
+                "price_lower_limit": 1800,
+                "price_upper_limit": 2200,
+            }
+        )
         self.assertEqual(cfg.stop_loss_pct, Decimal("0.03"))
         self.assertEqual(cfg.take_profit_pct, Decimal("0.08"))
         self.assertEqual(cfg.time_limit_seconds, 7200)

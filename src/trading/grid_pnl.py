@@ -67,9 +67,7 @@ class GridPnLTracker:
 
         return net_pnl
 
-    def calculate_unrealized_pnl(
-        self, levels: list[GridLevel], current_price: Decimal
-    ) -> Decimal:
+    def calculate_unrealized_pnl(self, levels: list[GridLevel], current_price: Decimal) -> Decimal:
         """计算所有持仓中层级的未实现盈亏。"""
         unrealized = Decimal("0")
 
@@ -170,7 +168,5 @@ class GridPnLTracker:
         tracker.realized_sell_volume = to_decimal(data.get("realized_sell_volume", "0"))
         tracker.realized_fees = to_decimal(data.get("realized_fees", "0"))
         tracker.completed_round_trips = int(data.get("completed_round_trips", 0))
-        tracker.maker_fee_rate = to_decimal(
-            data.get("maker_fee_rate", "0.00035")
-        )
+        tracker.maker_fee_rate = to_decimal(data.get("maker_fee_rate", "0.00035"))
         return tracker

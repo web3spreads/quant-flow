@@ -26,12 +26,8 @@ class TripleBarrierConfig:
     time_limit_seconds: int | None = 14400  # 4 小时
 
     # 4. 追踪止损
-    trailing_stop_activation_pct: Decimal | None = field(
-        default_factory=lambda: Decimal("0.03")
-    )
-    trailing_stop_delta_pct: Decimal | None = field(
-        default_factory=lambda: Decimal("0.01")
-    )
+    trailing_stop_activation_pct: Decimal | None = field(default_factory=lambda: Decimal("0.03"))
+    trailing_stop_delta_pct: Decimal | None = field(default_factory=lambda: Decimal("0.01"))
 
     # 5. 限价保护：价格超出此范围 -> 触发平仓
     price_lower_limit: Decimal | None = None
@@ -107,10 +103,7 @@ class GridBarrierMonitor:
                 return f"TIME_LIMIT: {elapsed:.0f}s >= {cfg.time_limit_seconds}s"
 
         # 4. 追踪止损
-        if (
-            cfg.trailing_stop_activation_pct is not None
-            and cfg.trailing_stop_delta_pct is not None
-        ):
+        if cfg.trailing_stop_activation_pct is not None and cfg.trailing_stop_delta_pct is not None:
             trigger = self._check_trailing_stop(net_pnl_pct)
             if trigger:
                 return trigger
@@ -118,7 +111,9 @@ class GridBarrierMonitor:
         # 5. 整体止盈
         if cfg.take_profit_pct is not None:
             if net_pnl_pct >= cfg.take_profit_pct:
-                return f"TAKE_PROFIT: PnL {float(net_pnl_pct):.2%} >= {float(cfg.take_profit_pct):.2%}"
+                return (
+                    f"TAKE_PROFIT: PnL {float(net_pnl_pct):.2%} >= {float(cfg.take_profit_pct):.2%}"
+                )
 
         return None
 

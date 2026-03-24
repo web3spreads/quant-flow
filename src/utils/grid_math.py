@@ -66,12 +66,20 @@ class GridLevel:
             "side": self.side,
             "state": self.state.value,
             "open_order_id": self.open_order_id,
-            "open_fill_price": str(self.open_fill_price) if self.open_fill_price is not None else None,
-            "open_fill_amount": str(self.open_fill_amount) if self.open_fill_amount is not None else None,
+            "open_fill_price": str(self.open_fill_price)
+            if self.open_fill_price is not None
+            else None,
+            "open_fill_amount": str(self.open_fill_amount)
+            if self.open_fill_amount is not None
+            else None,
             "open_fill_time": self.open_fill_time,
             "close_order_id": self.close_order_id,
-            "close_fill_price": str(self.close_fill_price) if self.close_fill_price is not None else None,
-            "close_fill_amount": str(self.close_fill_amount) if self.close_fill_amount is not None else None,
+            "close_fill_price": str(self.close_fill_price)
+            if self.close_fill_price is not None
+            else None,
+            "close_fill_amount": str(self.close_fill_amount)
+            if self.close_fill_amount is not None
+            else None,
             "close_fill_time": self.close_fill_time,
             "round_trip_count": self.round_trip_count,
             "cumulative_pnl": str(self.cumulative_pnl),
@@ -88,12 +96,26 @@ class GridLevel:
             state=GridLevelState(data.get("state", "IDLE")),
         )
         level.open_order_id = data.get("open_order_id")
-        level.open_fill_price = to_decimal(data["open_fill_price"]) if data.get("open_fill_price") is not None else None
-        level.open_fill_amount = to_decimal(data["open_fill_amount"]) if data.get("open_fill_amount") is not None else None
+        level.open_fill_price = (
+            to_decimal(data["open_fill_price"]) if data.get("open_fill_price") is not None else None
+        )
+        level.open_fill_amount = (
+            to_decimal(data["open_fill_amount"])
+            if data.get("open_fill_amount") is not None
+            else None
+        )
         level.open_fill_time = data.get("open_fill_time")
         level.close_order_id = data.get("close_order_id")
-        level.close_fill_price = to_decimal(data["close_fill_price"]) if data.get("close_fill_price") is not None else None
-        level.close_fill_amount = to_decimal(data["close_fill_amount"]) if data.get("close_fill_amount") is not None else None
+        level.close_fill_price = (
+            to_decimal(data["close_fill_price"])
+            if data.get("close_fill_price") is not None
+            else None
+        )
+        level.close_fill_amount = (
+            to_decimal(data["close_fill_amount"])
+            if data.get("close_fill_amount") is not None
+            else None
+        )
         level.close_fill_time = data.get("close_fill_time")
         level.round_trip_count = data.get("round_trip_count", 0)
         level.cumulative_pnl = to_decimal(data.get("cumulative_pnl", "0"))
