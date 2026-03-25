@@ -66,6 +66,7 @@ class GridFlowBot:
             self.order_manager,
             self.logger,
             notifier=self.notifier,
+            state_file="data/grid_state.json",
             grid_limit_order_take_profit_enabled=self.config.grid_limit_order_take_profit_enabled,
             grid_limit_order_stop_loss_enabled=self.config.grid_limit_order_stop_loss_enabled,
             grid_reduce_only_exit_orders_enabled=self.config.grid_reduce_only_exit_orders_enabled,
