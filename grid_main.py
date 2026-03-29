@@ -18,6 +18,7 @@ from src.data.market_data import MarketDataFetcher
 from src.llm import LLMClientManager
 from src.notification.notifier import Notifier
 from src.trading.client import HyperliquidClient
+from src.trading.grid_barrier import TripleBarrierConfig
 from src.trading.grid_manager import GridManager
 from src.trading.order_manager import OrderManager
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
@@ -45,11 +46,14 @@ class GridFlowBot:
                 flush_interval=self.config.cloud_logging_flush_interval,
                 payload_ttl=self.config.cloud_logging_payload_ttl,
             )
-            cloud.send_system_event("startup", details={
-                "config_path": config_path,
-                "symbols": self.config.symbols,
-                "run_mode": "grid",
-            })
+            cloud.send_system_event(
+                "startup",
+                details={
+                    "config_path": config_path,
+                    "symbols": self.config.symbols,
+                    "run_mode": "grid",
+                },
+            )
 
         is_testnet = self.config.hyperliquid_testnet
         self.notifier = Notifier(self.config.notifications, is_testnet=is_testnet)
@@ -68,6 +72,18 @@ class GridFlowBot:
             stop_loss_ratio=self.config.stop_loss_ratio,
             default_leverage=self.config.default_leverage,
         )
+        # 从配置中构建 Triple Barrier 风控参数
+        risk_cfg = self.config.config_data.get("risk_management", {})
+        barrier_config = TripleBarrierConfig(
+            stop_loss_pct=risk_cfg.get("stop_loss_pct"),
+            take_profit_pct=risk_cfg.get("take_profit_pct"),
+            time_limit_seconds=risk_cfg.get("time_limit_seconds"),
+            trailing_stop_activation_pct=risk_cfg.get("trailing_stop_activation_pct"),
+            trailing_stop_delta_pct=risk_cfg.get("trailing_stop_delta_pct"),
+            price_lower_limit=risk_cfg.get("price_lower_limit"),
+            price_upper_limit=risk_cfg.get("price_upper_limit"),
+        )
+
         self.grid_manager = GridManager(
             self.order_manager,
             self.logger,
@@ -76,6 +92,7 @@ class GridFlowBot:
             grid_limit_order_take_profit_enabled=self.config.grid_limit_order_take_profit_enabled,
             grid_limit_order_stop_loss_enabled=self.config.grid_limit_order_stop_loss_enabled,
             grid_reduce_only_exit_orders_enabled=self.config.grid_reduce_only_exit_orders_enabled,
+            barrier_config=barrier_config,
         )
 
         self.logger.print_info("初始化 LLM 客户端管理器...")
@@ -100,31 +117,43 @@ class GridFlowBot:
 
     def run_cycle(self):
         """执行一个网格交易周期"""
+        symbol = self.config.symbols[0]
+        cloud = get_cloud_logger()
+
         try:
             self.logger.print_header(
                 f"🔄 网格交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
+            if cloud:
+                cloud.send_cycle_event(symbol=symbol, phase="start")
 
             df = self.market_fetcher.fetch_ohlcv(
-                symbol=self.config.symbols[0],
+                symbol=symbol,
                 timeframe=self.config.timeframe,
                 limit=100,
             )
 
             if df is None or df.empty:
                 self.logger.print_error("无法获取市场数据")
+                if cloud:
+                    cloud.send_cycle_event(
+                        symbol=symbol,
+                        phase="skip",
+                        details={"reason": "无法获取市场数据"},
+                        level="warn",
+                    )
                 return
 
             df = TechnicalIndicators.calculate_all_indicators(df)
             market_data = TechnicalIndicators.get_latest_indicators(df)
-            self.logger.print_market_data(self.config.symbols[0], market_data)
+            self.logger.print_market_data(symbol, market_data)
 
             multi_timeframe_trends = TechnicalIndicators.get_multi_timeframe_trend(
                 self.market_fetcher,
-                self.config.symbols[0],
+                symbol,
                 cached_ohlcv={self.config.timeframe: df},
             )
-            current_grid_summary = self.grid_manager.get_grid_summary(self.config.symbols[0])
+            current_grid_summary = self.grid_manager.get_grid_summary(symbol)
 
             ai_decision = self.agent.make_decision(
                 market_data,
@@ -137,7 +166,7 @@ class GridFlowBot:
             reason = ai_decision.get("reason", "")
             confidence = float(ai_decision.get("confidence", 0.0))
             self.logger.log_decision(
-                symbol=self.config.symbols[0],
+                symbol=symbol,
                 market_data=market_data,
                 prompt="[GridAgent]",
                 ai_response=reason,
@@ -147,16 +176,49 @@ class GridFlowBot:
                 confidence=confidence,
             )
 
-            self.grid_manager.sync_grid(self.config.symbols[0], ai_decision)
+            self.grid_manager.sync_grid(symbol, ai_decision)
             self.logger.print_header("✅ 网格交易周期完成")
+
+            # 记录周期结束事件，附带网格 PnL 摘要
+            if cloud:
+                grid_summary = self.grid_manager.get_grid_summary(symbol)
+                pnl_data = {}
+                tracker = self.grid_manager.pnl_trackers.get(symbol)
+                levels = self.grid_manager.grid_levels.get(symbol)
+                if tracker and levels:
+                    try:
+                        from decimal import Decimal
+
+                        from src.utils.precision import to_decimal
+
+                        cp = self.grid_manager.order_manager.client.get_current_price(symbol)
+                        if cp and cp > 0:
+                            total_inv = sum((lv.amount for lv in levels), Decimal("0"))
+                            pnl_data = tracker.get_summary(levels, to_decimal(cp), total_inv)
+                            # Decimal 转 float 以便 JSON 序列化
+                            pnl_data = {
+                                k: float(v) if isinstance(v, Decimal) else v
+                                for k, v in pnl_data.items()
+                            }
+                    except Exception:
+                        pass
+                cloud.send_cycle_event(
+                    symbol=symbol,
+                    phase="end",
+                    details={
+                        "action": action,
+                        "confidence": confidence,
+                        "grid_summary": grid_summary,
+                        **pnl_data,
+                    },
+                )
 
         except Exception as e:
             self.logger.print_error(f"网格周期执行异常: {e}\n{traceback.format_exc()}")
             # 记录网格周期异常到云端
-            cloud = get_cloud_logger()
             if cloud:
                 cloud.send_alert(
-                    symbol=self.config.symbols[0] if self.config.symbols else "UNKNOWN",
+                    symbol=symbol if self.config.symbols else "UNKNOWN",
                     alert_type="grid_cycle_error",
                     severity="high",
                     message=str(e),
