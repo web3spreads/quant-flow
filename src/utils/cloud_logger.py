@@ -11,7 +11,6 @@ aepipe 项目: https://github.com/loadchange/aepipe
 """
 
 import contextlib
-import json
 import logging
 import queue
 import threading
