@@ -221,8 +221,10 @@ class LimitOrderMonitor:
                                 symbol=symbol,
                                 risk_type="tpsl_failed_emergency_close",
                                 details={
-                                    "order_id": order_id, "attempts": max_attempts,
-                                    "sl_price": sl_price, "actual_size": actual_size,
+                                    "order_id": order_id,
+                                    "attempts": max_attempts,
+                                    "sl_price": sl_price,
+                                    "actual_size": actual_size,
                                 },
                                 level="error",
                             )

@@ -408,9 +408,7 @@ class TestFlush:
 
     def test_flush_calls_sdk_log(self, cloud_logger):
         """flush 应调用 SDK 的 log 方法批量发送"""
-        cloud_logger._client.log = MagicMock(
-            return_value=MagicMock(ok=True, written=2)
-        )
+        cloud_logger._client.log = MagicMock(return_value=MagicMock(ok=True, written=2))
 
         cloud_logger.send_log("消息1")
         cloud_logger.send_log("消息2")
@@ -425,9 +423,7 @@ class TestFlush:
 
     def test_flush_calls_sdk_ingest(self, cloud_logger):
         """flush 应调用 SDK 的 ingest 方法批量发送"""
-        cloud_logger._client.ingest = MagicMock(
-            return_value=MagicMock(ok=True, written=2)
-        )
+        cloud_logger._client.ingest = MagicMock(return_value=MagicMock(ok=True, written=2))
 
         cloud_logger.send_event(event="e1")
         cloud_logger.send_event(event="e2")
@@ -442,9 +438,7 @@ class TestFlush:
 
     def test_flush_with_payload_points(self, cloud_logger):
         """带 payload 的事件应通过 SDK ingest 发送"""
-        cloud_logger._client.ingest = MagicMock(
-            return_value=MagicMock(ok=True, written=1)
-        )
+        cloud_logger._client.ingest = MagicMock(return_value=MagicMock(ok=True, written=1))
 
         cloud_logger.send_decision(
             symbol="BTC",
@@ -465,9 +459,7 @@ class TestFlush:
         """AepipeError 不应抛出异常"""
         from aepipe import AepipeError
 
-        cloud_logger._client.log = MagicMock(
-            side_effect=AepipeError(500, "服务器错误")
-        )
+        cloud_logger._client.log = MagicMock(side_effect=AepipeError(500, "服务器错误"))
 
         cloud_logger.send_log("test")
         # 不应抛异常
@@ -477,9 +469,7 @@ class TestFlush:
         """ValidationError 不应抛出异常（跳过不重试）"""
         from aepipe import ValidationError
 
-        cloud_logger._client.ingest = MagicMock(
-            side_effect=ValidationError("blob 超限")
-        )
+        cloud_logger._client.ingest = MagicMock(side_effect=ValidationError("blob 超限"))
 
         cloud_logger.send_event(event="test")
         # 不应抛异常
@@ -487,9 +477,7 @@ class TestFlush:
 
     def test_flush_handles_network_error_gracefully(self, cloud_logger):
         """网络错误不应抛出异常"""
-        cloud_logger._client.log = MagicMock(
-            side_effect=OSError("连接失败")
-        )
+        cloud_logger._client.log = MagicMock(side_effect=OSError("连接失败"))
 
         cloud_logger.send_log("test")
         cloud_logger.flush()
@@ -588,9 +576,7 @@ class TestShutdown:
 
     def test_shutdown_flushes_remaining(self, cloud_logger):
         """关闭时应刷新剩余日志"""
-        cloud_logger._client.log = MagicMock(
-            return_value=MagicMock(ok=True, written=1)
-        )
+        cloud_logger._client.log = MagicMock(return_value=MagicMock(ok=True, written=1))
 
         cloud_logger.send_log("最后一条")
         cloud_logger.shutdown()

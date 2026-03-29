@@ -716,7 +716,8 @@ class HyperliquidClient:
                                 symbol=symbol,
                                 risk_type="stop_loss_failed_rollback",
                                 details={
-                                    "is_buy": is_buy, "size": size,
+                                    "is_buy": is_buy,
+                                    "size": size,
                                     "stop_loss_price": stop_loss_price,
                                     "sl_error": sl_error,
                                 },
@@ -753,7 +754,8 @@ class HyperliquidClient:
                                     symbol=symbol,
                                     risk_type="rollback_failed_critical",
                                     details={
-                                        "is_buy": is_buy, "size": size,
+                                        "is_buy": is_buy,
+                                        "size": size,
                                         "retries": max_rollback_retries,
                                         "last_error": str(rollback_error),
                                         "message": critical_msg,
