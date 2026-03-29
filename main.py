@@ -8,6 +8,7 @@ import argparse
 import signal
 import sys
 import threading
+import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -948,7 +949,7 @@ class QuantFlowBot:
                             alert_type="decision_error",
                             severity="high",
                             message=str(e),
-                            details={"traceback": repr(e), "cycle": self.cycle_counter},
+                            details={"traceback": traceback.format_exc(), "cycle": self.cycle_counter},
                         )
                     send_error_notification(
                         notifier=self.notifier,
@@ -984,7 +985,7 @@ class QuantFlowBot:
                     alert_type="cycle_error",
                     severity="extreme",
                     message=str(e),
-                    details={"traceback": repr(e), "cycle": self.cycle_counter},
+                    details={"traceback": traceback.format_exc(), "cycle": self.cycle_counter},
                 )
 
             # 发送错误通知
