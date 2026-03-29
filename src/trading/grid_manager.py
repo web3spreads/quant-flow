@@ -962,6 +962,7 @@ class GridManager:
     def _emergency_close_all(self, symbol: str, reason: str):
         """紧急全部平仓（Triple Barrier 触发时调用）。"""
         self.logger.print_warning(f"   [Grid] 紧急平仓: {reason}")
+        cloud = get_cloud_logger()
 
         # 1. 撤掉所有挂单
         self._cancel_all_orders(symbol)
@@ -975,7 +976,6 @@ class GridManager:
                 self.logger.print_info(f"   [Grid] {symbol} 市价平仓完成: {result}")
         except Exception as e:
             self.logger.print_error(f"   [Grid] {symbol} 市价平仓失败: {e}")
-            cloud = get_cloud_logger()
             if cloud:
                 cloud.send_alert(
                     symbol=symbol,
@@ -986,7 +986,6 @@ class GridManager:
                 )
 
         # 记录紧急平仓事件到云端
-        cloud = get_cloud_logger()
         if cloud:
             cloud.send_grid_event(
                 symbol=symbol,

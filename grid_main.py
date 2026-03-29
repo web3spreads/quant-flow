@@ -7,6 +7,7 @@ import argparse
 import sys
 import traceback
 from datetime import datetime
+from decimal import Decimal
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -23,6 +24,7 @@ from src.trading.grid_manager import GridManager
 from src.trading.order_manager import OrderManager
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
+from src.utils.precision import to_decimal
 
 
 class GridFlowBot:
@@ -117,7 +119,7 @@ class GridFlowBot:
 
     def run_cycle(self):
         """执行一个网格交易周期"""
-        symbol = self.config.symbols[0]
+        symbol = self.config.symbols[0] if self.config.symbols else "UNKNOWN"
         cloud = get_cloud_logger()
 
         try:
@@ -187,10 +189,6 @@ class GridFlowBot:
                 levels = self.grid_manager.grid_levels.get(symbol)
                 if tracker and levels:
                     try:
-                        from decimal import Decimal
-
-                        from src.utils.precision import to_decimal
-
                         cp = self.grid_manager.order_manager.client.get_current_price(symbol)
                         if cp and cp > 0:
                             total_inv = sum((lv.amount for lv in levels), Decimal("0"))
@@ -200,8 +198,8 @@ class GridFlowBot:
                                 k: float(v) if isinstance(v, Decimal) else v
                                 for k, v in pnl_data.items()
                             }
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.logger.print_warning(f"PnL 摘要计算失败: {e}")
                 cloud.send_cycle_event(
                     symbol=symbol,
                     phase="end",
@@ -218,7 +216,7 @@ class GridFlowBot:
             # 记录网格周期异常到云端
             if cloud:
                 cloud.send_alert(
-                    symbol=symbol if self.config.symbols else "UNKNOWN",
+                    symbol=symbol,
                     alert_type="grid_cycle_error",
                     severity="high",
                     message=str(e),
