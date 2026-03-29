@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from src.trading.client import HyperliquidClient
+from src.utils.cloud_logger import get_cloud_logger
 from src.utils.grid_math import extract_order_id
 
 
@@ -214,6 +215,19 @@ class LimitOrderMonitor:
                     # 重试或紧急平仓
                     if order_info["tpsl_attempts"] >= max_attempts:
                         print("⚠️ 【安全机制】止损设置多次失败，紧急平仓")
+                        cloud = get_cloud_logger()
+                        if cloud:
+                            cloud.send_risk_event(
+                                symbol=symbol,
+                                risk_type="tpsl_failed_emergency_close",
+                                details={
+                                    "order_id": order_id,
+                                    "attempts": max_attempts,
+                                    "sl_price": sl_price,
+                                    "actual_size": actual_size,
+                                },
+                                level="error",
+                            )
                         self.client.close_position(symbol)
                         self.remove_order(order_id)
                         return

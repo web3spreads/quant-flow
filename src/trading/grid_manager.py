@@ -12,6 +12,7 @@ from contextlib import suppress
 from typing import Any
 
 from src.trading.order_manager import OrderManager
+from src.utils.cloud_logger import get_cloud_logger
 from src.utils.grid_math import extract_order_id
 from src.utils.logger import TradingLogger
 
@@ -286,6 +287,26 @@ class GridManager:
         }
         self._save_state()
         self.logger.print_info(f"✅ {symbol} 网格调整完成。")
+
+        # 记录网格重建事件到云端
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_grid_event(
+                symbol=symbol,
+                action="rebuild",
+                details={
+                    "lower_price": new_lower,
+                    "upper_price": new_upper,
+                    "grid_num": new_num,
+                    "amount_per_grid": new_amount,
+                    "tp_ratio": tp_ratio,
+                    "sl_ratio": sl_ratio,
+                    "buy_count": len(buy_orders),
+                    "sell_count": len(sell_orders),
+                    "current_price": current_price,
+                    "reason": ai_config.get("reason", "N/A"),
+                },
+            )
 
         # 无论 AI 如何，始终检查减仓保护单（不强制补基础开仓单）
         if self.grid_reduce_only_exit_orders_enabled:

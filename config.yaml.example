@@ -330,9 +330,10 @@ logging:
   # 决策日志格式（json 或 csv）
   decision_log_format: json
 
-# 云端日志配置（aepipe 服务，https://github.com/loadchange/aepipe）
-# 基于 Cloudflare Workers + Analytics Engine 的免费日志管道
-# 启用后所有本地日志将异步同步到云端，不影响主交易流程
+# 云端日志配置（aepipe-sdk 0.1.1，https://github.com/loadchange/aepipe）
+# 基于 Cloudflare Workers + Analytics Engine + D1 的生产级日志管道
+# 启用后所有日志异步同步到云端：决策全文、交易记录、风控事件、账户快照等
+# 长数据（AI 响应、Prompt、市场快照）通过 D1 payload 存储，突破 16KB blob 限制
 cloud_logging:
   # 是否启用云端日志同步（总开关）
   enabled: false
@@ -353,6 +354,10 @@ cloud_logging:
 
   # 批量发送间隔（秒），日志在本地缓存后定时批量上传
   flush_interval: 5.0
+
+  # D1 payload 过期时间（秒），默认 90 天（7776000），与 Analytics Engine 保留期一致
+  # 完整 AI 响应、Prompt、市场快照等大数据通过 D1 存储，需要 aepipe 服务端配置 D1 绑定
+  payload_ttl: 7776000
 
 # 通知配置
 notifications:

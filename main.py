@@ -8,6 +8,7 @@ import argparse
 import signal
 import sys
 import threading
+import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -38,7 +39,7 @@ from src.prompt_manager import PromptManager
 from src.trading.client import HyperliquidClient
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
-from src.utils.cloud_logger import init_cloud_logger
+from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
 
 
@@ -69,15 +70,21 @@ class QuantFlowBot:
             decision_log_format=self.config.decision_log_format,
         )
 
-        # 初始化云端日志（aepipe 服务）
+        # 初始化云端日志（aepipe-sdk 0.1.1，支持 D1 payload 完整日志）
         if self.config.cloud_logging_enabled:
-            init_cloud_logger(
+            cloud = init_cloud_logger(
                 base_url=self.config.cloud_logging_base_url,
                 token=self.config.cloud_logging_token,
                 project=self.config.cloud_logging_project,
                 logstore=self.config.cloud_logging_logstore,
                 flush_interval=self.config.cloud_logging_flush_interval,
+                payload_ttl=self.config.cloud_logging_payload_ttl,
             )
+            cloud.send_system_event("startup", details={
+                "config_path": config_path,
+                "symbols": self.config.symbols,
+                "run_mode": "main",
+            })
 
         # 打印启动信息
         print_startup_banner(config=self.config, console=self.logger.console)
@@ -534,6 +541,21 @@ class QuantFlowBot:
             f"🚨 [市场监控] 检测到异常波动: {alert.message} [{alert.level.value}]"
         )
 
+        # 记录异常波动告警到云端
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_alert(
+                symbol=alert.symbol,
+                alert_type="volatility",
+                severity=alert.level.value,
+                message=alert.message,
+                details={
+                    "change_pct": alert.change_pct,
+                    "current_price": alert.current_price,
+                    "reference_price": alert.reference_price,
+                },
+            )
+
         # 存储告警信息（供决策周期读取）
         with self._alert_lock:
             self._pending_alerts[alert.symbol] = alert
@@ -594,6 +616,21 @@ class QuantFlowBot:
             self.logger.print_info(
                 f"当前持仓数量: {len(current_positions)}/{self.config.max_positions}"
             )
+
+            # 记录账户快照到云端
+            cloud = get_cloud_logger()
+            if cloud:
+                cloud.send_account_snapshot(
+                    balance=balance_info.get("total", 0),
+                    equity=balance_info.get("equity", balance_info.get("total", 0)),
+                    unrealized_pnl=balance_info.get("unrealized_pnl", 0),
+                    positions=[
+                        {"symbol": p.get("symbol", ""), "size": p.get("size", 0),
+                         "entry_price": p.get("entry_price", 0),
+                         "unrealized_pnl": p.get("unrealized_pnl", 0)}
+                        for p in current_positions
+                    ] if current_positions else [],
+                )
 
             # 调整交易金额
             suggestion = self.order_manager.calculate_suggested_trade_amount(
@@ -904,6 +941,16 @@ class QuantFlowBot:
                 except Exception as e:
                     self.logger.print_error(f"{symbol} Agent 决策异常: {e}")
                     self.logger.logger.exception(e)
+                    # 记录决策异常到云端
+                    cloud = get_cloud_logger()
+                    if cloud:
+                        cloud.send_alert(
+                            symbol=symbol,
+                            alert_type="decision_error",
+                            severity="high",
+                            message=str(e),
+                            details={"traceback": traceback.format_exc(), "cycle": self.cycle_counter},
+                        )
                     send_error_notification(
                         notifier=self.notifier,
                         exception=e,
@@ -929,6 +976,17 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"交易周期异常: {e}")
             self.logger.logger.exception(e)
+
+            # 记录周期异常到云端
+            cloud = get_cloud_logger()
+            if cloud:
+                cloud.send_alert(
+                    symbol="ALL",
+                    alert_type="cycle_error",
+                    severity="extreme",
+                    message=str(e),
+                    details={"traceback": traceback.format_exc(), "cycle": self.cycle_counter},
+                )
 
             # 发送错误通知
             if self.notifier:
@@ -1028,6 +1086,16 @@ class QuantFlowBot:
 
         # 发送关闭通知
         self._send_shutdown_notification(reason)
+
+        # 记录关闭事件到云端并刷新日志
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_system_event("shutdown", details={
+                "reason": reason,
+                "cycle_count": self.cycle_counter,
+                "statistics": self.statistics,
+            })
+            cloud.shutdown()
 
         self.logger.print_info("机器人已停止")
 
