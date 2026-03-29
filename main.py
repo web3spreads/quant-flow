@@ -82,7 +82,7 @@ class QuantFlowBot:
             )
             cloud.send_system_event("startup", details={
                 "config_path": config_path,
-                "symbols": self.config.trading_symbols,
+                "symbols": self.config.symbols,
                 "run_mode": "main",
             })
 
