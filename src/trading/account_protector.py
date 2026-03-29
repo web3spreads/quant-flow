@@ -394,6 +394,22 @@ class AccountProtector:
 
         print(f"🛡️ 【保护机制触发】{reason}")
 
+        # 记录保护机制触发到云端
+        from src.utils.cloud_logger import get_cloud_logger
+
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_risk_event(
+                symbol="ALL",
+                risk_type="protection_triggered",
+                details={
+                    "reason": reason,
+                    "peak_equity": self._peak_equity,
+                    "consecutive_losses": self._consecutive_losses,
+                },
+                level="error",
+            )
+
         if self.on_protection_triggered:
             try:
                 self.on_protection_triggered(reason)

@@ -39,6 +39,9 @@ dependencies = [
     # 终端 UI
     "rich>=14.0.0",
 
+    # 云端日志（aepipe 服务 SDK）
+    "aepipe-sdk>=0.1.1",
+
     # 容器内多进程管理（Docker 部署需要，supervisord 通过 PATH 调用）
     "supervisor>=4.2.0",
 ]

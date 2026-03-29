@@ -382,7 +382,7 @@ class Config:
         self.notifications = self.config_data.get("notifications", {"enabled": False})
 
     def _init_cloud_logging_config(self):
-        """初始化云端日志配置（aepipe 服务）"""
+        """初始化云端日志配置（aepipe 服务，v2 支持 D1 payload）"""
         cloud = self.config_data.get("cloud_logging", {})
         self.cloud_logging_enabled: bool = cloud.get("enabled", False)
         self.cloud_logging_base_url: str = cloud.get(
@@ -392,6 +392,8 @@ class Config:
         self.cloud_logging_project: str = cloud.get("project", "quant-flow")
         self.cloud_logging_logstore: str = cloud.get("logstore", "trading")
         self.cloud_logging_flush_interval: float = float(cloud.get("flush_interval", 5.0))
+        # D1 payload 过期时间（秒），默认 90 天，与 Analytics Engine 保留期一致
+        self.cloud_logging_payload_ttl: int = int(cloud.get("payload_ttl", 90 * 24 * 3600))
 
     def _init_market_monitor_config(self):
         """初始化市场主动监控配置"""

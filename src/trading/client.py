@@ -14,6 +14,7 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
 
 from src.fees import FeeRates, calculate_fee_rates
+from src.utils.cloud_logger import get_cloud_logger
 from src.utils.hyperliquid import create_info, safe_spot_meta
 
 
@@ -709,6 +710,19 @@ class HyperliquidClient:
                     # 【关键安全机制】止损单失败，立即平仓避免裸仓（带重试）
                     if require_stop_loss:
                         print("⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
+                        cloud = get_cloud_logger()
+                        if cloud:
+                            cloud.send_risk_event(
+                                symbol=symbol,
+                                risk_type="stop_loss_failed_rollback",
+                                details={
+                                    "is_buy": is_buy,
+                                    "size": size,
+                                    "stop_loss_price": stop_loss_price,
+                                    "sl_error": sl_error,
+                                },
+                                level="error",
+                            )
                         max_rollback_retries = 3
                         rollback_success = False
                         rollback_error = None
@@ -734,6 +748,20 @@ class HyperliquidClient:
                             critical_msg = f"警告：安全平仓在尝试 {max_rollback_retries} 次后仍然失败: {rollback_error}，请立即手动处理！"
                             result["errors"].append(critical_msg)
                             print(f"❌ 【严重】{critical_msg}")
+                            cloud = get_cloud_logger()
+                            if cloud:
+                                cloud.send_risk_event(
+                                    symbol=symbol,
+                                    risk_type="rollback_failed_critical",
+                                    details={
+                                        "is_buy": is_buy,
+                                        "size": size,
+                                        "retries": max_rollback_retries,
+                                        "last_error": str(rollback_error),
+                                        "message": critical_msg,
+                                    },
+                                    level="error",
+                                )
 
                         return result
 

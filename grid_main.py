@@ -20,7 +20,7 @@ from src.notification.notifier import Notifier
 from src.trading.client import HyperliquidClient
 from src.trading.grid_manager import GridManager
 from src.trading.order_manager import OrderManager
-from src.utils.cloud_logger import init_cloud_logger
+from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
 
 
@@ -35,15 +35,21 @@ class GridFlowBot:
         self.config = get_config(config_path, env_file=env_file)
         self.logger = get_logger(log_level="INFO")
 
-        # 初始化云端日志（aepipe 服务）
+        # 初始化云端日志（aepipe-sdk 0.1.1，支持 D1 payload 完整日志）
         if self.config.cloud_logging_enabled:
-            init_cloud_logger(
+            cloud = init_cloud_logger(
                 base_url=self.config.cloud_logging_base_url,
                 token=self.config.cloud_logging_token,
                 project=self.config.cloud_logging_project,
                 logstore=self.config.cloud_logging_logstore,
                 flush_interval=self.config.cloud_logging_flush_interval,
+                payload_ttl=self.config.cloud_logging_payload_ttl,
             )
+            cloud.send_system_event("startup", details={
+                "config_path": config_path,
+                "symbols": self.config.symbols,
+                "run_mode": "grid",
+            })
 
         is_testnet = self.config.hyperliquid_testnet
         self.notifier = Notifier(self.config.notifications, is_testnet=is_testnet)
@@ -146,6 +152,16 @@ class GridFlowBot:
 
         except Exception as e:
             self.logger.print_error(f"网格周期执行异常: {e}\n{traceback.format_exc()}")
+            # 记录网格周期异常到云端
+            cloud = get_cloud_logger()
+            if cloud:
+                cloud.send_alert(
+                    symbol=self.config.symbols[0] if self.config.symbols else "UNKNOWN",
+                    alert_type="grid_cycle_error",
+                    severity="high",
+                    message=str(e),
+                    details={"traceback": traceback.format_exc()},
+                )
 
     def run(self):
         """启动机器人"""
