@@ -378,7 +378,7 @@ class TradingLogger:
         except OSError as e:
             self.logger.warning(f"决策日志写入失败: {e}")
 
-        # 同步到云端
+        # 同步到云端（完整数据，通过 D1 payload 存储，不截断）
         if self._cloud:
             self._cloud.send_decision(
                 symbol=symbol,
@@ -388,6 +388,9 @@ class TradingLogger:
                 confidence=confidence,
                 current_price=float(market_data.get("current_price", 0)),
                 error_message=error_message or "",
+                prompt=prompt or "",
+                market_data=market_data,
+                action_details=action_details,
             )
 
     def _save_decision_json(self, timestamp: datetime, log_entry: dict[str, Any]):
@@ -479,7 +482,7 @@ class TradingLogger:
 
         self.logger.info(f"交易记录: {action} {amount} {symbol} @ {price}")
 
-        # 同步到云端
+        # 同步到云端（完整交易数据）
         if self._cloud:
             self._cloud.send_trade(
                 symbol=symbol,
@@ -489,6 +492,8 @@ class TradingLogger:
                 order_id=order_id or "",
                 pnl=float(pnl) if pnl else 0.0,
                 status=status,
+                take_profit_price=float(take_profit_price) if take_profit_price else 0.0,
+                stop_loss_price=float(stop_loss_price) if stop_loss_price else 0.0,
             )
 
 
