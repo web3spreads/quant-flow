@@ -2,7 +2,124 @@
 网格计算数学引擎 (理科男强修版 - 彻底修复 Hyperliquid 保证金占用逻辑)
 """
 
+from dataclasses import dataclass, field
+from decimal import Decimal
+from enum import Enum
 from typing import Any
+
+from src.utils.precision import to_decimal
+
+
+class GridLevelState(Enum):
+    """层级状态机"""
+
+    IDLE = "IDLE"  # 空闲，等待挂开仓单
+    OPEN_PENDING = "OPEN_PENDING"  # 开仓单已挂，等待成交
+    OPEN_FILLED = "OPEN_FILLED"  # 开仓成交，等待挂平仓单
+    CLOSE_PENDING = "CLOSE_PENDING"  # 平仓单已挂，等待成交
+    COMPLETED = "COMPLETED"  # 开平仓均完成 -> 即将 reset 回 IDLE
+
+
+@dataclass
+class GridLevel:
+    """单个网格层级"""
+
+    id: str  # "L0", "L1", ...
+    price: Decimal  # 该层挂单价格
+    amount: Decimal  # 该层下单金额（quote，USD）
+    side: str  # "LONG" or "SHORT"
+    state: GridLevelState = GridLevelState.IDLE
+
+    # 订单追踪
+    open_order_id: int | None = None
+    open_fill_price: Decimal | None = None
+    open_fill_amount: Decimal | None = None  # base 数量
+    open_fill_time: float | None = None
+
+    close_order_id: int | None = None
+    close_fill_price: Decimal | None = None
+    close_fill_amount: Decimal | None = None
+    close_fill_time: float | None = None
+
+    # 统计
+    round_trip_count: int = 0
+    cumulative_pnl: Decimal = field(default_factory=lambda: Decimal("0"))
+
+    def reset(self):
+        """完成一轮后重置，保留统计数据。"""
+        self.state = GridLevelState.IDLE
+        self.open_order_id = None
+        self.open_fill_price = None
+        self.open_fill_amount = None
+        self.open_fill_time = None
+        self.close_order_id = None
+        self.close_fill_price = None
+        self.close_fill_amount = None
+        self.close_fill_time = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为可 JSON 持久化的字典。"""
+        return {
+            "id": self.id,
+            "price": str(self.price),
+            "amount": str(self.amount),
+            "side": self.side,
+            "state": self.state.value,
+            "open_order_id": self.open_order_id,
+            "open_fill_price": str(self.open_fill_price)
+            if self.open_fill_price is not None
+            else None,
+            "open_fill_amount": str(self.open_fill_amount)
+            if self.open_fill_amount is not None
+            else None,
+            "open_fill_time": self.open_fill_time,
+            "close_order_id": self.close_order_id,
+            "close_fill_price": str(self.close_fill_price)
+            if self.close_fill_price is not None
+            else None,
+            "close_fill_amount": str(self.close_fill_amount)
+            if self.close_fill_amount is not None
+            else None,
+            "close_fill_time": self.close_fill_time,
+            "round_trip_count": self.round_trip_count,
+            "cumulative_pnl": str(self.cumulative_pnl),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "GridLevel":
+        """从字典反序列化恢复层级（崩溃恢复）。"""
+        level = cls(
+            id=data["id"],
+            price=to_decimal(data["price"]),
+            amount=to_decimal(data["amount"]),
+            side=data["side"],
+            state=GridLevelState(data.get("state", "IDLE")),
+        )
+        level.open_order_id = data.get("open_order_id")
+        level.open_fill_price = (
+            to_decimal(data["open_fill_price"]) if data.get("open_fill_price") is not None else None
+        )
+        level.open_fill_amount = (
+            to_decimal(data["open_fill_amount"])
+            if data.get("open_fill_amount") is not None
+            else None
+        )
+        level.open_fill_time = data.get("open_fill_time")
+        level.close_order_id = data.get("close_order_id")
+        level.close_fill_price = (
+            to_decimal(data["close_fill_price"])
+            if data.get("close_fill_price") is not None
+            else None
+        )
+        level.close_fill_amount = (
+            to_decimal(data["close_fill_amount"])
+            if data.get("close_fill_amount") is not None
+            else None
+        )
+        level.close_fill_time = data.get("close_fill_time")
+        level.round_trip_count = data.get("round_trip_count", 0)
+        level.cumulative_pnl = to_decimal(data.get("cumulative_pnl", "0"))
+        return level
 
 
 def extract_order_id(limit_order_res: dict[str, Any]) -> int | None:
@@ -46,59 +163,64 @@ def calculate_grid_config(
     但如果一次性挂 6-8 个格子，系统会因为并行订单的潜在占用导致 Insufficient margin。
 
     修正方案：将单格金额大幅度压缩，确保 (单格金额 * 格子数) 远低于 (可用余额 * 杠杆)。
-    """
 
-    # 1. 计算区间 (保持原样)
+    内部使用 Decimal 精确计算，输出仍为 float（兼容 API 边界）。
+    """
+    # Decimal 精确计算
+    d_price = to_decimal(current_price)
+    d_balance = to_decimal(available_balance)
+    d_width = to_decimal(width_pct)
+    d_grid_num = Decimal(str(grid_num))
+    d_leverage = Decimal(str(leverage))
+
+    # 1. 计算区间
     if mode == "LONG":
-        lower_price = current_price * (1 - width_pct)
-        upper_price = current_price * 1.01
+        lower_price = d_price * (Decimal("1") - d_width)
+        upper_price = d_price * Decimal("1.01")
     elif mode == "SHORT":
-        lower_price = current_price * 0.99
-        upper_price = current_price * (1 + width_pct)
+        lower_price = d_price * Decimal("0.99")
+        upper_price = d_price * (Decimal("1") + d_width)
     else:  # NEUTRAL
-        lower_price = current_price * (1 - width_pct / 2)
-        upper_price = current_price * (1 + width_pct / 2)
+        lower_price = d_price * (Decimal("1") - d_width / Decimal("2"))
+        upper_price = d_price * (Decimal("1") + d_width / Decimal("2"))
 
     # 2. 【核心修正】极其保守的金额分配
-    # 既然之前的 0.6 安全系数还是报错，说明测试网可能在撤单未完全释放时就预扣了新单。
-    # 我们将安全系数调至 0.4，并强制限制单格金额。
-    conservative_safety = 0.4
+    conservative_safety = Decimal("0.4")
 
     # 总额度计算
-    total_notional_cap = available_balance * leverage * conservative_safety
+    total_notional_cap = d_balance * d_leverage * conservative_safety
 
     # 单格金额
-    amount_per_grid = total_notional_cap / grid_num
+    amount_per_grid = total_notional_cap / d_grid_num
 
-    # 强制兜底：如果算出来太大，强制压低到 25 USD 左右，这足够触发网格利润了
-    if amount_per_grid > 30.0:
-        amount_per_grid = 25.5
+    # 强制兜底：如果算出来太大，强制压低到 25.5 USD
+    if amount_per_grid > Decimal("30"):
+        amount_per_grid = Decimal("25.5")
 
     # Hyperliquid 最小限制
-    if amount_per_grid < 15.5:
-        amount_per_grid = 15.5
+    if amount_per_grid < Decimal("15.5"):
+        amount_per_grid = Decimal("15.5")
 
     # 3. 计算止盈止损
     # 止盈：每格宽度的 80%，确保覆盖双边手续费（Hyperliquid 约 0.035% Maker）
-    # 最低保障：tp_ratio >= 双边手续费 / 杠杆 * 2（2 倍手续费作为最小利润缓冲）
-    fee_rate = 0.00035  # Hyperliquid Maker 手续费率（保守估计）
-    min_tp_ratio = fee_rate * 2 * 2  # 双边手续费 × 2 倍缓冲（tp_ratio 是价格百分比，与杠杆无关）
-    raw_tp_ratio = (width_pct / grid_num) * 0.8
-    tp_ratio = round(max(raw_tp_ratio, min_tp_ratio), 4)
+    fee_rate = Decimal("0.00035")
+    min_tp_ratio = fee_rate * Decimal("4")  # 双边手续费 x 2 倍缓冲
+    raw_tp_ratio = (d_width / d_grid_num) * Decimal("0.8")
+    tp_ratio = max(raw_tp_ratio, min_tp_ratio)
 
     # 止损：控制在止盈的 2 倍内，避免单次止损亏损过多
-    # 同时设置上限 2%（10x 杠杆下最多亏损 20% 本金），下限 0.5%
-    max_sl_ratio = 0.02
-    min_sl_ratio = 0.005
-    sl_ratio = round(min(max(tp_ratio * 2, min_sl_ratio), max_sl_ratio), 4)
+    max_sl_ratio = Decimal("0.02")
+    min_sl_ratio = Decimal("0.005")
+    sl_ratio = min(max(tp_ratio * Decimal("2"), min_sl_ratio), max_sl_ratio)
 
+    # 输出为 float（API 边界兼容），保留合理精度
     return {
         "action": "UPDATE_GRID",
-        "lower_price": round(lower_price, 1),
-        "upper_price": round(upper_price, 1),
+        "lower_price": float(lower_price.quantize(Decimal("0.1"))),
+        "upper_price": float(upper_price.quantize(Decimal("0.1"))),
         "grid_num": int(grid_num),
-        "amount_per_grid": round(amount_per_grid, 2),
-        "tp_ratio": tp_ratio,
-        "sl_ratio": sl_ratio,
+        "amount_per_grid": float(amount_per_grid.quantize(Decimal("0.01"))),
+        "tp_ratio": float(tp_ratio.quantize(Decimal("0.0001"))),
+        "sl_ratio": float(sl_ratio.quantize(Decimal("0.0001"))),
         "mode": mode,
     }
