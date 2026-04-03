@@ -23,7 +23,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: 安装开发依赖
         run: uv sync --group dev
@@ -43,7 +43,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: 编译检查所有 Python 文件
         run: python -m compileall -q src/ tests/
@@ -60,7 +60,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: 安装依赖
         run: uv sync --group dev
