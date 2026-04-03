@@ -1198,7 +1198,7 @@ class QuantFlowBot:
         target = next_candle_close_ts(self.config.timeframe) + self.config.timeframe_offset
         sleep_duration = max(target - time.time(), self.config.min_throttle_secs)
 
-        target_str = datetime.utcfromtimestamp(target).strftime("%H:%M:%S")
+        target_str = time.strftime("%H:%M:%S", time.gmtime(target))
         self.logger.print_info(
             f"[节拍] 等待下一根 {self.config.timeframe} K 线 | "
             f"目标: {target_str} UTC | 等待: {sleep_duration:.0f}s"
