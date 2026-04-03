@@ -172,6 +172,14 @@ class ConsecutiveLossProtection(IProtection):
         except Exception as e:
             logger.warning("上报连续亏损风控事件失败: %s", e)
 
+    def _reset_state(self) -> None:
+        self._global_losses = 0
+        self._symbol_losses = {}
+        self._locked_symbols = {}
+        self._is_paused = False
+        self._pause_reason = ""
+        self._last_protection_time = None
+
     def _get_state_dict(self) -> dict[str, Any]:
         return {
             "global_losses": self._global_losses,

@@ -266,8 +266,36 @@ class TestDecisionReplayer:
         assert btc is not None
         assert btc[0] == "BUY"
 
-        # 需要 reset 因为指针已前进
-        replayer.reset()
+        # per-symbol 独立指针，无需 reset 即可查询其他 symbol
         eth = replayer.get_decision(datetime(2024, 1, 1), "ETH")
         assert eth is not None
         assert eth[0] == "SELL"
+
+    def test_multi_symbol_interleaved(self, jsonl_path):
+        """多交易对交织排列时，各 symbol 的决策互不丢失"""
+        _create_jsonl(
+            jsonl_path,
+            [
+                {"schema_version": 1, "timestamp": "2024-01-01T00:00:00", "symbol": "BTC", "decision": "BUY", "details": {}},
+                {"schema_version": 1, "timestamp": "2024-01-01T00:05:00", "symbol": "ETH", "decision": "SELL", "details": {}},
+                {"schema_version": 1, "timestamp": "2024-01-01T00:10:00", "symbol": "BTC", "decision": "SELL_SHORT", "details": {}},
+                {"schema_version": 1, "timestamp": "2024-01-01T00:15:00", "symbol": "ETH", "decision": "BUY", "details": {}},
+            ],
+        )
+        replayer = DecisionReplayer(jsonl_path)
+
+        # 先查 BTC 第 1 条
+        r1 = replayer.get_decision(datetime(2024, 1, 1, 0, 0, 0), "BTC")
+        assert r1 is not None and r1[0] == "BUY"
+
+        # 查 ETH 第 1 条（BTC 指针推进不影响 ETH）
+        r2 = replayer.get_decision(datetime(2024, 1, 1, 0, 5, 0), "ETH")
+        assert r2 is not None and r2[0] == "SELL"
+
+        # 继续查 BTC 第 2 条
+        r3 = replayer.get_decision(datetime(2024, 1, 1, 0, 10, 0), "BTC")
+        assert r3 is not None and r3[0] == "SELL_SHORT"
+
+        # 继续查 ETH 第 2 条
+        r4 = replayer.get_decision(datetime(2024, 1, 1, 0, 15, 0), "ETH")
+        assert r4 is not None and r4[0] == "BUY"

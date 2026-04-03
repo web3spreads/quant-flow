@@ -119,6 +119,13 @@ class DailyLossProtection(IProtection):
         except Exception as e:
             logger.warning("上报日亏损风控事件失败: %s", e)
 
+    def _reset_state(self) -> None:
+        self._daily_start_equity = 0.0
+        self._daily_start_date = ""
+        self._is_paused = False
+        self._pause_reason = ""
+        self._last_protection_time = None
+
     def _get_state_dict(self) -> dict[str, Any]:
         return {
             "daily_start_equity": self._daily_start_equity,

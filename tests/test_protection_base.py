@@ -77,3 +77,53 @@ class TestIProtection:
         """抽象基类不可直接实例化"""
         with pytest.raises(TypeError):
             IProtection(config={})
+
+
+class TestResetClearsMemory:
+    """reset() 同时清除磁盘和内存状态"""
+
+    def test_drawdown_reset_clears_memory(self, tmp_path):
+        from src.plugins.protections.drawdown import MaxDrawdownProtection
+
+        plugin = MaxDrawdownProtection(config={"max_drawdown_pct": 0.10}, data_dir=tmp_path)
+        # 制造内存状态
+        plugin._peak_equity = 50000.0
+        plugin._is_paused = True
+        plugin._pause_reason = "测试暂停"
+        plugin.save_state()
+
+        plugin.reset()
+
+        assert plugin._peak_equity == 0.0
+        assert plugin._is_paused is False
+        assert plugin._pause_reason == ""
+        assert plugin._last_protection_time is None
+        assert not plugin._state_file.exists()
+
+    def test_consecutive_loss_reset_clears_memory(self, tmp_path):
+        from src.plugins.protections.consecutive_loss import ConsecutiveLossProtection
+
+        plugin = ConsecutiveLossProtection(config={"max_consecutive_losses": 3}, data_dir=tmp_path)
+        plugin._global_losses = 5
+        plugin._symbol_losses = {"BTC": 3}
+        plugin._locked_symbols = {"BTC": "2099-01-01T00:00:00"}
+        plugin._is_paused = True
+        plugin.save_state()
+
+        plugin.reset()
+
+        assert plugin._global_losses == 0
+        assert plugin._symbol_losses == {}
+        assert plugin._locked_symbols == {}
+        assert plugin._is_paused is False
+
+    def test_position_timeout_reset_clears_memory(self, tmp_path):
+        from src.plugins.protections.position_timeout import PositionTimeoutProtection
+
+        plugin = PositionTimeoutProtection(config={"max_position_hours": 48}, data_dir=tmp_path)
+        plugin._position_records = {"BTC": {"entry_time": "2024-01-01T00:00:00"}}
+        plugin.save_state()
+
+        plugin.reset()
+
+        assert plugin._position_records == {}

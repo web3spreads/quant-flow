@@ -115,6 +115,9 @@ class PositionTimeoutProtection(IProtection):
         except Exception as e:
             logger.warning("上报超时风控事件失败: %s", e)
 
+    def _reset_state(self) -> None:
+        self._position_records = {}
+
     def _get_state_dict(self) -> dict[str, Any]:
         return {"position_records": self._position_records}
 

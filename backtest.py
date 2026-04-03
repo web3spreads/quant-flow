@@ -151,7 +151,13 @@ def parse_args():
         help='从 JSONL 文件回放决策（秒级完成，无需 LLM，结果可重现）'
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # 录制和回放互斥
+    if getattr(args, "record_decisions", None) and getattr(args, "replay_decisions", None):
+        parser.error("--record-decisions 和 --replay-decisions 不能同时使用")
+
+    return args
 
 
 def _build_live_report_filename(args) -> str:

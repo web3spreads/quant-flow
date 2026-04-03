@@ -113,6 +113,12 @@ class MaxDrawdownProtection(IProtection):
         except Exception as e:
             logger.warning("上报回撤风控事件失败: %s", e)
 
+    def _reset_state(self) -> None:
+        self._peak_equity = 0.0
+        self._is_paused = False
+        self._pause_reason = ""
+        self._last_protection_time = None
+
     def _get_state_dict(self) -> dict[str, Any]:
         return {
             "peak_equity": self._peak_equity,

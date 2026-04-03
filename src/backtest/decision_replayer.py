@@ -22,7 +22,7 @@ class DecisionReplayer:
         """
         self._tolerance = timedelta(seconds=tolerance_seconds)
         self._decisions: list[dict[str, Any]] = []
-        self._index = 0  # 顺序读取指针，利用时间单调递增
+        self._indices: dict[str, int] = {}  # 每个 symbol 独立的顺序读取指针
 
         with open(replay_path, encoding="utf-8") as f:
             for line in f:
@@ -56,10 +56,12 @@ class DecisionReplayer:
         Returns:
             (decision_str, details_dict) 或 None（无匹配）
         """
+        symbol_index = self._indices.get(symbol, 0)
         best_match = None
         best_diff = None
+        best_idx = symbol_index
 
-        for i in range(self._index, len(self._decisions)):
+        for i in range(symbol_index, len(self._decisions)):
             record = self._decisions[i]
             if record.get("symbol") != symbol:
                 continue
@@ -73,15 +75,16 @@ class DecisionReplayer:
                 if best_diff is None or diff < best_diff:
                     best_match = record
                     best_diff = diff
-                    self._index = i + 1
+                    best_idx = i + 1
             elif record_ts > timestamp + self._tolerance:
                 # 超过容忍度，后续记录时间更大，停止搜索
                 break
 
         if best_match:
+            self._indices[symbol] = best_idx
             return best_match["decision"], best_match.get("details", {})
         return None
 
     def reset(self) -> None:
         """重置读取指针到开头（用于多次回放）"""
-        self._index = 0
+        self._indices.clear()

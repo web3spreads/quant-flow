@@ -93,6 +93,35 @@ llm:
   # 模型名称（如不指定则使用 .env 中的 OPENAI_MODEL）
   # model: deepseek-chat
 
+# 云端日志配置（aepipe-sdk 0.1.1，https://github.com/loadchange/aepipe）
+# 基于 Cloudflare Workers + Analytics Engine + D1 的生产级日志管道
+# 启用后所有日志异步同步到云端：决策全文、交易记录、风控事件、账户快照等
+# 长数据（AI 响应、Prompt、市场快照）通过 D1 payload 存储，突破 16KB blob 限制
+cloud_logging:
+  # 是否启用云端日志同步（总开关）
+  enabled: false
+
+  # aepipe 服务地址（必填，你的 Cloudflare Worker URL）
+  # 也可通过环境变量 CLOUD_LOGGING_BASE_URL 设置
+  base_url: "https://your-aepipe-worker.workers.dev"
+
+  # aepipe ADMIN_TOKEN 认证令牌（必填）
+  # 也可通过环境变量 CLOUD_LOGGING_TOKEN 设置
+  token: "your_admin_token_here"
+
+  # aepipe 项目名称（用于数据隔离）
+  project: "quant-flow"
+
+  # aepipe 日志存储名称
+  logstore: "grid-trading"
+
+  # 批量发送间隔（秒），日志在本地缓存后定时批量上传
+  flush_interval: 5.0
+
+  # D1 payload 过期时间（秒），默认 90 天（7776000），与 Analytics Engine 保留期一致
+  # 完整 AI 响应、Prompt、市场快照等大数据通过 D1 存储，需要 aepipe 服务端配置 D1 绑定
+  payload_ttl: 7776000
+
 # 通知配置（可选）
 # 网格调整时会发送通知
 notifications:

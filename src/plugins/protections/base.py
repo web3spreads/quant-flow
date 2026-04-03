@@ -135,6 +135,12 @@ class IProtection(ABC):
         return  # noqa: B027 — 非抽象，子类按需覆盖
 
     def reset(self) -> None:
-        """重置插件状态"""
-        if self._state_file.exists():
-            self._state_file.unlink()
+        """重置插件状态（磁盘 + 内存）"""
+        with self._lock:
+            if self._state_file.exists():
+                self._state_file.unlink()
+            self._reset_state()
+
+    def _reset_state(self) -> None:
+        """重置内存状态（子类覆盖）"""
+        return  # noqa: B027 — 非抽象，子类按需覆盖
