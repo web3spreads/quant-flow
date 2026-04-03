@@ -747,11 +747,15 @@ class QuantFlowBot:
                     self.logger.print_warning("[风控]保护插件已暂停新开仓，仅管理现有持仓")
 
                 # 超时持仓自动平仓
+                # 注意：超时强平属于风控主动行为，不向连续亏损插件上报 pnl，
+                # 仅通知 position_timeout 插件清理记录
                 for ts in self.protection_manager.get_timeout_symbols():
                     self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
                     try:
                         self.order_manager.close_position(ts)
-                        self.protection_manager.on_trade_close(ts, 0)
+                        for plugin in self.protection_manager.plugins:
+                            if plugin.name == "position_timeout":
+                                plugin.on_trade_close(ts, 0)
                     except Exception as e:
                         self.logger.print_error(f"[风控]超时平仓失败 {ts}: {e}")
 

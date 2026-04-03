@@ -1002,6 +1002,8 @@ class GridManager:
             del self.grid_levels[symbol]
         if symbol in self.barrier_monitors:
             del self.barrier_monitors[symbol]
+        if symbol in self.pnl_trackers:
+            del self.pnl_trackers[symbol]
 
         # 通知
         if self.notifier:
@@ -1067,6 +1069,14 @@ class GridManager:
         exchange_orders = self._get_symbol_open_orders(symbol)
         exchange_oids = {o["oid"] for o in exchange_orders if "oid" in o}
 
+        # 统一获取一次成交记录，避免每个层级重复调用 API 触发频率限制
+        try:
+            user_address = self.order_manager.client.address
+            cached_fills = self.order_manager.client.info.user_fills(user_address) or []
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] 批量查询成交记录失败: {e}")
+            cached_fills = []
+
         for level in levels:
             try:
                 if level.state == GridLevelState.IDLE:
@@ -1077,7 +1087,7 @@ class GridManager:
                     # 检查开仓单是否还在挂单列表中
                     if level.open_order_id not in exchange_oids:
                         # 不在挂单列表 -> 已成交或被撤
-                        if self._confirm_fill(symbol, level, "open"):
+                        if self._confirm_fill(symbol, level, "open", cached_fills):
                             level.state = GridLevelState.OPEN_FILLED
                             self.logger.print_info(
                                 f"   [Grid] {level.id} 开仓成交 @ {level.open_fill_price}"
@@ -1100,7 +1110,7 @@ class GridManager:
 
                 elif level.state == GridLevelState.CLOSE_PENDING:
                     if level.close_order_id not in exchange_oids:
-                        if self._confirm_fill(symbol, level, "close"):
+                        if self._confirm_fill(symbol, level, "close", cached_fills):
                             level.state = GridLevelState.COMPLETED
                             self.logger.print_info(
                                 f"   [Grid] {level.id} 平仓成交 @ {level.close_fill_price}"
@@ -1188,17 +1198,21 @@ class GridManager:
                     status="PLACED",
                 )
 
-    def _confirm_fill(self, symbol: str, level: GridLevel, order_type: str) -> bool:
+    def _confirm_fill(
+        self, symbol: str, level: GridLevel, order_type: str, fills: list | None = None
+    ) -> bool:
         """确认订单是否已成交（非被撤销）。
 
         通过查询交易所成交历史 (user_fills) 判断。
+        优先使用外部传入的 fills 缓存，避免重复 API 调用。
         """
-        try:
-            user_address = self.order_manager.client.address
-            fills = self.order_manager.client.info.user_fills(user_address) or []
-        except Exception as e:
-            self.logger.print_error(f"   [Grid] 查询成交记录失败: {e}")
-            return False
+        if fills is None:
+            try:
+                user_address = self.order_manager.client.address
+                fills = self.order_manager.client.info.user_fills(user_address) or []
+            except Exception as e:
+                self.logger.print_error(f"   [Grid] 查询成交记录失败: {e}")
+                return False
 
         order_id = level.open_order_id if order_type == "open" else level.close_order_id
 

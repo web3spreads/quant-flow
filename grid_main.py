@@ -74,17 +74,9 @@ class GridFlowBot:
             stop_loss_ratio=self.config.stop_loss_ratio,
             default_leverage=self.config.default_leverage,
         )
-        # 从配置中构建 Triple Barrier 风控参数
+        # 从配置中构建 Triple Barrier 风控参数（from_config 内部做 Decimal 类型转换）
         risk_cfg = self.config.config_data.get("risk_management", {})
-        barrier_config = TripleBarrierConfig(
-            stop_loss_pct=risk_cfg.get("stop_loss_pct"),
-            take_profit_pct=risk_cfg.get("take_profit_pct"),
-            time_limit_seconds=risk_cfg.get("time_limit_seconds"),
-            trailing_stop_activation_pct=risk_cfg.get("trailing_stop_activation_pct"),
-            trailing_stop_delta_pct=risk_cfg.get("trailing_stop_delta_pct"),
-            price_lower_limit=risk_cfg.get("price_lower_limit"),
-            price_upper_limit=risk_cfg.get("price_upper_limit"),
-        )
+        barrier_config = TripleBarrierConfig.from_config(risk_cfg)
 
         self.grid_manager = GridManager(
             self.order_manager,
