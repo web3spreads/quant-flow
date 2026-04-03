@@ -35,6 +35,9 @@ class DecisionReplayer:
                     record["_ts"] = datetime.fromisoformat(ts)
                 self._decisions.append(record)
 
+        # 按时间戳排序，确保顺序指针查找的正确性
+        self._decisions.sort(key=lambda x: x.get("_ts", datetime.min))
+
     @property
     def total_decisions(self) -> int:
         """预录制的决策总数"""

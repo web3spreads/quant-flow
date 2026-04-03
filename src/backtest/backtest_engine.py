@@ -659,12 +659,15 @@ class BacktestEngine:
                         if self.cycle_counter % max(1, self.config.review_run_every_cycles) == 0:
                             self._run_review_agent()
 
-                # 执行决策（Agent的工具回调会自动调用order_manager）
-                # 对于平仓决策，需要检测持仓变化并记录交易
-                positions_after_decision = self.order_manager.get_current_positions()
+                # 执行决策（Agent 工具回调会自动调用 order_manager）
+                # 回放模式已在 _execute_replay_decision 中处理，跳过持仓变化检测
+                if self._replay_mode:
+                    pass
+                else:
+                    positions_after_decision = self.order_manager.get_current_positions()
 
-                # 检查是否有持仓被平掉
-                for pos_before in current_positions:
+                # 检查是否有持仓被平掉（仅正常模式）
+                for pos_before in [] if self._replay_mode else current_positions:
                     if pos_before.get("coin") == self.symbol:
                         # 检查这个持仓是否还存在
                         pos_after = next(
@@ -693,10 +696,13 @@ class BacktestEngine:
                 traceback.print_exc()
                 continue
 
-        # 关闭决策录制器
-        if self._decision_recorder:
-            self._decision_recorder.close()
-            print(f"   决策录制完成: {self._decision_recorder.count} 条")
+        # 确保决策录制器在任何情况下关闭
+        try:
+            if self._decision_recorder:
+                self._decision_recorder.close()
+                print(f"   决策录制完成: {self._decision_recorder.count} 条")
+        except Exception as e:
+            print(f"   决策录制器关闭失败: {e}")
 
         # 平掉所有剩余持仓
         self._close_all_positions(df.iloc[-1]["timestamp"], df.iloc[-1]["close"])
