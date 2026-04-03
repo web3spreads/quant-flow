@@ -32,7 +32,7 @@ class DecisionRecorder:
     def __init__(self, output_path: str | Path):
         self._path = Path(output_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = open(self._path, "a", encoding="utf-8")  # noqa: SIM115
+        self._file = open(self._path, "w", encoding="utf-8")  # noqa: SIM115
         self._count = 0
 
     def record(

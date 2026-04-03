@@ -1206,7 +1206,7 @@ class QuantFlowBot:
 
         end_time = time.time() + sleep_duration
         while time.time() < end_time and self.is_running:
-            time.sleep(min(1.0, end_time - time.time()))
+            time.sleep(max(0.0, min(1.0, end_time - time.time())))
 
     def stop(self, reason: str = "用户手动停止"):
         """停止机器人"""

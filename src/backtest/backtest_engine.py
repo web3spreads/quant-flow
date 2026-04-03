@@ -1138,10 +1138,11 @@ class BacktestEngine:
             return
 
         if decision in ("BUY", "SELL_SHORT"):
+            trade_amount = self.agent.trade_amount
+            if trade_amount <= 0:
+                return
+
             leverage = int(details.get("leverage", self.order_manager.default_leverage))
-            trade_amount = self.agent.trade_amount or (
-                self.config.max_trade_amount if self.config else 100
-            )
             is_long = decision == "BUY"
 
             if is_long:
