@@ -93,13 +93,9 @@ class TestStatePersistence:
 
     def test_state_survives_restart(self, tmp_dir):
         """重启后日亏损状态恢复"""
-        p1 = DailyLossProtection(
-            config={"max_daily_loss_pct": 0.05}, data_dir=tmp_dir
-        )
+        p1 = DailyLossProtection(config={"max_daily_loss_pct": 0.05}, data_dir=tmp_dir)
         p1.check(make_ctx(10000))
         assert p1._daily_start_equity == 10000
 
-        p2 = DailyLossProtection(
-            config={"max_daily_loss_pct": 0.05}, data_dir=tmp_dir
-        )
+        p2 = DailyLossProtection(config={"max_daily_loss_pct": 0.05}, data_dir=tmp_dir)
         assert p2._daily_start_equity == 10000

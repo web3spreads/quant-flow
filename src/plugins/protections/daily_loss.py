@@ -70,9 +70,7 @@ class DailyLossProtection(IProtection):
                 )
 
             # 计算日亏损
-            daily_loss_pct = (
-                (self._daily_start_equity - context.equity) / self._daily_start_equity
-            )
+            daily_loss_pct = (self._daily_start_equity - context.equity) / self._daily_start_equity
 
             if daily_loss_pct >= max_daily_loss_pct:
                 reason = (

@@ -43,10 +43,7 @@ class PositionTimeoutProtection(IProtection):
                     timeout_symbols.append(symbol)
 
             if timeout_symbols:
-                reason = (
-                    f"持仓超时保护触发: {', '.join(timeout_symbols)} "
-                    f"持仓超过 {max_hours}h"
-                )
+                reason = f"持仓超时保护触发: {', '.join(timeout_symbols)} 持仓超过 {max_hours}h"
                 self._send_cloud_event(timeout_symbols, max_hours)
 
                 return ProtectionReturn(

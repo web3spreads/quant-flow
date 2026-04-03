@@ -33,8 +33,12 @@ def full_config():
     return [
         {"name": "max_drawdown", "max_drawdown_pct": 0.10, "pause_hours": 1.0},
         {"name": "daily_loss", "max_daily_loss_pct": 0.05, "pause_hours": 1.0},
-        {"name": "consecutive_loss", "max_consecutive_losses": 3, "per_symbol": True,
-         "pause_hours": 1.0},
+        {
+            "name": "consecutive_loss",
+            "max_consecutive_losses": 3,
+            "per_symbol": True,
+            "pause_hours": 1.0,
+        },
         {"name": "position_timeout", "max_position_hours": 2.0},
     ]
 

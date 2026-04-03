@@ -109,9 +109,7 @@ class ConsecutiveLossProtection(IProtection):
                         self._symbol_losses[symbol],
                         lock_until.strftime("%H:%M"),
                     )
-                    self._send_cloud_event(
-                        symbol, self._symbol_losses[symbol], max_losses
-                    )
+                    self._send_cloud_event(symbol, self._symbol_losses[symbol], max_losses)
 
             self.save_state()
 
@@ -129,8 +127,7 @@ class ConsecutiveLossProtection(IProtection):
                 if datetime.now() < lock_until:
                     losses = self._symbol_losses.get(symbol, 0)
                     return True, (
-                        f"{symbol} 连续亏损 {losses} 次，"
-                        f"锁定至 {lock_until.strftime('%H:%M')}"
+                        f"{symbol} 连续亏损 {losses} 次，锁定至 {lock_until.strftime('%H:%M')}"
                     )
                 else:
                     # 锁定已过期

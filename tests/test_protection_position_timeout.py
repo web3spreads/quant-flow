@@ -94,13 +94,9 @@ class TestStatePersistence:
 
     def test_state_survives_restart(self, tmp_dir):
         """重启后持仓记录恢复"""
-        p1 = PositionTimeoutProtection(
-            config={"max_position_hours": 2.0}, data_dir=tmp_dir
-        )
+        p1 = PositionTimeoutProtection(config={"max_position_hours": 2.0}, data_dir=tmp_dir)
         p1.on_trade_open("BTC", 50000, 0.1, True, 5)
 
-        p2 = PositionTimeoutProtection(
-            config={"max_position_hours": 2.0}, data_dir=tmp_dir
-        )
+        p2 = PositionTimeoutProtection(config={"max_position_hours": 2.0}, data_dir=tmp_dir)
         assert "BTC" in p2._position_records
         assert p2._position_records["BTC"]["entry_price"] == 50000

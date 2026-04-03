@@ -110,15 +110,11 @@ class TestStatePersistence:
 
     def test_state_survives_restart(self, tmp_dir):
         """重启后峰值恢复"""
-        p1 = MaxDrawdownProtection(
-            config={"max_drawdown_pct": 0.10}, data_dir=tmp_dir
-        )
+        p1 = MaxDrawdownProtection(config={"max_drawdown_pct": 0.10}, data_dir=tmp_dir)
         p1.check(make_ctx(10000))
         p1.check(make_ctx(11000))
 
-        p2 = MaxDrawdownProtection(
-            config={"max_drawdown_pct": 0.10}, data_dir=tmp_dir
-        )
+        p2 = MaxDrawdownProtection(config={"max_drawdown_pct": 0.10}, data_dir=tmp_dir)
         assert p2._peak_equity == 11000
 
 
@@ -131,9 +127,7 @@ class TestCloudEvent:
         mock_cloud = MagicMock()
         mock_get_cloud.return_value = mock_cloud
 
-        plugin = MaxDrawdownProtection(
-            config={"max_drawdown_pct": 0.10}, data_dir=tmp_dir
-        )
+        plugin = MaxDrawdownProtection(config={"max_drawdown_pct": 0.10}, data_dir=tmp_dir)
         plugin.check(make_ctx(10000))
         plugin.check(make_ctx(8500))
 

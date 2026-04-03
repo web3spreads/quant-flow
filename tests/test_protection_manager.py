@@ -134,8 +134,12 @@ class TestSymbolLocking:
     def test_locks_via_consecutive_loss(self, tmp_dir):
         """通过连续亏损插件锁定交易对"""
         config = [
-            {"name": "consecutive_loss", "max_consecutive_losses": 2, "per_symbol": True,
-             "pause_hours": 1.0},
+            {
+                "name": "consecutive_loss",
+                "max_consecutive_losses": 2,
+                "per_symbol": True,
+                "pause_hours": 1.0,
+            },
         ]
         manager = ProtectionManager(protections_config=config, data_dir=tmp_dir)
 

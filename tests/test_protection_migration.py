@@ -34,8 +34,12 @@ class TestNewConfig:
         config = [
             {"name": "max_drawdown", "max_drawdown_pct": 0.10, "pause_hours": 4},
             {"name": "daily_loss", "max_daily_loss_pct": 0.05, "pause_hours": 4},
-            {"name": "consecutive_loss", "max_consecutive_losses": 5, "per_symbol": True,
-             "pause_hours": 4},
+            {
+                "name": "consecutive_loss",
+                "max_consecutive_losses": 5,
+                "per_symbol": True,
+                "pause_hours": 4,
+            },
             {"name": "position_timeout", "max_position_hours": 48},
         ]
         manager = ProtectionManager(protections_config=config, data_dir=tmp_dir)

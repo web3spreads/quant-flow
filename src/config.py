@@ -426,9 +426,7 @@ class Config:
         self.account_protection_max_daily_loss_pct: float = float(
             ap.get("max_daily_loss_pct", 0.05)
         )
-        self.account_protection_max_position_hours: float = float(
-            ap.get("max_position_hours", 48)
-        )
+        self.account_protection_max_position_hours: float = float(ap.get("max_position_hours", 48))
         self.account_protection_max_consecutive_losses: int = int(
             ap.get("max_consecutive_losses", 5)
         )
