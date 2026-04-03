@@ -28,6 +28,15 @@ from .mock_order_manager import MockOrderManager
 from .report_generator import BacktestReportGenerator
 
 
+class _NullAgent:
+    """回放模式占位 Agent，不做任何 LLM 调用"""
+
+    trade_amount = 0
+
+    def make_decision(self, **kwargs):
+        raise RuntimeError("回放模式不应调用 Agent.make_decision")
+
+
 class BacktestEngine:
     """回测引擎"""
 
@@ -41,6 +50,8 @@ class BacktestEngine:
         prompt_manager: PromptManager | None = None,
         strategy: str = "single",
         grid_state_file: str | None = None,
+        record_file: str | None = None,
+        replay_file: str | None = None,
     ):
         """
         初始化回测引擎
@@ -54,6 +65,8 @@ class BacktestEngine:
             prompt_manager: Prompt管理器
             strategy: 回测策略（single/grid）
             grid_state_file: 网格状态文件路径（仅 grid 策略使用）
+            record_file: 录制 JSONL 路径（录制模式）
+            replay_file: 回放 JSONL 路径（回放模式，不需要 LLM）
         """
         self.symbol = symbol
         self.historical_data = historical_data.copy()
@@ -74,9 +87,31 @@ class BacktestEngine:
             default_leverage=config.max_leverage if config else 10,
         )
 
-        # 初始化Agent（需要配置信息）
+        # 决策录制/回放
+        self._decision_recorder = None
+        self._decision_replayer = None
+        self._replay_mode = bool(replay_file)
+
+        if replay_file:
+            from src.backtest.decision_replayer import DecisionReplayer
+
+            self._decision_replayer = DecisionReplayer(replay_file)
+            print(
+                f"   回放模式: 从 {replay_file} 加载 {self._decision_replayer.total_decisions} 条决策"
+            )
+
+        if record_file:
+            from src.backtest.decision_recorder import DecisionRecorder
+
+            self._decision_recorder = DecisionRecorder(record_file)
+            print(f"   录制模式: 决策将写入 {record_file}")
+
+        # 初始化Agent（需要配置信息，回放模式跳过）
         self.grid_manager: GridManager | None = None
-        if config:
+        if self._replay_mode:
+            # 回放模式不需要 Agent/LLM
+            self.agent = _NullAgent()
+        elif config:
             if self.strategy == "grid":
                 self.agent = GridAgent(
                     symbol=symbol,
@@ -126,8 +161,10 @@ class BacktestEngine:
         # 决策历史
         self.decision_history = DecisionHistory(max_history=50)
 
-        # 汇总Agent（用于历史汇总）
-        if config:
+        # 汇总Agent（用于历史汇总，回放模式跳过）
+        if self._replay_mode:
+            self.summary_agent = None
+        elif config:
             self.summary_agent = SummaryAgentV2(
                 logger=self.logger,
                 openai_api_base=config.openai_api_base,
@@ -139,11 +176,11 @@ class BacktestEngine:
         else:
             self.summary_agent = None
 
-        # 复盘Agent（如果启用）
+        # 复盘Agent（如果启用，回放模式跳过）
         self.review_agent = None
         self.review_memory_store = None
         self.cycle_counter = 0
-        if config and config.review_enabled and prompt_manager:
+        if not self._replay_mode and config and config.review_enabled and prompt_manager:
             try:
                 self.logger.print_info("初始化复盘 Agent...")
                 self.review_memory_store = ReviewMemoryStore(
@@ -574,15 +611,35 @@ class BacktestEngine:
                     precomputed_4h=precomputed_4h,
                 )
 
-                # 调用Agent做出决策
-                decision, details = self.agent.make_decision(
-                    market_data=market_data,
-                    multi_timeframe_trends=multi_timeframe_trends,
-                    current_positions=current_positions,
-                    max_positions=self.config.max_positions if self.config else 2,
-                    historical_summary=historical_summary,
-                    enriched_data=enriched_data,
-                )
+                # 调用Agent做出决策（回放模式从 JSONL 读取）
+                if self._decision_replayer:
+                    replay_result = self._decision_replayer.get_decision(timestamp, self.symbol)
+                    if replay_result:
+                        decision, details = replay_result
+                    else:
+                        decision, details = "DO_NOTHING", {}
+                else:
+                    decision, details = self.agent.make_decision(
+                        market_data=market_data,
+                        multi_timeframe_trends=multi_timeframe_trends,
+                        current_positions=current_positions,
+                        max_positions=self.config.max_positions if self.config else 2,
+                        historical_summary=historical_summary,
+                        enriched_data=enriched_data,
+                    )
+
+                # 录制模式：记录决策到 JSONL
+                if self._decision_recorder:
+                    self._decision_recorder.record(
+                        timestamp=timestamp,
+                        symbol=self.symbol,
+                        decision=decision,
+                        details=details,
+                    )
+
+                # 回放模式：根据决策手动执行交易（正常模式由 Agent 工具回调执行）
+                if self._decision_replayer and decision not in ("DO_NOTHING", "HOLD"):
+                    self._execute_replay_decision(decision, details, timestamp)
 
                 # 记录决策历史
                 self.decision_history.add_decision(
@@ -602,12 +659,15 @@ class BacktestEngine:
                         if self.cycle_counter % max(1, self.config.review_run_every_cycles) == 0:
                             self._run_review_agent()
 
-                # 执行决策（Agent的工具回调会自动调用order_manager）
-                # 对于平仓决策，需要检测持仓变化并记录交易
-                positions_after_decision = self.order_manager.get_current_positions()
+                # 执行决策（Agent 工具回调会自动调用 order_manager）
+                # 回放模式已在 _execute_replay_decision 中处理，跳过持仓变化检测
+                if self._replay_mode:
+                    pass
+                else:
+                    positions_after_decision = self.order_manager.get_current_positions()
 
-                # 检查是否有持仓被平掉
-                for pos_before in current_positions:
+                # 检查是否有持仓被平掉（仅正常模式）
+                for pos_before in [] if self._replay_mode else current_positions:
                     if pos_before.get("coin") == self.symbol:
                         # 检查这个持仓是否还存在
                         pos_after = next(
@@ -635,6 +695,14 @@ class BacktestEngine:
                 print(f"⚠️ 决策点 {i + 1}/{len(decision_timestamps)} 处理失败: {e}")
                 traceback.print_exc()
                 continue
+
+        # 确保决策录制器在任何情况下关闭
+        try:
+            if self._decision_recorder:
+                self._decision_recorder.close()
+                print(f"   决策录制完成: {self._decision_recorder.count} 条")
+        except Exception as e:
+            print(f"   决策录制器关闭失败: {e}")
 
         # 平掉所有剩余持仓
         self._close_all_positions(df.iloc[-1]["timestamp"], df.iloc[-1]["close"])
@@ -1068,6 +1136,36 @@ class BacktestEngine:
                 position_closed = True
 
         return position_closed
+
+    def _execute_replay_decision(self, decision: str, details: dict, timestamp: datetime):
+        """回放模式下根据决策手动执行交易操作"""
+        current_price = self.client.get_current_price(self.symbol)
+        if not current_price:
+            return
+
+        if decision in ("BUY", "SELL_SHORT"):
+            trade_amount = float(details.get("amount", 0) or details.get("size", 0) or 0)
+            if trade_amount <= 0:
+                trade_amount = self.config.max_trade_amount if self.config else 100
+
+            leverage = int(details.get("leverage", self.order_manager.default_leverage))
+            is_long = decision == "BUY"
+
+            if is_long:
+                self.order_manager.execute_long(
+                    symbol=self.symbol,
+                    usdt_amount=trade_amount,
+                    leverage=leverage,
+                )
+            else:
+                self.order_manager.execute_short(
+                    symbol=self.symbol,
+                    usdt_amount=trade_amount,
+                    leverage=leverage,
+                )
+
+        elif decision in ("SELL", "BUY_TO_COVER"):
+            self._close_position(self.symbol, current_price, f"回放决策: {decision}")
 
     def _close_position(
         self,
