@@ -206,6 +206,9 @@ class Config:
         scheduler = self.config_data.get("scheduler", {})
         self.interval_minutes: int = int(scheduler.get("interval_minutes", 3))
         self.run_immediately: bool = scheduler.get("run_immediately", True)
+        # Q-03: K 线节拍对齐参数
+        self.timeframe_offset: float = float(scheduler.get("timeframe_offset", 2.0))
+        self.min_throttle_secs: float = float(scheduler.get("min_throttle_secs", 30.0))
 
     def _init_data_config(self):
         """初始化数据配置"""

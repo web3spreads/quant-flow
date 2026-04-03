@@ -8,11 +8,12 @@ import argparse
 import signal
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
@@ -40,6 +41,7 @@ from src.trading.client import HyperliquidClient
 from src.plugins.protections import ProtectionAction, ProtectionContext, ProtectionManager
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
+from src.utils.candle_align import next_candle_close_ts
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
 
@@ -1125,29 +1127,19 @@ class QuantFlowBot:
             self._trading_lock.release()
 
     def start(self):
-        """启动机器人"""
+        """启动机器人（K 线节拍驱动主循环）"""
         try:
-            self.logger.print_section("🚀 启动多 Agent 交易机器人", style="bold green")
+            self.logger.print_section("启动多 Agent 交易机器人", style="bold green")
 
             # 记录启动时间
             self.statistics["start_time"] = datetime.now()
 
-            # 创建调度器
-            self.scheduler = BlockingScheduler()
+            # 创建后台调度器（仅用于非决策任务）
+            self.scheduler = BackgroundScheduler()
 
-            # 添加定时任务
-            self.scheduler.add_job(
-                self.trading_cycle,
-                trigger=IntervalTrigger(minutes=self.config.interval_minutes),
-                id="trading_cycle",
-                name="多 Agent 交易决策循环",
-                replace_existing=True,
-            )
-
-            # 添加外部信息收集定时任务
+            # 外部信息收集定时任务
             if self.external_info_agent:
                 interval_hours = getattr(self.config, "external_info_interval_hours", 3.0)
-                # 将小时转换为分钟
                 interval_minutes = int(interval_hours * 60)
 
                 self.scheduler.add_job(
@@ -1157,38 +1149,42 @@ class QuantFlowBot:
                     name="外部信息收集任务",
                     replace_existing=True,
                 )
-                self.logger.print_info(f"📡 外部信息收集任务已添加，间隔: {interval_hours} 小时")
+                self.logger.print_info(f"外部信息收集任务已添加，间隔: {interval_hours} 小时")
 
-                # 首次启动时立即执行一次外部信息收集
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
+
+            # 启动后台调度器
+            self.scheduler.start()
+
+            # 启动市场主动监控线程
+            if self.market_monitor:
+                self.market_monitor.start()
+                self.logger.print_info(
+                    f"市场主动监控已启动 | "
+                    f"波动阈值: {self.config.market_monitor_alert_threshold_pct}%"
+                )
+
+            self.is_running = True
+            self.start_time = datetime.now()
 
             # 如果配置了立即执行，先执行一次
             if self.config.run_immediately:
                 self.logger.print_info("立即执行第一次交易循环...")
                 self.trading_cycle()
 
-            # 显示下次执行时间
-            next_run = datetime.now().replace(second=0, microsecond=0)
-            next_run = next_run + timedelta(minutes=self.config.interval_minutes)
-            self.logger.print_info(f"下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-            self.logger.print_info(f"执行间隔: {self.config.interval_minutes} 分钟")
-
-            # 启动市场主动监控线程
-            if self.market_monitor:
-                self.market_monitor.start()
-                self.logger.print_info(
-                    f"📡 市场主动监控已启动，决策间隔 {self.config.interval_minutes} 分钟内"
-                    f"检测到 ≥{self.config.market_monitor_alert_threshold_pct}% 波动将主动触发决策"
-                )
-
-            # 启动调度器
-            self.is_running = True
-            self.start_time = datetime.now()  # 记录启动时间
             self.logger.print_section(
-                "✅ 多 Agent 机器人已启动，按 Ctrl+C 停止", style="bold green"
+                f"K 线节拍驱动已启动 | "
+                f"周期: {self.config.timeframe} | "
+                f"偏移: {self.config.timeframe_offset}s",
+                style="bold green",
             )
-            self.scheduler.start()
+
+            # 主循环：K 线节拍驱动
+            while self.is_running:
+                self._wait_next_candle()
+                if self.is_running:
+                    self.trading_cycle()
 
         except KeyboardInterrupt:
             self.stop("用户手动停止 (Ctrl+C)")
@@ -1196,6 +1192,21 @@ class QuantFlowBot:
             self.logger.print_error(f"启动失败: {e}")
             self.logger.logger.exception(e)
             sys.exit(1)
+
+    def _wait_next_candle(self):
+        """等待到下一根 K 线收盘后 offset 秒（分段 sleep 以便快速响应停止信号）"""
+        target = next_candle_close_ts(self.config.timeframe) + self.config.timeframe_offset
+        sleep_duration = max(target - time.time(), self.config.min_throttle_secs)
+
+        target_str = datetime.utcfromtimestamp(target).strftime("%H:%M:%S")
+        self.logger.print_info(
+            f"[节拍] 等待下一根 {self.config.timeframe} K 线 | "
+            f"目标: {target_str} UTC | 等待: {sleep_duration:.0f}s"
+        )
+
+        end_time = time.time() + sleep_duration
+        while time.time() < end_time and self.is_running:
+            time.sleep(min(1.0, end_time - time.time()))
 
     def stop(self, reason: str = "用户手动停止"):
         """停止机器人"""
