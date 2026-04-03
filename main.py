@@ -37,6 +37,7 @@ from src.llm import LLMClientManager
 from src.notification import Notifier
 from src.prompt_manager import PromptManager
 from src.trading.client import HyperliquidClient
+from src.plugins.protections import ProtectionAction, ProtectionContext, ProtectionManager
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
@@ -442,6 +443,19 @@ class QuantFlowBot:
                 f"检查间隔: {monitor_config.check_interval_seconds}s"
             )
 
+        # 12. 保护插件管理器
+        self.protection_manager = None
+        if self.config.protections_config:
+            self.logger.print_info("初始化保护插件管理器...")
+            self.protection_manager = ProtectionManager(
+                protections_config=self.config.protections_config,
+                on_protection_triggered=self._on_protection_triggered,
+            )
+            plugin_names = [p.name for p in self.protection_manager.plugins]
+            self.logger.print_info(
+                f"保护插件管理器初始化完成 | 已加载: {', '.join(plugin_names)}"
+            )
+
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info("  - 1 个汇总 Agent")
@@ -451,6 +465,8 @@ class QuantFlowBot:
             self.logger.print_info("  - 1 个外部信息收集 Agent")
         if self.market_monitor:
             self.logger.print_info("  - 1 个市场主动监控器")
+        if self.protection_manager:
+            self.logger.print_info("  - 1 个保护插件管理器 (ProtectionManager)")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -531,6 +547,26 @@ class QuantFlowBot:
                 self.logger.print_info("✅ 启动通知已发送")
         except Exception as e:
             self.logger.print_error(f"发送启动通知失败: {e}")
+
+    def _on_protection_triggered(self, reason: str):
+        """账户保护触发时的回调：发送通知 + 云端告警"""
+        self.logger.print_warning(f"[账户保护] {reason}")
+
+        # 通知（熔断通知）
+        if self.notifier and self.notifier.enabled:
+            pause_minutes = int(self.config.account_protection_pause_hours * 60)
+            self.notifier.notify_circuit_breaker(reason=reason, pause_minutes=pause_minutes)
+
+        # 云端告警
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_alert(
+                symbol="ALL",
+                alert_type="account_protection",
+                severity="extreme",
+                message=reason,
+                details={"pause_hours": self.config.account_protection_pause_hours},
+            )
 
     def _on_market_alert(self, alert: VolatilityAlert):
         """
@@ -663,12 +699,75 @@ class QuantFlowBot:
             # 更新所有 Agent 的交易金额
             for agent in self.symbol_agents.values():
                 agent.trade_amount = adjusted_amount
+            # ── 风控检查（保护插件链）──
+            if self.protection_manager:
+                context = ProtectionContext(
+                    balance=balance_info.get("available", 0),
+                    equity=balance_info.get("total", 0),
+                    unrealized_pnl=balance_info.get("unrealized_pnl", 0),
+                    margin_used=balance_info.get("occupied", 0),
+                    current_positions=current_positions or [],
+                )
+                results = self.protection_manager.check_all(context)
+                action = ProtectionManager.get_most_severe_action(results)
+
+                # 上报每个触发结果到云端
+                cloud = get_cloud_logger()
+                for r in results:
+                    self.logger.print_warning(f"[风控]{r.reason}")
+                    if cloud:
+                        cloud.send_risk_event(
+                            symbol=",".join(r.affected_symbols) if r.affected_symbols else "ALL",
+                            risk_type=f"protection_{r.action}",
+                            details=r.details,
+                            level="error" if r.action == ProtectionAction.CLOSE_ALL_POSITIONS else "warning",
+                        )
+
+                # 回撤触发全部平仓
+                if action == ProtectionAction.CLOSE_ALL_POSITIONS:
+                    self.logger.print_warning("[风控]回撤保护触发，执行全部平仓")
+                    for pos in current_positions:
+                        sym = pos.get("symbol", pos.get("coin", ""))
+                        if sym:
+                            try:
+                                self.order_manager.close_position(sym)
+                                self.logger.print_info(f"[风控]已平仓: {sym}")
+                            except Exception as e:
+                                self.logger.print_error(f"[风控]平仓失败 {sym}: {e}")
+                    return
+
+                # 暂停新开仓
+                if action == ProtectionAction.PAUSE_NEW_TRADES:
+                    can_open_new_positions = False
+                    for agent in self.symbol_agents.values():
+                        agent.trade_amount = 0
+                    self.logger.print_warning("[风控]保护插件已暂停新开仓，仅管理现有持仓")
+
+                # 超时持仓自动平仓（从 position_timeout 插件获取）
+                for plugin in self.protection_manager.plugins:
+                    if hasattr(plugin, "get_timeout_symbols"):
+                        for ts in plugin.get_timeout_symbols():
+                            self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
+                            try:
+                                self.order_manager.close_position(ts)
+                                plugin.on_trade_close(ts, 0)
+                            except Exception as e:
+                                self.logger.print_error(f"[风控]超时平仓失败 {ts}: {e}")
+
             # 第二步：为每个交易对独立决策
             self.logger.print_section("🤖 多 Agent 独立决策", style="bold magenta")
 
             for symbol in self.config.symbols:
                 try:
                     self.logger.print_section(f"📊 {symbol} - 独立 Agent 分析", style="bold cyan")
+
+                    # 检查交易对级锁定
+                    if self.protection_manager:
+                        locked, lock_reason = self.protection_manager.is_symbol_locked(symbol)
+                        if locked:
+                            self.logger.print_warning(f"[风控]{symbol} 已锁定: {lock_reason}")
+                            if symbol in self.symbol_agents:
+                                self.symbol_agents[symbol].trade_amount = 0
 
                     # 获取市场数据
                     df = self.market_fetcher.fetch_ohlcv(
@@ -937,6 +1036,33 @@ class QuantFlowBot:
                             )
                         except Exception as e:
                             self.logger.print_warning(f"[{symbol}] 即时反思失败: {e}")
+
+                    # 保护插件：记录开平仓事件
+                    if self.protection_manager:
+                        try:
+                            if decision in ("BUY", "SELL_SHORT"):
+                                entry_price = (
+                                    details.get("entry_price")
+                                    or details.get("fill_price")
+                                    or details.get("price", 0)
+                                )
+                                size = details.get("size") or details.get("amount", 0)
+                                self.protection_manager.on_trade_open(
+                                    symbol=symbol,
+                                    entry_price=float(entry_price),
+                                    size=float(size),
+                                    is_long=(decision == "BUY"),
+                                    leverage=int(details.get("leverage", 1)),
+                                )
+                            elif decision in ("SELL", "BUY_TO_COVER"):
+                                pnl = details.get("pnl") or details.get("closed_pnl", 0)
+                                self.protection_manager.on_trade_close(
+                                    symbol=symbol, pnl=float(pnl)
+                                )
+                        except Exception as e:
+                            self.logger.print_warning(
+                                f"[{symbol}] 保护插件记录失败: {e}"
+                            )
 
                 except Exception as e:
                     self.logger.print_error(f"{symbol} Agent 决策异常: {e}")

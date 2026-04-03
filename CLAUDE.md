@@ -120,8 +120,8 @@ tail -f logs/grid.log          # 网格交易日志
                    └──────────────────┼──────────────────┘            │
                                       ↓                               ↓
                           ┌─────────────────────┐           ┌────────────────┐
-                          │  AccountProtector   │           │  OrderManager  │
-                          │  (回撤保护/超时清仓) │           │  (订单执行)     │
+                          │ProtectionManager   │           │  OrderManager  │
+                          │ (插件链风控保护)     │           │  (订单执行)     │
                           └──────────┬──────────┘           └───────┬────────┘
                                      │                               │
                                      └───────────────┬───────────────┘
@@ -196,8 +196,15 @@ src/
 │   ├── decision_validator.py       # 决策多维度验证
 │   ├── position_sizer.py           # 凯利公式仓位计算
 │   ├── risk_manager.py             # ATR动态止盈止损
-│   ├── account_protector.py        # 账户保护 (回撤/超时)
 │   └── enhanced_engine.py          # 增强交易引擎 (Regime 参数覆盖)
+├── plugins/                  # 插件系统
+│   └── protections/                # 保护插件
+│       ├── base.py                     # IProtection 抽象基类 + 数据结构
+│       ├── manager.py                  # ProtectionManager 插件编排器
+│       ├── drawdown.py                 # 最大回撤保护
+│       ├── daily_loss.py               # 单日亏损保护
+│       ├── consecutive_loss.py         # 连续亏损保护（支持 per-symbol 锁定）
+│       └── position_timeout.py         # 持仓超时保护
 ├── data/                     # 数据模块
 │   ├── market_data.py              # K线和市场数据
 │   ├── indicators.py               # 技术指标 (MA, RSI, MACD, Bollinger)
@@ -525,15 +532,21 @@ max_total_exposure: 0.5       # 最大总敞口 50%
 min_risk_reward_ratio: 1.5    # 最小风险回报比
 ```
 
-### 账户保护 (`account_protector.py`)
+### 保护插件系统 (`src/plugins/protections/`)
 
-实现最大回撤保护和持仓超时机制：
+插件化风控架构，每个保护规则可独立启用/禁用/配置：
 
 ```python
-# 保护动作
-ProtectionAction.PAUSE_NEW_TRADES        # 暂停新开仓
-ProtectionAction.CLOSE_LOSING_POSITIONS  # 关闭亏损仓位
-ProtectionAction.CLOSE_ALL_POSITIONS     # 全部平仓
+# 4 个内置插件
+MaxDrawdownProtection     # 最大回撤 → 全部平仓
+DailyLossProtection       # 单日亏损 → 暂停新开仓
+ConsecutiveLossProtection # 连续亏损 → 暂停或锁定交易对（per-symbol）
+PositionTimeoutProtection # 持仓超时 → 自动平仓
+
+# 核心接口
+ProtectionManager.check_all(context)       # 执行所有插件检查
+ProtectionManager.is_symbol_locked(symbol) # 查询交易对级锁定
+ProtectionManager.on_trade_open/close()    # 分发开平仓事件
 ```
 
 ### 交易客户端 (`client.py`)
@@ -617,12 +630,20 @@ debate:
 regime_adaptive:
   enabled: true
 
-# 账户保护
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10          # 最大回撤 10%
-  max_daily_loss_pct: 0.05        # 单日亏损 5%
-  max_position_hours: 48          # 最大持仓时间
+# 保护插件（可任意组合/禁用，空列表=关闭所有风控）
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10        # 最大回撤 10%
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05      # 单日亏损 5%
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true              # true=只锁该交易对
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48
 
 # 市场主动监控（异常波动触发决策循环）
 market_monitor:
@@ -719,6 +740,14 @@ uv run pytest tests/ --cov=src
 - `test_fact_subjective_split.py`: 事实-主观分离测试（改进6d）
 - `test_prompt_meta_reflection.py`: Prompt 自优化测试（改进6e）
 - `test_grid_manager_exit_orders.py`: 网格交易分层减仓单测试
+- `test_account_protection_integration.py`: 保护系统集成测试
+- `test_protection_base.py`: 保护插件基础架构测试
+- `test_protection_drawdown.py`: 最大回撤保护插件测试
+- `test_protection_daily_loss.py`: 单日亏损保护插件测试
+- `test_protection_consecutive_loss.py`: 连续亏损保护插件测试（含 per-symbol）
+- `test_protection_position_timeout.py`: 持仓超时保护插件测试
+- `test_protection_manager.py`: 保护插件管理器测试
+- `test_protection_migration.py`: 保护配置迁移测试
 
 ## 注意事项
 
