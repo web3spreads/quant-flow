@@ -93,11 +93,12 @@ class IProtection(ABC):
         size: float,
         is_long: bool,
         leverage: int = 1,
+        timestamp: datetime | None = None,
     ) -> None:
         """开仓事件回调（子类按需覆盖）"""
         return  # noqa: B027 — 非抽象，子类按需覆盖
 
-    def on_trade_close(self, symbol: str, pnl: float) -> None:
+    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
         """平仓事件回调（子类按需覆盖）"""
         return  # noqa: B027 — 非抽象，子类按需覆盖
 

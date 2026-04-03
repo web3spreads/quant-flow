@@ -82,11 +82,12 @@ class ConsecutiveLossProtection(IProtection):
             self.save_state()
             return ProtectionReturn(triggered=False)
 
-    def on_trade_close(self, symbol: str, pnl: float) -> None:
+    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
         """平仓事件：更新连续亏损计数"""
         max_losses = self.config.get("max_consecutive_losses", 5)
         per_symbol = self.config.get("per_symbol", False)
         pause_hours = self.config.get("pause_hours", 4.0)
+        now = timestamp or datetime.now()
 
         with self._lock:
             if pnl > 0:
@@ -101,7 +102,7 @@ class ConsecutiveLossProtection(IProtection):
 
                 # per_symbol 模式：检查该交易对是否达阈值
                 if per_symbol and self._symbol_losses.get(symbol, 0) >= max_losses:
-                    lock_until = datetime.now() + timedelta(hours=pause_hours)
+                    lock_until = now + timedelta(hours=pause_hours)
                     self._locked_symbols[symbol] = lock_until.isoformat()
                     logger.warning(
                         "连续亏损保护: %s 连续亏损 %d 次，锁定至 %s",
@@ -113,18 +114,23 @@ class ConsecutiveLossProtection(IProtection):
 
             self.save_state()
 
-    def is_symbol_locked(self, symbol: str) -> tuple[bool, str]:
+    def is_symbol_locked(self, symbol: str, timestamp: datetime | None = None) -> tuple[bool, str]:
         """
         查询指定交易对是否被锁定
+
+        Args:
+            symbol: 交易对符号
+            timestamp: 当前时间戳（传入以支持回测，默认 datetime.now()）
 
         Returns:
             (是否锁定, 锁定原因)
         """
+        now = timestamp or datetime.now()
         with self._lock:
             if symbol in self._locked_symbols:
                 lock_until_str = self._locked_symbols[symbol]
                 lock_until = datetime.fromisoformat(lock_until_str)
-                if datetime.now() < lock_until:
+                if now < lock_until:
                     losses = self._symbol_losses.get(symbol, 0)
                     return True, (
                         f"{symbol} 连续亏损 {losses} 次，锁定至 {lock_until.strftime('%H:%M')}"

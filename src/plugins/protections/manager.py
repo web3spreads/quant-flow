@@ -131,6 +131,21 @@ class ProtectionManager:
                     return True, reason
         return False, ""
 
+    def get_timeout_symbols(self) -> list[str]:
+        """
+        从支持超时检测的插件中获取所有超时持仓符号
+
+        Returns:
+            超时持仓的交易对符号列表
+        """
+        result: list[str] = []
+        for plugin in self._plugins:
+            if not plugin.enabled:
+                continue
+            if hasattr(plugin, "get_timeout_symbols"):
+                result.extend(plugin.get_timeout_symbols())
+        return result
+
     def on_trade_open(
         self,
         symbol: str,

@@ -78,11 +78,13 @@ class PositionTimeoutProtection(IProtection):
         size: float,
         is_long: bool,
         leverage: int = 1,
+        timestamp: datetime | None = None,
     ) -> None:
         """记录开仓"""
+        ts = timestamp or datetime.now()
         with self._lock:
             self._position_records[symbol] = {
-                "entry_time": datetime.now().isoformat(),
+                "entry_time": ts.isoformat(),
                 "entry_price": entry_price,
                 "size": size,
                 "is_long": is_long,
@@ -90,7 +92,7 @@ class PositionTimeoutProtection(IProtection):
             }
             self.save_state()
 
-    def on_trade_close(self, symbol: str, pnl: float) -> None:
+    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
         """移除持仓记录"""
         with self._lock:
             self._position_records.pop(symbol, None)

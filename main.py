@@ -549,15 +549,16 @@ class QuantFlowBot:
             self.logger.print_error(f"发送启动通知失败: {e}")
 
     def _on_protection_triggered(self, reason: str):
-        """账户保护触发时的回调：发送通知 + 云端告警"""
-        self.logger.print_warning(f"[账户保护] {reason}")
+        """保护插件触发时的回调：发送通知 + 云端告警"""
+        self.logger.print_warning(f"[风控] {reason}")
 
-        # 通知（熔断通知）
         if self.notifier and self.notifier.enabled:
-            pause_minutes = int(self.config.account_protection_pause_hours * 60)
-            self.notifier.notify_circuit_breaker(reason=reason, pause_minutes=pause_minutes)
+            self.notifier.notify_error(
+                title="风控保护触发",
+                error_message=reason,
+                context="保护插件检测到风险条件，已自动采取保护措施",
+            )
 
-        # 云端告警
         cloud = get_cloud_logger()
         if cloud:
             cloud.send_alert(
@@ -565,7 +566,7 @@ class QuantFlowBot:
                 alert_type="account_protection",
                 severity="extreme",
                 message=reason,
-                details={"pause_hours": self.config.account_protection_pause_hours},
+                details={},
             )
 
     def _on_market_alert(self, alert: VolatilityAlert):
@@ -726,7 +727,7 @@ class QuantFlowBot:
                 # 回撤触发全部平仓
                 if action == ProtectionAction.CLOSE_ALL_POSITIONS:
                     self.logger.print_warning("[风控]回撤保护触发，执行全部平仓")
-                    for pos in current_positions:
+                    for pos in (current_positions or []):
                         sym = pos.get("symbol", pos.get("coin", ""))
                         if sym:
                             try:
@@ -743,16 +744,14 @@ class QuantFlowBot:
                         agent.trade_amount = 0
                     self.logger.print_warning("[风控]保护插件已暂停新开仓，仅管理现有持仓")
 
-                # 超时持仓自动平仓（从 position_timeout 插件获取）
-                for plugin in self.protection_manager.plugins:
-                    if hasattr(plugin, "get_timeout_symbols"):
-                        for ts in plugin.get_timeout_symbols():
-                            self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
-                            try:
-                                self.order_manager.close_position(ts)
-                                plugin.on_trade_close(ts, 0)
-                            except Exception as e:
-                                self.logger.print_error(f"[风控]超时平仓失败 {ts}: {e}")
+                # 超时持仓自动平仓
+                for ts in self.protection_manager.get_timeout_symbols():
+                    self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
+                    try:
+                        self.order_manager.close_position(ts)
+                        self.protection_manager.on_trade_close(ts, 0)
+                    except Exception as e:
+                        self.logger.print_error(f"[风控]超时平仓失败 {ts}: {e}")
 
             # 第二步：为每个交易对独立决策
             self.logger.print_section("🤖 多 Agent 独立决策", style="bold magenta")
