@@ -95,9 +95,11 @@ class IProtection(ABC):
         leverage: int = 1,
     ) -> None:
         """开仓事件回调（子类按需覆盖）"""
+        return  # noqa: B027 — 非抽象，子类按需覆盖
 
     def on_trade_close(self, symbol: str, pnl: float) -> None:
         """平仓事件回调（子类按需覆盖）"""
+        return  # noqa: B027 — 非抽象，子类按需覆盖
 
     def save_state(self) -> None:
         """保存插件状态到 JSON 文件"""
@@ -129,6 +131,7 @@ class IProtection(ABC):
 
     def _restore_state_dict(self, state: dict[str, Any]) -> None:
         """从字典恢复状态（子类覆盖）"""
+        return  # noqa: B027 — 非抽象，子类按需覆盖
 
     def reset(self) -> None:
         """重置插件状态"""

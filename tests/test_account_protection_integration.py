@@ -17,7 +17,6 @@ from src.plugins.protections import (
     ProtectionManager,
 )
 
-
 # ──────────────────────────────── Fixtures ────────────────────────────────
 
 

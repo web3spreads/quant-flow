@@ -3,6 +3,8 @@
 测试 IProtection、ProtectionReturn、ProtectionContext 等核心数据结构。
 """
 
+from datetime import datetime
+
 import pytest
 
 from src.plugins.protections.base import (
@@ -11,7 +13,6 @@ from src.plugins.protections.base import (
     ProtectionContext,
     ProtectionReturn,
 )
-from datetime import datetime
 
 
 class TestProtectionReturn:
