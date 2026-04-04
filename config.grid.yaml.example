@@ -88,10 +88,10 @@ data:
 # 与主程序共用 .env 中的 API 密钥，通过此配置块选择客户端类型和模型
 llm:
   # 客户端类型: langchain_openai, langchain_cloudflare, langchain_google, langchain_litellm, langchain_nvidia
-  client_type: langchain_openai
+  client_type: langchain_nvidia
 
   # 模型名称（如不指定则使用 .env 中的 OPENAI_MODEL）
-  # model: deepseek-chat
+  # model: deepseek-ai/deepseek-v3.2
 
 # 云端日志配置（aepipe-sdk 0.1.1，https://github.com/loadchange/aepipe）
 # 基于 Cloudflare Workers + Analytics Engine + D1 的生产级日志管道

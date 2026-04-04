@@ -74,10 +74,12 @@ uv add --group dev <package>  # 添加开发依赖
 docker compose up -d
 docker compose logs -f
 
-# 回测（支持 single/grid 策略）
+# 回测（支持 single/grid 策略 + 确定性回测）
 uv run python backtest.py --symbol BTC --strategy single --start-date 2024-01-01 --end-date 2024-12-01
 uv run python backtest.py --symbol BTC --strategy grid --start-date 2024-01-01 --end-date 2024-12-01
 uv run python backtest.py --symbol BTC --resume-from workspace/BTC_xxx/live_report.json  # 中断恢复
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --record-decisions decisions.jsonl  # 录制决策
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --replay-decisions decisions.jsonl  # 回放决策（跳过 LLM）
 
 # A/B 回测对比（对比不同功能配置的效果差异）
 uv run python backtest_comparison.py --symbol BTC --compare all
@@ -220,7 +222,7 @@ src/
 │   └── cloud_logger.py             # 云端日志同步（aepipe 服务）
 ├── llm/                      # LLM 客户端
 │   └── llm_client.py               # 多供应商支持 (OpenAI/Cloudflare/Google/LiteLLM/NVIDIA)
-├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复）
+├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复 + 确定性录制/回放）
 └── notification/             # 通知模块
 ```
 
@@ -748,6 +750,9 @@ uv run pytest tests/ --cov=src
 - `test_protection_position_timeout.py`: 持仓超时保护插件测试
 - `test_protection_manager.py`: 保护插件管理器测试
 - `test_protection_migration.py`: 保护配置迁移测试
+- `test_decision_recorder.py`: 决策录制/回放测试（确定性回测）
+- `test_candle_align.py`: K 线节拍对齐测试
+- `test_candle_throttle.py`: K 线节拍节流测试
 
 ## 注意事项
 

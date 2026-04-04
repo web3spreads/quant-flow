@@ -17,6 +17,7 @@
 - ✅ **实时报告**：回测过程中实时更新进度
 - ✅ **详细报告**：生成完整的回测报告（JSON、CSV、盈亏历史、元数据等）
 - ✅ **恢复功能**：支持从实时报告恢复并继续回测
+- ✅ **确定性回测**：录制 LLM 决策到 JSONL 文件，回放时跳过 LLM 调用，实现 100% 可复现
 - ✅ 统计关键指标（胜率、盈亏比、最大回撤等）
 
 ## 使用方法
@@ -93,6 +94,28 @@ python backtest.py --symbol BTC \
     --strategy grid
 ```
 
+### 9. 确定性回测（录制 + 回放）
+
+首次回测时录制 LLM 决策到 JSONL 文件：
+
+```bash
+python backtest.py --symbol BTC \
+    --start-date 2024-01-01 \
+    --end-date 2024-03-01 \
+    --record-decisions decisions_btc.jsonl
+```
+
+后续使用录制的决策回放，跳过 LLM 调用，结果 100% 可复现：
+
+```bash
+python backtest.py --symbol BTC \
+    --start-date 2024-01-01 \
+    --end-date 2024-03-01 \
+    --replay-decisions decisions_btc.jsonl
+```
+
+> **注意**：`--record-decisions` 和 `--replay-decisions` 不能同时使用。回放模式不需要 LLM API 密钥，运行速度显著更快。
+
 ## 命令行参数
 
 ### 必需参数
@@ -123,6 +146,10 @@ python backtest.py --symbol BTC \
 #### 恢复参数
 - `--resume-from`: 从 live_report.json 文件恢复并继续回测（提供文件路径）
 
+#### 确定性回测参数
+- `--record-decisions`: 录制 LLM 决策到 JSONL 文件（与 `--replay-decisions` 互斥）
+- `--replay-decisions`: 从 JSONL 文件回放决策，跳过 LLM 调用（与 `--record-decisions` 互斥）
+
 ## 工作空间结构
 
 每次回测都会创建一个独立的工作空间目录，格式为：`backtest_{symbol}_{timestamp}/`
@@ -139,6 +166,7 @@ backtest_results/
     ├── trades.csv               # 所有交易明细
     ├── pnl_history.csv          # 盈亏历史记录（用于图表展示）
     ├── metadata.json            # 回测参数和配置信息
+    ├── decisions.jsonl           # LLM 决策录制文件（使用 --record-decisions 时生成）
     ├── README.md                # 报告说明文档
 ```
 

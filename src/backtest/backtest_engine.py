@@ -19,6 +19,7 @@ from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
 from src.config import FEE_RATE_PER_SIDE
 from src.data.indicators import TechnicalIndicators
 from src.i18n import get_text
+from src.llm import LLMClientManager
 from src.prompt_manager import PromptManager
 from src.trading.grid_manager import GridManager
 from src.utils.logger import TradingLogger
@@ -106,6 +107,12 @@ class BacktestEngine:
             self._decision_recorder = DecisionRecorder(record_file)
             print(f"   录制模式: 决策将写入 {record_file}")
 
+        # 初始化 LLM 客户端管理器（回放模式跳过）
+        self._llm_manager: LLMClientManager | None = None
+        if not self._replay_mode and config:
+            llm_client_config = config.get_llm_client_config()
+            self._llm_manager = LLMClientManager.get_instance(llm_client_config)
+
         # 初始化Agent（需要配置信息，回放模式跳过）
         self.grid_manager: GridManager | None = None
         if self._replay_mode:
@@ -117,9 +124,7 @@ class BacktestEngine:
                     symbol=symbol,
                     order_manager=self.order_manager,
                     logger=self.logger,
-                    openai_api_base=config.openai_api_base,
-                    openai_api_key=config.openai_api_key,
-                    openai_model=config.openai_model,
+                    llm_manager=self._llm_manager,
                     trade_amount=config.max_trade_amount,
                     width_pct_min=config.grid_width_min_pct,
                     width_pct_max=config.grid_width_max_pct,
@@ -140,9 +145,7 @@ class BacktestEngine:
                     symbol=symbol,
                     order_manager=self.order_manager,
                     logger=self.logger,
-                    openai_api_base=config.openai_api_base,
-                    openai_api_key=config.openai_api_key,
-                    openai_model=config.openai_model,
+                    llm_manager=self._llm_manager,
                     temperature=config.agent_temperature,
                     max_iterations=config.agent_max_iterations,
                     trade_amount=config.max_trade_amount,
@@ -164,12 +167,10 @@ class BacktestEngine:
         # 汇总Agent（用于历史汇总，回放模式跳过）
         if self._replay_mode:
             self.summary_agent = None
-        elif config:
+        elif config and self._llm_manager:
             self.summary_agent = SummaryAgentV2(
                 logger=self.logger,
-                openai_api_base=config.openai_api_base,
-                openai_api_key=config.openai_api_key,
-                openai_model=config.openai_model,
+                llm_manager=self._llm_manager,
                 temperature=0.1,
                 max_context_tokens=2000,
             )
@@ -180,26 +181,18 @@ class BacktestEngine:
         self.review_agent = None
         self.review_memory_store = None
         self.cycle_counter = 0
-        if not self._replay_mode and config and config.review_enabled and prompt_manager:
+        if not self._replay_mode and config and config.review_enabled and prompt_manager and self._llm_manager:
             try:
                 self.logger.print_info("初始化复盘 Agent...")
                 self.review_memory_store = ReviewMemoryStore(
                     path=config.review_memory_file,
                     max_lessons=config.review_max_lessons,
                 )
-                # 使用 review_model 如果存在，否则使用 openai_model
-                review_model = (
-                    config.review_model
-                    if hasattr(config, "review_model") and config.review_model
-                    else config.openai_model
-                )
 
                 self.review_agent = ReviewAgent(
                     logger=self.logger,
                     prompt_manager=prompt_manager,
-                    openai_api_base=config.openai_api_base,
-                    openai_api_key=config.openai_api_key,
-                    model=review_model,
+                    llm_manager=self._llm_manager,
                     temperature=config.review_temperature,
                     lookback_decisions=config.review_lookback_decisions,
                     memory_store=self.review_memory_store,
@@ -1844,7 +1837,7 @@ class BacktestEngine:
 
         # 按4小时分组
         df_15m = df_15m.copy()
-        df_15m["timestamp_4h"] = df_15m["timestamp"].dt.floor("4H")
+        df_15m["timestamp_4h"] = df_15m["timestamp"].dt.floor("4h")
 
         # 聚合为4小时K线
         df_4h = (
