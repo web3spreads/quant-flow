@@ -276,10 +276,34 @@ class TestDecisionReplayer:
         _create_jsonl(
             jsonl_path,
             [
-                {"schema_version": 1, "timestamp": "2024-01-01T00:00:00", "symbol": "BTC", "decision": "BUY", "details": {}},
-                {"schema_version": 1, "timestamp": "2024-01-01T00:05:00", "symbol": "ETH", "decision": "SELL", "details": {}},
-                {"schema_version": 1, "timestamp": "2024-01-01T00:10:00", "symbol": "BTC", "decision": "SELL_SHORT", "details": {}},
-                {"schema_version": 1, "timestamp": "2024-01-01T00:15:00", "symbol": "ETH", "decision": "BUY", "details": {}},
+                {
+                    "schema_version": 1,
+                    "timestamp": "2024-01-01T00:00:00",
+                    "symbol": "BTC",
+                    "decision": "BUY",
+                    "details": {},
+                },
+                {
+                    "schema_version": 1,
+                    "timestamp": "2024-01-01T00:05:00",
+                    "symbol": "ETH",
+                    "decision": "SELL",
+                    "details": {},
+                },
+                {
+                    "schema_version": 1,
+                    "timestamp": "2024-01-01T00:10:00",
+                    "symbol": "BTC",
+                    "decision": "SELL_SHORT",
+                    "details": {},
+                },
+                {
+                    "schema_version": 1,
+                    "timestamp": "2024-01-01T00:15:00",
+                    "symbol": "ETH",
+                    "decision": "BUY",
+                    "details": {},
+                },
             ],
         )
         replayer = DecisionReplayer(jsonl_path)
