@@ -181,7 +181,13 @@ class BacktestEngine:
         self.review_agent = None
         self.review_memory_store = None
         self.cycle_counter = 0
-        if not self._replay_mode and config and config.review_enabled and prompt_manager and self._llm_manager:
+        if (
+            not self._replay_mode
+            and config
+            and config.review_enabled
+            and prompt_manager
+            and self._llm_manager
+        ):
             try:
                 self.logger.print_info("初始化复盘 Agent...")
                 self.review_memory_store = ReviewMemoryStore(
