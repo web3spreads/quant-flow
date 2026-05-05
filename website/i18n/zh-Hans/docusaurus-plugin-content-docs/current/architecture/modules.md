@@ -31,8 +31,18 @@ description: 核心模块说明和代码入口
 | `decision_validator.py` | 决策多维度验证 |
 | `position_sizer.py` | 凯利公式仓位计算 |
 | `risk_manager.py` | ATR 动态止盈止损 |
-| `account_protector.py` | 账户保护（回撤/超时） |
 | `enhanced_engine.py` | 增强引擎（Regime 参数覆盖） |
+
+## src/plugins/protections/ — 插件化风控
+
+| 文件 | 说明 |
+|------|------|
+| `base.py` | `IProtection` 抽象基类 + `ProtectionContext` / `ProtectionReturn` 数据结构 |
+| `manager.py` | `ProtectionManager` 编排多插件：`check_all()` / `on_trade_open` / `on_trade_close` / `is_symbol_locked` |
+| `drawdown.py` | 最大回撤保护 → CLOSE_ALL + 暂停 |
+| `daily_loss.py` | 单日亏损保护 → PAUSE_NEW_TRADES |
+| `consecutive_loss.py` | 连续亏损保护，支持 `per_symbol` 锁定（仅锁亏损交易对） |
+| `position_timeout.py` | 持仓超时保护 → 上报 affected_symbols 由调用方平仓 |
 
 ## src/data/ — 数据模块
 

@@ -166,6 +166,10 @@ def calculate_grid_config(
 
     内部使用 Decimal 精确计算，输出仍为 float（兼容 API 边界）。
     """
+    # 参数校验（grid_num/leverage 来自 AI 输出，需防御非法值）
+    grid_num = max(1, int(grid_num))
+    leverage = max(1, int(leverage))
+
     # Decimal 精确计算
     d_price = to_decimal(current_price)
     d_balance = to_decimal(available_balance)

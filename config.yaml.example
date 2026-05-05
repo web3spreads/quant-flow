@@ -205,8 +205,8 @@ risk_management:
   # 熔断后暂停交易时间（分钟）
   circuit_breaker_pause: 30
 
-# 账户保护配置
-# 实现最大回撤保护、持仓时间限制等风控机制
+# 账户保护配置（旧格式，向后兼容）
+# 如果同时存在 protections 列表，优先使用 protections
 account_protection:
   # 是否启用账户保护（强烈建议启用）
   enabled: true
@@ -234,6 +234,31 @@ account_protection:
   # 最小风险回报比
   # 开仓前验证止盈/止损比例，低于此值将拒绝开仓
   min_risk_reward_ratio: 1.5
+
+# 保护插件配置（新格式，推荐）
+# 每个插件可独立启用/禁用，支持任意组合
+# 空列表 = 关闭所有风控
+# 如果此配置块不存在但 account_protection.enabled: true，会自动从旧格式迁移
+protections:
+  # 最大回撤保护：净值回撤超阈值 → 全部平仓 + 暂停交易
+  - name: max_drawdown
+    max_drawdown_pct: 0.10       # 最大回撤 10%
+    pause_hours: 4               # 触发后暂停 4 小时
+
+  # 单日亏损保护：当日亏损超阈值 → 暂停新开仓
+  - name: daily_loss
+    max_daily_loss_pct: 0.05     # 单日最大亏损 5%
+    pause_hours: 4
+
+  # 连续亏损保护：连续亏损超次数 → 暂停交易或锁定交易对
+  - name: consecutive_loss
+    max_consecutive_losses: 5    # 最大连续亏损次数
+    per_symbol: true             # true=只锁定亏损的交易对，false=全局暂停
+    pause_hours: 4
+
+  # 持仓超时保护：持仓超时 → 自动平仓
+  - name: position_timeout
+    max_position_hours: 48       # 最大持仓时间（小时）
 
 # 增强型交易分析配置
 # 整合市场状态分析、智能风险管理和多因子信号评分系统

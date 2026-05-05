@@ -79,6 +79,8 @@ class Config:
         self._init_notifications_config()
         self._init_market_monitor_config()
         self._init_cloud_logging_config()
+        self._init_account_protection_config()
+        self._init_protections_config()
 
     def _load_yaml_config(self) -> dict[str, Any]:
         """加载 YAML 配置文件"""
@@ -204,6 +206,9 @@ class Config:
         scheduler = self.config_data.get("scheduler", {})
         self.interval_minutes: int = int(scheduler.get("interval_minutes", 3))
         self.run_immediately: bool = scheduler.get("run_immediately", True)
+        # Q-03: K 线节拍对齐参数
+        self.timeframe_offset: float = float(scheduler.get("timeframe_offset", 2.0))
+        self.min_throttle_secs: float = float(scheduler.get("min_throttle_secs", 30.0))
 
     def _init_data_config(self):
         """初始化数据配置"""
@@ -415,6 +420,59 @@ class Config:
         self.market_monitor_reference_window_minutes: int = int(
             monitor.get("reference_window_minutes", 10)
         )
+
+    def _init_account_protection_config(self):
+        """初始化账户保护配置"""
+        ap = self.config_data.get("account_protection", {})
+        self.account_protection_enabled: bool = self._as_bool(ap.get("enabled"), False)
+        self.account_protection_max_drawdown_pct: float = float(ap.get("max_drawdown_pct", 0.10))
+        self.account_protection_max_daily_loss_pct: float = float(
+            ap.get("max_daily_loss_pct", 0.05)
+        )
+        self.account_protection_max_position_hours: float = float(ap.get("max_position_hours", 48))
+        self.account_protection_max_consecutive_losses: int = int(
+            ap.get("max_consecutive_losses", 5)
+        )
+        self.account_protection_pause_hours: float = float(
+            ap.get("pause_hours_after_protection", 4)
+        )
+
+    def _init_protections_config(self):
+        """初始化插件化保护配置（优先使用新 protections 格式，兼容旧 account_protection 格式）"""
+        raw = self.config_data.get("protections", None)
+        if raw is not None:
+            # 新格式：直接使用 protections 列表
+            self.protections_config: list[dict[str, Any]] = raw if isinstance(raw, list) else []
+        elif self.account_protection_enabled:
+            # 旧格式：自动迁移为新格式
+            self.protections_config = self._migrate_legacy_protection_config()
+        else:
+            self.protections_config = []
+
+    def _migrate_legacy_protection_config(self) -> list[dict[str, Any]]:
+        """将旧 account_protection 配置迁移为插件化格式"""
+        return [
+            {
+                "name": "max_drawdown",
+                "max_drawdown_pct": self.account_protection_max_drawdown_pct,
+                "pause_hours": self.account_protection_pause_hours,
+            },
+            {
+                "name": "daily_loss",
+                "max_daily_loss_pct": self.account_protection_max_daily_loss_pct,
+                "pause_hours": self.account_protection_pause_hours,
+            },
+            {
+                "name": "consecutive_loss",
+                "max_consecutive_losses": self.account_protection_max_consecutive_losses,
+                "per_symbol": False,
+                "pause_hours": self.account_protection_pause_hours,
+            },
+            {
+                "name": "position_timeout",
+                "max_position_hours": self.account_protection_max_position_hours,
+            },
+        ]
 
     def validate(self):
         """验证配置的有效性"""

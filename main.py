@@ -8,11 +8,12 @@ import argparse
 import signal
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
@@ -35,10 +36,12 @@ from src.data.market_data import MarketDataFetcher
 from src.data.market_monitor import MarketMonitor, MonitorConfig, VolatilityAlert
 from src.llm import LLMClientManager
 from src.notification import Notifier
+from src.plugins.protections import ProtectionAction, ProtectionContext, ProtectionManager
 from src.prompt_manager import PromptManager
 from src.trading.client import HyperliquidClient
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
+from src.utils.candle_align import next_candle_close_ts
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
 
@@ -442,6 +445,19 @@ class QuantFlowBot:
                 f"检查间隔: {monitor_config.check_interval_seconds}s"
             )
 
+        # 12. 保护插件管理器
+        self.protection_manager = None
+        if self.config.protections_config:
+            self.logger.print_info("初始化保护插件管理器...")
+            self.protection_manager = ProtectionManager(
+                protections_config=self.config.protections_config,
+                on_protection_triggered=self._on_protection_triggered,
+            )
+            plugin_names = [p.name for p in self.protection_manager.plugins]
+            self.logger.print_info(
+                f"保护插件管理器初始化完成 | 已加载: {', '.join(plugin_names)}"
+            )
+
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
         self.logger.print_info(f"  - {len(self.symbol_agents)} 个单币 Agent")
         self.logger.print_info("  - 1 个汇总 Agent")
@@ -451,6 +467,8 @@ class QuantFlowBot:
             self.logger.print_info("  - 1 个外部信息收集 Agent")
         if self.market_monitor:
             self.logger.print_info("  - 1 个市场主动监控器")
+        if self.protection_manager:
+            self.logger.print_info("  - 1 个保护插件管理器 (ProtectionManager)")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -531,6 +549,27 @@ class QuantFlowBot:
                 self.logger.print_info("✅ 启动通知已发送")
         except Exception as e:
             self.logger.print_error(f"发送启动通知失败: {e}")
+
+    def _on_protection_triggered(self, reason: str):
+        """保护插件触发时的回调：发送通知 + 云端告警"""
+        self.logger.print_warning(f"[风控] {reason}")
+
+        if self.notifier and self.notifier.enabled:
+            self.notifier.notify_error(
+                title="风控保护触发",
+                error_message=reason,
+                context="保护插件检测到风险条件，已自动采取保护措施",
+            )
+
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_alert(
+                symbol="ALL",
+                alert_type="account_protection",
+                severity="extreme",
+                message=reason,
+                details={},
+            )
 
     def _on_market_alert(self, alert: VolatilityAlert):
         """
@@ -663,12 +702,75 @@ class QuantFlowBot:
             # 更新所有 Agent 的交易金额
             for agent in self.symbol_agents.values():
                 agent.trade_amount = adjusted_amount
+            # ── 风控检查（保护插件链）──
+            if self.protection_manager:
+                context = ProtectionContext(
+                    balance=balance_info.get("available", 0),
+                    equity=balance_info.get("total", 0),
+                    unrealized_pnl=balance_info.get("unrealized_pnl", 0),
+                    margin_used=balance_info.get("occupied", 0),
+                    current_positions=current_positions or [],
+                )
+                results = self.protection_manager.check_all(context)
+                action = ProtectionManager.get_most_severe_action(results)
+
+                # 各插件内部已上报精确的 risk_event（含专有字段），此处仅打日志
+                # _on_protection_triggered 回调会发送一次 send_alert 总览
+                for r in results:
+                    self.logger.print_warning(f"[风控]{r.reason}")
+
+                # 回撤触发全部平仓
+                if action == ProtectionAction.CLOSE_ALL_POSITIONS:
+                    self.logger.print_warning("[风控]回撤保护触发，执行全部平仓")
+                    for pos in (current_positions or []):
+                        sym = pos.get("coin", "")
+                        if sym:
+                            try:
+                                self.order_manager.close_position(sym)
+                                self.logger.print_info(f"[风控]已平仓: {sym}")
+                            except Exception as e:
+                                self.logger.print_error(f"[风控]平仓失败 {sym}: {e}")
+                    return
+
+                # 暂停新开仓
+                if action == ProtectionAction.PAUSE_NEW_TRADES:
+                    can_open_new_positions = False
+                    for agent in self.symbol_agents.values():
+                        agent.trade_amount = 0
+                    self.logger.print_warning("[风控]保护插件已暂停新开仓，仅管理现有持仓")
+
+                # 超时持仓自动平仓（直接从 check_all 结果中取，避免重复扫描）
+                # 注意：超时强平属于风控主动行为，不向连续亏损插件上报 pnl，
+                # 仅通知 position_timeout 插件清理记录
+                timeout_symbols: list[str] = []
+                for r in results:
+                    if r.plugin_name == "position_timeout" and r.affected_symbols:
+                        timeout_symbols.extend(r.affected_symbols)
+
+                for ts in timeout_symbols:
+                    self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
+                    try:
+                        self.order_manager.close_position(ts)
+                        for plugin in self.protection_manager.plugins:
+                            if plugin.name == "position_timeout":
+                                plugin.on_trade_close(ts, 0)
+                    except Exception as e:
+                        self.logger.print_error(f"[风控]超时平仓失败 {ts}: {e}")
+
             # 第二步：为每个交易对独立决策
             self.logger.print_section("🤖 多 Agent 独立决策", style="bold magenta")
 
             for symbol in self.config.symbols:
                 try:
                     self.logger.print_section(f"📊 {symbol} - 独立 Agent 分析", style="bold cyan")
+
+                    # 检查交易对级锁定
+                    if self.protection_manager:
+                        locked, lock_reason = self.protection_manager.is_symbol_locked(symbol)
+                        if locked:
+                            self.logger.print_warning(f"[风控]{symbol} 已锁定: {lock_reason}")
+                            if symbol in self.symbol_agents:
+                                self.symbol_agents[symbol].trade_amount = 0
 
                     # 获取市场数据
                     df = self.market_fetcher.fetch_ohlcv(
@@ -938,6 +1040,27 @@ class QuantFlowBot:
                         except Exception as e:
                             self.logger.print_warning(f"[{symbol}] 即时反思失败: {e}")
 
+                    # 保护插件：记录开平仓事件
+                    # 仅当工具回调真实执行成功（size > 0）时上报，避免执行失败也误触发风控
+                    if self.protection_manager and details.get("size", 0) > 0:
+                        try:
+                            if decision in ("BUY", "SELL_SHORT"):
+                                self.protection_manager.on_trade_open(
+                                    symbol=symbol,
+                                    entry_price=float(details.get("entry_price", 0)),
+                                    size=float(details["size"]),
+                                    is_long=(decision == "BUY"),
+                                    leverage=int(details.get("leverage", 1)),
+                                )
+                            elif decision in ("SELL", "BUY_TO_COVER"):
+                                self.protection_manager.on_trade_close(
+                                    symbol=symbol, pnl=float(details.get("pnl", 0))
+                                )
+                        except Exception as e:
+                            self.logger.print_warning(
+                                f"[{symbol}] 保护插件记录失败: {e}"
+                            )
+
                 except Exception as e:
                     self.logger.print_error(f"{symbol} Agent 决策异常: {e}")
                     self.logger.logger.exception(e)
@@ -1000,29 +1123,19 @@ class QuantFlowBot:
             self._trading_lock.release()
 
     def start(self):
-        """启动机器人"""
+        """启动机器人（K 线节拍驱动主循环）"""
         try:
-            self.logger.print_section("🚀 启动多 Agent 交易机器人", style="bold green")
+            self.logger.print_section("启动多 Agent 交易机器人", style="bold green")
 
             # 记录启动时间
             self.statistics["start_time"] = datetime.now()
 
-            # 创建调度器
-            self.scheduler = BlockingScheduler()
+            # 创建后台调度器（仅用于非决策任务）
+            self.scheduler = BackgroundScheduler()
 
-            # 添加定时任务
-            self.scheduler.add_job(
-                self.trading_cycle,
-                trigger=IntervalTrigger(minutes=self.config.interval_minutes),
-                id="trading_cycle",
-                name="多 Agent 交易决策循环",
-                replace_existing=True,
-            )
-
-            # 添加外部信息收集定时任务
+            # 外部信息收集定时任务
             if self.external_info_agent:
                 interval_hours = getattr(self.config, "external_info_interval_hours", 3.0)
-                # 将小时转换为分钟
                 interval_minutes = int(interval_hours * 60)
 
                 self.scheduler.add_job(
@@ -1032,38 +1145,42 @@ class QuantFlowBot:
                     name="外部信息收集任务",
                     replace_existing=True,
                 )
-                self.logger.print_info(f"📡 外部信息收集任务已添加，间隔: {interval_hours} 小时")
+                self.logger.print_info(f"外部信息收集任务已添加，间隔: {interval_hours} 小时")
 
-                # 首次启动时立即执行一次外部信息收集
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
+
+            # 启动后台调度器
+            self.scheduler.start()
+
+            # 启动市场主动监控线程
+            if self.market_monitor:
+                self.market_monitor.start()
+                self.logger.print_info(
+                    f"市场主动监控已启动 | "
+                    f"波动阈值: {self.config.market_monitor_alert_threshold_pct}%"
+                )
+
+            self.is_running = True
+            self.start_time = datetime.now()
 
             # 如果配置了立即执行，先执行一次
             if self.config.run_immediately:
                 self.logger.print_info("立即执行第一次交易循环...")
                 self.trading_cycle()
 
-            # 显示下次执行时间
-            next_run = datetime.now().replace(second=0, microsecond=0)
-            next_run = next_run + timedelta(minutes=self.config.interval_minutes)
-            self.logger.print_info(f"下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-            self.logger.print_info(f"执行间隔: {self.config.interval_minutes} 分钟")
-
-            # 启动市场主动监控线程
-            if self.market_monitor:
-                self.market_monitor.start()
-                self.logger.print_info(
-                    f"📡 市场主动监控已启动，决策间隔 {self.config.interval_minutes} 分钟内"
-                    f"检测到 ≥{self.config.market_monitor_alert_threshold_pct}% 波动将主动触发决策"
-                )
-
-            # 启动调度器
-            self.is_running = True
-            self.start_time = datetime.now()  # 记录启动时间
             self.logger.print_section(
-                "✅ 多 Agent 机器人已启动，按 Ctrl+C 停止", style="bold green"
+                f"K 线节拍驱动已启动 | "
+                f"周期: {self.config.timeframe} | "
+                f"偏移: {self.config.timeframe_offset}s",
+                style="bold green",
             )
-            self.scheduler.start()
+
+            # 主循环：K 线节拍驱动
+            while self.is_running:
+                self._wait_next_candle()
+                if self.is_running:
+                    self.trading_cycle()
 
         except KeyboardInterrupt:
             self.stop("用户手动停止 (Ctrl+C)")
@@ -1071,6 +1188,21 @@ class QuantFlowBot:
             self.logger.print_error(f"启动失败: {e}")
             self.logger.logger.exception(e)
             sys.exit(1)
+
+    def _wait_next_candle(self):
+        """等待到下一根 K 线收盘后 offset 秒（分段 sleep 以便快速响应停止信号）"""
+        target = next_candle_close_ts(self.config.timeframe) + self.config.timeframe_offset
+        sleep_duration = max(target - time.time(), self.config.min_throttle_secs)
+
+        target_str = time.strftime("%H:%M:%S", time.gmtime(target))
+        self.logger.print_info(
+            f"[节拍] 等待下一根 {self.config.timeframe} K 线 | "
+            f"目标: {target_str} UTC | 等待: {sleep_duration:.0f}s"
+        )
+
+        end_time = time.time() + sleep_duration
+        while time.time() < end_time and self.is_running:
+            time.sleep(max(0.0, min(1.0, end_time - time.time())))
 
     def stop(self, reason: str = "用户手动停止"):
         """停止机器人"""

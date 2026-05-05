@@ -74,10 +74,12 @@ uv add --group dev <package>  # 添加开发依赖
 docker compose up -d
 docker compose logs -f
 
-# 回测（支持 single/grid 策略）
+# 回测（支持 single/grid 策略 + 确定性回测）
 uv run python backtest.py --symbol BTC --strategy single --start-date 2024-01-01 --end-date 2024-12-01
 uv run python backtest.py --symbol BTC --strategy grid --start-date 2024-01-01 --end-date 2024-12-01
 uv run python backtest.py --symbol BTC --resume-from workspace/BTC_xxx/live_report.json  # 中断恢复
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --record-decisions decisions.jsonl  # 录制决策
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --replay-decisions decisions.jsonl  # 回放决策（跳过 LLM）
 
 # A/B 回测对比（对比不同功能配置的效果差异）
 uv run python backtest_comparison.py --symbol BTC --compare all
@@ -120,8 +122,8 @@ tail -f logs/grid.log          # 网格交易日志
                    └──────────────────┼──────────────────┘            │
                                       ↓                               ↓
                           ┌─────────────────────┐           ┌────────────────┐
-                          │  AccountProtector   │           │  OrderManager  │
-                          │  (回撤保护/超时清仓) │           │  (订单执行)     │
+                          │ProtectionManager   │           │  OrderManager  │
+                          │ (插件链风控保护)     │           │  (订单执行)     │
                           └──────────┬──────────┘           └───────┬────────┘
                                      │                               │
                                      └───────────────┬───────────────┘
@@ -196,8 +198,15 @@ src/
 │   ├── decision_validator.py       # 决策多维度验证
 │   ├── position_sizer.py           # 凯利公式仓位计算
 │   ├── risk_manager.py             # ATR动态止盈止损
-│   ├── account_protector.py        # 账户保护 (回撤/超时)
 │   └── enhanced_engine.py          # 增强交易引擎 (Regime 参数覆盖)
+├── plugins/                  # 插件系统
+│   └── protections/                # 保护插件
+│       ├── base.py                     # IProtection 抽象基类 + 数据结构
+│       ├── manager.py                  # ProtectionManager 插件编排器
+│       ├── drawdown.py                 # 最大回撤保护
+│       ├── daily_loss.py               # 单日亏损保护
+│       ├── consecutive_loss.py         # 连续亏损保护（支持 per-symbol 锁定）
+│       └── position_timeout.py         # 持仓超时保护
 ├── data/                     # 数据模块
 │   ├── market_data.py              # K线和市场数据
 │   ├── indicators.py               # 技术指标 (MA, RSI, MACD, Bollinger)
@@ -213,7 +222,7 @@ src/
 │   └── cloud_logger.py             # 云端日志同步（aepipe 服务）
 ├── llm/                      # LLM 客户端
 │   └── llm_client.py               # 多供应商支持 (OpenAI/Cloudflare/Google/LiteLLM/NVIDIA)
-├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复）
+├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复 + 确定性录制/回放）
 └── notification/             # 通知模块
 ```
 
@@ -525,15 +534,21 @@ max_total_exposure: 0.5       # 最大总敞口 50%
 min_risk_reward_ratio: 1.5    # 最小风险回报比
 ```
 
-### 账户保护 (`account_protector.py`)
+### 保护插件系统 (`src/plugins/protections/`)
 
-实现最大回撤保护和持仓超时机制：
+插件化风控架构，每个保护规则可独立启用/禁用/配置：
 
 ```python
-# 保护动作
-ProtectionAction.PAUSE_NEW_TRADES        # 暂停新开仓
-ProtectionAction.CLOSE_LOSING_POSITIONS  # 关闭亏损仓位
-ProtectionAction.CLOSE_ALL_POSITIONS     # 全部平仓
+# 4 个内置插件
+MaxDrawdownProtection     # 最大回撤 → 全部平仓
+DailyLossProtection       # 单日亏损 → 暂停新开仓
+ConsecutiveLossProtection # 连续亏损 → 暂停或锁定交易对（per-symbol）
+PositionTimeoutProtection # 持仓超时 → 自动平仓
+
+# 核心接口
+ProtectionManager.check_all(context)       # 执行所有插件检查
+ProtectionManager.is_symbol_locked(symbol) # 查询交易对级锁定
+ProtectionManager.on_trade_open/close()    # 分发开平仓事件
 ```
 
 ### 交易客户端 (`client.py`)
@@ -597,10 +612,15 @@ trading:
 # 调度配置
 scheduler:
   interval_minutes: 30            # 兜底巡检，突发由 market_monitor 覆盖
+  # K 线节拍参数（Q-03）：主循环对齐到 K 线收盘后 timeframe_offset 秒触发决策
+  # timeframe_offset: 2.0         # K 线收盘后等待秒数（确保数据可获取）
+  # min_throttle_secs: 30.0       # 两次决策之间最小间隔（防止过快循环）
 
 # 数据配置
 data:
   timeframe: 1h                   # 兜底决策用大周期 K 线，减少噪音
+                                  # ⚠️ 建议 ≥ 5m：若 trading_cycle 单次耗时 > timeframe，
+                                  # K 线节拍会持续返回 min_throttle_secs 跳过 K 线
 
 prompt:
   set: nof1-improved              # Prompt 集（推荐 nof1-improved）
@@ -617,12 +637,20 @@ debate:
 regime_adaptive:
   enabled: true
 
-# 账户保护
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10          # 最大回撤 10%
-  max_daily_loss_pct: 0.05        # 单日亏损 5%
-  max_position_hours: 48          # 最大持仓时间
+# 保护插件（可任意组合/禁用，空列表=关闭所有风控）
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10        # 最大回撤 10%
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05      # 单日亏损 5%
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true              # true=只锁该交易对
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48
 
 # 市场主动监控（异常波动触发决策循环）
 market_monitor:
@@ -719,6 +747,17 @@ uv run pytest tests/ --cov=src
 - `test_fact_subjective_split.py`: 事实-主观分离测试（改进6d）
 - `test_prompt_meta_reflection.py`: Prompt 自优化测试（改进6e）
 - `test_grid_manager_exit_orders.py`: 网格交易分层减仓单测试
+- `test_account_protection_integration.py`: 保护系统集成测试
+- `test_protection_base.py`: 保护插件基础架构测试
+- `test_protection_drawdown.py`: 最大回撤保护插件测试
+- `test_protection_daily_loss.py`: 单日亏损保护插件测试
+- `test_protection_consecutive_loss.py`: 连续亏损保护插件测试（含 per-symbol）
+- `test_protection_position_timeout.py`: 持仓超时保护插件测试
+- `test_protection_manager.py`: 保护插件管理器测试
+- `test_protection_migration.py`: 保护配置迁移测试
+- `test_decision_recorder.py`: 决策录制/回放测试（确定性回测）
+- `test_candle_align.py`: K 线节拍对齐测试
+- `test_candle_throttle.py`: K 线节拍节流测试
 
 ## 注意事项
 

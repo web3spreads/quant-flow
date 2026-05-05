@@ -21,7 +21,7 @@ ExecutionAgent (structured output)
          ↓
 DecisionValidator + PositionSizer + RiskManager
          ↓
-AccountProtector + OrderManager
+ProtectionManager (plugin chain) + OrderManager
          ↓
 HyperliquidClient [safety: SL fail → auto close with retries]
          ↓
@@ -81,7 +81,7 @@ Before any order is placed, the decision passes through multiple validators:
 | `DecisionValidator` | Multi-timeframe trend alignment, signal quality, R:R ratio, market state suitability |
 | `PositionSizer` | Kelly criterion position sizing, volatility adjustment, drawdown shrinkage |
 | `RiskManager` | ATR-based dynamic SL/TP, max risk per trade (default 2%), max total exposure (50%) |
-| `AccountProtector` | Drawdown circuit breaker, daily loss limit, position age timeout |
+| `ProtectionManager` | Plugin chain: max drawdown (close-all + pause), daily loss (pause), consecutive loss (global or per-symbol lock), position timeout (force-close). Each plugin independently togglable via `protections:` config. |
 
 Validation results:
 - `PASS` — proceed with trade

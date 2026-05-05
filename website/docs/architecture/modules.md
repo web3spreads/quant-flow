@@ -160,15 +160,26 @@ ATR-based dynamic stop-loss and take-profit calculation.
 - `max_total_exposure: 0.50` (50% of account)
 - `min_risk_reward_ratio: 1.5`
 
-### `account_protector.py`
-Account-level circuit breakers.
+### `src/plugins/protections/`
+Plugin-based account-level circuit breakers (replaces the legacy `account_protector.py`).
 
 ```python
-class ProtectionAction(Enum):
+class ProtectionAction(StrEnum):
+    NONE = "none"
     PAUSE_NEW_TRADES = "pause_new_trades"
-    CLOSE_LOSING_POSITIONS = "close_losing_positions"
     CLOSE_ALL_POSITIONS = "close_all_positions"
 ```
+
+Built-in plugins:
+
+| Plugin | File | Behavior |
+|---|---|---|
+| `MaxDrawdownProtection` | `drawdown.py` | Drawdown ≥ threshold → CLOSE_ALL + pause |
+| `DailyLossProtection` | `daily_loss.py` | Daily loss ≥ threshold → PAUSE_NEW_TRADES |
+| `ConsecutiveLossProtection` | `consecutive_loss.py` | N consecutive losses → pause (global or per-symbol lock) |
+| `PositionTimeoutProtection` | `position_timeout.py` | Position held > N hours → flagged for force-close |
+
+`ProtectionManager` (manager.py) loads plugins from `protections:` config, dispatches `check_all()` and `on_trade_open/close()` events, and resolves the most-severe action via `get_most_severe_action()`. Each plugin persists its own state file under `data/protection/<plugin_name>/state.json`.
 
 ### `enhanced_engine.py`
 Regime-adaptive parameter override engine. Applies `regime_adaptive` config parameters over the base trading parameters.
