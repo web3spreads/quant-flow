@@ -114,9 +114,7 @@ class ProtectionManager:
             key=lambda a: severity.get(a, 0),
         )
 
-    def is_symbol_locked(
-        self, symbol: str, timestamp: datetime | None = None
-    ) -> tuple[bool, str]:
+    def is_symbol_locked(self, symbol: str, timestamp: datetime | None = None) -> tuple[bool, str]:
         """
         查询指定交易对是否被锁定
 
