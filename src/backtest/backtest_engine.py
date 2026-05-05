@@ -88,7 +88,13 @@ class BacktestEngine:
             default_leverage=config.max_leverage if config else 10,
         )
 
-        # 决策录制/回放
+        # 决策录制/回放（仅 single 策略支持，grid 策略的 ai_config 结构不兼容）
+        if (record_file or replay_file) and self.strategy != "single":
+            raise ValueError(
+                f"决策录制/回放仅支持 single 策略，当前 strategy={self.strategy!r}。"
+                "grid 策略的 ai_config 结构与 single 决策不兼容。"
+            )
+
         self._decision_recorder = None
         self._decision_replayer = None
         self._replay_mode = bool(replay_file)

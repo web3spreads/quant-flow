@@ -157,6 +157,15 @@ def parse_args():
     if getattr(args, "record_decisions", None) and getattr(args, "replay_decisions", None):
         parser.error("--record-decisions 和 --replay-decisions 不能同时使用")
 
+    # 决策录制/回放仅 single 策略支持
+    if (
+        getattr(args, "record_decisions", None) or getattr(args, "replay_decisions", None)
+    ) and args.strategy != "single":
+        parser.error(
+            f"--record-decisions/--replay-decisions 仅支持 --strategy single，"
+            f"当前 --strategy={args.strategy}"
+        )
+
     return args
 
 

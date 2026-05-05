@@ -36,9 +36,9 @@ from src.data.market_data import MarketDataFetcher
 from src.data.market_monitor import MarketMonitor, MonitorConfig, VolatilityAlert
 from src.llm import LLMClientManager
 from src.notification import Notifier
+from src.plugins.protections import ProtectionAction, ProtectionContext, ProtectionManager
 from src.prompt_manager import PromptManager
 from src.trading.client import HyperliquidClient
-from src.plugins.protections import ProtectionAction, ProtectionContext, ProtectionManager
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
 from src.utils.candle_align import next_candle_close_ts
@@ -714,23 +714,16 @@ class QuantFlowBot:
                 results = self.protection_manager.check_all(context)
                 action = ProtectionManager.get_most_severe_action(results)
 
-                # 上报每个触发结果到云端
-                cloud = get_cloud_logger()
+                # 各插件内部已上报精确的 risk_event（含专有字段），此处仅打日志
+                # _on_protection_triggered 回调会发送一次 send_alert 总览
                 for r in results:
                     self.logger.print_warning(f"[风控]{r.reason}")
-                    if cloud:
-                        cloud.send_risk_event(
-                            symbol=",".join(r.affected_symbols) if r.affected_symbols else "ALL",
-                            risk_type=f"protection_{r.action}",
-                            details=r.details,
-                            level="error" if r.action == ProtectionAction.CLOSE_ALL_POSITIONS else "warning",
-                        )
 
                 # 回撤触发全部平仓
                 if action == ProtectionAction.CLOSE_ALL_POSITIONS:
                     self.logger.print_warning("[风控]回撤保护触发，执行全部平仓")
                     for pos in (current_positions or []):
-                        sym = pos.get("symbol", pos.get("coin", ""))
+                        sym = pos.get("coin", "")
                         if sym:
                             try:
                                 self.order_manager.close_position(sym)
@@ -746,10 +739,15 @@ class QuantFlowBot:
                         agent.trade_amount = 0
                     self.logger.print_warning("[风控]保护插件已暂停新开仓，仅管理现有持仓")
 
-                # 超时持仓自动平仓
+                # 超时持仓自动平仓（直接从 check_all 结果中取，避免重复扫描）
                 # 注意：超时强平属于风控主动行为，不向连续亏损插件上报 pnl，
                 # 仅通知 position_timeout 插件清理记录
-                for ts in self.protection_manager.get_timeout_symbols():
+                timeout_symbols: list[str] = []
+                for r in results:
+                    if r.plugin_name == "position_timeout" and r.affected_symbols:
+                        timeout_symbols.extend(r.affected_symbols)
+
+                for ts in timeout_symbols:
                     self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
                     try:
                         self.order_manager.close_position(ts)
@@ -1043,26 +1041,20 @@ class QuantFlowBot:
                             self.logger.print_warning(f"[{symbol}] 即时反思失败: {e}")
 
                     # 保护插件：记录开平仓事件
-                    if self.protection_manager:
+                    # 仅当工具回调真实执行成功（size > 0）时上报，避免执行失败也误触发风控
+                    if self.protection_manager and details.get("size", 0) > 0:
                         try:
                             if decision in ("BUY", "SELL_SHORT"):
-                                entry_price = (
-                                    details.get("entry_price")
-                                    or details.get("fill_price")
-                                    or details.get("price", 0)
-                                )
-                                size = details.get("size") or details.get("amount", 0)
                                 self.protection_manager.on_trade_open(
                                     symbol=symbol,
-                                    entry_price=float(entry_price),
-                                    size=float(size),
+                                    entry_price=float(details.get("entry_price", 0)),
+                                    size=float(details["size"]),
                                     is_long=(decision == "BUY"),
                                     leverage=int(details.get("leverage", 1)),
                                 )
                             elif decision in ("SELL", "BUY_TO_COVER"):
-                                pnl = details.get("pnl") or details.get("closed_pnl", 0)
                                 self.protection_manager.on_trade_close(
-                                    symbol=symbol, pnl=float(pnl)
+                                    symbol=symbol, pnl=float(details.get("pnl", 0))
                                 )
                         except Exception as e:
                             self.logger.print_warning(

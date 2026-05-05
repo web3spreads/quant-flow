@@ -114,7 +114,12 @@ python backtest.py --symbol BTC \
     --replay-decisions decisions_btc.jsonl
 ```
 
-> **注意**：`--record-decisions` 和 `--replay-decisions` 不能同时使用。回放模式不需要 LLM API 密钥，运行速度显著更快。
+> **注意**：
+> - `--record-decisions` 和 `--replay-decisions` 不能同时使用
+> - 录制/回放仅支持 `--strategy single`，grid 策略的 ai_config 结构不兼容
+> - 回放模式不需要 LLM API 密钥，运行速度显著更快
+> - **决策一致 ≠ 完全一致**：录制保留决策方向（BUY/SELL/...）和执行参数（entry_price/size/leverage/pnl 等）。
+>   若 LLM 决策时通过工具调用动态调整 `set_leverage`，由于这些只反映在最终执行结果中，回放会按录制时的实际成交参数还原决策侧；而仓位实际开平由 `_execute_replay_decision` 根据 details 中的 amount/leverage 重放，缺失字段时回退到 `config.max_trade_amount` 与 `default_leverage`。
 
 ## 命令行参数
 

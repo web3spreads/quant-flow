@@ -131,6 +131,10 @@ class SingleSymbolAgent:
         # 用于去重：记录本次决策周期中已执行的工具调用
         self._executed_callbacks = set()
 
+        # 工具回调执行后写回的交易事件，供 make_decision 合并到 details，
+        # 用于风控插件等下游消费实际成交参数（避免回调结果只通过文本回流到 LLM）
+        self._current_trade_event: dict[str, Any] = {}
+
         # 初始化 LLM（从管理器获取）
         self.llm = self.llm_manager.get_client(temperature=temperature)
 
@@ -206,6 +210,17 @@ class SingleSymbolAgent:
                     sl_price = entry_price * (1 - self.stop_loss_ratio)
                     quantity = result.get("quantity", 0)
                     leverage_used = actual_leverage
+
+                    # 写回执行后的真实成交参数（供 main.py 风控插件等下游使用）
+                    self._current_trade_event = {
+                        "action": "BUY",
+                        "entry_price": float(entry_price),
+                        "size": float(quantity),
+                        "amount": float(actual_amount),
+                        "leverage": int(actual_leverage),
+                        "fill_price": float(result.get("fill_price", entry_price)),
+                        "is_long": True,
+                    }
 
                     # 发送开仓通知
                     if self.notifier:
@@ -313,21 +328,32 @@ class SingleSymbolAgent:
                 )
 
                 if result and result.get("status") == "ok":
+                    # 计算执行结果（独立于通知发送，供风控插件等下游消费）
+                    entry_price = float(position.get("entryPx", 0))
+                    exit_price = result.get("fill_price", self.current_price)
+                    size = abs(float(position.get("szi", 0)))
+                    pnl = (exit_price - entry_price) * size
+                    leverage = safe_leverage(position.get("leverage"), 1)
+                    pnl_percent = (
+                        (exit_price - entry_price) / entry_price * leverage * 100
+                        if entry_price > 0
+                        else 0
+                    )
+
+                    # 写回执行后的真实成交参数
+                    self._current_trade_event = {
+                        "action": "SELL",
+                        "entry_price": entry_price,
+                        "exit_price": float(exit_price),
+                        "fill_price": float(exit_price),
+                        "size": size,
+                        "pnl": float(pnl),
+                        "pnl_percent": float(pnl_percent),
+                        "leverage": int(leverage),
+                    }
+
                     # 发送平仓通知
                     if self.notifier:
-                        entry_price = float(position.get("entryPx", 0))
-                        # 优先使用实际成交价，回退到当前市场价
-                        exit_price = result.get("fill_price", self.current_price)
-                        size = abs(float(position.get("szi", 0)))
-                        # 根据开仓价、平仓价和数量计算实际盈亏金额
-                        pnl = (exit_price - entry_price) * size
-                        leverage = safe_leverage(position.get("leverage"), 1)
-                        pnl_percent = (
-                            (exit_price - entry_price) / entry_price * leverage * 100
-                            if entry_price > 0
-                            else 0
-                        )
-
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
                             side="long",
@@ -439,6 +465,17 @@ class SingleSymbolAgent:
                     quantity = result.get("quantity", 0)
                     leverage_used = actual_leverage
 
+                    # 写回执行后的真实成交参数（供 main.py 风控插件等下游使用）
+                    self._current_trade_event = {
+                        "action": "SELL_SHORT",
+                        "entry_price": float(entry_price),
+                        "size": float(quantity),
+                        "amount": float(actual_amount),
+                        "leverage": int(actual_leverage),
+                        "fill_price": float(result.get("fill_price", entry_price)),
+                        "is_long": False,
+                    }
+
                     # 发送开仓通知
                     if self.notifier:
                         self.notifier.notify_trade_opened(
@@ -545,21 +582,33 @@ class SingleSymbolAgent:
                 )
 
                 if result and result.get("status") == "ok":
+                    # 计算执行结果（独立于通知发送，供风控插件等下游消费）
+                    entry_price = float(position.get("entryPx", 0))
+                    exit_price = result.get("fill_price", self.current_price)
+                    size = abs(float(position.get("szi", 0)))
+                    # 做空盈亏：价格下跌盈利，上涨亏损
+                    pnl = (entry_price - exit_price) * size
+                    leverage = safe_leverage(position.get("leverage"), 1)
+                    pnl_percent = (
+                        ((entry_price - exit_price) / entry_price * leverage * 100)
+                        if entry_price > 0
+                        else 0
+                    )
+
+                    # 写回执行后的真实成交参数
+                    self._current_trade_event = {
+                        "action": "BUY_TO_COVER",
+                        "entry_price": entry_price,
+                        "exit_price": float(exit_price),
+                        "fill_price": float(exit_price),
+                        "size": size,
+                        "pnl": float(pnl),
+                        "pnl_percent": float(pnl_percent),
+                        "leverage": int(leverage),
+                    }
+
                     # 发送平仓通知
                     if self.notifier:
-                        entry_price = float(position.get("entryPx", 0))
-                        # 优先使用实际成交价，回退到当前市场价
-                        exit_price = result.get("fill_price", self.current_price)
-                        size = abs(float(position.get("szi", 0)))
-                        # 做空盈亏：价格下跌盈利，上涨亏损
-                        pnl = (entry_price - exit_price) * size
-                        leverage = safe_leverage(position.get("leverage"), 1)
-                        pnl_percent = (
-                            ((entry_price - exit_price) / entry_price * leverage * 100)
-                            if entry_price > 0
-                            else 0
-                        )
-
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
                             side="short",
@@ -876,6 +925,9 @@ class SingleSymbolAgent:
             # 重置去重状态（每次新的决策周期开始时）
             self._executed_callbacks.clear()
 
+            # 重置工具回调写回的交易事件
+            self._current_trade_event = {}
+
             # 更新当前价格
             self.current_price = market_data.get("current_price", 0)
 
@@ -939,6 +991,11 @@ class SingleSymbolAgent:
                 "prompt": prompt,
                 "symbol": self.symbol,
             }
+
+            # 合入工具回调写回的真实成交参数
+            # （open/close 事件传递给风控插件、即时反思、决策录制等）
+            if self._current_trade_event:
+                decision_details.update(self._current_trade_event)
 
             return decision_type, decision_details
 

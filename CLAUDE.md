@@ -612,10 +612,15 @@ trading:
 # 调度配置
 scheduler:
   interval_minutes: 30            # 兜底巡检，突发由 market_monitor 覆盖
+  # K 线节拍参数（Q-03）：主循环对齐到 K 线收盘后 timeframe_offset 秒触发决策
+  # timeframe_offset: 2.0         # K 线收盘后等待秒数（确保数据可获取）
+  # min_throttle_secs: 30.0       # 两次决策之间最小间隔（防止过快循环）
 
 # 数据配置
 data:
   timeframe: 1h                   # 兜底决策用大周期 K 线，减少噪音
+                                  # ⚠️ 建议 ≥ 5m：若 trading_cycle 单次耗时 > timeframe，
+                                  # K 线节拍会持续返回 min_throttle_secs 跳过 K 线
 
 prompt:
   set: nof1-improved              # Prompt 集（推荐 nof1-improved）

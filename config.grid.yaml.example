@@ -91,7 +91,9 @@ llm:
   client_type: langchain_nvidia
 
   # 模型名称（如不指定则使用 .env 中的 OPENAI_MODEL）
-  # model: deepseek-ai/deepseek-v3.2
+  # 按你的供应商可用模型填写，例如：
+  # model: qwen/qwen3.5-122b-a10b
+  # model: deepseek-chat
 
 # 云端日志配置（aepipe-sdk 0.1.1，https://github.com/loadchange/aepipe）
 # 基于 Cloudflare Workers + Analytics Engine + D1 的生产级日志管道

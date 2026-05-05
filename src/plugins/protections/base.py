@@ -34,6 +34,7 @@ class ProtectionReturn:
     should_pause: bool = False
     affected_symbols: list[str] | None = None  # None = 全局
     details: dict[str, Any] = field(default_factory=dict)
+    plugin_name: str = ""  # 由 ProtectionManager 在分发时填入，便于调用方识别来源
 
 
 @dataclass

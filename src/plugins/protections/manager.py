@@ -5,6 +5,7 @@
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,7 @@ class ProtectionManager:
             try:
                 result = plugin.check(context)
                 if result.triggered:
+                    result.plugin_name = plugin.name
                     results.append(result)
                     logger.warning(
                         "保护插件 %s 触发: %s (动作: %s)",
@@ -112,12 +114,15 @@ class ProtectionManager:
             key=lambda a: severity.get(a, 0),
         )
 
-    def is_symbol_locked(self, symbol: str) -> tuple[bool, str]:
+    def is_symbol_locked(
+        self, symbol: str, timestamp: datetime | None = None
+    ) -> tuple[bool, str]:
         """
         查询指定交易对是否被锁定
 
         Args:
             symbol: 交易对符号
+            timestamp: 当前时间戳（回测时传入模拟时间，默认 datetime.now()）
 
         Returns:
             (是否锁定, 锁定原因)
@@ -126,7 +131,7 @@ class ProtectionManager:
             if not plugin.enabled:
                 continue
             if hasattr(plugin, "is_symbol_locked"):
-                locked, reason = plugin.is_symbol_locked(symbol)
+                locked, reason = plugin.is_symbol_locked(symbol, timestamp=timestamp)
                 if locked:
                     return True, reason
         return False, ""
