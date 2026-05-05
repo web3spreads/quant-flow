@@ -35,7 +35,7 @@ Quant Flow 是基于 [Hyperliquid DEX](https://hyperliquid.xyz/) 的 AI 自动�
 - 📊 **网格交易策略** — AI 驱动的动态网格做市
 - 📐 **凯利公式仓位管理** — 动态计算最优仓位
 - 🛡️ **ATR 动态止盈止损** — 波动率自适应风险管理
-- 🔒 **账户保护** — 最大回撤限制、持仓超时机制
+- 🔒 **账户保护** — 插件化风控：最大回撤 / 单日亏损 / 连续亏损 / 持仓超时，可独立开关组合
 - 🔍 **决策验证** — 多周期趋势共振、信号质量评估
 - 📈 **回测支持** — `single/grid` 双策略，支持中断恢复
 - 🔄 **API 回退机制** — LLM 和 Hyperliquid API 双重回退
@@ -121,7 +121,7 @@ HYPERLIQUID_TESTNET=true        # true=测试网，false=主网
 ```yaml
 llm:
   client_type: langchain_nvidia   # openai / cloudflare / google / litellm / nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b   # 按你的供应商可用模型填写
   temperature: 0.2
 
 trading:
@@ -141,10 +141,21 @@ debate:
 regime_adaptive:
   enabled: false                  # 依赖 enhanced_analysis: true
 
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10          # 最大回撤 10%
-  max_daily_loss_pct: 0.05        # 单日亏损 5%
+# 插件化风控保护（新格式，空列表 = 关闭所有风控）
+# 旧的 `account_protection: { enabled: true, ... }` 仍会自动迁移，保持向后兼容
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10        # 最大回撤 10%
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05      # 单日亏损 5%
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true              # true = 仅锁定亏损的交易对
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48
 
 market_monitor:
   enabled: false
@@ -167,6 +178,14 @@ uv run python backtest.py --symbol BTC --strategy grid \
 # 从检查点恢复中断的回测
 uv run python backtest.py \
   --resume-from backtest_results/backtest_BTC_xxx/live_report.json
+
+# 确定性回测：录制一次，后续秒级重放（仅支持 single 策略）
+uv run python backtest.py --symbol BTC --strategy single \
+  --start-date 2024-01-01 --end-date 2024-03-01 \
+  --record-decisions decisions.jsonl
+uv run python backtest.py --symbol BTC --strategy single \
+  --start-date 2024-01-01 --end-date 2024-03-01 \
+  --replay-decisions decisions.jsonl   # 跳过 LLM，秒级完成
 
 # A/B 对比回测（验证各功能效果）
 uv run python backtest_comparison.py --symbol BTC --compare all
@@ -193,10 +212,11 @@ quant-flow/
 ├── backtest_comparison.py     # A/B 对比工具
 ├── src/
 │   ├── agent/                 # Agent 实现
-│   ├── trading/               # 交易核心（客户端、订单、风控）
-│   ├── data/                  # 市场数据、指标、增强器
+│   ├── trading/               # 交易核心（客户端、订单、网格管理器）
+│   ├── plugins/protections/   # 插件化风控（回撤/日亏/连损/超时）
+│   ├── data/                  # 市场数据、指标、增强器、K 线节拍对齐
 │   ├── llm/                   # LLM 客户端封装
-│   ├── backtest/              # 回测引擎
+│   ├── backtest/              # 回测引擎 + 决策录制/回放
 │   └── notification/          # 通知模块
 ├── prompts/                   # 8 套 Prompt 策略模板
 ├── website/                   # Docusaurus 文档站点

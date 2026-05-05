@@ -35,7 +35,7 @@ Quant Flow is an AI-powered automated trading system for [Hyperliquid DEX](https
 - 📊 **Grid Flow Strategy** — AI-driven dynamic grid market making
 - 📐 **Kelly Formula Position Sizing** — Dynamic optimal position calculation
 - 🛡️ **ATR Dynamic Stop-Loss/Take-Profit** — Volatility-adaptive risk management
-- 🔒 **Account Protection** — Max drawdown limits, position timeout
+- 🔒 **Account Protection** — Plugin-based: max drawdown / daily loss / consecutive loss / position timeout, each independently togglable
 - 🔍 **Decision Validation** — Multi-timeframe trend resonance, signal quality
 - 📈 **Backtesting** — `single/grid` strategies with checkpoint resume
 - 🔄 **API Fallback** — LLM and Hyperliquid API fallback mechanisms
@@ -121,7 +121,7 @@ HYPERLIQUID_TESTNET=true        # true=testnet, false=mainnet
 ```yaml
 llm:
   client_type: langchain_nvidia   # openai / cloudflare / google / litellm / nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b   # pick any model your provider supports
   temperature: 0.2
 
 trading:
@@ -141,10 +141,22 @@ debate:
 regime_adaptive:
   enabled: false       # requires enhanced_analysis: true
 
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10
-  max_daily_loss_pct: 0.05
+# Plugin-based protection (new format). Empty list = no risk control.
+# The legacy `account_protection: { enabled: true, ... }` block is still
+# auto-migrated for backward compatibility.
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true   # true = lock only the losing symbol
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48
 
 market_monitor:
   enabled: false
@@ -166,6 +178,14 @@ uv run python backtest.py --symbol BTC --strategy grid \
 
 # Resume from checkpoint
 uv run python backtest.py --resume-from backtest_results/backtest_BTC_xxx/live_report.json
+
+# Deterministic replay: record once, replay deterministically (single strategy only)
+uv run python backtest.py --symbol BTC --strategy single \
+  --start-date 2024-01-01 --end-date 2024-03-01 \
+  --record-decisions decisions.jsonl
+uv run python backtest.py --symbol BTC --strategy single \
+  --start-date 2024-01-01 --end-date 2024-03-01 \
+  --replay-decisions decisions.jsonl   # skips LLM, runs in seconds
 
 # A/B comparison (test effect of specific features)
 uv run python backtest_comparison.py --symbol BTC --compare all
@@ -192,10 +212,11 @@ quant-flow/
 ├── backtest_comparison.py     # A/B comparison tool
 ├── src/
 │   ├── agent/                 # Agent implementations
-│   ├── trading/               # Trading core (client, orders, risk)
-│   ├── data/                  # Market data, indicators, enricher
+│   ├── trading/               # Trading core (client, orders, grid manager)
+│   ├── plugins/protections/   # Plugin-based risk control (drawdown, daily loss, etc.)
+│   ├── data/                  # Market data, indicators, enricher, candle align
 │   ├── llm/                   # LLM client wrappers
-│   ├── backtest/              # Backtest engine
+│   ├── backtest/              # Backtest engine + decision recorder/replayer
 │   └── notification/          # Notification module
 ├── prompts/                   # 8 prompt strategy sets
 ├── website/                   # Docusaurus documentation site

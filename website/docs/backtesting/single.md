@@ -130,7 +130,7 @@ uv run python backtest.py --symbol BTC --strategy single \
 A win rate of 50–60% is typical for a well-tuned strategy. More important is **profit factor** (gross profit ÷ gross loss) — aim for > 1.5.
 
 ### On Drawdown
-Max drawdown of 10–15% is generally acceptable for a leveraged crypto strategy. Higher drawdown means higher risk of hitting your `account_protection.max_drawdown_pct` in live trading.
+Max drawdown of 10–15% is generally acceptable for a leveraged crypto strategy. Higher drawdown means higher risk of hitting your `protections.max_drawdown.max_drawdown_pct` in live trading.
 
 ### On Sharpe Ratio
 Sharpe > 1.5 is good; > 2.0 is excellent for crypto markets.

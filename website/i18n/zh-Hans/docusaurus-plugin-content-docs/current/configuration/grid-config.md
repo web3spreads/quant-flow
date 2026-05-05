@@ -64,7 +64,7 @@ agent:
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.3               # 网格策略可略高——宽度估算允许更多创意
 ```
 
@@ -93,7 +93,7 @@ data:
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.3
 
 trading:

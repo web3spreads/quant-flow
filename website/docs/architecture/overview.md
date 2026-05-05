@@ -56,7 +56,8 @@ ExecutionAgent (Pydantic structured output: ExecutionPlan)
 │  DecisionValidator  — multi-dim checks     │
 │  PositionSizer      — Kelly criterion      │
 │  RiskManager        — ATR-based SL/TP      │
-│  AccountProtector   — drawdown/timeout CB  │
+│  ProtectionManager  — plugin-based CB      │
+│   (drawdown / daily / consec / timeout)    │
 └────────────────────────┬───────────────────┘
          ↓
 OrderManager → HyperliquidClient

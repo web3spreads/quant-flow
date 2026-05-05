@@ -64,7 +64,7 @@ The market data component uses ATR and volatility to compute a data-driven width
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.3               # slightly higher for grid — more creative width estimation
 ```
 
@@ -93,7 +93,7 @@ Grid trading benefits from shorter timeframes (15m, 5m) compared to the perpetua
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.3
 
 trading:
