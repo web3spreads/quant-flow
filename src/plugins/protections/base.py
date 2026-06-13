@@ -103,6 +103,16 @@ class IProtection(ABC):
         """平仓事件回调（子类按需覆盖）"""
         return  # noqa: B027 — 非抽象，子类按需覆盖
 
+    def on_position_dropped(self, symbol: str) -> None:
+        """
+        持仓被外部/风控强制平掉的事件回调（子类按需覆盖）。
+
+        与 on_trade_close 的区别：这是风控主动行为（如回撤强平、超时强平），
+        不携带 pnl 语义，仅用于让维护持仓状态的插件清理其内部记录，
+        不应影响基于盈亏的计数器（如连续亏损）。
+        """
+        return  # noqa: B027 — 非抽象，子类按需覆盖
+
     def save_state(self) -> None:
         """保存插件状态到 JSON 文件"""
         state = self._get_state_dict()

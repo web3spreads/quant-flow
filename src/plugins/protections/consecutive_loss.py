@@ -96,7 +96,9 @@ class ConsecutiveLossProtection(IProtection):
                 if symbol in self._symbol_losses:
                     self._symbol_losses[symbol] = 0
             else:
-                # 亏损：递增计数
+                # 非盈利（亏损或保本）：递增计数。
+                # 注意：pnl==0 也按"非盈利"递增是既定设计——main.py 的 size>0 守卫
+                # 已保证只有真实成交才会进入此分支（参见 test_protection_dataflow）。
                 self._global_losses += 1
                 self._symbol_losses[symbol] = self._symbol_losses.get(symbol, 0) + 1
 

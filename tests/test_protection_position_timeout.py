@@ -88,6 +88,39 @@ class TestPositionTracking:
         """平仓不存在的持仓不报错"""
         plugin.on_trade_close("DOGE", 0)  # 不应报错
 
+    def test_on_position_dropped_clears_record(self, plugin):
+        """风控强平后 on_position_dropped 清理超时记录"""
+        plugin.on_trade_open("BTC", 50000, 0.1, True, 5)
+        assert "BTC" in plugin._position_records
+
+        plugin.on_position_dropped("BTC")
+        assert "BTC" not in plugin._position_records
+
+    def test_on_position_dropped_nonexistent_is_safe(self, plugin):
+        """对不存在的持仓调用 on_position_dropped 不报错"""
+        plugin.on_position_dropped("DOGE")  # 不应报错
+
+
+class TestTimestampHandling:
+    """显式时间戳支持（回测确定性）"""
+
+    def test_get_timeout_symbols_uses_passed_timestamp(self, plugin):
+        """get_timeout_symbols 使用传入的时间戳而非墙钟"""
+        plugin.on_trade_open("BTC", 50000, 0.1, True, 5)
+        entry = plugin._position_records["BTC"]["entry_time"]
+        entry_dt = datetime.fromisoformat(entry)
+
+        # 传入开仓后 1 小时：未超时（阈值 2h）
+        assert plugin.get_timeout_symbols(timestamp=entry_dt + timedelta(hours=1)) == []
+        # 传入开仓后 3 小时：已超时
+        assert "BTC" in plugin.get_timeout_symbols(timestamp=entry_dt + timedelta(hours=3))
+
+    def test_on_trade_open_records_passed_timestamp(self, plugin):
+        """on_trade_open 按传入时间戳记录开仓时间"""
+        ts = datetime(2024, 1, 1, 12, 0, 0)
+        plugin.on_trade_open("BTC", 50000, 0.1, True, 5, timestamp=ts)
+        assert plugin._position_records["BTC"]["entry_time"] == ts.isoformat()
+
 
 class TestStatePersistence:
     """状态持久化"""

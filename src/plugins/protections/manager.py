@@ -134,9 +134,12 @@ class ProtectionManager:
                     return True, reason
         return False, ""
 
-    def get_timeout_symbols(self) -> list[str]:
+    def get_timeout_symbols(self, timestamp: datetime | None = None) -> list[str]:
         """
         从支持超时检测的插件中获取所有超时持仓符号
+
+        Args:
+            timestamp: 当前时间戳（回测时传入模拟时间，默认 datetime.now()）
 
         Returns:
             超时持仓的交易对符号列表
@@ -146,7 +149,7 @@ class ProtectionManager:
             if not plugin.enabled:
                 continue
             if hasattr(plugin, "get_timeout_symbols"):
-                result.extend(plugin.get_timeout_symbols())
+                result.extend(plugin.get_timeout_symbols(timestamp=timestamp))
         return result
 
     def on_trade_open(
@@ -156,22 +159,41 @@ class ProtectionManager:
         size: float,
         is_long: bool,
         leverage: int = 1,
+        timestamp: datetime | None = None,
     ) -> None:
         """分发开仓事件到所有插件"""
         for plugin in self._plugins:
             if not plugin.enabled:
                 continue
             try:
-                plugin.on_trade_open(symbol, entry_price, size, is_long, leverage)
+                plugin.on_trade_open(
+                    symbol, entry_price, size, is_long, leverage, timestamp=timestamp
+                )
             except Exception as e:
                 logger.error("插件 %s on_trade_open 异常: %s", plugin.name, e)
 
-    def on_trade_close(self, symbol: str, pnl: float) -> None:
+    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
         """分发平仓事件到所有插件"""
         for plugin in self._plugins:
             if not plugin.enabled:
                 continue
             try:
-                plugin.on_trade_close(symbol, pnl)
+                plugin.on_trade_close(symbol, pnl, timestamp=timestamp)
             except Exception as e:
                 logger.error("插件 %s on_trade_close 异常: %s", plugin.name, e)
+
+    def on_position_dropped(self, symbol: str) -> None:
+        """
+        分发「持仓被风控强制平仓」事件到所有插件。
+
+        用于回撤强平 / 超时强平等风控主动平仓场景：仅让维护持仓状态的插件
+        （如 position_timeout）清理其内部记录，不向基于盈亏的插件
+        （如 consecutive_loss）上报虚假 pnl。
+        """
+        for plugin in self._plugins:
+            if not plugin.enabled:
+                continue
+            try:
+                plugin.on_position_dropped(symbol)
+            except Exception as e:
+                logger.error("插件 %s on_position_dropped 异常: %s", plugin.name, e)

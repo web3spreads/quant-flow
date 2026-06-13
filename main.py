@@ -454,8 +454,19 @@ class QuantFlowBot:
                 on_protection_triggered=self._on_protection_triggered,
             )
             plugin_names = [p.name for p in self.protection_manager.plugins]
-            self.logger.print_info(
-                f"保护插件管理器初始化完成 | 已加载: {', '.join(plugin_names)}"
+            if plugin_names:
+                self.logger.print_info(
+                    f"保护插件管理器初始化完成 | 已加载: {', '.join(plugin_names)}"
+                )
+            else:
+                self.logger.print_warning(
+                    "⚠️ protections 配置非空但未加载任何有效保护插件（插件名未知或全部 enabled=false），"
+                    "账户风控已全部关闭"
+                )
+        else:
+            self.logger.print_warning(
+                "⚠️ 未配置任何风控保护插件（protections 为空），账户风控已全部关闭。"
+                "如需启用，请在 config.yaml 的 protections 段添加插件（参考 config.yaml.example）"
             )
 
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
@@ -727,6 +738,9 @@ class QuantFlowBot:
                         if sym:
                             try:
                                 self.order_manager.close_position(sym)
+                                # 强平属于风控主动行为：清理持仓状态记录（如超时记录），
+                                # 不向连续亏损插件上报虚假 pnl
+                                self.protection_manager.on_position_dropped(sym)
                                 self.logger.print_info(f"[风控]已平仓: {sym}")
                             except Exception as e:
                                 self.logger.print_error(f"[风控]平仓失败 {sym}: {e}")
@@ -751,9 +765,9 @@ class QuantFlowBot:
                     self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
                     try:
                         self.order_manager.close_position(ts)
-                        for plugin in self.protection_manager.plugins:
-                            if plugin.name == "position_timeout":
-                                plugin.on_trade_close(ts, 0)
+                        # 超时强平属于风控主动行为：仅清理 position_timeout 记录，
+                        # 不向连续亏损插件上报虚假 pnl
+                        self.protection_manager.on_position_dropped(ts)
                     except Exception as e:
                         self.logger.print_error(f"[风控]超时平仓失败 {ts}: {e}")
 
