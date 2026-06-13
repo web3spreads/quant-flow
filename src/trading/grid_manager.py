@@ -4,6 +4,7 @@
 """
 
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -689,8 +690,10 @@ class GridManager:
             "buy_orders": buy_orders,
             "sell_orders": sell_orders,
             "last_sync": time.time(),
-            # 保留上次重建时间戳，避免残单回写重置重建冷却
-            "last_rebuild_ts": grid.get("last_rebuild_ts", self._last_rebuild_ts.get(symbol)),
+            # 保留上次重建时间戳，避免残单回写重置重建冷却；两者皆空时回退 0.0 防止 None 入库
+            "last_rebuild_ts": grid.get("last_rebuild_ts")
+            or self._last_rebuild_ts.get(symbol)
+            or 0.0,
         }
         self._save_state()
 
@@ -804,13 +807,18 @@ class GridManager:
                 break
 
             target_layers_left = max(min_exit_orders - current_count, 1)
+            # 资金有限时动态合并层级：若按 target_layers_left 拆分会使单层低于最小名义额，
+            # 则减少层数，确保每层都 ≥ $10 且持仓能被完全覆盖。
+            if min_notional_size > 0:
+                max_layers_by_notional = max(1, int(remaining_to_cover / min_notional_size))
+                target_layers_left = min(target_layers_left, max_layers_by_notional)
             order_size = remaining_to_cover / target_layers_left
             # 抬到最小名义额，但不超过剩余待覆盖持仓
             order_size = max(order_size, min_notional_size)
             order_size = min(order_size, remaining_to_cover)
-            # 量化到合约最小步长，清理浮点尾差
+            # 量化到合约最小步长（向上取整避免低于最小名义额；reduce_only 略微超出由交易所截断）
             if size_step > 0:
-                order_size = round(round(order_size / size_step) * size_step, 10)
+                order_size = round(math.ceil(order_size / size_step) * size_step, 10)
 
             # 若连整笔剩余持仓都凑不到 $10 名义额，则无法下合法减仓单，停止补单
             if order_size <= 0 or order_size * limit_price < HL_MIN_NOTIONAL_USD:

@@ -230,8 +230,9 @@ class GridFlowBot:
         self._stopping = True
         try:
             if self.scheduler.running:
-                # wait=True：阻塞直到正在执行的 run_cycle 完成，再停止调度器
-                self.scheduler.shutdown(wait=True)
+                # wait=False：非阻塞停止，避免在信号处理器中阻塞主线程导致进程假死、无法响应二次信号。
+                # 让 scheduler.start() 退出后，由主线程 finally 块中的 _graceful_shutdown 执行 wait=True 优雅停机。
+                self.scheduler.shutdown(wait=False)
         except Exception as e:
             self.logger.print_error(f"调度器停机异常: {e}")
 

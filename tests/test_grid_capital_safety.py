@@ -47,7 +47,10 @@ class DummyLogger:
 
 
 def _resting_response(oid):
-    return {"status": "ok", "response": {"type": "order", "data": {"statuses": [{"resting": {"oid": oid}}]}}}
+    return {
+        "status": "ok",
+        "response": {"type": "order", "data": {"statuses": [{"resting": {"oid": oid}}]}},
+    }
 
 
 def _reject_response(msg="Order has invalid size"):
@@ -81,7 +84,13 @@ class OrderClient:
 
     def place_limit_order(self, symbol, is_buy, size, price, reduce_only=False):
         self.place_calls.append(
-            {"symbol": symbol, "is_buy": is_buy, "size": size, "price": price, "reduce_only": reduce_only}
+            {
+                "symbol": symbol,
+                "is_buy": is_buy,
+                "size": size,
+                "price": price,
+                "reduce_only": reduce_only,
+            }
         )
         if self.reject:
             return _reject_response()
@@ -108,7 +117,12 @@ class TestLeverageNotionalFix(unittest.TestCase):
 
         # 名义额 $155，价格 $1550 -> 合约数量应为 0.1（=155/1550），与杠杆无关
         res = om.execute_long_limit(
-            "ETH", 155.0, 1550.0, with_take_profit=False, with_stop_loss=False, amount_is_notional=True
+            "ETH",
+            155.0,
+            1550.0,
+            with_take_profit=False,
+            with_stop_loss=False,
+            amount_is_notional=True,
         )
         self.assertTrue(res["success"])
         self.assertAlmostEqual(client.place_calls[0]["size"], 0.1, places=6)
@@ -117,7 +131,12 @@ class TestLeverageNotionalFix(unittest.TestCase):
         client = OrderClient(sz_decimals=4)
         om = self._make_om(client, default_leverage=10)
         res = om.execute_short_limit(
-            "ETH", 155.0, 1550.0, with_take_profit=False, with_stop_loss=False, amount_is_notional=True
+            "ETH",
+            155.0,
+            1550.0,
+            with_take_profit=False,
+            with_stop_loss=False,
+            amount_is_notional=True,
         )
         self.assertTrue(res["success"])
         self.assertAlmostEqual(client.place_calls[0]["size"], 0.1, places=6)
@@ -141,7 +160,12 @@ class TestInnerStatusRejection(unittest.TestCase):
         client = OrderClient(reject=True)
         om = OrderManager(client=client, default_leverage=5, enable_limit_order_monitor=False)
         res = om.execute_long_limit(
-            "ETH", 100.0, 1500.0, with_take_profit=False, with_stop_loss=False, amount_is_notional=True
+            "ETH",
+            100.0,
+            1500.0,
+            with_take_profit=False,
+            with_stop_loss=False,
+            amount_is_notional=True,
         )
         self.assertIsNotNone(res)
         self.assertFalse(res["success"])
@@ -178,11 +202,23 @@ class GridFakeClient:
 
     def place_limit_order(self, symbol, is_buy, size, price, reduce_only=False):
         self.place_calls.append(
-            {"symbol": symbol, "is_buy": is_buy, "size": size, "price": price, "reduce_only": reduce_only}
+            {
+                "symbol": symbol,
+                "is_buy": is_buy,
+                "size": size,
+                "price": price,
+                "reduce_only": reduce_only,
+            }
         )
         self._oid += 1
         self.open_orders.append(
-            {"oid": self._oid, "coin": symbol, "side": "B" if is_buy else "A", "sz": str(size), "limitPx": str(price)}
+            {
+                "oid": self._oid,
+                "coin": symbol,
+                "side": "B" if is_buy else "A",
+                "sz": str(size),
+                "limitPx": str(price),
+            }
         )
         return _resting_response(self._oid)
 
@@ -217,7 +253,9 @@ class TestDustReduceOrders(unittest.TestCase):
     def test_reduce_orders_respect_min_notional(self):
         # 较大空头持仓（0.5 ETH @ $1600 ≈ $800），应布若干 ≥$10 的减仓买单
         client = GridFakeClient()
-        gm = _make_grid_manager(client, positions=[{"coin": "ETH", "szi": "-0.5"}], state_file=self.state_file)
+        gm = _make_grid_manager(
+            client, positions=[{"coin": "ETH", "szi": "-0.5"}], state_file=self.state_file
+        )
         gm._ensure_min_orders(symbol="ETH")
 
         reduce_calls = [c for c in client.place_calls if c["reduce_only"]]
@@ -229,11 +267,26 @@ class TestDustReduceOrders(unittest.TestCase):
     def test_tiny_position_places_no_dust(self):
         # 极小持仓（0.0002 ETH ≈ $0.32），整笔都凑不到 $10，应一笔减仓单都不下
         client = GridFakeClient()
-        gm = _make_grid_manager(client, positions=[{"coin": "ETH", "szi": "-0.0002"}], state_file=self.state_file)
+        gm = _make_grid_manager(
+            client, positions=[{"coin": "ETH", "szi": "-0.0002"}], state_file=self.state_file
+        )
         gm._ensure_min_orders(symbol="ETH")
 
         reduce_calls = [c for c in client.place_calls if c["reduce_only"]]
         self.assertEqual(len(reduce_calls), 0)
+
+    def test_small_position_merges_into_single_order(self):
+        # 持仓 0.01 ETH ≈ $16，只够一笔合法减仓单：应合并为 1 笔覆盖全仓，而非拆成多笔灰尘单
+        client = GridFakeClient()
+        gm = _make_grid_manager(
+            client, positions=[{"coin": "ETH", "szi": "-0.01"}], state_file=self.state_file
+        )
+        gm._ensure_min_orders(symbol="ETH")
+
+        reduce_calls = [c for c in client.place_calls if c["reduce_only"]]
+        self.assertEqual(len(reduce_calls), 1)
+        notional = reduce_calls[0]["size"] * reduce_calls[0]["price"]
+        self.assertGreaterEqual(notional, 10.0)
 
 
 class TestRebuildCooldown(unittest.TestCase):
@@ -271,7 +324,9 @@ class TestRebuildCooldown(unittest.TestCase):
 
     def test_within_cooldown_blocks_rebuild(self):
         # 挂单充足，避免触发"挂单不足"安全重建
-        client = GridFakeClient(open_orders=[{"oid": i, "coin": "ETH", "side": "B"} for i in range(4)])
+        client = GridFakeClient(
+            open_orders=[{"oid": i, "coin": "ETH", "side": "B"} for i in range(4)]
+        )
         gm = _make_grid_manager(client, state_file=self.state_file)
         self._seed_grid(gm)
         gm._last_rebuild_ts["ETH"] = time.time()  # 刚刚重建过
@@ -281,7 +336,9 @@ class TestRebuildCooldown(unittest.TestCase):
         self.assertIn("冷却", reason)
 
     def test_after_cooldown_allows_rebuild(self):
-        client = GridFakeClient(open_orders=[{"oid": i, "coin": "ETH", "side": "B"} for i in range(4)])
+        client = GridFakeClient(
+            open_orders=[{"oid": i, "coin": "ETH", "side": "B"} for i in range(4)]
+        )
         gm = _make_grid_manager(client, state_file=self.state_file)
         self._seed_grid(gm)
         gm._last_rebuild_ts["ETH"] = time.time() - (gm.grid_rebuild_cooldown_seconds + 60)
@@ -326,14 +383,19 @@ class AgentFakeLLMManager:
 
 
 class AgentFakeOM:
+    def __init__(self, balance_status="ok"):
+        self._balance_status = balance_status
+
     def get_available_balance_info(self):
-        return {"available": 100.0}
+        if self._balance_status != "ok":
+            return {"status": "error", "message": "余额接口失败", "available": 0}
+        return {"status": "ok", "available": 100.0}
 
 
-def _make_agent(content):
+def _make_agent(content, balance_status="ok"):
     return GridAgent(
         symbol="ETH",
-        order_manager=AgentFakeOM(),
+        order_manager=AgentFakeOM(balance_status=balance_status),
         logger=DummyLogger(),
         llm_manager=AgentFakeLLMManager(content),
         trade_amount=100.0,
@@ -365,6 +427,15 @@ class TestGridAgentHardening(unittest.TestCase):
         # 线上真实出现过的非法 action
         agent = _make_agent('{"action": "UPDATE_GRIDLE", "mode": "NEUTRAL", "confidence": 0.8}')
         decision = agent.make_decision(self.MARKET, {}, "无网格")
+        self.assertEqual(decision["action"], "KEEP_GRID")
+
+    def test_balance_api_failure_falls_back_to_keep_grid(self):
+        # 余额接口失败时 UPDATE_GRID 应回退 KEEP_GRID，保护现有网格不被清空
+        agent = _make_agent(
+            '{"action": "UPDATE_GRID", "mode": "NEUTRAL", "width_pct": 0.05, "grid_num": 8, "confidence": 0.7}',
+            balance_status="error",
+        )
+        decision = agent.make_decision(self.MARKET, {}, "运行中")
         self.assertEqual(decision["action"], "KEEP_GRID")
 
     def test_update_grid_carries_confidence(self):

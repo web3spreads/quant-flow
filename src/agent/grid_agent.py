@@ -90,6 +90,19 @@ class GridAgent:
             if action == "UPDATE_GRID":
                 current_price = float(market_data.get("current_price"))
                 balance_info = self.order_manager.get_available_balance_info()
+                # 余额接口失败时 available 会回退为 0，若继续 UPDATE_GRID 会以最小单格金额
+                # 触发全量重建、撤光现有挂单却可能挂不出新单，导致网格被意外清空。
+                # 因此余额获取失败时回退 KEEP_GRID，保护现有网格与持仓。
+                if balance_info.get("status") != "ok":
+                    self.logger.print_warning(
+                        f"[GridAgent] 获取可用余额失败: {balance_info.get('message')}，回退 KEEP_GRID"
+                    )
+                    return {
+                        "action": "KEEP_GRID",
+                        "mode": "NEUTRAL",
+                        "confidence": confidence,
+                        "reason": f"获取可用余额失败: {balance_info.get('message')}，保守维持网格",
+                    }
                 available = float(balance_info.get("available", 0))
                 mode = str(ai_decision.get("mode", "NEUTRAL")).strip().upper()
                 if mode not in VALID_GRID_MODES:
