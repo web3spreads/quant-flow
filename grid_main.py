@@ -4,6 +4,7 @@ Grid Flow - 动态 AI 天地单
 """
 
 import argparse
+import signal
 import sys
 import traceback
 from datetime import datetime
@@ -108,6 +109,8 @@ class GridFlowBot:
         )
 
         self.scheduler = BlockingScheduler()
+        self._stopping = False
+        self._shutdown_done = False
 
     def run_cycle(self):
         """执行一个网格交易周期"""
@@ -159,6 +162,8 @@ class GridFlowBot:
             action = ai_decision.get("action", "UNKNOWN")
             reason = ai_decision.get("reason", "")
             confidence = float(ai_decision.get("confidence", 0.0))
+            # 仅合法动作记 SUCCESS，ERROR/UNKNOWN/非法值一律记 ERROR，避免监控对 LLM 故障失明
+            decision_ok = action in ("UPDATE_GRID", "KEEP_GRID")
             self.logger.log_decision(
                 symbol=symbol,
                 market_data=market_data,
@@ -166,7 +171,8 @@ class GridFlowBot:
                 ai_response=reason,
                 decision=action,
                 action_details=ai_decision,
-                status="SUCCESS" if action != "ERROR" else "ERROR",
+                status="SUCCESS" if decision_ok else "ERROR",
+                error_message=None if decision_ok else reason,
                 confidence=confidence,
             )
 
@@ -215,8 +221,46 @@ class GridFlowBot:
                     details={"traceback": traceback.format_exc()},
                 )
 
+    def _handle_signal(self, signum, frame):
+        """SIGTERM/SIGINT 处理：标记停机并等待当前周期完成后关闭调度器。
+
+        关键：不在信号中途直接终止进程，避免撤单/布单序列被腰斩留下无保护裸仓。
+        """
+        self.logger.print_warning(f"⚠️ 收到信号 {signum}，开始优雅停机（等待当前周期完成）...")
+        self._stopping = True
+        try:
+            if self.scheduler.running:
+                # wait=True：阻塞直到正在执行的 run_cycle 完成，再停止调度器
+                self.scheduler.shutdown(wait=True)
+        except Exception as e:
+            self.logger.print_error(f"调度器停机异常: {e}")
+
+    def _graceful_shutdown(self):
+        """统一退出清理：停止调度器 + flush 云端日志（幂等）。"""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+        try:
+            if self.scheduler.running:
+                self.scheduler.shutdown(wait=True)
+        except Exception as e:
+            self.logger.print_error(f"调度器停机异常: {e}")
+
+        cloud = get_cloud_logger()
+        if cloud:
+            try:
+                cloud.send_system_event("shutdown", details={"reason": "graceful", "run_mode": "grid"})
+                cloud.shutdown()
+            except Exception as e:
+                self.logger.print_error(f"云端日志关闭异常: {e}")
+        self.logger.print_info("✅ 网格机器人已优雅停机")
+
     def run(self):
         """启动机器人"""
+        # 先注册信号处理，确保首个 run_immediately 周期也在保护范围内
+        signal.signal(signal.SIGTERM, self._handle_signal)
+        signal.signal(signal.SIGINT, self._handle_signal)
+
         self.scheduler.add_job(
             self.run_cycle,
             trigger=IntervalTrigger(minutes=self.config.interval_minutes),
@@ -225,11 +269,20 @@ class GridFlowBot:
             replace_existing=True,
         )
 
-        if self.config.run_immediately:
+        if self.config.run_immediately and not self._stopping:
             self.run_cycle()
 
+        if self._stopping:
+            self._graceful_shutdown()
+            return
+
         self.logger.print_info(f"🚀 AI网格机器人已启动 (间隔: {self.config.interval_minutes} 分钟)")
-        self.scheduler.start()
+        try:
+            self.scheduler.start()
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        finally:
+            self._graceful_shutdown()
 
 
 def main():

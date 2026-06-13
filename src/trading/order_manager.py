@@ -911,19 +911,22 @@ class OrderManager:
         sl_ratio: float | None = None,
         with_take_profit: bool = True,
         with_stop_loss: bool = True,
+        amount_is_notional: bool = False,
     ) -> dict[str, Any] | None:
         """
         执行限价开多操作（带止盈止损计算）
 
         Args:
             symbol: 交易对符号
-            usdt_amount: 投入金额
+            usdt_amount: 投入金额（保证金口径）
             limit_price: 限价价格
             leverage: 杠杆倍数
             tp_ratio: 自定义止盈比例（覆盖默认值）
             sl_ratio: 自定义止损比例（覆盖默认值）
             with_take_profit: 是否启用止盈触发单
             with_stop_loss: 是否启用止损触发单
+            amount_is_notional: 若为 True，usdt_amount 已是名义额（网格引擎口径），
+                合约数量直接为 名义额 / 价格，不再乘杠杆；否则视为保证金，乘杠杆换算名义额
 
         Returns:
             订单信息（包含止盈止损价格）
@@ -932,8 +935,12 @@ class OrderManager:
             # 1. 计算仓位大小
             lev = leverage if leverage else self.default_leverage
 
-            # 合约数量 = (投入金额 * 杠杆) / 限价
-            size = (usdt_amount * lev) / limit_price
+            # 合约数量：名义额口径直接除以价格；保证金口径需乘杠杆换算为名义额
+            # （网格数学引擎产出的 amount_per_grid 已含杠杆，必须走名义额口径，否则杠杆被重复计算）
+            if amount_is_notional:
+                size = usdt_amount / limit_price
+            else:
+                size = (usdt_amount * lev) / limit_price
 
             # 获取交易对的精度信息
             asset_info = self.client.get_asset_info(symbol)
@@ -975,7 +982,9 @@ class OrderManager:
                 symbol=symbol, is_buy=True, size=size, price=limit_price
             )
 
-            if limit_order.get("status") == "ok":
+            # 校验交易所内层 statuses：HL 拒单时外层仍为 status=ok，错误藏在 statuses[].error
+            order_ok, order_err = self.client.check_order_success(limit_order)
+            if order_ok:
                 result = {
                     "success": True,
                     "limit_order": limit_order,
@@ -1005,8 +1014,8 @@ class OrderManager:
 
                 return result
             else:
-                print(f"❌ 限价单失败: {limit_order.get('message')}")
-                return None
+                print(f"❌ 限价单失败: {order_err}")
+                return {"success": False, "message": order_err, "limit_order": limit_order}
 
         except Exception as e:
             print(f"❌ 执行限价开多失败: {e}")
@@ -1022,19 +1031,22 @@ class OrderManager:
         sl_ratio: float | None = None,
         with_take_profit: bool = True,
         with_stop_loss: bool = True,
+        amount_is_notional: bool = False,
     ) -> dict[str, Any] | None:
         """
         执行限价开空操作（带止盈止损计算）
 
         Args:
             symbol: 交易对符号
-            usdt_amount: 投入金额
+            usdt_amount: 投入金额（保证金口径）
             limit_price: 限价价格
             leverage: 杠杆倍数
             tp_ratio: 自定义止盈比例（覆盖默认值）
             sl_ratio: 自定义止损比例（覆盖默认值）
             with_take_profit: 是否启用止盈触发单
             with_stop_loss: 是否启用止损触发单
+            amount_is_notional: 若为 True，usdt_amount 已是名义额（网格引擎口径），
+                合约数量直接为 名义额 / 价格，不再乘杠杆；否则视为保证金，乘杠杆换算名义额
 
         Returns:
             订单信息（包含止盈止损价格）
@@ -1043,8 +1055,12 @@ class OrderManager:
             # 1. 计算仓位大小
             lev = leverage if leverage else self.default_leverage
 
-            # 合约数量 = (投入金额 * 杠杆) / 限价
-            size = (usdt_amount * lev) / limit_price
+            # 合约数量：名义额口径直接除以价格；保证金口径需乘杠杆换算为名义额
+            # （网格数学引擎产出的 amount_per_grid 已含杠杆，必须走名义额口径，否则杠杆被重复计算）
+            if amount_is_notional:
+                size = usdt_amount / limit_price
+            else:
+                size = (usdt_amount * lev) / limit_price
 
             # 获取交易对的精度信息
             asset_info = self.client.get_asset_info(symbol)
@@ -1087,7 +1103,9 @@ class OrderManager:
                 symbol=symbol, is_buy=False, size=size, price=limit_price
             )
 
-            if limit_order.get("status") == "ok":
+            # 校验交易所内层 statuses：HL 拒单时外层仍为 status=ok，错误藏在 statuses[].error
+            order_ok, order_err = self.client.check_order_success(limit_order)
+            if order_ok:
                 result = {
                     "success": True,
                     "limit_order": limit_order,
@@ -1117,8 +1135,8 @@ class OrderManager:
 
                 return result
             else:
-                print(f"❌ 限价单失败: {limit_order.get('message')}")
-                return None
+                print(f"❌ 限价单失败: {order_err}")
+                return {"success": False, "message": order_err, "limit_order": limit_order}
 
         except Exception as e:
             print(f"❌ 执行限价开空失败: {e}")

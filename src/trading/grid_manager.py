@@ -33,6 +33,11 @@ EXIT_MAX_ORDERS = 8
 EXIT_TARGET_COVERAGE_RATIO = 1.0
 EXIT_PRICE_STEPS = [0.004, 0.008, 0.012, 0.016, 0.024, 0.032, 0.040, 0.050]
 
+# Hyperliquid 单笔订单最小名义额（USD）。低于此值的下单必被交易所拒绝。
+# 含 2% 缓冲，避免价格波动导致名义额贴边后被拒。
+HL_MIN_NOTIONAL_USD = 10.0
+HL_MIN_NOTIONAL_BUFFER = 1.02
+
 
 class GridManager:
     """管理网格订单的动态同步"""
@@ -81,6 +86,8 @@ class GridManager:
         self.pnl_trackers: dict[str, GridPnLTracker] = {}
         # Triple Barrier 监控：每个 symbol 对应一个 monitor
         self.barrier_monitors: dict[str, GridBarrierMonitor] = {}
+        # 上次全量重建时间戳（用于重建冷却），从状态恢复以抵御自动重启循环导致的高频重建
+        self._last_rebuild_ts: dict[str, float] = {}
         # 从状态文件恢复层级和 PnL
         self._restore_levels_from_state()
 
@@ -99,6 +106,10 @@ class GridManager:
             start_time = grid_data.get("last_sync", time.time())
             self.barrier_monitors[symbol] = GridBarrierMonitor(
                 config=self.barrier_config, start_time=start_time
+            )
+            # 恢复上次重建时间戳（无该字段的旧状态回退到 last_sync）
+            self._last_rebuild_ts[symbol] = self._safe_float(
+                grid_data.get("last_rebuild_ts", grid_data.get("last_sync")), 0.0
             )
 
     def _load_state(self) -> dict[str, Any]:
@@ -281,6 +292,7 @@ class GridManager:
                         sl_ratio=sl_ratio,
                         with_take_profit=self.grid_limit_order_take_profit_enabled,
                         with_stop_loss=self.grid_limit_order_stop_loss_enabled,
+                        amount_is_notional=True,
                     )
                     if res and res.get("success"):
                         oid = self._extract_oid(res["limit_order"])
@@ -308,6 +320,7 @@ class GridManager:
                         sl_ratio=sl_ratio,
                         with_take_profit=self.grid_limit_order_take_profit_enabled,
                         with_stop_loss=self.grid_limit_order_stop_loss_enabled,
+                        amount_is_notional=True,
                     )
                     if res and res.get("success"):
                         oid = self._extract_oid(res["limit_order"])
@@ -364,13 +377,16 @@ class GridManager:
         )
 
         # 5. 更新状态（含层级和 PnL 数据）
+        rebuild_ts = time.time()
+        self._last_rebuild_ts[symbol] = rebuild_ts
         self.state["active_grids"][symbol] = {
             "config": ai_config,
             "buy_orders": buy_orders,
             "sell_orders": sell_orders,
             "levels": [level.to_dict() for level in levels],
             "pnl": self.pnl_trackers[symbol].to_dict(),
-            "last_sync": time.time(),
+            "last_sync": rebuild_ts,
+            "last_rebuild_ts": rebuild_ts,
         }
         self._save_state()
         self.logger.print_info(f"✅ {symbol} 网格调整完成。")
@@ -455,6 +471,18 @@ class GridManager:
 
         if min(old_lower, old_upper, new_lower, new_upper) <= 0:
             return True, "网格参数异常，强制重建"
+
+        # 重建冷却：除上述安全性触发（首次/挂单不足/参数异常）外，距上次全量重建不足冷却期一律不重建。
+        # 这是抑制高频撤换单的主闸——历史上 84.6% 周期触发全量重建、挂单活不过 5 分钟即源于此处缺失。
+        if self.grid_rebuild_cooldown_seconds > 0:
+            last_rebuild = self._last_rebuild_ts.get(symbol, 0.0)
+            elapsed = time.time() - last_rebuild
+            if 0 <= elapsed < self.grid_rebuild_cooldown_seconds:
+                remaining = self.grid_rebuild_cooldown_seconds - elapsed
+                return (
+                    False,
+                    f"重建冷却中（剩余 {remaining:.0f}s / 冷却 {self.grid_rebuild_cooldown_seconds}s），维持网格",
+                )
 
         if (
             old_params["grid_num"] != new_params["grid_num"]
@@ -661,6 +689,8 @@ class GridManager:
             "buy_orders": buy_orders,
             "sell_orders": sell_orders,
             "last_sync": time.time(),
+            # 保留上次重建时间戳，避免残单回写重置重建冷却
+            "last_rebuild_ts": grid.get("last_rebuild_ts", self._last_rebuild_ts.get(symbol)),
         }
         self._save_state()
 
@@ -755,12 +785,6 @@ class GridManager:
             if current_count >= max_exit_orders:
                 break
 
-            size_needed = max(required_cover_size - projected_covered, size_step)
-            target_layers_left = max(min_exit_orders - current_count, 1)
-            order_size = max(size_needed / target_layers_left, size_step)
-            if order_size < size_step:
-                break
-
             if close_with_buy:
                 raw_price = current_price * (1 - step)
                 side_code = "B"
@@ -769,6 +793,33 @@ class GridManager:
                 side_code = "A"
 
             limit_price = self.order_manager.client.format_price(symbol, raw_price)
+            if not limit_price or limit_price <= 0:
+                continue
+
+            # 最小名义额对应的最小下单量：低于 $10 名义额的减仓单必被 HL 拒绝，
+            # 历史上这里退化到 size_step（约 $0.17）产生了上万笔灰尘虚单。
+            min_notional_size = (HL_MIN_NOTIONAL_USD * HL_MIN_NOTIONAL_BUFFER) / limit_price
+            remaining_to_cover = max(required_cover_size - projected_covered, 0.0)
+            if remaining_to_cover <= 0:
+                break
+
+            target_layers_left = max(min_exit_orders - current_count, 1)
+            order_size = remaining_to_cover / target_layers_left
+            # 抬到最小名义额，但不超过剩余待覆盖持仓
+            order_size = max(order_size, min_notional_size)
+            order_size = min(order_size, remaining_to_cover)
+            # 量化到合约最小步长，清理浮点尾差
+            if size_step > 0:
+                order_size = round(round(order_size / size_step) * size_step, 10)
+
+            # 若连整笔剩余持仓都凑不到 $10 名义额，则无法下合法减仓单，停止补单
+            if order_size <= 0 or order_size * limit_price < HL_MIN_NOTIONAL_USD:
+                self.logger.print_warning(
+                    f"   [Grid] ⏭️ 剩余待覆盖持仓名义额不足 ${HL_MIN_NOTIONAL_USD:.0f}，"
+                    f"跳过减仓补单（剩余 {remaining_to_cover:.6f}）"
+                )
+                break
+
             result = self.order_manager.client.place_limit_order(
                 symbol=symbol,
                 is_buy=close_with_buy,
@@ -777,7 +828,9 @@ class GridManager:
                 reduce_only=True,
             )
 
-            if isinstance(result, dict) and result.get("status") == "ok":
+            # 校验内层 statuses：拒单（外层仍 ok）不得计入覆盖率与已挂单数
+            order_ok, order_err = self.order_manager.client.check_order_success(result)
+            if order_ok:
                 oid = self._extract_oid(result)
                 if oid is not None:
                     self._append_order_cache(
@@ -803,7 +856,7 @@ class GridManager:
                 )
             else:
                 self.logger.print_warning(
-                    f"   [Grid] ⚠️ 减仓{side_name}单失败 @ ${limit_price}: {result}"
+                    f"   [Grid] ⚠️ 减仓{side_name}单被拒 @ ${limit_price}: {order_err}"
                 )
 
         return open_orders
@@ -1169,6 +1222,7 @@ class GridManager:
                 sl_ratio=sl_ratio,
                 with_take_profit=self.grid_limit_order_take_profit_enabled,
                 with_stop_loss=self.grid_limit_order_stop_loss_enabled,
+                amount_is_notional=True,
             )
         else:
             res = self.order_manager.execute_short_limit(
@@ -1179,6 +1233,7 @@ class GridManager:
                 sl_ratio=sl_ratio,
                 with_take_profit=self.grid_limit_order_take_profit_enabled,
                 with_stop_loss=self.grid_limit_order_stop_loss_enabled,
+                amount_is_notional=True,
             )
 
         if res and res.get("success"):

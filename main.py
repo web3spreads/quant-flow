@@ -993,16 +993,22 @@ class QuantFlowBot:
                     # 显示决策
                     self.logger.print_info(f"[{symbol}Agent] 决策: {decision}")
 
-                    # 记录决策历史
-                    self.decision_history.add_decision(
-                        symbol=symbol,
-                        decision=decision,
-                        market_data=market_data,
-                        reason=details.get("output", "")[:200],  # 截取前200字符
-                        action_details=details,
-                    )
+                    # 判定真实决策状态：Agent 内部异常时返回 decision=="ERROR" 或 details 含 error 字段
+                    decision_failed = decision == "ERROR" or bool(details.get("error"))
+                    decision_status = "ERROR" if decision_failed else "SUCCESS"
+                    decision_error = details.get("error") if decision_failed else None
 
-                    # 记录决策日志
+                    # 记录决策历史（ERROR 决策不写入，避免污染历史压缩与复盘记忆）
+                    if not decision_failed:
+                        self.decision_history.add_decision(
+                            symbol=symbol,
+                            decision=decision,
+                            market_data=market_data,
+                            reason=details.get("output", "")[:200],  # 截取前200字符
+                            action_details=details,
+                        )
+
+                    # 记录决策日志（按真实状态记录，不再硬编码 SUCCESS）
                     self.logger.log_decision(
                         symbol=symbol,
                         market_data=market_data,
@@ -1010,7 +1016,8 @@ class QuantFlowBot:
                         ai_response=details.get("output", ""),
                         decision=decision,
                         action_details=details,
-                        status="SUCCESS",
+                        status=decision_status,
+                        error_message=decision_error,
                     )
 
                     # 改进1a: 即时反思（平仓类型时触发）

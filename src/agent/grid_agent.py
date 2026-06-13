@@ -15,6 +15,11 @@ DEFAULT_WIDTH_PCT_MAX = 0.15
 DEFAULT_WIDTH_PCT_FALLBACK = 0.05
 DEFAULT_AI_WIDTH_BLEND_WEIGHT = 0.35
 
+# 合法的网格动作白名单。LLM 输出此集合之外的值（如线上出现过的 UPDATE_GRIDLE）
+# 一律回退到 KEEP_GRID 保守处理，绝不透传到下游执行。
+VALID_GRID_ACTIONS = {"UPDATE_GRID", "KEEP_GRID"}
+VALID_GRID_MODES = {"LONG", "SHORT", "NEUTRAL"}
+
 
 class GridAgent:
     def __init__(
@@ -54,45 +59,67 @@ class GridAgent:
 
             try:
                 ai_decision = self._parse_decision_json(content)
-
-                if ai_decision.get("action") == "UPDATE_GRID":
-                    current_price = float(market_data.get("current_price"))
-                    balance_info = self.order_manager.get_available_balance_info()
-                    available = float(balance_info.get("available", 0))
-                    mode = ai_decision.get("mode", "NEUTRAL")
-                    dynamic_width_pct = self._calculate_dynamic_width_pct(
-                        market_data=market_data,
-                        ai_width_pct=ai_decision.get("width_pct"),
-                        mode=mode,
-                    )
-
-                    math_config = calculate_grid_config(
-                        current_price=current_price,
-                        available_balance=min(available, self.trade_amount),
-                        mode=mode,
-                        width_pct=dynamic_width_pct,
-                        grid_num=ai_decision.get("grid_num", 6),
-                    )
-                    math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
-                    math_config["width_pct"] = dynamic_width_pct
-                    return math_config
-
-                return ai_decision
-            except Exception:
-                fallback_width_pct = self._calculate_dynamic_width_pct(
-                    market_data=market_data,
-                    ai_width_pct=None,
-                    mode="NEUTRAL",
+            except Exception as parse_err:
+                # 解析失败回退保守 KEEP_GRID（仅检查减仓保护单），而非全量重建。
+                # 把 LLM 故障放大成撤换单动作是历史亏损来源之一（线上 19 次解析失败）。
+                self.logger.print_warning(
+                    f"[GridAgent] LLM 决策解析失败，回退 KEEP_GRID: {parse_err}"
                 )
+                return {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": 0.0,
+                    "reason": f"LLM 输出解析失败，保守维持网格: {parse_err}",
+                }
+
+            action = str(ai_decision.get("action", "")).strip().upper()
+            confidence = self._safe_float(ai_decision.get("confidence"), 0.0)
+
+            # action 白名单校验：非法/未知值（如线上出现过的 UPDATE_GRIDLE）不透传，保守维持网格
+            if action not in VALID_GRID_ACTIONS:
+                self.logger.print_warning(
+                    f"[GridAgent] LLM 返回非法 action={ai_decision.get('action')!r}，回退 KEEP_GRID"
+                )
+                return {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": confidence,
+                    "reason": f"非法 action={ai_decision.get('action')!r}，保守维持网格",
+                }
+
+            if action == "UPDATE_GRID":
+                current_price = float(market_data.get("current_price"))
                 balance_info = self.order_manager.get_available_balance_info()
-                available = float(balance_info.get("available", 0.0))
-                return calculate_grid_config(
-                    current_price=float(market_data["current_price"]),
-                    available_balance=min(available, self.trade_amount),
-                    mode="NEUTRAL",
-                    width_pct=fallback_width_pct,
-                    grid_num=6,
+                available = float(balance_info.get("available", 0))
+                mode = str(ai_decision.get("mode", "NEUTRAL")).strip().upper()
+                if mode not in VALID_GRID_MODES:
+                    mode = "NEUTRAL"
+                dynamic_width_pct = self._calculate_dynamic_width_pct(
+                    market_data=market_data,
+                    ai_width_pct=ai_decision.get("width_pct"),
+                    mode=mode,
                 )
+
+                math_config = calculate_grid_config(
+                    current_price=current_price,
+                    available_balance=min(available, self.trade_amount),
+                    mode=mode,
+                    width_pct=dynamic_width_pct,
+                    grid_num=ai_decision.get("grid_num", 6),
+                )
+                math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
+                math_config["width_pct"] = dynamic_width_pct
+                # 透传置信度，避免云端监控指标恒为 0
+                math_config["confidence"] = confidence
+                return math_config
+
+            # KEEP_GRID
+            return {
+                "action": "KEEP_GRID",
+                "mode": str(ai_decision.get("mode", "NEUTRAL")).strip().upper(),
+                "confidence": confidence,
+                "reason": ai_decision.get("reason", "AI 维持当前网格"),
+            }
 
         except Exception as e:
             return {"action": "ERROR", "reason": str(e)}
@@ -278,13 +305,13 @@ JSON Schema:
         bb_width_pct = ((bb_upper - bb_lower) / current_price) if current_price > 0 else 0.0
 
         return (
-            f"symbol={self.symbol}\\n"
-            f"current_price={current_price:.4f}\\n"
-            f"rsi={rsi:.2f}\\n"
-            f"macd_hist={macd_hist:.6f}\\n"
-            f"bb_width_pct={bb_width_pct:.4f}\\n"
-            f"volume_change_pct={volume_change:.2f}\\n"
-            f"multi_timeframe_trends={json.dumps(trends, ensure_ascii=False)}\\n"
-            f"current_grid_summary={summary}\\n"
+            f"symbol={self.symbol}\n"
+            f"current_price={current_price:.4f}\n"
+            f"rsi={rsi:.2f}\n"
+            f"macd_hist={macd_hist:.6f}\n"
+            f"bb_width_pct={bb_width_pct:.4f}\n"
+            f"volume_change_pct={volume_change:.2f}\n"
+            f"multi_timeframe_trends={json.dumps(trends, ensure_ascii=False)}\n"
+            f"current_grid_summary={summary}\n"
             "请输出严格 JSON 决策。"
         )
