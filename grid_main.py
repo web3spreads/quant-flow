@@ -229,6 +229,8 @@ class GridFlowBot:
         self.logger.print_warning(f"⚠️ 收到信号 {signum}，开始优雅停机（等待当前周期完成）...")
         self._stopping = True
         try:
+            # 信号处理器在主线程执行；scheduler.running 是 APScheduler 的简单布尔标志，
+            # 此处读取与 shutdown(wait=False) 均为非阻塞操作，不会与调度线程产生死锁。
             if self.scheduler.running:
                 # wait=False：非阻塞停止，避免在信号处理器中阻塞主线程导致进程假死、无法响应二次信号。
                 # 让 scheduler.start() 退出后，由主线程 finally 块中的 _graceful_shutdown 执行 wait=True 优雅停机。

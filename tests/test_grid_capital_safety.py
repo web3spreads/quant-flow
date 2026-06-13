@@ -9,12 +9,14 @@
 5. GridAgent 输出加固：解析失败/非法 action 回退 KEEP_GRID，置信度透传。
 """
 
+import inspect
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 from src.agent.grid_agent import GridAgent
+from src.backtest.mock_order_manager import MockOrderManager
 from src.trading.client import HyperliquidClient
 from src.trading.grid_manager import GridManager
 from src.trading.order_manager import OrderManager
@@ -97,6 +99,9 @@ class OrderClient:
         self._oid += 1
         return _resting_response(self._oid)
 
+    # 直接复用真实客户端的静态校验逻辑，保证 mock 与生产行为一致。
+    # 注意：此绑定依赖 check_order_success/get_order_fill_info 始终为 @staticmethod；
+    # 若它们将来改为实例方法（依赖 self），此处需改为包装函数，否则会丢失 self 绑定。
     check_order_success = staticmethod(HyperliquidClient.check_order_success)
     get_order_fill_info = staticmethod(HyperliquidClient.get_order_fill_info)
 
@@ -176,6 +181,27 @@ class TestInnerStatusRejection(unittest.TestCase):
         self.assertIn("min size", err)
         ok2, _ = HyperliquidClient.check_order_success(_resting_response(1))
         self.assertTrue(ok2)
+
+
+class TestSignatureAndGuards(unittest.TestCase):
+    """接口契约与边界保护。"""
+
+    def test_mock_order_manager_accepts_amount_is_notional(self):
+        # 回测 mock 必须与生产 OrderManager 接口对齐，否则网格回测路径传入该参数会 TypeError
+        for name in ("execute_long_limit", "execute_short_limit"):
+            params = inspect.signature(getattr(MockOrderManager, name)).parameters
+            self.assertIn("amount_is_notional", params, f"{name} 缺少 amount_is_notional 参数")
+
+    def test_zero_price_rejected_without_exception(self):
+        # limit_price=0 不得触发除零异常，应返回失败
+        client = OrderClient()
+        om = OrderManager(client=client, default_leverage=10, enable_limit_order_monitor=False)
+        res = om.execute_long_limit(
+            "ETH", 100.0, 0.0, with_take_profit=False, with_stop_loss=False, amount_is_notional=True
+        )
+        self.assertIsNotNone(res)
+        self.assertFalse(res["success"])
+        self.assertEqual(len(client.place_calls), 0)
 
 
 # ───────────────────────── GridManager 测试用 mock ─────────────────────────

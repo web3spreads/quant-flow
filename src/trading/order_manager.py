@@ -935,6 +935,14 @@ class OrderManager:
             # 1. 计算仓位大小
             lev = leverage if leverage else self.default_leverage
 
+            # 价格非法时直接拒绝，避免后续 usdt_amount / limit_price 触发除零
+            if limit_price <= 0:
+                print(f"❌ 限价单价格非法: {limit_price}")
+                return {
+                    "success": False,
+                    "message": f"limit_price 必须大于 0，实际为 {limit_price}",
+                }
+
             # 合约数量：名义额口径直接除以价格；保证金口径需乘杠杆换算为名义额
             # （网格数学引擎产出的 amount_per_grid 已含杠杆，必须走名义额口径，否则杠杆被重复计算）
             if amount_is_notional:
@@ -1054,6 +1062,14 @@ class OrderManager:
         try:
             # 1. 计算仓位大小
             lev = leverage if leverage else self.default_leverage
+
+            # 价格非法时直接拒绝，避免后续 usdt_amount / limit_price 触发除零
+            if limit_price <= 0:
+                print(f"❌ 限价单价格非法: {limit_price}")
+                return {
+                    "success": False,
+                    "message": f"limit_price 必须大于 0，实际为 {limit_price}",
+                }
 
             # 合约数量：名义额口径直接除以价格；保证金口径需乘杠杆换算为名义额
             # （网格数学引擎产出的 amount_per_grid 已含杠杆，必须走名义额口径，否则杠杆被重复计算）
