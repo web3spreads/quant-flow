@@ -173,6 +173,13 @@ class RiskManager:
         Returns:
             StopLossResult: 止损计算结果
         """
+        # 价格守卫：entry_price 为 0/负（行情缺失或数据损坏）会在 L236 触发除零，
+        # 抛出明确异常由上层 except 捕获 → 安全跳过本轮，而非崩溃整个决策循环
+        if entry_price <= 0:
+            raise ValueError(
+                f"entry_price 必须为正数，实际为 {entry_price}（疑似行情数据缺失/损坏）"
+            )
+
         # 基础ATR倍数
         atr_multiplier = self.params.atr_stop_loss_multiplier
 
@@ -269,6 +276,12 @@ class RiskManager:
         Returns:
             TakeProfitResult: 止盈计算结果
         """
+        # 价格守卫：entry_price 为 0/负会在 L332 触发除零
+        if entry_price <= 0:
+            raise ValueError(
+                f"entry_price 必须为正数，实际为 {entry_price}（疑似行情数据缺失/损坏）"
+            )
+
         min_rr = min_risk_reward or self.params.min_risk_reward_ratio
         atr_multiplier = self.params.atr_take_profit_multiplier
 
@@ -410,8 +423,23 @@ class RiskManager:
         """
         adjustments = []
 
+        # 价格守卫：entry_price 为 0/负会触发除零（L414 及后续 position_size 计算）
+        if entry_price <= 0:
+            raise ValueError(
+                f"entry_price 必须为正数，实际为 {entry_price}（疑似行情数据缺失/损坏）"
+            )
+        # 杠杆守卫：非法杠杆会导致 position_size 除零或负仓位
+        if leverage <= 0:
+            leverage = 1
+            adjustments.append("杠杆非法，回退为 1x")
+
         # 计算每单位风险
         risk_per_unit = abs(entry_price - stop_loss_price) / entry_price
+        # 止损距离为 0（入场价==止损价，异常信号）会使后续 risk_amount/(risk_per_unit*leverage)
+        # 触发除零；回退到最小风险距离 0.5%（与 calculate_dynamic_stop_loss 的最小止损一致）
+        if risk_per_unit <= 0:
+            risk_per_unit = 0.005
+            adjustments.append("止损距离为 0，回退最小风险 0.5% 以避免除零")
 
         if self.sizing_method == PositionSizingMethod.FIXED_AMOUNT:
             # 固定金额法
@@ -427,7 +455,9 @@ class RiskManager:
 
         elif self.sizing_method == PositionSizingMethod.KELLY_CRITERION:
             # 凯利公式
-            if win_rate and avg_win_loss_ratio:
+            # 参数合法性校验：胜率须在 (0,1]，盈亏比须为正，否则凯利公式无意义
+            # （负盈亏比会翻转符号、win_rate 越界会产出错误仓位），非法时回退固定风险法
+            if win_rate and avg_win_loss_ratio and 0 < win_rate <= 1 and avg_win_loss_ratio > 0:
                 # Kelly % = W - (1-W)/R
                 kelly_pct = win_rate - (1 - win_rate) / avg_win_loss_ratio
                 # 使用半凯利降低风险
