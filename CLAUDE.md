@@ -196,8 +196,7 @@ src/
 │   ├── order_manager.py            # 订单管理（支持限价单 TP/SL 开关）
 │   ├── grid_manager.py             # 网格交易管理器（布单/同步/安全机制）
 │   ├── decision_validator.py       # 决策多维度验证
-│   ├── position_sizer.py           # 凯利公式仓位计算
-│   ├── risk_manager.py             # ATR动态止盈止损
+│   ├── risk_manager.py             # ATR动态止盈止损与仓位计算（固定金额/固定风险/凯利公式）
 │   └── enhanced_engine.py          # 增强交易引擎 (Regime 参数覆盖)
 ├── plugins/                  # 插件系统
 │   └── protections/                # 保护插件
@@ -506,29 +505,17 @@ ValidationResult.WARN   # 警告但允许
 ValidationResult.BLOCK  # 阻止交易
 ```
 
-### 仓位管理 (`position_sizer.py`)
+### 风险与仓位管理 (`risk_manager.py`)
 
-基于凯利公式动态计算最优仓位：
+提供动态止盈止损（基于 ATR）和最优仓位大小计算（支持固定金额、固定风险、凯利公式）：
 
 ```python
 # 仓位计算方法
-PositionSizeMethod.KELLY                # 凯利公式
-PositionSizeMethod.VOLATILITY_ADJUSTED  # 波动率调整
-PositionSizeMethod.SIGNAL_BASED         # 基于信号强度
+PositionSizingMethod.FIXED_AMOUNT   # 固定金额法
+PositionSizingMethod.FIXED_RISK     # 固定风险法
+PositionSizingMethod.KELLY          # 凯利公式
 
-# 调整因子
-kelly_factor      # 凯利系数调整
-signal_factor     # 信号强度调整
-volatility_factor # 波动率调整
-drawdown_factor   # 连续亏损收缩
-```
-
-### 风险管理 (`risk_manager.py`)
-
-提供动态止盈止损（基于 ATR）：
-
-```python
-# 核心参数
+# 核心风控参数
 max_risk_per_trade: 0.02      # 单笔最大风险 2%
 max_total_exposure: 0.5       # 最大总敞口 50%
 min_risk_reward_ratio: 1.5    # 最小风险回报比

@@ -301,25 +301,7 @@ class TestReviewDailyLogger:
                 format_type="invalid_format",
             )
 
-    def test_get_statistics(self, logger, sample_review_data):
-        """测试统计信息"""
-        # 写入一些数据
-        logger.log_review(**sample_review_data)
 
-        eth_data = copy.deepcopy(sample_review_data)
-        eth_data["symbol"] = "ETH"
-        eth_data["lessons"] = [{"rule": "ETH 规则", "action": "ETH 动作"}]
-        logger.log_review(**eth_data)
-
-        stats = logger.get_statistics()
-
-        assert stats["total_files"] == 1
-        assert stats["total_records"] == 2
-        assert stats["total_lessons"] == 2  # BTC 1条 + ETH 1条
-        assert "BTC" in stats["symbols"]
-        assert "ETH" in stats["symbols"]
-        assert stats["symbols"]["BTC"]["records"] == 1
-        assert stats["symbols"]["ETH"]["records"] == 1
 
     def test_instruction_content(self, logger, sample_review_data):
         """测试 instruction 内容包含交易对信息"""

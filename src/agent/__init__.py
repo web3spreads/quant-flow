@@ -66,13 +66,13 @@ def __getattr__(name):
         return SimilarityScorer
 
     # External info
-    if name in ("ExternalInfoAgent", "ExternalInfoScheduler", "get_external_info_agent"):
+    if name == "ExternalInfoAgent":
         from src.agent import external_info_agent
 
         return getattr(external_info_agent, name)
 
     # Market info store
-    if name in ("MarketInfoStore", "get_market_info_store"):
+    if name == "MarketInfoStore":
         from src.agent import market_info_store
 
         return getattr(market_info_store, name)
@@ -93,8 +93,5 @@ __all__ = [
     "ContextExtractor",
     "SimilarityScorer",
     "ExternalInfoAgent",
-    "ExternalInfoScheduler",
-    "get_external_info_agent",
     "MarketInfoStore",
-    "get_market_info_store",
 ]

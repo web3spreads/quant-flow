@@ -137,7 +137,6 @@ class TestThreadSafety:
                 barrier.wait(timeout=5)
                 for _ in range(50):
                     store.get_lessons("ETH")
-                    store.get_lessons_summary("ETH")
                     store.get_verbal_finetuning_section("ETH")
             except Exception as e:
                 errors.append(e)

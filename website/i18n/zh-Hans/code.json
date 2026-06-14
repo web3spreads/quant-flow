@@ -1,66 +1,74 @@
 {
   "homepage.tagline": {
-    "message": "基于 AI 的 Hyperliquid DEX 加密货币自动交易机器人",
+    "message": "基于 AI 驱动的 Hyperliquid 自动交易系统。跟着 AI 混，开仓稳准狠。",
     "description": "Homepage hero tagline"
   },
   "homepage.getStarted": {
-    "message": "开始使用 →",
+    "message": "快速开始",
     "description": "Homepage get started button"
   },
   "homepage.disclaimer": {
-    "message": "⚠️ 本项目仅供学习与研究使用，请勿在生产环境中未经充分测试直接使用。",
+    "message": "⚠️ 友情提示：本项目仅供学习与研究，别直接拿真钱瞎胡闹，实盘爆仓了概不负责噢。",
     "description": "Homepage disclaimer text"
   },
   "homepage.description": {
-    "message": "基于 LangChain/LangGraph 构建的 AI 加密货币自动交易机器人，专为 Hyperliquid DEX 设计",
+    "message": "基于 LangChain/LangGraph 构建的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 打造",
     "description": "Homepage meta description"
   },
+  "homepage.features.title": {
+    "message": "核心技术架构",
+    "description": "Homepage features section title"
+  },
+  "homepage.features.subtitle": {
+    "message": "融合前沿 AI 协同技术与严苛的风控逻辑，拒绝情绪化，让交易更理智。",
+    "description": "Homepage features section subtitle"
+  },
   "feature.multiAgent.title": {
-    "message": "🤖 多智能体 AI",
-    "description": "Feature card title: Multi-Agent AI"
+    "message": "🤖 AI Agent 协同网络",
+    "description": "Feature card title: Multi-Agent AI Graph"
   },
   "feature.multiAgent.desc": {
-    "message": "基于 LangGraph 的交易对独立决策架构，支持 OpenAI、NVIDIA、Google、Cloudflare、LiteLLM 多个 LLM 提供商。",
-    "description": "Feature card description: Multi-Agent AI"
+    "message": "每个币种由独立 Agent 决策，基于 LangGraph 构建。支持上下文压缩，LLM 记性再差也能轻松拿捏历史数据。",
+    "description": "Feature card description: Multi-Agent AI Graph"
   },
   "feature.gridFlow.title": {
-    "message": "📊 网格做市策略",
-    "description": "Feature card title: Grid Flow Strategy"
+    "message": "📊 动态网格做市策略",
+    "description": "Feature card title: Grid Flow Market Maker"
   },
   "feature.gridFlow.desc": {
-    "message": "AI 驱动的动态网格做市策略。LLM 判断方向与网格宽度，数学引擎精确计算参数，GridManager 负责挂单管理。",
-    "description": "Feature card description: Grid Flow Strategy"
+    "message": "AI 预判方向与价格区间，数学引擎自动计算网格间距和 reduce-only 退出单。安心挂单，收割震荡市。",
+    "description": "Feature card description: Grid Flow Market Maker"
   },
-  "feature.research.title": {
-    "message": "🔬 学术研究驱动",
-    "description": "Feature card title: Research-Backed"
+  "feature.fincot.title": {
+    "message": "🧠 金融思维链推理 (FinCoT)",
+    "description": "Feature card title: FinCoT Reasoning"
   },
-  "feature.research.desc": {
-    "message": "FinCoT 结构化推理链（准确率 +17%）、多空辩论引擎、CEX 领先信号、Regime 自适应策略 — 全部基于学术论文验证。",
-    "description": "Feature card description: Research-Backed"
+  "feature.fincot.desc": {
+    "message": "独创 6 步结构化推理链，帮大模型理清开仓头绪，实测决策准确率提升 17.3%。",
+    "description": "Feature card description: FinCoT Reasoning"
   },
-  "feature.backtest.title": {
-    "message": "📈 回测系统",
-    "description": "Feature card title: Backtesting"
+  "feature.debate.title": {
+    "message": "⚔️ 独立多空对决辩论",
+    "description": "Feature card title: Bull/Bear Debate"
   },
-  "feature.backtest.desc": {
-    "message": "永续合约与网格策略全面回测支持，含 A/B 功能对比测试与中断恢复功能。",
-    "description": "Feature card description: Backtesting"
+  "feature.debate.desc": {
+    "message": "下单前让两个独立 LLM 扮演多军和空军吵一架，全方位拆解风险，彻底消灭你的主观偏见。",
+    "description": "Feature card description: Bull/Bear Debate"
+  },
+  "feature.backtesting.title": {
+    "message": "📈 确定性回测系统",
+    "description": "Feature card title: Deterministic Backtesting"
+  },
+  "feature.backtesting.desc": {
+    "message": "支持 A/B 策略参数比对、决策录制与完全确定性回放，离线重现每一笔交易的思考细节。",
+    "description": "Feature card description: Deterministic Backtesting"
   },
   "feature.risk.title": {
-    "message": "🛡️ 风险管理",
-    "description": "Feature card title: Risk Management"
+    "message": "🛡️ 机构级风控护栏",
+    "description": "Feature card title: Risk Guard"
   },
   "feature.risk.desc": {
-    "message": "凯利公式仓位管理、ATR 动态止盈止损、最大回撤保护、持仓超时自动平仓。",
-    "description": "Feature card description: Risk Management"
-  },
-  "feature.docker.title": {
-    "message": "🐳 Docker 一键部署",
-    "description": "Feature card title: Docker Ready"
-  },
-  "feature.docker.desc": {
-    "message": "Docker Compose 一键部署，通过 RUN_MODE 环境变量灵活选择运行主策略、网格策略或两者并行。",
-    "description": "Feature card description: Docker Ready"
+    "message": "凯利公式算仓，ATR 算动态止盈止损。叠加回撤熔断和超时强制平仓，誓死守护每一毛本金。",
+    "description": "Feature card description: Risk Guard"
   }
 }

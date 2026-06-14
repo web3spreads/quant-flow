@@ -9,7 +9,6 @@
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -99,7 +98,6 @@ class LessonGeneralizer:
             min_diversity_ratio: 最低多样性比例，低于此值会触发警告
         """
         self.min_diversity_ratio = min_diversity_ratio
-        self.counter_examples: dict[str, list[dict]] = {}  # 反例存储
 
     def generalize_lesson(self, lesson: dict[str, Any]) -> dict[str, Any]:
         """
@@ -259,122 +257,6 @@ class LessonGeneralizer:
             adjusted["untested_market_states"] = diversity_score.missing_states
 
         return adjusted
-
-    def add_counter_example(
-        self, lesson_id: str, failed_context: dict[str, Any], failure_reason: str
-    ):
-        """
-        记录经验失效的反例
-
-        Args:
-            lesson_id: 经验标识符（如 rule 的 hash）
-            failed_context: 失效时的市场上下文
-            failure_reason: 失效原因
-        """
-        if lesson_id not in self.counter_examples:
-            self.counter_examples[lesson_id] = []
-
-        self.counter_examples[lesson_id].append(
-            {
-                "context": failed_context,
-                "reason": failure_reason,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-
-    def get_counter_examples(self, lesson_id: str) -> list[dict]:
-        """获取某条经验的所有反例"""
-        return self.counter_examples.get(lesson_id, [])
-
-    def cross_validate_lesson(
-        self,
-        lesson: dict[str, Any],
-        train_records: list[dict[str, Any]],
-        holdout_records: list[dict[str, Any]],
-    ) -> tuple[float, dict[str, Any]]:
-        """
-        使用留出数据集交叉验证经验
-
-        Args:
-            lesson: 经验规则
-            train_records: 训练集（用于生成经验的记录）
-            holdout_records: 测试集（留出数据）
-
-        Returns:
-            (验证得分, 详细结果)
-        """
-        if not holdout_records:
-            return 0.5, {"error": "holdout_records is empty"}
-
-        lesson_action = (lesson.get("action") or "").upper()
-        lesson_context = lesson.get("context_features", {})
-
-        matches = 0
-        successes = 0
-        failures = 0
-
-        for record in holdout_records:
-            market_data = record.get("market_data", {})
-            decision = record.get("decision", "").upper()
-            action_details = record.get("action_details", {}) or {}
-            pnl = action_details.get("pnl", 0) or 0
-
-            # 简单的上下文匹配
-            context_match = self._simple_context_match(lesson_context, market_data)
-            if not context_match:
-                continue
-
-            matches += 1
-
-            # 检查决策是否与经验一致
-            action_aligned = (
-                ("BUY" in lesson_action and "BUY" in decision)
-                or ("SELL" in lesson_action and "SELL" in decision)
-                or ("HOLD" in lesson_action and "DO_NOTHING" in decision)
-            )
-
-            if action_aligned:
-                if pnl > 0:
-                    successes += 1
-                elif pnl < 0:
-                    failures += 1
-
-        # 计算验证得分
-        if matches == 0:
-            validation_score = 0.5  # 无匹配时保持中性
-        elif successes + failures == 0:
-            validation_score = 0.5
-        else:
-            validation_score = successes / (successes + failures)
-
-        return validation_score, {
-            "matches": matches,
-            "successes": successes,
-            "failures": failures,
-            "validation_score": validation_score,
-        }
-
-    def _simple_context_match(
-        self, lesson_context: dict[str, Any], market_data: dict[str, Any]
-    ) -> bool:
-        """简单的上下文匹配"""
-        if not lesson_context:
-            return True
-
-        # RSI 区间匹配
-        lesson_rsi = lesson_context.get("rsi") or 50
-        market_rsi = market_data.get("rsi") or 50
-
-        # 允许 ±15 的误差
-        if abs(lesson_rsi - market_rsi) > 15:
-            return False
-
-        # 趋势方向匹配
-        lesson_direction = lesson_context.get("trend_direction", "")
-        market_change = market_data.get("price_change") or 0
-        market_direction = "up" if market_change > 0 else "down"
-
-        return not (lesson_direction and lesson_direction != market_direction)
 
 
 def enhance_lessons_with_generalization(

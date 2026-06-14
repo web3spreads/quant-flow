@@ -17,7 +17,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
-from src.agent.external_info_agent import ExternalInfoAgent, ExternalInfoScheduler
+from src.agent.external_info_agent import ExternalInfoAgent
 from src.agent.market_info_store import MarketInfoStore
 from src.agent.review_agent import ReviewAgent
 from src.agent.review_daily_logger import ReviewDailyLogger
@@ -369,7 +369,6 @@ class QuantFlowBot:
 
         # 9. 外部信息收集 Agent
         self.external_info_agent = None
-        self.external_info_scheduler = None
         self.market_info_store = None
 
         if getattr(self.config, "external_info_enabled", False):
@@ -400,18 +399,10 @@ class QuantFlowBot:
                     base_dir=getattr(self.config, "external_info_store_dir", "data/market_info")
                 )
 
-                # 创建调度器
-                self.external_info_scheduler = ExternalInfoScheduler(
-                    agent=self.external_info_agent,
-                    interval_hours=getattr(self.config, "external_info_interval_hours", 3.0),
-                    logger=self.logger,
-                )
-
                 self.logger.print_info("✅ 外部信息收集 Agent 初始化完成")
             except Exception as e:
                 self.logger.print_warning(f"外部信息收集 Agent 初始化失败: {e}")
                 self.external_info_agent = None
-                self.external_info_scheduler = None
         else:
             # 即使未启用 Agent，也创建存储实例以便读取已有的报告
             store_dir = getattr(self.config, "external_info_store_dir", "data/market_info")

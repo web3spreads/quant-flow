@@ -142,18 +142,15 @@ Validation checks:
 - Market state suitability
 - Entry timing quality
 
-### `position_sizer.py`
-Kelly criterion position sizing with multiple sizing methods:
+### `risk_manager.py`
+Calculates ATR-based dynamic stop-loss and take-profit, and computes suggested position sizes using multiple sizing methods:
 
 ```python
-class PositionSizeMethod(Enum):
+class PositionSizingMethod(Enum):
+    FIXED_AMOUNT = "fixed_amount"
+    FIXED_RISK = "fixed_risk"
     KELLY = "kelly"
-    VOLATILITY_ADJUSTED = "volatility_adjusted"
-    SIGNAL_BASED = "signal_based"
 ```
-
-### `risk_manager.py`
-ATR-based dynamic stop-loss and take-profit calculation.
 
 **Defaults**:
 - `max_risk_per_trade: 0.02` (2% of account)

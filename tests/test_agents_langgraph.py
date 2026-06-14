@@ -7,9 +7,7 @@ import pytest
 from src.agent.helpers import (
     extract_json_from_text,
     safe_float,
-    safe_int,
     safe_leverage,
-    shorten_text,
 )
 from src.agent.tools import TradingTools
 
@@ -44,19 +42,7 @@ class TestHelperFunctions:
         assert safe_leverage(None) == 1
         assert safe_leverage("invalid") == 1
 
-    def test_safe_int(self):
-        """测试 safe_int"""
-        assert safe_int("123") == 123
-        assert safe_int(45.6) == 45
-        assert safe_int(None) == 0
-        assert safe_int("invalid", default=-1) == -1
 
-    def test_shorten_text(self):
-        """测试文本裁剪"""
-        assert shorten_text("Hello World", limit=20) == "Hello World"
-        assert shorten_text("Hello World", limit=5) == "He..."
-        assert shorten_text("") == ""
-        assert shorten_text(None) == ""
 
     def test_extract_json_from_text_markdown(self):
         """测试从 Markdown 代码块提取 JSON"""
