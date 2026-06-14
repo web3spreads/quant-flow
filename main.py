@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -18,6 +19,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
 from src.agent.external_info_agent import ExternalInfoAgent
+from src.agent.grid_agent import GridAgent
+from src.agent.helpers import send_error_notification
 from src.agent.market_info_store import MarketInfoStore
 from src.agent.review_agent import ReviewAgent
 from src.agent.review_daily_logger import ReviewDailyLogger
@@ -25,10 +28,8 @@ from src.agent.review_memory import ReviewMemoryStore
 from src.agent.single_symbol_agent import SingleSymbolAgent
 
 # 改进1: 双粒度反思（延迟导入在初始化时使用）
-
 # RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
 from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
-from src.agent.helpers import send_error_notification
 from src.config import DEFAULT_PERP_FEE_RATES, get_config
 from src.data.data_enricher import MarketDataEnricher
 from src.data.indicators import TechnicalIndicators
@@ -39,16 +40,13 @@ from src.notification import Notifier
 from src.plugins.protections import ProtectionAction, ProtectionContext, ProtectionManager
 from src.prompt_manager import PromptManager
 from src.trading.client import HyperliquidClient
+from src.trading.grid_barrier import TripleBarrierConfig
+from src.trading.grid_manager import GridManager
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
 from src.utils.candle_align import next_candle_close_ts
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
-
-from decimal import Decimal
-from src.agent.grid_agent import GridAgent
-from src.trading.grid_manager import GridManager
-from src.trading.grid_barrier import TripleBarrierConfig
 from src.utils.precision import to_decimal
 
 
