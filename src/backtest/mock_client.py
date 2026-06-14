@@ -3,11 +3,43 @@
 用于回测，不实际执行交易，只记录交易意图和模拟账户状态
 """
 
+import math
 from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
+
+# 真实 Hyperliquid 永续合约 szDecimals(数量精度),取自交易所 meta 接口。
+# 价格越高的资产 szDecimals 越大(可交易更小的数量)。此前 mock 对所有币种
+# 硬编码 szDecimals=3,导致 BTC(~$78k)等高价资产的小额网格单 size 被四舍五入
+# 为 0 而遭 place_limit_order 误拒(报"下单数量必须大于0"),网格回测零成交。
+# 仅收录 szDecimals >= 2 的主流(多为高价)资产;低价资产 szDecimals 多为 0-1,
+# 且单位数量较大不会因取整为 0,未收录者按价格量级启发式回退(见 get_asset_info)。
+_HL_SZ_DECIMALS: dict[str, int] = {
+    "BTC": 5, "ETH": 4,
+    "BCH": 3, "BNB": 3, "PAXG": 3, "TAO": 3, "UNIBOT": 3, "XMR": 3,
+    "AAVE": 2, "ACE": 2, "APT": 2, "AR": 2, "ATOM": 2, "AVAX": 2, "BSV": 2,
+    "COMP": 2, "DASH": 2, "EIGEN": 2, "ENS": 2, "ETC": 2, "GMX": 2, "HYPE": 2,
+    "ILV": 2, "LTC": 2, "NEO": 2, "OMNI": 2, "ORDI": 2, "SOL": 2, "TRB": 2,
+    "VVV": 2, "ZEC": 2, "ZEN": 2,
+}
+
+
+def _infer_sz_decimals(symbol: str, price: float | None) -> int:
+    """推断资产数量精度 szDecimals。
+
+    已知主流资产用真实值;未知资产按价格量级回退:szDecimals ≈ round(log10(price)),
+    使最小数量步长的名义价值维持在约 $0.1~$1 量级,与 Hyperliquid 的实际分布一致。
+    高价资产得到更高精度(避免小额单取整为 0);无价格信息时回退到 2(偏保守,
+    不会像旧默认值 3 那样使高价资产 size 归零)。
+    """
+    known = _HL_SZ_DECIMALS.get(symbol)
+    if known is not None:
+        return known
+    if price and price > 0:
+        return max(0, min(5, round(math.log10(price))))
+    return 2
 
 
 class MockHyperliquidClient:
@@ -132,10 +164,12 @@ class MockHyperliquidClient:
             交易对元数据
         """
         if symbol not in self.asset_info_cache:
-            # 模拟资产信息
+            # 按真实 Hyperliquid 精度推断 szDecimals(高价资产需更高精度,
+            # 否则小额单 size 取整为 0 被误拒);未知资产按当前价格量级回退。
+            sz_decimals = _infer_sz_decimals(symbol, self.get_current_price(symbol))
             self.asset_info_cache[symbol] = {
                 "name": symbol,
-                "szDecimals": 3,  # 默认3位小数
+                "szDecimals": sz_decimals,
                 "maxLeverage": 50,
                 "tickSize": 0.1,
             }
