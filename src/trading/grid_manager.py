@@ -109,9 +109,12 @@ class GridManager:
             self.barrier_monitors[symbol] = GridBarrierMonitor(
                 config=self.barrier_config, start_time=start_time
             )
-            # 恢复上次重建时间戳（无该字段的旧状态回退到 last_sync）
+            # 恢复上次重建时间戳：优先 last_rebuild_ts，其次旧状态的 last_sync；
+            # 两者都缺失时回退到当前时间（视为“刚重建”）而非 0.0——否则崩溃/自动重启
+            # 后冷却判断恒为真，会立即触发全量撤换单抖动（正是重建冷却要规避的）。
+            # 安全性触发（挂单不足/参数异常）的重建不受冷却约束，不影响必要保护。
             self._last_rebuild_ts[symbol] = self._safe_float(
-                grid_data.get("last_rebuild_ts", grid_data.get("last_sync")), 0.0
+                grid_data.get("last_rebuild_ts") or grid_data.get("last_sync"), time.time()
             )
 
     def _load_state(self) -> dict[str, Any]:
@@ -850,7 +853,10 @@ class GridManager:
                         limit_price=limit_price,
                         size=order_size,
                     )
-                projected_covered += order_size
+                # 覆盖率按实际覆盖量累计：order_size 经 ceil 取整可能略超 remaining_to_cover，
+                # 但 reduce_only 单实际成交被交易所截断到剩余持仓，若按 order_size 累计会过计、
+                # 提前判定覆盖完成而漏挂后续保护单。故按 min(order_size, remaining_to_cover) 计。
+                projected_covered += min(order_size, remaining_to_cover)
                 placed += 1
                 self.logger.print_warning(
                     f"   [Grid] 🛟 补减仓{side_name}单: {order_size:.6f} @ ${limit_price} (reduce_only)"
