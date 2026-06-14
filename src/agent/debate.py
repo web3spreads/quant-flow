@@ -11,7 +11,9 @@
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic_ai import Agent
+
+from src.llm.llm_client import wrap_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +44,6 @@ def build_debate_context(
 ) -> str:
     """
     构建精简的辩论上下文（控制在 ~200 tokens 以内）
-
-    Args:
-        symbol: 交易对
-        market_data: 市场数据
-        enriched_data: 增强数据
-        multi_timeframe_trends: 多周期趋势
     """
     price = market_data.get("current_price", 0)
     rsi = market_data.get("rsi", 50)
@@ -91,7 +87,7 @@ def run_bull_bear_debate(
     执行多空辩论，返回格式化的辩论摘要
 
     Args:
-        llm: LLM 客户端实例
+        llm: Pydantic AI Model 实例
         symbol: 交易对
         market_data: 市场数据
         enriched_data: 增强数据
@@ -101,24 +97,18 @@ def run_bull_bear_debate(
         格式化的辩论摘要文本，可直接注入 prompt
     """
     context = build_debate_context(symbol, market_data, enriched_data, multi_timeframe_trends)
+    llm = wrap_llm_client(llm)
 
     try:
-        # 并行调用需要 async，这里用顺序调用（总延迟 ~2-4s）
-        bull_response = llm.invoke(
-            [
-                SystemMessage(content=BULL_SYSTEM_PROMPT),
-                HumanMessage(content=context),
-            ]
-        )
-        bull_text = bull_response.content.strip() if bull_response.content else "（多头分析失败）"
+        # 使用 Pydantic AI Agent 分别代表 Bull & Bear 进行辩论
+        bull_agent = Agent(llm, system_prompt=BULL_SYSTEM_PROMPT)
+        bear_agent = Agent(llm, system_prompt=BEAR_SYSTEM_PROMPT)
 
-        bear_response = llm.invoke(
-            [
-                SystemMessage(content=BEAR_SYSTEM_PROMPT),
-                HumanMessage(content=context),
-            ]
-        )
-        bear_text = bear_response.content.strip() if bear_response.content else "（空头分析失败）"
+        bull_result = bull_agent.run_sync(context)
+        bull_text = bull_result.output.strip() if bull_result.output else "（多头分析失败）"
+
+        bear_result = bear_agent.run_sync(context)
+        bear_text = bear_result.output.strip() if bear_result.output else "（空头分析失败）"
 
     except Exception as e:
         logger.warning("多空辩论 LLM 调用失败: %s", e)

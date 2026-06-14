@@ -301,8 +301,6 @@ class TestReviewDailyLogger:
                 format_type="invalid_format",
             )
 
-
-
     def test_instruction_content(self, logger, sample_review_data):
         """测试 instruction 内容包含交易对信息"""
         logger.log_review(**sample_review_data)

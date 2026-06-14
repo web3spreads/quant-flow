@@ -45,6 +45,12 @@ from src.utils.candle_align import next_candle_close_ts
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
 
+from decimal import Decimal
+from src.agent.grid_agent import GridAgent
+from src.trading.grid_manager import GridManager
+from src.trading.grid_barrier import TripleBarrierConfig
+from src.utils.precision import to_decimal
+
 
 class QuantFlowBot:
     """Quant Flow 交易机器人 - 多 Agent 架构"""
@@ -102,6 +108,8 @@ class QuantFlowBot:
         self.scheduler = None
         self.is_running = False
         self._skipped_cycles = 0  # 跳过的周期计数
+        # 立即执行的网格周期线程引用（停机时 join，避免腰斩首次布单序列）
+        self._grid_immediate_thread = None
 
         # 交易统计
         self.statistics = {
@@ -471,6 +479,46 @@ class QuantFlowBot:
             self.logger.print_info("  - 1 个市场主动监控器")
         if self.protection_manager:
             self.logger.print_info("  - 1 个保护插件管理器 (ProtectionManager)")
+
+        # 13. 初始化网格交易组件
+        self.grid_manager = None
+        self.grid_agent = None
+        if self.config.grid_enabled:
+            self.logger.print_info("初始化网格交易组件...")
+            try:
+                risk_cfg = self.config.config_data.get("risk_management", {})
+                barrier_config = TripleBarrierConfig.from_config(risk_cfg)
+
+                self.grid_manager = GridManager(
+                    self.order_manager,
+                    self.logger,
+                    notifier=self.notifier,
+                    state_file="data/grid_state.json",
+                    grid_limit_order_take_profit_enabled=self.config.grid_limit_order_take_profit_enabled,
+                    grid_limit_order_stop_loss_enabled=self.config.grid_limit_order_stop_loss_enabled,
+                    grid_reduce_only_exit_orders_enabled=self.config.grid_reduce_only_exit_orders_enabled,
+                    barrier_config=barrier_config,
+                )
+
+                self.grid_agent = GridAgent(
+                    symbol=self.config.symbols[0],
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    llm_manager=self.llm_manager,
+                    trade_amount=self.config.max_trade_amount,
+                    width_pct_min=self.config.grid_width_min_pct,
+                    width_pct_max=self.config.grid_width_max_pct,
+                    width_pct_fallback=self.config.grid_width_fallback_pct,
+                    ai_width_blend_weight=self.config.grid_ai_blend_weight,
+                )
+                self.logger.print_info("✅ 网格交易组件初始化完成")
+            except Exception as e:
+                self.logger.print_warning(f"网格交易组件初始化失败: {e}")
+                self.grid_manager = None
+                self.grid_agent = None
+
+        if self.grid_manager:
+            self.logger.print_info("  - 1 个网格交易管理器 (GridManager)")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -1162,6 +1210,26 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
+            # 网格交易定时任务
+            if self.grid_manager and self.grid_agent:
+                self.scheduler.add_job(
+                    self.grid_cycle,
+                    trigger=IntervalTrigger(minutes=self.config.interval_minutes),
+                    id="grid_cycle",
+                    name="AI网格决策循环",
+                    replace_existing=True,
+                )
+                self.logger.print_info(f"网格交易决策任务已添加，间隔: {self.config.interval_minutes} 分钟")
+
+                # 如果配置了立即执行，在后台线程中立即运行一次网格循环
+                if self.config.run_immediately:
+                    self.logger.print_info("立即执行首次网格交易循环...")
+                    self._grid_immediate_thread = threading.Thread(
+                        target=self.grid_cycle, daemon=True,
+                        name="grid-immediate",
+                    )
+                    self._grid_immediate_thread.start()
+
             # 启动后台调度器
             self.scheduler.start()
 
@@ -1176,30 +1244,48 @@ class QuantFlowBot:
             self.is_running = True
             self.start_time = datetime.now()
 
-            # 如果配置了立即执行，先执行一次
-            if self.config.run_immediately:
-                self.logger.print_info("立即执行第一次交易循环...")
-                self.trading_cycle()
-
-            self.logger.print_section(
-                f"K 线节拍驱动已启动 | "
-                f"周期: {self.config.timeframe} | "
-                f"偏移: {self.config.timeframe_offset}s",
-                style="bold green",
-            )
-
-            # 主循环：K 线节拍驱动
-            while self.is_running:
-                self._wait_next_candle()
-                if self.is_running:
+            # 永续合约主流程
+            if self.config.perp_enabled:
+                # 如果配置了立即执行，先执行一次
+                if self.config.run_immediately:
+                    self.logger.print_info("立即执行第一次交易循环...")
                     self.trading_cycle()
 
+                self.logger.print_section(
+                    f"K 线节拍驱动已启动 | "
+                    f"周期: {self.config.timeframe} | "
+                    f"偏移: {self.config.timeframe_offset}s",
+                    style="bold green",
+                )
+
+                # 主循环：K 线节拍驱动
+                while self.is_running:
+                    self._wait_next_candle()
+                    if self.is_running:
+                        self.trading_cycle()
+            else:
+                self.logger.print_section(
+                    "永续合约交易已禁用。程序运行在纯网格模式下。",
+                    style="bold green",
+                )
+                # 主循环：保持程序存活
+                while self.is_running:
+                    time.sleep(1)
+
         except KeyboardInterrupt:
-            self.stop("用户手动停止 (Ctrl+C)")
+            self.logger.print_info("收到 Ctrl+C，触发优雅停机")
         except Exception as e:
             self.logger.print_error(f"启动失败: {e}")
             self.logger.logger.exception(e)
-            sys.exit(1)
+            raise
+        finally:
+            # 优雅停机：循环退出（停止信号 / Ctrl+C / 异常）后统一清理。stop() 内部对各
+            # 组件做了存在性守卫，初始化中途失败调用也安全；scheduler.shutdown(wait=True)
+            # 会等待进行中的网格周期跑完，避免腰斩撤单/布单序列而留下无保护裸仓。
+            try:
+                self.stop("收到停止信号或异常退出")
+            except Exception as cleanup_err:
+                self.logger.print_error(f"停机清理异常: {cleanup_err}")
 
     def _wait_next_candle(self):
         """等待到下一根 K 线收盘后 offset 秒（分段 sleep 以便快速响应停止信号）"""
@@ -1224,6 +1310,16 @@ class QuantFlowBot:
         # 停止市场监控线程
         if self.market_monitor:
             self.market_monitor.stop()
+
+        # 等待「立即执行的网格周期」完成（首次布单可能仍在运行中）。
+        # 该线程由 start() 直接派生、不走调度器，scheduler.shutdown(wait=True) 不会等它，
+        # 故单独 join，避免腰斩布单/撤单序列而留下无保护裸仓。
+        if (
+            getattr(self, "_grid_immediate_thread", None) is not None
+            and self._grid_immediate_thread.is_alive()
+        ):
+            self.logger.print_info("等待进行中的网格周期完成（最多 30s）...")
+            self._grid_immediate_thread.join(timeout=30)
 
         if self.scheduler and self.scheduler.running:
             self.scheduler.shutdown()
@@ -1527,11 +1623,242 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"发送关闭通知失败: {e}")
 
+    def _grid_protection_triggered(self, symbol: str) -> bool:
+        """
+        网格周期的账户级风控熔断检查。
+
+        网格此前仅有 per-grid Triple Barrier（单网格止盈止损），缺少账户级回撤 /
+        连亏 / 单日亏损熔断。此处复用永续同款 ``ProtectionManager.check_all``，在
+        布单前拦截：
+
+        - ``CLOSE_ALL_POSITIONS``：平掉全部持仓 + 撤销该 symbol 的网格挂单（含
+          trigger）并清理网格状态，跳过本轮布单。
+        - ``PAUSE_NEW_TRADES``：仅跳过本轮布单（不新增挂单）。
+
+        余额/持仓查询失败时不误熔断（返回 False），避免网络抖动把网格误停。
+
+        Returns:
+            True 表示已熔断、本轮网格应跳过布单；False 表示正常继续。
+        """
+        try:
+            balance_info = self.order_manager.get_available_balance_info()
+        except Exception as e:
+            self.logger.print_warning(f"[网格风控] 获取余额失败，跳过风控检查: {e}")
+            return False
+
+        if balance_info.get("status") != "ok":
+            self.logger.print_warning(
+                f"[网格风控] 余额查询异常({balance_info.get('message')})，跳过风控检查"
+            )
+            return False
+
+        try:
+            current_positions = self.order_manager.get_current_positions()
+        except Exception as e:
+            self.logger.print_warning(f"[网格风控] 获取持仓失败，跳过风控检查: {e}")
+            return False
+
+        context = ProtectionContext(
+            balance=balance_info.get("available", 0),
+            equity=balance_info.get("total", 0),
+            unrealized_pnl=balance_info.get("unrealized_pnl", 0),
+            margin_used=balance_info.get("occupied", 0),
+            current_positions=current_positions or [],
+        )
+        results = self.protection_manager.check_all(context)
+        action = ProtectionManager.get_most_severe_action(results)
+        for r in results:
+            self.logger.print_warning(f"[网格风控]{r.reason}")
+
+        if action == ProtectionAction.CLOSE_ALL_POSITIONS:
+            self.logger.print_warning("[网格风控]账户熔断触发，平掉全部持仓并撤销网格挂单")
+            for pos in (current_positions or []):
+                sym = pos.get("coin", "")
+                if sym:
+                    try:
+                        self.order_manager.close_position(sym)
+                        # 强平属风控主动行为：清理持仓记录，不向连亏插件上报虚假 pnl
+                        self.protection_manager.on_position_dropped(sym)
+                    except Exception as e:
+                        self.logger.print_error(f"[网格风控]平仓失败 {sym}: {e}")
+            # 撤销该 symbol 的全部网格挂单（含 trigger）并清理本地网格状态，
+            # 避免熔断期间挂单成交新增敞口
+            if self.grid_manager:
+                try:
+                    self.grid_manager.cancel_all_orders(symbol)
+                    self.logger.print_info(f"[网格风控]已撤销 {symbol} 的全部网格挂单")
+                except Exception as e:
+                    self.logger.print_error(f"[网格风控]撤销网格挂单失败: {e}")
+            return True
+
+        if action == ProtectionAction.PAUSE_NEW_TRADES:
+            self.logger.print_warning("[网格风控]账户风控暂停新开仓，本轮跳过网格布单")
+            return True
+
+        return False
+
+    def grid_cycle(self):
+        """执行一个网格交易周期"""
+        symbol = self.config.symbols[0] if self.config.symbols else "UNKNOWN"
+        cloud = get_cloud_logger()
+
+        # 与永续 trading_cycle 共享交易锁：RUN_MODE=all 时两者会并发操作同一 symbol，
+        # 不加锁会踩乱持仓/挂单状态。冲突时跳过本轮（网格下一周期再布）。
+        if not self._trading_lock.acquire(blocking=False):
+            self.logger.print_warning(
+                f"⏭️ 交易周期运行中，跳过本次网格周期 ({symbol})"
+            )
+            return
+
+        try:
+            self.logger.print_header(
+                f"🔄 网格交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            if cloud:
+                cloud.send_cycle_event(symbol=symbol, phase="start")
+
+            # 账户级风控熔断（回撤/连亏/单日亏损）：网格此前只有 per-grid Triple Barrier，
+            # 此处复用永续同款 ProtectionManager，在布单前拦截。熔断时已平仓/撤单并跳过布单。
+            if self.protection_manager and self._grid_protection_triggered(symbol):
+                if cloud:
+                    cloud.send_cycle_event(
+                        symbol=symbol,
+                        phase="skip",
+                        details={"reason": "账户级风控熔断"},
+                        level="warn",
+                    )
+                return
+
+            df = self.market_fetcher.fetch_ohlcv(
+                symbol=symbol,
+                timeframe=self.config.timeframe,
+                limit=100,
+            )
+
+            if df is None or df.empty:
+                self.logger.print_error("无法获取市场数据")
+                if cloud:
+                    cloud.send_cycle_event(
+                        symbol=symbol,
+                        phase="skip",
+                        details={"reason": "无法获取市场数据"},
+                        level="warn",
+                    )
+                return
+
+            df = TechnicalIndicators.calculate_all_indicators(df)
+            market_data = TechnicalIndicators.get_latest_indicators(df)
+            self.logger.print_market_data(symbol, market_data)
+
+            multi_timeframe_trends = TechnicalIndicators.get_multi_timeframe_trend(
+                self.market_fetcher,
+                symbol,
+                cached_ohlcv={self.config.timeframe: df},
+            )
+            current_grid_summary = self.grid_manager.get_grid_summary(symbol)
+
+            ai_decision = self.grid_agent.make_decision(
+                market_data,
+                multi_timeframe_trends,
+                current_grid_summary,
+            )
+
+            # 记录网格决策到本地日志 + 云端
+            action = ai_decision.get("action", "UNKNOWN")
+            reason = ai_decision.get("reason", "")
+            confidence = float(ai_decision.get("confidence", 0.0))
+            decision_ok = action in ("UPDATE_GRID", "KEEP_GRID")
+            self.logger.log_decision(
+                symbol=symbol,
+                market_data=market_data,
+                prompt="[GridAgent]",
+                ai_response=reason,
+                decision=action,
+                action_details=ai_decision,
+                status="SUCCESS" if decision_ok else "ERROR",
+                error_message=None if decision_ok else reason,
+                confidence=confidence,
+            )
+
+            self.grid_manager.sync_grid(symbol, ai_decision)
+            self.logger.print_header("✅ 网格交易周期完成")
+
+            # 记录周期结束事件，附带网格 PnL 摘要
+            if cloud:
+                grid_summary = self.grid_manager.get_grid_summary(symbol)
+                pnl_data = {}
+                tracker = self.grid_manager.pnl_trackers.get(symbol)
+                levels = self.grid_manager.grid_levels.get(symbol)
+                if tracker and levels:
+                    try:
+                        cp = self.grid_manager.order_manager.client.get_current_price(symbol)
+                        if cp and cp > 0:
+                            total_inv = sum((lv.amount for lv in levels), Decimal("0"))
+                            pnl_data = tracker.get_summary(levels, to_decimal(cp), total_inv)
+                            # Decimal 转 float 以便 JSON 序列化
+                            pnl_data = {
+                                k: float(v) if isinstance(v, Decimal) else v
+                                for k, v in pnl_data.items()
+                            }
+                    except Exception as e:
+                        self.logger.print_warning(f"PnL 摘要计算失败: {e}")
+                cloud.send_cycle_event(
+                    symbol=symbol,
+                    phase="end",
+                    details={
+                        "action": action,
+                        "confidence": confidence,
+                        "grid_summary": grid_summary,
+                        **pnl_data,
+                    },
+                )
+
+        except Exception as e:
+            self.logger.print_error(f"网格周期执行异常: {e}")
+            self.logger.logger.exception(e)
+            if cloud:
+                cloud.send_alert(
+                    symbol=symbol,
+                    alert_type="grid_cycle_error",
+                    severity="high",
+                    message=str(e),
+                    details={"traceback": traceback.format_exc()},
+                )
+        finally:
+            # 释放交易锁，确保永续/网格下一周期可正常获取
+            self._trading_lock.release()
+
+
+# 模块级引用：信号处理器需访问当前 bot 实例以触发优雅停机
+_running_bot: "QuantFlowBot | None" = None
+_signal_count = 0
+
 
 def signal_handler(signum, frame):
-    """信号处理器"""
-    print("\n\n收到停止信号，正在关闭...")
-    sys.exit(0)
+    """
+    信号处理器：触发优雅停机（覆盖永续 + 网格两条路径）。
+
+    首次收到 SIGINT/SIGTERM：仅置停止标志并立即返回，不调用 sys.exit —— 让主循环
+    退出、进行中的永续/网格周期自然跑完（grid_manager 的撤单/布单序列不会被腰斩，
+    避免留下无保护裸仓）。统一的 stop() 清理由 start() 的 finally 负责。
+
+    第二次收到信号：用户要求强制退出，立即 sys.exit。
+    """
+    global _signal_count
+    _signal_count += 1
+    if _signal_count >= 2:
+        print("\n\n收到第二次停止信号，强制退出。")
+        sys.exit(1)
+
+    print(
+        f"\n\n收到停止信号({signum})，正在优雅停机"
+        "（等待当前周期完成；再次按 Ctrl+C 强制退出）..."
+    )
+    if _running_bot is not None:
+        _running_bot.is_running = False
+    else:
+        # bot 尚未创建完成，无状态可清理，直接退出
+        sys.exit(0)
 
 
 def main():
@@ -1567,9 +1894,11 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    global _running_bot
     try:
         # 创建并启动机器人
         bot = QuantFlowBot(config_path=args.config, env_file=args.env_file)
+        _running_bot = bot  # 供信号处理器触发优雅停机
         bot.start()
 
     except FileNotFoundError as e:

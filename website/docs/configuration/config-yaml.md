@@ -39,8 +39,12 @@ Keep `temperature` at `0.1`–`0.3` for trading decisions. Higher values produce
 
 ```yaml
 trading:
+  # Strategy toggles
+  perp_enabled: true         # Enable perpetual futures agent
+  grid_enabled: false        # Enable grid market-making
+
   symbols: [BTC, ETH]       # use simple symbols, NOT pair format (not BTC/USDT)
-  max_trade_amount: 100     # maximum USD per single trade
+  max_trade_amount: 100     # maximum USD per single trade / grid investment
   max_leverage: 10          # maximum leverage multiplier
   limit_order_enabled: false  # use limit orders for entry (vs. market orders)
 ```
@@ -217,6 +221,8 @@ llm:
   temperature: 0.2
 
 trading:
+  perp_enabled: true
+  grid_enabled: false
   symbols: [BTC, ETH]
   max_trade_amount: 100
   max_leverage: 10

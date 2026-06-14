@@ -49,8 +49,6 @@ Edit `.env`:
 ```bash
 # LLM API Keys (use at least one)
 OPENAI_API_KEY=sk-...
-CLOUDFLARE_ACCOUNT_ID=...       # optional: Cloudflare Workers AI
-CLOUDFLARE_API_TOKEN=...        # optional
 GOOGLE_API_KEY=...              # optional: Gemini
 NVIDIA_API_KEY=nvapi-...        # optional: NVIDIA NIM
 
@@ -74,6 +72,8 @@ llm:
   temperature: 0.2
 
 trading:
+  perp_enabled: true
+  grid_enabled: false
   symbols: [BTC]
   max_trade_amount: 10    # keep small for testing
   max_leverage: 2
@@ -82,9 +82,9 @@ scheduler:
   interval_minutes: 5
 ```
 
-## Running the Strategies
+## Running the Bot
 
-### Perpetual Futures Agent
+Run the unified trading bot:
 
 ```bash
 uv run python main.py
@@ -93,17 +93,10 @@ uv run python main.py
 With explicit config and env file:
 
 ```bash
-uv run python main.py --config config.yaml --env .env
+uv run python main.py --config config.yaml --env-file .env
 ```
 
-### Grid Trading
-
-```bash
-cp config.grid.yaml.example config.grid.yaml
-# Edit config.grid.yaml
-
-uv run python grid_main.py --config config.grid.yaml --env-file .env
-```
+By toggling `perp_enabled` and `grid_enabled` in `config.yaml`, the runner will execute the Perpetual Futures agent, the Grid Flow market maker, or both concurrently.
 
 ## Running Tests
 
@@ -112,7 +105,7 @@ uv run python grid_main.py --config config.grid.yaml --env-file .env
 uv run pytest tests/
 
 # Run a specific test file
-uv run pytest tests/test_agents_langgraph.py -v
+uv run pytest tests/test_decision_validator.py -v
 
 # Run with coverage
 uv run pytest tests/ --cov=src
@@ -147,8 +140,7 @@ uv add --group dev pytest-mock
 When running locally, logs are printed to stdout and also written to `logs/`:
 
 ```bash
-tail -f logs/main.log    # perpetual agent
-tail -f logs/grid.log    # grid trading
+tail -f logs/main.log    # perp / grid unified bot logs
 ```
 
 ## Testnet vs Mainnet

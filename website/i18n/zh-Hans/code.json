@@ -12,7 +12,7 @@
     "description": "Homepage disclaimer text"
   },
   "homepage.description": {
-    "message": "基于 LangChain/LangGraph 构建的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 打造",
+    "message": "基于 Pydantic AI 构建的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 打造",
     "description": "Homepage meta description"
   },
   "homepage.features.title": {

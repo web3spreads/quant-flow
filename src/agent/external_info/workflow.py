@@ -1,17 +1,14 @@
 """
-外部信息收集 LangGraph 工作流
+外部信息收集 LangGraph 工作流 -> 原生 Python 工作流优化版
 
-使用 StateGraph 实现的外部信息收集工作流，
+使用 Pydantic AI 和原生 Python 顺序管道实现外部信息收集，
 包含查询准备、搜索执行、结果格式化和报告生成四个阶段。
 """
 
 from datetime import datetime
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_openai import ChatOpenAI
-from langgraph.graph import END, StateGraph
+from pydantic_ai import Agent
 
 from src.agent.external_info.state import ResearchState
 from src.agent.external_info.tools import (
@@ -26,16 +23,16 @@ class ExternalInfoWorkflow:
     """
     外部信息收集工作流
 
-    使用 LangGraph StateGraph 实现的四阶段工作流：
+    使用原生 Python 实现的四阶段顺序工作流，消除 LangGraph 框架开销：
     1. prepare_queries - 准备搜索查询
     2. execute_searches - 执行 Exa 搜索
     3. format_results - 格式化搜索结果
-    4. generate_report - 使用 LLM 生成结构化报告
+    4. generate_report - 使用 Pydantic AI 生成结构化报告
     """
 
     def __init__(
         self,
-        llm: ChatOpenAI,
+        llm,
         system_prompt: str,
         research_template: str,
         exa_api_key: str,
@@ -45,13 +42,15 @@ class ExternalInfoWorkflow:
         初始化工作流
 
         Args:
-            llm: LangChain LLM 实例
+            llm: Pydantic AI Model 实例
             system_prompt: 系统提示
             research_template: 研究模板（Jinja2 格式字符串）
             exa_api_key: Exa API 密钥
             logger: 日志记录器
         """
-        self.llm = llm
+        from src.llm.llm_client import wrap_llm_client
+
+        self.llm = wrap_llm_client(llm)
         self.system_prompt = system_prompt
         self.logger = logger
 
@@ -61,31 +60,6 @@ class ExternalInfoWorkflow:
         self.research_template = Template(research_template)
 
         self.exa_api_key = exa_api_key
-        self.parser = JsonOutputParser()
-
-        # 构建工作流图
-        self.app = self._build_workflow()
-
-    def _build_workflow(self) -> StateGraph:
-        """构建工作流图"""
-        workflow = StateGraph(ResearchState)
-
-        # 添加节点
-        workflow.add_node("prepare_queries", self._prepare_queries_node)
-        workflow.add_node("execute_searches", self._execute_searches_node)
-        workflow.add_node("format_results", self._format_results_node)
-        workflow.add_node("generate_report", self._generate_report_node)
-
-        # 设置入口点
-        workflow.set_entry_point("prepare_queries")
-
-        # 添加边
-        workflow.add_edge("prepare_queries", "execute_searches")
-        workflow.add_edge("execute_searches", "format_results")
-        workflow.add_edge("format_results", "generate_report")
-        workflow.add_edge("generate_report", END)
-
-        return workflow.compile()
 
     def _prepare_queries_node(self, state: ResearchState) -> dict[str, Any]:
         """准备搜索查询"""
@@ -96,7 +70,7 @@ class ExternalInfoWorkflow:
             self.logger.print_info(f"📝 准备搜索查询 (间隔: {interval_hours} 小时)")
 
         # 创建查询
-        queries = create_period_search_queries(symbols, interval_hours)
+        queries = create_period_search_queries(symbols, int(interval_hours))
 
         if self.logger:
             total_queries = sum(len(q) for q in queries.values())
@@ -119,22 +93,36 @@ class ExternalInfoWorkflow:
 
             for query_config in topic_queries:
                 try:
-                    # 添加 exa_api_key 到查询配置
-                    query_config_with_key = {**query_config, "exa_api_key": self.exa_api_key}
-
                     # 记录查询
+                    query_text = query_config.get("query", "")
                     if self.logger:
-                        self.logger.print_info(
-                            f"  📤 查询 [{topic}]: {query_config.get('query', '')[:80]}..."
-                        )
+                        self.logger.print_info(f"  📤 查询 [{topic}]: {query_text[:80]}...")
 
                     # 根据主题选择合适的工具
                     if topic == "regulatory":
-                        search_results = search_crypto_regulatory_news.invoke(query_config_with_key)
+                        search_results = search_crypto_regulatory_news(
+                            query=query_text,
+                            exa_api_key=self.exa_api_key,
+                            num_results=5,
+                            start_date=query_config.get("start_date"),
+                            end_date=query_config.get("end_date"),
+                        )
                     elif topic == "macro":
-                        search_results = search_crypto_macro_news.invoke(query_config_with_key)
+                        search_results = search_crypto_macro_news(
+                            query=query_text,
+                            exa_api_key=self.exa_api_key,
+                            num_results=5,
+                            start_date=query_config.get("start_date"),
+                            end_date=query_config.get("end_date"),
+                        )
                     else:
-                        search_results = search_crypto_market_news.invoke(query_config_with_key)
+                        search_results = search_crypto_market_news(
+                            query=query_text,
+                            exa_api_key=self.exa_api_key,
+                            num_results=5,
+                            start_date=query_config.get("start_date"),
+                            end_date=query_config.get("end_date"),
+                        )
 
                     # 记录结果
                     if self.logger:
@@ -200,7 +188,7 @@ class ExternalInfoWorkflow:
         end_time = state["end_time"]
 
         if self.logger:
-            self.logger.print_info("🤖 使用 LLM 生成报告...")
+            self.logger.print_info("🤖 使用 Pydantic AI 生成报告...")
 
         # 渲染 Prompt（使用 Jinja2）
         prompt_text = self.research_template.render(
@@ -212,72 +200,58 @@ class ExternalInfoWorkflow:
             search_results=formatted_results,
         )
 
-        # 调用 LLM
-        messages = [SystemMessage(content=self.system_prompt), HumanMessage(content=prompt_text)]
-
         try:
-            response = self.llm.invoke(messages)
-            raw_text = (
-                response.content if isinstance(response.content, str) else str(response.content)
-            )
+            # 使用 Pydantic AI 运行报告 Agent
+            agent = Agent(self.llm, system_prompt=self.system_prompt)
+            response = agent.run_sync(prompt_text)
+            # response.output 理论上可能为 None（模型返回空），需防空以免下游解析抛错
+            raw_text = response.output
+            if not isinstance(raw_text, str):
+                raw_text = "" if raw_text is None else str(raw_text)
 
             # 尝试解析 JSON
-            try:
-                report = self.parser.parse(raw_text)
-                if self.logger:
-                    self.logger.print_info("✅ 报告生成成功")
-            except Exception as e:
-                # 如果解析失败，返回基本结构
-                if self.logger:
-                    self.logger.print_warning(f"⚠️  JSON 解析失败: {e}")
+            from src.agent.helpers import extract_json_from_text
 
-                report = {
-                    "interval_hours": interval_hours,
-                    "generated_at": end_time.isoformat(),
-                    "market_overview": {
-                        "summary": "报告生成失败",
-                        "trend": "未知",
-                        "sentiment": "中性",
-                    },
-                    "key_events": [],
-                    "regulatory_updates": [],
-                    "industry_news": [],
-                    "market_sentiment": {},
-                    "risk_alerts": [],
-                    "trading_implications": {},
-                    "raw_response": raw_text[:500],
-                }
+            report = extract_json_from_text(raw_text)
+
+            if not report:
+                raise ValueError("未提取到有效的 JSON 报告结构")
+
+            if self.logger:
+                self.logger.print_info("✅ 报告生成成功")
 
             return {"report": report}
 
         except Exception as e:
             if self.logger:
-                self.logger.print_error(f"❌ LLM 调用失败: {e}")
+                self.logger.print_error(f"❌ LLM 报告生成或解析失败: {e}")
 
-            return {
-                "report": {
-                    "interval_hours": interval_hours,
-                    "generated_at": end_time.isoformat(),
-                    "error": str(e),
-                }
+            # 异常时回退到默认基本格式
+            report = {
+                "interval_hours": interval_hours,
+                "generated_at": end_time.isoformat(),
+                "market_overview": {
+                    "summary": f"报告生成失败: {e}",
+                    "trend": "未知",
+                    "sentiment": "中性",
+                },
+                "key_events": [],
+                "regulatory_updates": [],
+                "industry_news": [],
+                "market_sentiment": {},
+                "risk_alerts": [],
+                "trading_implications": {},
+                "raw_response": raw_text[:500] if "raw_text" in locals() else "",
             }
+            return {"report": report}
 
     def run(
         self, interval_hours: float, symbols: list[str], start_time: datetime, end_time: datetime
     ) -> dict[str, Any]:
         """
-        运行工作流
-
-        Args:
-            interval_hours: 时间间隔（小时）
-            symbols: 关注的币种列表
-            start_time: 开始时间
-            end_time: 结束时间
-
-        Returns:
-            包含报告的状态字典
+        运行工作流 (Python 原生管道)
         """
-        initial_state = {
+        state = {
             "interval_hours": interval_hours,
             "symbols": symbols,
             "start_time": start_time,
@@ -289,5 +263,20 @@ class ExternalInfoWorkflow:
             "errors": [],
         }
 
-        final_state = self.app.invoke(initial_state)
-        return final_state
+        # Step 1: Prepare queries
+        queries_res = self._prepare_queries_node(state)
+        state.update(queries_res)
+
+        # Step 2: Execute searches
+        searches_res = self._execute_searches_node(state)
+        state.update(searches_res)
+
+        # Step 3: Format results
+        format_res = self._format_results_node(state)
+        state.update(format_res)
+
+        # Step 4: Generate report
+        report_res = self._generate_report_node(state)
+        state.update(report_res)
+
+        return state

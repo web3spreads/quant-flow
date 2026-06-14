@@ -39,8 +39,12 @@ llm:
 
 ```yaml
 trading:
+  # 策略总开关
+  perp_enabled: true         # 启用永续合约方向交易 Agent
+  grid_enabled: false        # 启用网格交易做市策略
+
   symbols: [BTC, ETH]       # 使用简单符号，不是交易对格式（不要用 BTC/USDT）
-  max_trade_amount: 100     # 单笔交易最大 USD 金额
+  max_trade_amount: 100     # 单笔交易最大 USD 金额 / 网格投入上限
   max_leverage: 10          # 最大杠杆倍数
   limit_order_enabled: false  # 是否使用限价单入场（vs. 市价单）
 ```
@@ -216,6 +220,8 @@ llm:
   temperature: 0.2
 
 trading:
+  perp_enabled: true
+  grid_enabled: false
   symbols: [BTC, ETH]
   max_trade_amount: 100
   max_leverage: 10

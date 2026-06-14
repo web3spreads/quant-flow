@@ -6,7 +6,7 @@ description: AI 驱动的动态网格做市策略
 
 # 网格交易 Grid Flow
 
-Grid Flow 是独立的网格做市策略，入口为 `grid_main.py`。它将 AI 决策与严格的数学引擎结合：LLM 判断市场方向和网格宽度，数学引擎计算最优参数，GridManager 负责布单和同步管理。
+Grid Flow 是 AI 驱动的动态网格做市策略。它将 AI 决策与严格的数学引擎结合：LLM 判断市场方向和网格宽度，数学引擎计算最优参数，GridManager 负责布单和同步管理。在统一的架构中，通过在 `config.yaml` 中设置 `trading.grid_enabled: true` 并运行 `main.py` 即可启用。
 
 ## 架构概览
 
@@ -29,26 +29,30 @@ MarketData ──→ GridAgent (AI 决策)
 
 ## 运行方式
 
+通过在配置文件中启用策略，直接运行统一主程序：
+
 ```bash
 # 本地运行
-uv run python grid_main.py --config config.grid.yaml --env-file .env
+uv run python main.py
 
 # Docker 运行
-RUN_MODE=grid docker compose up -d
-
-# 同时运行主策略 + 网格策略
-RUN_MODE=all docker compose up -d
+# 在 config.yaml 中配置 perp_enabled 和 grid_enabled 开关，然后启动即可：
+docker compose up -d
 ```
 
 ## 核心参数
 
-在 `config.grid.yaml` 中配置：
+在 `config.yaml` 中配置：
 
 ```yaml
 trading:
+  grid_enabled: true
   symbols: [ETH]
-  max_total_investment: 500       # 总投入上限（USD）
+  max_trade_amount: 500           # 总投入上限（USD）
   max_leverage: 5
+  grid_limit_order_take_profit_enabled: true
+  grid_limit_order_stop_loss_enabled: true
+  grid_reduce_only_exit_orders_enabled: true
 
 agent:
   grid_width:
@@ -58,40 +62,15 @@ agent:
     ai_blend_weight: 0.35         # AI 与市场数据融合权重
 
 scheduler:
-  interval_minutes: 5             # 网格决策间隔
+  interval_minutes: 5
 ```
 
-## AI 融合机制
+## 动态融合机制
 
-网格宽度通过以下方式计算：
+数学引擎（`src/utils/grid_math.py`）将行情历史波动率（ATR）计算得到的“统计网格宽度”与 AI 推荐的“AI 建议网格宽度”按权重（默认 65% : 35%）进行动态加权融合。该公式不仅能发挥 AI 对大趋势的感知力，也通过 ATR 对纯 AI 决策进行了合理限幅（防止其由于情绪影响得出过宽或过窄的网格宽度，降低极端行情下的穿仓风险）。
 
-```
-最终宽度 = 市场数据宽度 × 0.65 + AI建议宽度 × 0.35
-```
+## 安全与防护机制
 
-市场数据依据 ATR、布林带宽度等指标确定"客观宽度"，AI 输出则反映对当前行情的主观判断。两者加权融合，既避免纯 AI 的不稳定性，也引入对市场状态的理解。
-
-## 安全机制
-
-GridManager 包含多项安全保护：
-
-| 机制 | 说明 |
-|------|------|
-| 孤儿订单清理 | 自动清理没有对应触发单的悬空订单 |
-| 撤单超时保护 | 撤单操作硬超时 20 秒，防止卡死 |
-| 原子状态写入 | 使用 tempfile + move 防止进程中断导致状态文件损坏 |
-| reduce-only 减仓 | 支持分层 reduce-only 出场单，有序平仓 |
-
-## 止盈止损配置
-
-```yaml
-trading:
-  grid_limit_order_take_profit_enabled: true   # 网格成交后补止盈单
-  grid_limit_order_stop_loss_enabled: true     # 网格成交后补止损单
-  grid_reduce_only_exit_orders_enabled: true   # 启用分层减仓单
-```
-
-## 相关文档
-
-- [网格模式配置](../configuration/grid-config) — 完整网格配置参考
-- [网格回测](../backtesting/grid) — 回测网格策略
+- **止盈止损自动补单**：限价单成交后，GridManager 异步自动计算并挂单止盈（TP）与硬止损（SL）。
+- **孤儿 Trigger 挂单清理**：如检测到没有主仓位对应的止盈止损单，自动进行撤单防踏空。
+- **状态持久化**：每次布单变化使用 tempfile + rename 原子式保存至 `grid_state.json`，确保掉电或容器重启时可安全恢复对齐。

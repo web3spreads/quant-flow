@@ -120,7 +120,7 @@ Your API wallet needs to be authorized on the main Hyperliquid interface:
 3. Go to **Settings → API Wallets**
 4. Add your API wallet address and authorize it
 
-### `ModuleNotFoundError: No module named 'langchain_...'`
+### `ModuleNotFoundError: No module named 'pydantic_ai'`
 
 Dependencies are not installed. Run:
 

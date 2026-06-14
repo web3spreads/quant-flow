@@ -1,5 +1,5 @@
 """
-汇总 Agent 模块 v2 - 使用 LangChain 上下文压缩技术
+汇总 Agent 模块 v2 - 使用 pydantic-ai 上下文压缩技术
 负责对历史决策和市场走势进行分层汇总，生成压缩的上下文摘要
 
 v2.1 增强版：
@@ -13,12 +13,25 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.messages.utils import count_tokens_approximately
 from pydantic import BaseModel, Field
+from pydantic_ai import Agent
 
 from src.llm import LLMClientManager
+from src.llm.llm_client import wrap_llm_client
 from src.utils.logger import TradingLogger
+
+
+def count_tokens_approximately(text_or_msg: Any) -> int:
+    """近似计算 Token 数（1 个 token 约等于 4 个字符或 0.75 个英文单词）"""
+    if not text_or_msg:
+        return 0
+    if hasattr(text_or_msg, "content"):
+        text = text_or_msg.content
+    elif isinstance(text_or_msg, str):
+        text = text_or_msg
+    else:
+        text = str(text_or_msg)
+    return len(text) // 4
 
 
 class TrendStrength(StrEnum):
@@ -113,10 +126,10 @@ class SummaryAgentV2:
         self.max_context_tokens = max_context_tokens
 
         # 初始化主 LLM
-        self.llm = self.llm_manager.get_client(temperature=temperature)
+        self.llm = wrap_llm_client(self.llm_manager.get_client(temperature=temperature))
 
         # 初始化压缩用的快速 LLM
-        self.compression_llm = self.llm_manager.get_client(temperature=0.1)
+        self.compression_llm = wrap_llm_client(self.llm_manager.get_client(temperature=0.1))
 
     def _calculate_trend_strength(
         self,
@@ -624,16 +637,17 @@ class SummaryAgentV2:
 3. 避免重复，合并类似观点
 4. 突出关键技术指标和市场状态"""
 
-                messages = [
-                    SystemMessage(content="你是决策分析专家，善于提炼核心逻辑。"),
-                    HumanMessage(content=prompt),
-                ]
-
                 try:
-                    response = self.compression_llm.invoke(messages)
+                    agent = Agent(
+                        self.compression_llm, system_prompt="你是决策分析专家，善于提炼核心逻辑。"
+                    )
+                    res = agent.run_sync(prompt)
+                    response_content = (
+                        res.output if isinstance(res.output, str) else str(res.output)
+                    )
                     key_reasons = [
                         line.strip()
-                        for line in response.content.strip().split("\n")
+                        for line in response_content.strip().split("\n")
                         if line.strip() and not line.strip().startswith("#")
                     ][:5]
                 except Exception:
@@ -1011,13 +1025,11 @@ class SummaryAgentV2:
 2. 可以删除：详细理由、次要技术指标
 3. 使用简洁表达"""
 
-                messages = [
-                    SystemMessage(content="你是信息压缩专家。"),
-                    HumanMessage(content=compress_prompt),
-                ]
-
-                response = self.compression_llm.invoke(messages)
-                result = response.content.strip()
+                agent = Agent(self.compression_llm, system_prompt="你是信息压缩专家。")
+                res = agent.run_sync(compress_prompt)
+                result = (
+                    res.output.strip() if isinstance(res.output, str) else str(res.output).strip()
+                )
 
             return result
 

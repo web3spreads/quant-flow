@@ -201,6 +201,20 @@ class Config:
         # 保留旧字段名用于兼容性
         self.default_leverage: int = self.max_leverage
 
+        # Agent 启动开关配置
+        self.perp_enabled: bool = self._as_bool(
+            trading.get("perp_enabled")
+            if trading.get("perp_enabled") is not None
+            else os.getenv("PERP_ENABLED"),
+            True,
+        )
+        self.grid_enabled: bool = self._as_bool(
+            trading.get("grid_enabled")
+            if trading.get("grid_enabled") is not None
+            else os.getenv("GRID_ENABLED"),
+            False,
+        )
+
     def _init_scheduler_config(self):
         """初始化调度器配置"""
         scheduler = self.config_data.get("scheduler", {})

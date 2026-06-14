@@ -6,8 +6,7 @@ import json
 import re
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
+from src.llm.llm_client import wrap_llm_client
 from src.utils.grid_math import calculate_grid_config
 
 DEFAULT_WIDTH_PCT_MIN = 0.02
@@ -38,7 +37,7 @@ class GridAgent:
         self.order_manager = order_manager
         self.logger = logger
         self.trade_amount = trade_amount
-        self.llm = llm_manager.get_client(temperature=0.1)
+        self.llm = wrap_llm_client(llm_manager.get_client(temperature=0.1))
         self.width_pct_min = float(width_pct_min)
         self.width_pct_max = float(width_pct_max)
         self.width_pct_fallback = float(width_pct_fallback)
@@ -46,16 +45,13 @@ class GridAgent:
 
     def make_decision(self, market_data, multi_timeframe_trends, current_grid_summary):
         try:
-            messages = [
-                SystemMessage(content=self._get_decision_system_prompt()),
-                HumanMessage(
-                    content=self._format_prompt(
-                        market_data, multi_timeframe_trends, current_grid_summary
-                    )
-                ),
-            ]
-            response = self.llm.invoke(messages)
-            content = response.content
+            prompt = self._format_prompt(market_data, multi_timeframe_trends, current_grid_summary)
+
+            from pydantic_ai import Agent
+
+            agent = Agent(self.llm, system_prompt=self._get_decision_system_prompt())
+            res = agent.run_sync(prompt)
+            content = res.output if isinstance(res.output, str) else str(res.output)
 
             try:
                 ai_decision = self._parse_decision_json(content)

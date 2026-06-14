@@ -4,6 +4,12 @@
 
 # 交易配置
 trading:
+  # 交易模式总开关
+  # 是否启用永续合约方向型交易 Agent
+  perp_enabled: true
+  # 是否启用网格交易 Agent
+  grid_enabled: false
+
   # 要交易的币种符号（Hyperliquid 永续合约，支持多个）
   # 注意：Hyperliquid 使用简单符号，如 'BTC', 'ETH' 而不是 'BTC/USDT'
   symbols:

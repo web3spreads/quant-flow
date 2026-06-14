@@ -31,12 +31,6 @@ def __getattr__(name):
 
         return getattr(summary_agent_v2, name)
 
-    # Trading tools
-    if name == "TradingTools":
-        from src.agent.tools import TradingTools
-
-        return TradingTools
-
     # Prompts
     if name == "SYSTEM_PROMPT":
         from src.agent.prompts import SYSTEM_PROMPT
@@ -86,7 +80,6 @@ __all__ = [
     "create_enhanced_agent",
     "SummaryAgentV2",
     "DecisionHistory",
-    "TradingTools",
     "SYSTEM_PROMPT",
     "ReviewAgent",
     "ReviewMemoryStore",

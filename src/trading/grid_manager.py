@@ -939,6 +939,15 @@ class GridManager:
 
         return all_canceled
 
+    def cancel_all_orders(self, symbol: str) -> bool:
+        """
+        撤销指定 symbol 的全部网格挂单（含 trigger）并清理本地网格状态。
+
+        公共入口，供 main.py 在账户级风控熔断（CLOSE_ALL_POSITIONS）时调用，
+        避免熔断期间网格挂单成交新增敞口。返回 True 表示全部撤销成功。
+        """
+        return self._cancel_all_orders(symbol)
+
     def _ensure_min_orders(
         self,
         symbol: str,
