@@ -10,7 +10,7 @@ description: Frequently asked questions and troubleshooting guide for Quant Flow
 
 ### Q: Which Python version is required?
 
-Python **3.11 or higher** is required. LangGraph and some dependencies use features not available in earlier versions.
+Python **3.11 or higher** is required. Pydantic AI and some dependencies use features not available in earlier versions.
 
 ```bash
 python --version    # should show 3.11+

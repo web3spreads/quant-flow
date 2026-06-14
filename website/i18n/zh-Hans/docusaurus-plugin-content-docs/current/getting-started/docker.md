@@ -93,11 +93,7 @@ environment:
   - RUN_MODE=main
 ```
 
-如需网格模式，还需配置 `config.grid.yaml`：
-
-```bash
-cp config.grid.yaml.example config.grid.yaml
-```
+如需网格模式，在同一份 `config.yaml` 中启用即可——设置 `trading.grid_enabled: true`（纯网格模式再设 `trading.perp_enabled: false`），无需单独的网格配置文件。
 
 ## 运行命令
 

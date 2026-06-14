@@ -31,14 +31,14 @@
 
 ## 项目概述
 
-Quant Flow 是一个基于 LangChain/LangGraph 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
+Quant Flow 是一个基于 Pydantic AI 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
 
-- **永续合约 Agent**（`main.py`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
-- **网格交易 Grid Flow**（`grid_main.py`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
+- **永续合约 Agent**（`main.py`，`perp_enabled: true`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
+- **网格交易 Grid Flow**（`main.py`，`grid_enabled: true`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
 
-两种策略完全解耦，可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
+两种策略共用 `main.py` 统一入口，由 `config.yaml` 的 `perp_enabled` / `grid_enabled` 开关控制；可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
 
-**技术栈**: Python 3.11+, LangChain, LangGraph, Hyperliquid SDK, Pydantic
+**技术栈**: Python 3.11+, Pydantic AI, Hyperliquid SDK, Pydantic
 
 ## 常用命令
 
@@ -53,12 +53,12 @@ uv run python main.py
 # 指定配置文件运行
 uv run python main.py --config config.yaml --env .env
 
-# 运行网格交易
-uv run python grid_main.py --config config.grid.yaml --env-file .env
+# 运行网格交易（在 config.yaml 中设 grid_enabled: true、perp_enabled: false）
+uv run python main.py --config config.yaml --env-file .env
 
 # 运行测试
 uv run pytest tests/
-uv run pytest tests/test_agents_langgraph.py -v  # 单个文件
+uv run pytest tests/test_decision_validator.py -v  # 单个文件
 
 # 语法检查
 uv run python -m py_compile src/trading/client.py
@@ -143,7 +143,7 @@ tail -f logs/grid.log          # 网格交易日志
                   └──────────────┘                                     └───────────────┘
 ```
 
-### 网格交易数据流（Grid Flow，独立入口 `grid_main.py`）
+### 网格交易数据流（Grid Flow，由 `main.py` 在 `grid_enabled` 时驱动）
 
 ```
 ┌──────────────┐    ┌─────────────────────────────────────┐
@@ -668,13 +668,17 @@ cloud_logging:
   flush_interval: 5.0                   # 批量发送间隔（秒）
 ```
 
-### 网格交易配置 (`config.grid.yaml`)
+### 网格交易配置
+
+网格配置已合并进统一的 `config.yaml`，由 `trading.grid_enabled` 开关启用（关闭 `perp_enabled` 即为纯网格模式）。关键键：
 
 ```yaml
 trading:
-  symbols: [ETH]                          # 网格交易对
-  max_total_investment: 500               # 总投入上限（USD）
-  max_leverage: 5                         # 最大杠杆
+  perp_enabled: false                          # 纯网格模式时关闭永续
+  grid_enabled: true                           # 启用网格交易
+  symbols: [ETH]                               # 网格交易对
+  max_trade_amount: 100                        # 单层投入上限（USD）
+  max_leverage: 5                              # 最大杠杆
   grid_limit_order_take_profit_enabled: true   # 网格成交后是否补止盈单
   grid_limit_order_stop_loss_enabled: true     # 网格成交后是否补止损单
   grid_reduce_only_exit_orders_enabled: true   # 是否启用分层减仓单
@@ -690,9 +694,11 @@ scheduler:
   interval_minutes: 5        # 网格决策间隔
 ```
 
+> 网格周期还接入账户级风控（`ProtectionManager.check_all`）：回撤/连亏/单日亏损熔断时平掉全部持仓、撤销网格挂单并跳过本轮布单。
+
 ## 设计模式
 
-1. **工具回调模式**: `TradingTools` 通过回调函数将 LLM 决策映射到实际交易操作
+1. **工具回调模式**: `SingleSymbolAgent` 通过 Pydantic AI 的 `@agent.tool` 装饰器注册下单工具（buy/sell/sell_short 等），将 LLM 工具调用映射到实际交易操作；回调内置幂等守卫，单次决策周期内同一动作最多执行一次，防止 run_sync 重跑导致重复下单
 2. **延迟导入**: `src/agent/__init__.py` 使用 `__getattr__` 延迟导入避免循环依赖
 3. **单例模式**: `LLMClientManager` 和 `Config` 使用单例确保全局一致性
 4. **结构化输出**: `ExecutionAgent` 使用 Pydantic 模型 (`ExecutionPlan`) 确保决策格式正确
@@ -716,7 +722,7 @@ uv run pytest tests/ --cov=src
 ```
 
 主要测试文件：
-- `test_agents_langgraph.py`: Agent 架构测试
+- `test_trading_tool_idempotency.py`: 下单工具幂等去重测试（FunctionModel 真实工具调用，覆盖此前 0 覆盖的下单路径）
 - `test_decision_validator.py`: 决策验证器测试
 - `test_debate.py`: 多空辩论引擎测试
 - `test_signal_scorer_regime.py`: 信号评分 Regime 自适应测试

@@ -28,7 +28,7 @@
     "description": "Feature card title: Multi-Agent AI Graph"
   },
   "feature.multiAgent.desc": {
-    "message": "每个币种由独立 Agent 决策，基于 LangGraph 构建。支持上下文压缩，LLM 记性再差也能轻松拿捏历史数据。",
+    "message": "每个币种由独立 Agent 决策，基于 Pydantic AI 构建。支持上下文压缩，LLM 记性再差也能轻松拿捏历史数据。",
     "description": "Feature card description: Multi-Agent AI Graph"
   },
   "feature.gridFlow.title": {

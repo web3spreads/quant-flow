@@ -93,11 +93,7 @@ environment:
   - RUN_MODE=main
 ```
 
-For grid mode, also configure `config.grid.yaml`:
-
-```bash
-cp config.grid.yaml.example config.grid.yaml
-```
+For grid mode, enable it in the same `config.yaml` — set `trading.grid_enabled: true` (and `trading.perp_enabled: false` for grid-only). No separate grid config file is required.
 
 ## Running
 

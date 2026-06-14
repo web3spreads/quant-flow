@@ -6,7 +6,7 @@ description: How the multi-agent perpetual futures trading strategy works
 
 # Perpetual Futures Agent
 
-The perpetual futures agent (`main.py`) is the primary trading strategy. It uses a multi-agent LangGraph architecture where each trading pair runs with its own independent decision context.
+The perpetual futures agent (`main.py`) is the primary trading strategy. It uses a multi-agent Pydantic AI architecture where each trading pair runs with its own independent decision context.
 
 ## Architecture Overview
 
@@ -113,7 +113,7 @@ After each closed position, the `ReviewAgent` records the outcome and updates th
 ## Per-Symbol Independence
 
 Each symbol in `trading.symbols` runs with:
-- Its own LangGraph state graph
+- Its own Pydantic AI agent instance
 - Its own conversation history and context window
 - Its own experience/lesson database
 - Independent cooldown timers for market monitor alerts

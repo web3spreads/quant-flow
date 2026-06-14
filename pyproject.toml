@@ -1,7 +1,7 @@
 [project]
 name = "quant-flow"
 version = "0.5.0"
-description = "基于 LangChain Agent 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
+description = "基于 Pydantic AI 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

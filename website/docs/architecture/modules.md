@@ -26,7 +26,7 @@ src/
 ## `src/agent/`
 
 ### `single_symbol_agent.py`
-Base single-symbol trading agent. Handles the LangGraph state graph, context window management, and decision cycle for one trading pair.
+Base single-symbol trading agent. Handles the Pydantic AI agent lifecycle, context window management, and decision cycle for one trading pair.
 
 ### `enhanced_single_symbol_agent.py`
 Extends the base agent with:
