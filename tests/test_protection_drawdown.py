@@ -39,6 +39,18 @@ def make_ctx(equity, balance=None, **kwargs):
     )
 
 
+class TestInvalidEquityGuard:
+    """净值非法守卫"""
+
+    def test_skips_on_nonpositive_equity(self, plugin):
+        """equity<=0 时跳过：不触发 CLOSE_ALL 误平、不污染峰值"""
+        plugin.check(make_ctx(10000))  # 建立峰值
+        # 行情/接口抖动给出 0 / 负净值，不应算出 ~100% 回撤而误触发全平
+        assert plugin.check(make_ctx(0)).triggered is False
+        assert plugin.check(make_ctx(-1000)).triggered is False
+        assert plugin._peak_equity == 10000  # 峰值未被坏值污染
+
+
 class TestPeakEquityTracking:
     """峰值净值追踪"""
 

@@ -37,6 +37,13 @@ class MaxDrawdownProtection(IProtection):
         pause_hours = self.config.get("pause_hours", 4.0)
 
         with self._lock:
+            # 净值非法守卫：行情/接口抖动导致 equity<=0 时，若继续计算会算出巨大回撤
+            # （(peak-0)/peak≈100%）误触发 CLOSE_ALL 平掉全部=实亏，或用坏值污染峰值。
+            # 遇到非法净值直接跳过本次检查，不更新峰值、不触发。
+            if context.equity <= 0:
+                logger.warning("最大回撤保护跳过：净值非法 (%.4f)", context.equity)
+                return ProtectionReturn(triggered=False)
+
             # 更新峰值
             if context.equity > self._peak_equity:
                 self._peak_equity = context.equity

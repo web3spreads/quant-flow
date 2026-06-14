@@ -88,6 +88,43 @@ class TestPausePeriod:
         assert result.should_pause is False
 
 
+class TestCrossDayPause:
+    """跨天暂停冷却"""
+
+    def test_pause_persists_across_midnight_within_cooldown(self, plugin):
+        """23:30 触发暂停(冷却1h)，00:00 跨天但冷却未到期，应保持暂停而非提前恢复"""
+        t1 = datetime(2026, 4, 3, 23, 30)
+        plugin.check(make_ctx(10000, timestamp=t1))
+        r = plugin.check(make_ctx(9400, timestamp=t1))  # 6% 亏损触发
+        assert r.should_pause is True
+
+        t2 = datetime(2026, 4, 4, 0, 0)  # 跨天，距触发仅 30 分钟 < 1h
+        r2 = plugin.check(make_ctx(9400, timestamp=t2))
+        assert r2.should_pause is True  # 未因跨天提前解除暂停
+
+    def test_pause_clears_after_cooldown_across_day(self, plugin):
+        """跨天且冷却已过(1.5h>1h)，应恢复交易"""
+        t1 = datetime(2026, 4, 3, 23, 30)
+        plugin.check(make_ctx(10000, timestamp=t1))
+        plugin.check(make_ctx(9400, timestamp=t1))  # 触发
+
+        t2 = datetime(2026, 4, 4, 1, 0)  # 距触发 1.5h > 1h 冷却
+        r = plugin.check(make_ctx(9900, timestamp=t2))
+        assert r.should_pause is False
+
+
+class TestInvalidEquityGuard:
+    """净值非法守卫"""
+
+    def test_skips_on_nonpositive_equity(self, plugin):
+        """equity<=0(行情/接口抖动)时跳过，不触发误报、不污染基准"""
+        plugin.check(make_ctx(10000))
+        assert plugin.check(make_ctx(0)).triggered is False
+        assert plugin.check(make_ctx(-500)).triggered is False
+        # 基准未被坏值污染
+        assert plugin._daily_start_equity == 10000
+
+
 class TestStatePersistence:
     """状态持久化"""
 
