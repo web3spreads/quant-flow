@@ -1338,7 +1338,10 @@ class GridManager:
             reduce_only=True,
         )
 
-        if isinstance(result, dict) and result.get("status") == "ok":
+        # 校验内层 statuses：HL 拒单时外层仍为 status=ok，错误藏在 statuses[].error，
+        # 仅判外层会把被拒平仓单误记为 PLACED/CLOSE_PENDING，导致持仓失去对冲裸奔
+        order_ok, order_err = self.order_manager.client.check_order_success(result)
+        if order_ok:
             oid = self._extract_oid(result)
             if oid:
                 level.close_order_id = oid
@@ -1357,7 +1360,7 @@ class GridManager:
                 )
         else:
             self.logger.print_warning(
-                f"   [Grid] {level.id} 平仓单失败 @ ${formatted_price}: {result}"
+                f"   [Grid] {level.id} 平仓单失败/被拒 @ ${formatted_price}: {order_err}"
             )
             cloud = get_cloud_logger()
             if cloud:

@@ -943,6 +943,14 @@ class OrderManager:
                     "message": f"limit_price 必须大于 0，实际为 {limit_price}",
                 }
 
+            # 入参金额非法时直接拒绝，避免下出 0 量或反向（负量）单
+            if usdt_amount <= 0:
+                print(f"❌ 限价单金额非法: {usdt_amount}")
+                return {
+                    "success": False,
+                    "message": f"usdt_amount 必须大于 0，实际为 {usdt_amount}",
+                }
+
             # 合约数量：名义额口径直接除以价格；保证金口径需乘杠杆换算为名义额
             # （网格数学引擎产出的 amount_per_grid 已含杠杆，必须走名义额口径，否则杠杆被重复计算）
             if amount_is_notional:
@@ -957,6 +965,14 @@ class OrderManager:
                 size = round(size, decimals)
             else:
                 size = round(size, 3)
+
+            # 取整后量退化到 0（或负）时拒绝下单，避免发出 0 量单被拒或反向单
+            if size <= 0:
+                print(f"❌ 限价单数量取整后非法: {size}（金额 {usdt_amount} @ ${limit_price}）")
+                return {
+                    "success": False,
+                    "message": f"size 取整后必须大于 0，实际为 {size}",
+                }
 
             print(f"📈 限价开多 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
 
@@ -1071,6 +1087,14 @@ class OrderManager:
                     "message": f"limit_price 必须大于 0，实际为 {limit_price}",
                 }
 
+            # 入参金额非法时直接拒绝，避免下出 0 量或反向（负量）单
+            if usdt_amount <= 0:
+                print(f"❌ 限价单金额非法: {usdt_amount}")
+                return {
+                    "success": False,
+                    "message": f"usdt_amount 必须大于 0，实际为 {usdt_amount}",
+                }
+
             # 合约数量：名义额口径直接除以价格；保证金口径需乘杠杆换算为名义额
             # （网格数学引擎产出的 amount_per_grid 已含杠杆，必须走名义额口径，否则杠杆被重复计算）
             if amount_is_notional:
@@ -1085,6 +1109,14 @@ class OrderManager:
                 size = round(size, decimals)
             else:
                 size = round(size, 3)
+
+            # 取整后量退化到 0（或负）时拒绝下单，避免发出 0 量单被拒或反向单
+            if size <= 0:
+                print(f"❌ 限价单数量取整后非法: {size}（金额 {usdt_amount} @ ${limit_price}）")
+                return {
+                    "success": False,
+                    "message": f"size 取整后必须大于 0，实际为 {size}",
+                }
 
             print(f"📉 限价开空 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
 
