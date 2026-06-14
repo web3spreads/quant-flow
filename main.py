@@ -1640,6 +1640,11 @@ class QuantFlowBot:
         Returns:
             True 表示已熔断、本轮网格应跳过布单；False 表示正常继续。
         """
+        # 自包含守卫：未配置风控时不熔断（当前调用方虽已先判 protection_manager，
+        # 但此处再判一次可避免未来其他调用路径触发 None.check_all 崩溃）
+        if not self.protection_manager:
+            return False
+
         try:
             balance_info = self.order_manager.get_available_balance_info()
         except Exception as e:

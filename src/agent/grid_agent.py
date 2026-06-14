@@ -51,6 +51,16 @@ class GridAgent:
 
             agent = Agent(self.llm, system_prompt=self._get_decision_system_prompt())
             res = agent.run_sync(prompt)
+            # LLM 返回空/None 时显式保守维持网格，而非把 str(None)="None" 喂给解析器
+            # （LLM 故障放大成撤换单动作是历史亏损来源之一）
+            if res.output is None or (isinstance(res.output, str) and not res.output.strip()):
+                self.logger.print_warning("[GridAgent] LLM 返回空输出，回退 KEEP_GRID")
+                return {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": 0.0,
+                    "reason": "LLM 返回空输出，保守维持网格",
+                }
             content = res.output if isinstance(res.output, str) else str(res.output)
 
             try:

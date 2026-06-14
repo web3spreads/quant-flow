@@ -946,6 +946,13 @@ class SingleSymbolAgent:
                     if order_id <= 0:
                         return f"❌ 订单ID无效: {order_id}"
 
+                    # 幂等守卫（与其他下单/平仓动作一致）：同一周期内对同一 order_id 的重复
+                    # 撤单调用直接拒绝，避免 run_sync 重跑浪费工具额度并刷屏。按 order_id 区分，
+                    # 仍允许同周期撤销多个不同订单。
+                    dup_msg = self._guard_duplicate_action(f"CANCEL_LIMIT_ORDER:{order_id}")
+                    if dup_msg:
+                        return dup_msg
+
                     self.logger.print_info(f"[{self.symbol}Agent] 取消限价单 (订单ID: {order_id})")
 
                     result = self.order_manager.cancel_limit_order(symbol=symbol, order_id=order_id)

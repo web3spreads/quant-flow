@@ -88,7 +88,9 @@ class ExecutionAgent:
 
         Args:
             llm_manager: LLM 客户端管理器
-            temperature: 温度参数
+            temperature: 温度参数。执行 Agent 仅将决策文本解析为结构化执行计划，
+                应使用低温（默认 0.1）以保证结构化输出的确定性与稳定性，避免高温
+                引入解析随机性导致执行计划抖动。
         """
         self.llm_manager = llm_manager
         # 获取支持 structured output 的 LLM 客户端（Pydantic AI 兼容 Model）

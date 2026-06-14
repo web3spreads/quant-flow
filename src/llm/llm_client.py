@@ -92,8 +92,8 @@ class MockModelAdapter(Model):
         return "mock-provider"
 
 
-def wrap_llm_client(llm: Any) -> Model:
-    """包装 mock / 传统调用客户端为 Pydantic AI Model"""
+def wrap_llm_client(llm: Any) -> Model | None:
+    """包装 mock / 传统调用客户端为 Pydantic AI Model（llm 为 None 时返回 None）"""
     if llm is None:
         return None
     if isinstance(llm, Model):
