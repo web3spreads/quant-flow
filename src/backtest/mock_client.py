@@ -342,14 +342,33 @@ class MockHyperliquidClient:
     def cancel_order(self, symbol: str, oid: int) -> dict[str, Any]:
         """
         取消挂单（模拟）
+
+        撤单语义为幂等:订单不存在(通常已成交/已撤)时,真实 Hyperliquid 返回顶层
+        status=ok 且内层 statuses 标注 error(目标态"订单已不在挂单中"已达成)。
+        此前 mock 对 not-found 返回顶层 status=error,使 GridManager._cancel_order_
+        with_retry 误判失败→对已成交单反复重试 3 次并刷屏(实际 drain 靠重读挂单
+        自纠,无安全影响)。这里改为对齐真实幂等语义,消除噪音。
         """
         before = len(self.open_orders)
         self.open_orders = [
             o for o in self.open_orders if not (o.get("coin") == symbol and o.get("oid") == oid)
         ]
         if len(self.open_orders) == before:
-            return {"status": "error", "message": f"订单不存在: {oid}"}
-        return {"status": "ok"}
+            return {
+                "status": "ok",
+                "response": {
+                    "type": "cancel",
+                    "data": {
+                        "statuses": [
+                            {"error": f"Order was never placed, already canceled, or filled: {oid}"}
+                        ]
+                    },
+                },
+            }
+        return {
+            "status": "ok",
+            "response": {"type": "cancel", "data": {"statuses": ["success"]}},
+        }
 
     def match_limit_orders(
         self,
