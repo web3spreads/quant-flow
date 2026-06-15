@@ -303,6 +303,42 @@ class MockHyperliquidClient:
             "response": {"type": "order", "data": {"statuses": [{"resting": {"oid": oid}}]}},
         }
 
+    @staticmethod
+    def check_order_success(order_result: dict[str, Any]) -> tuple[bool, str | None]:
+        """检查订单是否成功(镜像 HyperliquidClient.check_order_success 语义)。
+
+        生产代码(如 GridManager._place_open_order/_place_close_order)依赖此方法
+        校验内层 statuses[].error,以区分"顶层 status==ok 但实际被拒"的情况。
+        mock 此前缺失该方法,导致网格布单/平仓时抛 AttributeError(LN 同步异常),
+        层状态无法推进、残留 oid 反复尝试撤销。逻辑与真实客户端保持一致:
+        顶层 status 必须为 ok;order 响应需检查 statuses 中是否含 error。
+        """
+        if not order_result:
+            return False, "订单结果为空"
+
+        if order_result.get("status") != "ok":
+            error_msg = order_result.get("message", order_result.get("response", "未知错误"))
+            return False, f"订单请求失败: {error_msg}"
+
+        response = order_result.get("response", {})
+        if response.get("type") == "order":
+            statuses = response.get("data", {}).get("statuses", [])
+            if not statuses:
+                return False, "没有返回订单状态"
+
+            errors = [s["error"] for s in statuses if isinstance(s, dict) and "error" in s]
+            if errors:
+                return False, "; ".join(errors)
+
+            for status in statuses:
+                if isinstance(status, dict) and (
+                    "filled" in status or "resting" in status or not status.get("error")
+                ):
+                    return True, None
+            return False, f"未知订单状态: {statuses}"
+
+        return True, None
+
     def cancel_order(self, symbol: str, oid: int) -> dict[str, Any]:
         """
         取消挂单（模拟）
