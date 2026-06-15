@@ -42,6 +42,24 @@ def _infer_sz_decimals(symbol: str, price: float | None) -> int:
     return 2
 
 
+class _MockInfo:
+    """模拟 Hyperliquid SDK 的 Info 对象。
+
+    生产代码(如 GridManager._confirm_fill)通过 client.info.user_fills(address)
+    查询成交历史来确认网格挂单是否成交。回测此前未提供 .info,导致该调用抛
+    AttributeError('MockHyperliquidClient' object has no attribute 'info'),
+    网格无法确认成交→层状态滞后→重建时反复尝试撤销已被撮合移除的挂单
+    (报"订单不存在")。这里桥接到 mock 在撮合时累积的成交记录。
+    """
+
+    def __init__(self, client: "MockHyperliquidClient"):
+        self._client = client
+
+    def user_fills(self, address: str | None = None) -> list[dict[str, Any]]:
+        """返回最近成交记录(最新在前),格式对齐真实 user_fills 的关键字段。"""
+        return list(reversed(self._client.fills))
+
+
 class MockHyperliquidClient:
     """
     模拟 Hyperliquid 客户端
@@ -76,6 +94,14 @@ class MockHyperliquidClient:
 
         # 交易历史（用于记录）
         self.trade_history: list[dict[str, Any]] = []
+
+        # 成交记录（user_fills 模拟）：在 match_limit_orders 撮合时追加，
+        # 供 GridManager._confirm_fill 通过 client.info.user_fills 确认成交。
+        self.fills: list[dict[str, Any]] = []
+
+        # 模拟 SDK Info 对象（暴露 user_fills 等只读查询接口）
+        # 注：account address 已由下方 address 属性提供
+        self.info = _MockInfo(self)
 
         # 资产信息缓存（模拟）
         self.asset_info_cache: dict[str, dict[str, Any]] = {}
@@ -320,12 +346,53 @@ class MockHyperliquidClient:
             can_fill = (limit_px >= candle_low) if is_buy else (limit_px <= candle_high)
 
             if can_fill:
-                filled_orders.append(deepcopy(order))
+                filled = deepcopy(order)
+                filled_orders.append(filled)
+                self._record_fill(filled, limit_px, is_buy)
             else:
                 remaining_orders.append(order)
 
         self.open_orders = remaining_orders
         return filled_orders
+
+    def _current_time_ms(self) -> int:
+        """返回当前回测时间(毫秒)。DataFrame timestamp 为 datetime,转 epoch 毫秒。"""
+        try:
+            ts = self.historical_data.iloc[self.current_index]["timestamp"]
+            return int(pd.Timestamp(ts).value // 1_000_000)
+        except (IndexError, KeyError, ValueError, TypeError):
+            return 0
+
+    def _record_fill(self, order: dict[str, Any], fill_px: float, is_buy: bool) -> None:
+        """将一笔撮合成交追加到 fills 列表,字段对齐真实 Hyperliquid user_fills。
+
+        GridManager._confirm_fill 按 oid 匹配并读取 px/sz/time,这里补齐这些
+        关键字段;coin/side/dir 等用于对齐真实接口语义,便于其他消费者使用。
+        """
+        try:
+            sz = abs(float(order.get("sz", 0)))
+        except (TypeError, ValueError):
+            sz = 0.0
+        reduce_only = bool(order.get("reduceOnly", False))
+        if is_buy:
+            direction = "Close Short" if reduce_only else "Open Long"
+        else:
+            direction = "Close Long" if reduce_only else "Open Short"
+        self.fills.append(
+            {
+                "oid": order.get("oid"),
+                "coin": order.get("coin"),
+                "px": str(fill_px),
+                "sz": str(sz),
+                "side": "B" if is_buy else "A",
+                "time": self._current_time_ms(),
+                "dir": direction,
+                "closedPnl": "0.0",
+                "fee": "0.0",
+                "hash": "0x0",
+                "crossed": True,
+            }
+        )
 
     def place_order_with_tpsl(
         self,
