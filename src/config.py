@@ -202,16 +202,19 @@ class Config:
         self.default_leverage: int = self.max_leverage
 
         # Agent 启动开关配置
+        # 优先级：环境变量 PERP_ENABLED/GRID_ENABLED（由 Docker RUN_MODE 映射）
+        # > config.yaml 的 trading.perp_enabled/grid_enabled > 内置默认值。
+        # 容器部署时 RUN_MODE 据此在不改配置文件的前提下切换运行模式。
         self.perp_enabled: bool = self._as_bool(
-            trading.get("perp_enabled")
-            if trading.get("perp_enabled") is not None
-            else os.getenv("PERP_ENABLED"),
+            os.getenv("PERP_ENABLED")
+            if os.getenv("PERP_ENABLED") is not None
+            else trading.get("perp_enabled"),
             True,
         )
         self.grid_enabled: bool = self._as_bool(
-            trading.get("grid_enabled")
-            if trading.get("grid_enabled") is not None
-            else os.getenv("GRID_ENABLED"),
+            os.getenv("GRID_ENABLED")
+            if os.getenv("GRID_ENABLED") is not None
+            else trading.get("grid_enabled"),
             False,
         )
 
