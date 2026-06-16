@@ -57,6 +57,10 @@ logs/review_daily/*
 # Config (保留模板文件)
 config.yaml
 config.*.yaml
+# 回测派生配置（由 config.yaml 复制而来，含密钥，禁止提交）
+config_backtest.yaml
+config_backtest_fast.yaml
+config_backtest*.yaml
 
 # macOS
 .DS_Store
