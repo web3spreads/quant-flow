@@ -4,6 +4,7 @@
 
 import json
 import re
+import time
 from typing import Any
 
 from src.llm.llm_client import wrap_llm_client
@@ -50,7 +51,32 @@ class GridAgent:
             from pydantic_ai import Agent
 
             agent = Agent(self.llm, system_prompt=self._get_decision_system_prompt())
-            res = agent.run_sync(prompt)
+
+            # 推理模型（如 deepseek-v4-pro）偶发返回「仅含 reasoning、正文为空」的回复，
+            # 触发 Pydantic AI 内部补全重试，把空 assistant 消息回填重发，被 DeepSeek 以
+            # 400 "Invalid assistant message: content or tool_calls must be set" 拒绝。
+            # 单次 run_sync 是独立会话，重跑即可绕开那条坏消息，故对瞬时调用异常做有界重试。
+            # 全部失败时抛出末次异常，由外层 except 归一为 action=ERROR——下游与 KEEP_GRID
+            # 同样仅维持网格并检查减仓单，绝不把 LLM 故障放大成撤换单动作。
+            max_llm_attempts = 3
+            last_run_err: Exception | None = None
+            res = None
+            for attempt in range(1, max_llm_attempts + 1):
+                try:
+                    res = agent.run_sync(prompt)
+                    break
+                except Exception as run_err:
+                    last_run_err = run_err
+                    self.logger.print_warning(
+                        f"[GridAgent] LLM 调用异常（第 {attempt}/{max_llm_attempts} 次），"
+                        f"准备重试: {run_err}"
+                    )
+                    if attempt < max_llm_attempts:
+                        time.sleep(min(2.0 * attempt, 5.0))
+            if res is None:
+                raise last_run_err if last_run_err is not None else RuntimeError(
+                    "LLM run_sync 未返回结果"
+                )
             # LLM 返回空/None 时显式保守维持网格，而非把 str(None)="None" 喂给解析器
             # （LLM 故障放大成撤换单动作是历史亏损来源之一）
             if res.output is None or (isinstance(res.output, str) and not res.output.strip()):

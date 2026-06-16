@@ -14,6 +14,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.agent.grid_agent import GridAgent
 from src.backtest.mock_order_manager import MockOrderManager
@@ -408,6 +409,58 @@ class AgentFakeLLMManager:
         return AgentFakeLLM(self._content)
 
 
+class AgentFakeLLMFlaky:
+    """前 fail_times 次 invoke 抛 400 异常，之后返回有效内容——验证有界重试自愈。
+
+    模拟推理模型偶发空正文触发 Pydantic AI 回填空 assistant 消息、被 DeepSeek 以
+    400 "Invalid assistant message" 拒绝的瞬时故障。
+    """
+
+    def __init__(self, content, fail_times):
+        self._content = content
+        self._fail_times = int(fail_times)
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise RuntimeError(
+                "status_code: 400, model_name: deepseek-v4-pro, body: "
+                "Invalid assistant message: content or tool_calls must be set"
+            )
+
+        class _R:
+            pass
+
+        r = _R()
+        r.content = self._content
+        return r
+
+
+class AgentFakeLLMAlwaysFails:
+    """每次 invoke 都抛 400——验证重试耗尽后保留 action=ERROR 语义（下游与 KEEP_GRID 同样仅维持网格）。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        raise RuntimeError(
+            "status_code: 400, model_name: deepseek-v4-pro, body: "
+            "Invalid assistant message: content or tool_calls must be set"
+        )
+
+
+class AgentFakeLLMManagerCustom:
+    """返回预构造的有状态假 LLM 实例（保证跨多次 run_sync 重试时调用计数持续累加）。"""
+
+    def __init__(self, client):
+        self._client = client
+
+    def get_client(self, temperature=0.1):
+        return self._client
+
+
 class AgentFakeOM:
     def __init__(self, balance_status="ok"):
         self._balance_status = balance_status
@@ -424,6 +477,16 @@ def _make_agent(content, balance_status="ok"):
         order_manager=AgentFakeOM(balance_status=balance_status),
         logger=DummyLogger(),
         llm_manager=AgentFakeLLMManager(content),
+        trade_amount=100.0,
+    )
+
+
+def _make_agent_with_client(client, balance_status="ok"):
+    return GridAgent(
+        symbol="ETH",
+        order_manager=AgentFakeOM(balance_status=balance_status),
+        logger=DummyLogger(),
+        llm_manager=AgentFakeLLMManagerCustom(client),
         trade_amount=100.0,
     )
 
@@ -477,6 +540,31 @@ class TestGridAgentHardening(unittest.TestCase):
         decision = agent.make_decision(self.MARKET, {}, "运行中")
         self.assertEqual(decision["action"], "KEEP_GRID")
         self.assertAlmostEqual(decision["confidence"], 0.6, places=6)
+
+    def test_transient_llm_400_recovers_via_retry(self):
+        # 推理模型偶发 400（空 assistant 消息）应被有界重试自愈，而非丢失整轮决策。
+        # 首次 invoke 抛 400、第二次成功返回 KEEP_GRID。
+        client = AgentFakeLLMFlaky(
+            '{"action": "KEEP_GRID", "mode": "NEUTRAL", "confidence": 0.6}',
+            fail_times=1,
+        )
+        agent = _make_agent_with_client(client)
+        with patch("src.agent.grid_agent.time.sleep"):  # 跳过退避，保持测试快速
+            decision = agent.make_decision(self.MARKET, {}, "运行中")
+        self.assertEqual(decision["action"], "KEEP_GRID")
+        self.assertAlmostEqual(decision["confidence"], 0.6, places=6)
+        self.assertEqual(client.calls, 2)  # 失败 1 次 + 成功 1 次
+
+    def test_persistent_llm_failure_falls_back_to_error(self):
+        # 重试耗尽（默认 3 次）后保留 action=ERROR 语义：下游与 KEEP_GRID 同样仅维持网格、
+        # 检查减仓单，绝不把 LLM 故障放大成撤换单动作。
+        client = AgentFakeLLMAlwaysFails()
+        agent = _make_agent_with_client(client)
+        with patch("src.agent.grid_agent.time.sleep"):
+            decision = agent.make_decision(self.MARKET, {}, "运行中")
+        self.assertEqual(decision["action"], "ERROR")
+        self.assertEqual(client.calls, 3)  # 完整重试 max_llm_attempts 次
+        self.assertIn("400", str(decision.get("reason", "")))
 
 
 if __name__ == "__main__":
