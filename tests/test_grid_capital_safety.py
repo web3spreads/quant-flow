@@ -566,6 +566,37 @@ class TestGridAgentHardening(unittest.TestCase):
         self.assertEqual(client.calls, 3)  # 完整重试 max_llm_attempts 次
         self.assertIn("400", str(decision.get("reason", "")))
 
+    def test_force_neutral_overrides_ai_direction(self):
+        # 强制中性：AI 给 SHORT，UPDATE_GRID 仍以 NEUTRAL 建网格，从源头消除方向翻转 whipsaw
+        agent = GridAgent(
+            symbol="ETH",
+            order_manager=AgentFakeOM(balance_status="ok"),
+            logger=DummyLogger(),
+            llm_manager=AgentFakeLLMManager(
+                '{"action": "UPDATE_GRID", "mode": "SHORT", "width_pct": 0.05, "grid_num": 8, "confidence": 0.7}'
+            ),
+            trade_amount=100.0,
+            force_neutral_mode=True,
+        )
+        decision = agent.make_decision(self.MARKET, {}, "运行中")
+        self.assertEqual(decision["action"], "UPDATE_GRID")
+        self.assertEqual(decision["mode"], "NEUTRAL")
+
+    def test_default_preserves_ai_direction(self):
+        # 默认（开关关闭）保持历史行为：AI 给 SHORT 就建 SHORT 网格
+        agent = GridAgent(
+            symbol="ETH",
+            order_manager=AgentFakeOM(balance_status="ok"),
+            logger=DummyLogger(),
+            llm_manager=AgentFakeLLMManager(
+                '{"action": "UPDATE_GRID", "mode": "SHORT", "width_pct": 0.05, "grid_num": 8, "confidence": 0.7}'
+            ),
+            trade_amount=100.0,
+        )
+        decision = agent.make_decision(self.MARKET, {}, "运行中")
+        self.assertEqual(decision["action"], "UPDATE_GRID")
+        self.assertEqual(decision["mode"], "SHORT")
+
 
 if __name__ == "__main__":
     unittest.main()

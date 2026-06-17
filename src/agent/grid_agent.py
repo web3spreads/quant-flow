@@ -33,6 +33,7 @@ class GridAgent:
         width_pct_max: float = DEFAULT_WIDTH_PCT_MAX,
         width_pct_fallback: float = DEFAULT_WIDTH_PCT_FALLBACK,
         ai_width_blend_weight: float = DEFAULT_AI_WIDTH_BLEND_WEIGHT,
+        force_neutral_mode: bool = False,
     ):
         self.symbol = symbol
         self.order_manager = order_manager
@@ -43,6 +44,7 @@ class GridAgent:
         self.width_pct_max = float(width_pct_max)
         self.width_pct_fallback = float(width_pct_fallback)
         self.ai_width_blend_weight = self._clamp(float(ai_width_blend_weight), 0.0, 1.0)
+        self.force_neutral_mode = bool(force_neutral_mode)
 
     def make_decision(self, market_data, multi_timeframe_trends, current_grid_summary):
         try:
@@ -138,6 +140,14 @@ class GridAgent:
                 available = float(balance_info.get("available", 0))
                 mode = str(ai_decision.get("mode", "NEUTRAL")).strip().upper()
                 if mode not in VALID_GRID_MODES:
+                    mode = "NEUTRAL"
+                # 强制中性：忽略 AI 的 LONG/SHORT 方向，网格只做对称做市。
+                # 线上验证 24h 亏损几乎全部来自 LONG↔SHORT 方向翻转的 taker 反手（whipsaw），
+                # 中性网格不主动建/反方向头寸，从源头消除该亏损与反手手续费。
+                if self.force_neutral_mode and mode != "NEUTRAL":
+                    self.logger.print_info(
+                        f"[GridAgent] 强制中性模式：忽略 AI 方向 {mode}，覆盖为 NEUTRAL"
+                    )
                     mode = "NEUTRAL"
                 dynamic_width_pct = self._calculate_dynamic_width_pct(
                     market_data=market_data,

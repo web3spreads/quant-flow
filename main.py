@@ -508,6 +508,7 @@ class QuantFlowBot:
                     width_pct_max=self.config.grid_width_max_pct,
                     width_pct_fallback=self.config.grid_width_fallback_pct,
                     ai_width_blend_weight=self.config.grid_ai_blend_weight,
+                    force_neutral_mode=self.config.grid_force_neutral_mode,
                 )
                 self.logger.print_info("✅ 网格交易组件初始化完成")
             except Exception as e:

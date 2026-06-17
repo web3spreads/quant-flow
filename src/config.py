@@ -192,6 +192,13 @@ class Config:
             trading.get("grid_reduce_only_exit_orders_enabled"),
             True,
         )
+        # 强制网格走 NEUTRAL：忽略 AI 的 LONG/SHORT 方向输出，网格只做对称做市。
+        # 默认关闭（保持历史行为）。开启后可消除 LONG↔SHORT 方向翻转带来的 whipsaw 亏损
+        # 与 taker 反手手续费——线上验证 24h 亏损几乎全部来自方向反转。
+        self.grid_force_neutral_mode: bool = self._as_bool(
+            trading.get("grid_force_neutral_mode"),
+            False,
+        )
 
         # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
         # 向后兼容：支持旧字段名 default_leverage
