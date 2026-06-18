@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from decimal import Decimal
 from typing import Any
@@ -56,11 +57,15 @@ class GridManager:
         grid_rebuild_cooldown_seconds: int = DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS,
         grid_rebuild_min_price_change_ratio: float = DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO,
         barrier_config: TripleBarrierConfig | None = None,
+        on_round_trip_close: Callable[[str, float], None] | None = None,
     ):
         self.order_manager = order_manager
         self.logger = logger
         self.notifier = notifier
         self.state_file = state_file
+        # 每轮 round-trip 平仓回调：把网格逐轮盈亏上报给账户级风控（连亏熔断）。
+        # GridManager 不直接依赖 ProtectionManager，仅通过回调解耦上报，main.py 负责接线。
+        self.on_round_trip_close = on_round_trip_close
         self.grid_limit_order_take_profit_enabled = bool(grid_limit_order_take_profit_enabled)
         self.grid_limit_order_stop_loss_enabled = bool(grid_limit_order_stop_loss_enabled)
         self.grid_reduce_only_exit_orders_enabled = bool(grid_reduce_only_exit_orders_enabled)
@@ -1398,6 +1403,14 @@ class GridManager:
             f"   [Grid] {level.id} 完成第 {level.round_trip_count} 轮 | "
             f"PnL: {pnl:+.4f} | 累计: {level.cumulative_pnl:+.4f}"
         )
+
+        # 上报逐轮盈亏给账户级风控（连亏熔断）。失败不得影响网格主流程，
+        # 故吞掉异常仅记日志——风控记账出错绝不能拖垮布单/同步。
+        if self.on_round_trip_close is not None:
+            try:
+                self.on_round_trip_close(symbol, float(pnl))
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] round-trip 盈亏上报风控失败: {e}")
 
         # 记录轮回完成和 PnL 到云端
         cloud = get_cloud_logger()

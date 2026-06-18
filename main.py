@@ -496,6 +496,7 @@ class QuantFlowBot:
                     grid_limit_order_stop_loss_enabled=self.config.grid_limit_order_stop_loss_enabled,
                     grid_reduce_only_exit_orders_enabled=self.config.grid_reduce_only_exit_orders_enabled,
                     barrier_config=barrier_config,
+                    on_round_trip_close=self._on_grid_round_trip_close,
                 )
 
                 self.grid_agent = GridAgent(
@@ -1622,13 +1623,35 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"发送关闭通知失败: {e}")
 
+    def _on_grid_round_trip_close(self, symbol: str, pnl: float) -> None:
+        """网格每轮 round-trip 平仓回调：把逐轮盈亏喂给连亏熔断插件。
+
+        连亏保护（``consecutive_loss``）完全由 ``on_trade_close`` 事件驱动；网格此前
+        从不上报逐笔盈亏，导致该插件在纯网格模式下形同虚设。此回调由 GridManager 在
+        ``_record_round_trip`` 中触发，补齐这条数据通路。
+
+        注意：仅上报 ``on_trade_close``（盈亏事件），不上报 ``on_trade_open``——网格
+        持续滚动库存、没有干净的「单笔开仓」语义，position_timeout 不适用网格，故不接线。
+        """
+        if not self.protection_manager:
+            return
+        try:
+            self.protection_manager.on_trade_close(symbol=symbol, pnl=float(pnl))
+        except Exception as e:
+            self.logger.print_warning(f"[网格风控] round-trip 盈亏上报失败: {e}")
+
     def _grid_protection_triggered(self, symbol: str) -> bool:
         """
         网格周期的账户级风控熔断检查。
 
-        网格此前仅有 per-grid Triple Barrier（单网格止盈止损），缺少账户级回撤 /
-        连亏 / 单日亏损熔断。此处复用永续同款 ``ProtectionManager.check_all``，在
-        布单前拦截：
+        网格风控分两条通路：
+        - 账户级（本方法，``ProtectionManager.check_all``，按权益快照判定）：回撤
+          （max_drawdown）与单日亏损（daily_loss）熔断，布单前拦截。
+        - 逐轮级（``_on_grid_round_trip_close`` → ``on_trade_close``）：连亏熔断
+          （consecutive_loss），由每轮 round-trip 盈亏驱动。
+        position_timeout 依赖逐笔开仓事件，不适用持续滚动库存的网格，故未接入。
+
+        本方法处理 check_all 的拦截动作：
 
         - ``CLOSE_ALL_POSITIONS``：平掉全部持仓 + 撤销该 symbol 的网格挂单（含
           trigger）并清理网格状态，跳过本轮布单。
@@ -1721,8 +1744,8 @@ class QuantFlowBot:
             if cloud:
                 cloud.send_cycle_event(symbol=symbol, phase="start")
 
-            # 账户级风控熔断（回撤/连亏/单日亏损）：网格此前只有 per-grid Triple Barrier，
-            # 此处复用永续同款 ProtectionManager，在布单前拦截。熔断时已平仓/撤单并跳过布单。
+            # 账户级风控熔断（回撤/单日亏损，按权益判定）：在布单前拦截，熔断时已平仓/撤单并跳过布单。
+            # 连亏熔断走另一条逐轮通路（_on_grid_round_trip_close → on_trade_close），不在此处。
             if self.protection_manager and self._grid_protection_triggered(symbol):
                 if cloud:
                     cloud.send_cycle_event(
