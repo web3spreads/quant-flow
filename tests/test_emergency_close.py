@@ -33,9 +33,7 @@ def test_emergency_close_falls_back_to_full_close():
     """按 size 平仓全部失败（如 get_positions 查不到），市价全平兜底成功。"""
     client = _make_client()
     # 前 3 次（size 部分平仓）失败，第 4 次（全平 size=None）成功
-    client.close_position = MagicMock(
-        side_effect=[{"e": 1}, {"e": 2}, {"e": 3}, {"ok": 1}]
-    )
+    client.close_position = MagicMock(side_effect=[{"e": 1}, {"e": 2}, {"e": 3}, {"ok": 1}])
     client.check_order_success = MagicMock(
         side_effect=[(False, "无持仓"), (False, "无持仓"), (False, "无持仓"), (True, None)]
     )

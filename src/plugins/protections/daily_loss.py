@@ -49,9 +49,7 @@ class DailyLossProtection(IProtection):
             # 不能因日期翻转（如 23:00 触发、00:00 跨天）提前解除暂停。
             pause_still_active = False
             if self._is_paused and self._last_protection_time:
-                elapsed_h = (
-                    context.timestamp - self._last_protection_time
-                ).total_seconds() / 3600
+                elapsed_h = (context.timestamp - self._last_protection_time).total_seconds() / 3600
                 pause_still_active = elapsed_h < pause_hours
 
             # 新的一天，重置日亏损基准；但暂停冷却未到期时保留暂停状态

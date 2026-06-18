@@ -76,8 +76,10 @@ class GridAgent:
                     if attempt < max_llm_attempts:
                         time.sleep(min(2.0 * attempt, 5.0))
             if res is None:
-                raise last_run_err if last_run_err is not None else RuntimeError(
-                    "LLM run_sync 未返回结果"
+                raise (
+                    last_run_err
+                    if last_run_err is not None
+                    else RuntimeError("LLM run_sync 未返回结果")
                 )
             # LLM 返回空/None 时显式保守维持网格，而非把 str(None)="None" 喂给解析器
             # （LLM 故障放大成撤换单动作是历史亏损来源之一）
