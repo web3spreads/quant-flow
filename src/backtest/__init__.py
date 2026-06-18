@@ -5,10 +5,14 @@
 
 from .backtest_engine import BacktestEngine
 from .data_loader import BacktestDataLoader
+from .decision_recorder import DecisionRecorder
+from .decision_replayer import DecisionReplayer
 from .report_generator import BacktestReportGenerator
 
 __all__ = [
     "BacktestEngine",
     "BacktestDataLoader",
     "BacktestReportGenerator",
+    "DecisionRecorder",
+    "DecisionReplayer",
 ]

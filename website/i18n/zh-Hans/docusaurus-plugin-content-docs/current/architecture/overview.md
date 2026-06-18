@@ -19,7 +19,7 @@ MarketMonitor (独立线程，30s 间隔)
           ↓
 DecisionValidator + PositionSizer + RiskManager
           ↓
-AccountProtector (回撤保护/超时清仓)
+ProtectionManager (插件链：回撤/日亏/连损/持仓超时)
           ↓
 OrderManager → HyperliquidClient
     [止损失败 → 自动平仓重试 ×3]

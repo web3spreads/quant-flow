@@ -31,14 +31,14 @@
 
 ## 项目概述
 
-Quant Flow 是一个基于 LangChain/LangGraph 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
+Quant Flow 是一个基于 Pydantic AI 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
 
-- **永续合约 Agent**（`main.py`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
-- **网格交易 Grid Flow**（`grid_main.py`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
+- **永续合约 Agent**（`main.py`，`perp_enabled: true`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
+- **网格交易 Grid Flow**（`main.py`，`grid_enabled: true`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
 
-两种策略完全解耦，可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
+两种策略共用 `main.py` 统一入口，由 `config.yaml` 的 `perp_enabled` / `grid_enabled` 开关控制；可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
 
-**技术栈**: Python 3.11+, LangChain, LangGraph, Hyperliquid SDK, Pydantic
+**技术栈**: Python 3.11+, Pydantic AI, Hyperliquid SDK, Pydantic
 
 ## 常用命令
 
@@ -53,12 +53,12 @@ uv run python main.py
 # 指定配置文件运行
 uv run python main.py --config config.yaml --env .env
 
-# 运行网格交易
-uv run python grid_main.py --config config.grid.yaml --env-file .env
+# 运行网格交易（在 config.yaml 中设 grid_enabled: true、perp_enabled: false）
+uv run python main.py --config config.yaml --env-file .env
 
 # 运行测试
 uv run pytest tests/
-uv run pytest tests/test_agents_langgraph.py -v  # 单个文件
+uv run pytest tests/test_decision_validator.py -v  # 单个文件
 
 # 语法检查
 uv run python -m py_compile src/trading/client.py
@@ -74,10 +74,12 @@ uv add --group dev <package>  # 添加开发依赖
 docker compose up -d
 docker compose logs -f
 
-# 回测（支持 single/grid 策略）
+# 回测（支持 single/grid 策略 + 确定性回测）
 uv run python backtest.py --symbol BTC --strategy single --start-date 2024-01-01 --end-date 2024-12-01
 uv run python backtest.py --symbol BTC --strategy grid --start-date 2024-01-01 --end-date 2024-12-01
 uv run python backtest.py --symbol BTC --resume-from workspace/BTC_xxx/live_report.json  # 中断恢复
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --record-decisions decisions.jsonl  # 录制决策
+uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --replay-decisions decisions.jsonl  # 回放决策（跳过 LLM）
 
 # A/B 回测对比（对比不同功能配置的效果差异）
 uv run python backtest_comparison.py --symbol BTC --compare all
@@ -120,8 +122,8 @@ tail -f logs/grid.log          # 网格交易日志
                    └──────────────────┼──────────────────┘            │
                                       ↓                               ↓
                           ┌─────────────────────┐           ┌────────────────┐
-                          │  AccountProtector   │           │  OrderManager  │
-                          │  (回撤保护/超时清仓) │           │  (订单执行)     │
+                          │ProtectionManager   │           │  OrderManager  │
+                          │ (插件链风控保护)     │           │  (订单执行)     │
                           └──────────┬──────────┘           └───────┬────────┘
                                      │                               │
                                      └───────────────┬───────────────┘
@@ -141,7 +143,7 @@ tail -f logs/grid.log          # 网格交易日志
                   └──────────────┘                                     └───────────────┘
 ```
 
-### 网格交易数据流（Grid Flow，独立入口 `grid_main.py`）
+### 网格交易数据流（Grid Flow，由 `main.py` 在 `grid_enabled` 时驱动）
 
 ```
 ┌──────────────┐    ┌─────────────────────────────────────┐
@@ -194,10 +196,16 @@ src/
 │   ├── order_manager.py            # 订单管理（支持限价单 TP/SL 开关）
 │   ├── grid_manager.py             # 网格交易管理器（布单/同步/安全机制）
 │   ├── decision_validator.py       # 决策多维度验证
-│   ├── position_sizer.py           # 凯利公式仓位计算
-│   ├── risk_manager.py             # ATR动态止盈止损
-│   ├── account_protector.py        # 账户保护 (回撤/超时)
+│   ├── risk_manager.py             # ATR动态止盈止损与仓位计算（固定金额/固定风险/凯利公式）
 │   └── enhanced_engine.py          # 增强交易引擎 (Regime 参数覆盖)
+├── plugins/                  # 插件系统
+│   └── protections/                # 保护插件
+│       ├── base.py                     # IProtection 抽象基类 + 数据结构
+│       ├── manager.py                  # ProtectionManager 插件编排器
+│       ├── drawdown.py                 # 最大回撤保护
+│       ├── daily_loss.py               # 单日亏损保护
+│       ├── consecutive_loss.py         # 连续亏损保护（支持 per-symbol 锁定）
+│       └── position_timeout.py         # 持仓超时保护
 ├── data/                     # 数据模块
 │   ├── market_data.py              # K线和市场数据
 │   ├── indicators.py               # 技术指标 (MA, RSI, MACD, Bollinger)
@@ -213,7 +221,7 @@ src/
 │   └── cloud_logger.py             # 云端日志同步（aepipe 服务）
 ├── llm/                      # LLM 客户端
 │   └── llm_client.py               # 多供应商支持 (OpenAI/Cloudflare/Google/LiteLLM/NVIDIA)
-├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复）
+├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复 + 确定性录制/回放）
 └── notification/             # 通知模块
 ```
 
@@ -497,43 +505,37 @@ ValidationResult.WARN   # 警告但允许
 ValidationResult.BLOCK  # 阻止交易
 ```
 
-### 仓位管理 (`position_sizer.py`)
+### 风险与仓位管理 (`risk_manager.py`)
 
-基于凯利公式动态计算最优仓位：
+提供动态止盈止损（基于 ATR）和最优仓位大小计算（支持固定金额、固定风险、凯利公式）：
 
 ```python
 # 仓位计算方法
-PositionSizeMethod.KELLY                # 凯利公式
-PositionSizeMethod.VOLATILITY_ADJUSTED  # 波动率调整
-PositionSizeMethod.SIGNAL_BASED         # 基于信号强度
+PositionSizingMethod.FIXED_AMOUNT   # 固定金额法
+PositionSizingMethod.FIXED_RISK     # 固定风险法
+PositionSizingMethod.KELLY          # 凯利公式
 
-# 调整因子
-kelly_factor      # 凯利系数调整
-signal_factor     # 信号强度调整
-volatility_factor # 波动率调整
-drawdown_factor   # 连续亏损收缩
-```
-
-### 风险管理 (`risk_manager.py`)
-
-提供动态止盈止损（基于 ATR）：
-
-```python
-# 核心参数
+# 核心风控参数
 max_risk_per_trade: 0.02      # 单笔最大风险 2%
 max_total_exposure: 0.5       # 最大总敞口 50%
 min_risk_reward_ratio: 1.5    # 最小风险回报比
 ```
 
-### 账户保护 (`account_protector.py`)
+### 保护插件系统 (`src/plugins/protections/`)
 
-实现最大回撤保护和持仓超时机制：
+插件化风控架构，每个保护规则可独立启用/禁用/配置：
 
 ```python
-# 保护动作
-ProtectionAction.PAUSE_NEW_TRADES        # 暂停新开仓
-ProtectionAction.CLOSE_LOSING_POSITIONS  # 关闭亏损仓位
-ProtectionAction.CLOSE_ALL_POSITIONS     # 全部平仓
+# 4 个内置插件
+MaxDrawdownProtection     # 最大回撤 → 全部平仓
+DailyLossProtection       # 单日亏损 → 暂停新开仓
+ConsecutiveLossProtection # 连续亏损 → 暂停或锁定交易对（per-symbol）
+PositionTimeoutProtection # 持仓超时 → 自动平仓
+
+# 核心接口
+ProtectionManager.check_all(context)       # 执行所有插件检查
+ProtectionManager.is_symbol_locked(symbol) # 查询交易对级锁定
+ProtectionManager.on_trade_open/close()    # 分发开平仓事件
 ```
 
 ### 交易客户端 (`client.py`)
@@ -597,10 +599,15 @@ trading:
 # 调度配置
 scheduler:
   interval_minutes: 30            # 兜底巡检，突发由 market_monitor 覆盖
+  # K 线节拍参数（Q-03）：主循环对齐到 K 线收盘后 timeframe_offset 秒触发决策
+  # timeframe_offset: 2.0         # K 线收盘后等待秒数（确保数据可获取）
+  # min_throttle_secs: 30.0       # 两次决策之间最小间隔（防止过快循环）
 
 # 数据配置
 data:
   timeframe: 1h                   # 兜底决策用大周期 K 线，减少噪音
+                                  # ⚠️ 建议 ≥ 5m：若 trading_cycle 单次耗时 > timeframe，
+                                  # K 线节拍会持续返回 min_throttle_secs 跳过 K 线
 
 prompt:
   set: nof1-improved              # Prompt 集（推荐 nof1-improved）
@@ -617,12 +624,20 @@ debate:
 regime_adaptive:
   enabled: true
 
-# 账户保护
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10          # 最大回撤 10%
-  max_daily_loss_pct: 0.05        # 单日亏损 5%
-  max_position_hours: 48          # 最大持仓时间
+# 保护插件（可任意组合/禁用，空列表=关闭所有风控）
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10        # 最大回撤 10%
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05      # 单日亏损 5%
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true              # true=只锁该交易对
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48
 
 # 市场主动监控（异常波动触发决策循环）
 market_monitor:
@@ -653,13 +668,17 @@ cloud_logging:
   flush_interval: 5.0                   # 批量发送间隔（秒）
 ```
 
-### 网格交易配置 (`config.grid.yaml`)
+### 网格交易配置
+
+网格配置已合并进统一的 `config.yaml`，由 `trading.grid_enabled` 开关启用（关闭 `perp_enabled` 即为纯网格模式）。关键键：
 
 ```yaml
 trading:
-  symbols: [ETH]                          # 网格交易对
-  max_total_investment: 500               # 总投入上限（USD）
-  max_leverage: 5                         # 最大杠杆
+  perp_enabled: false                          # 纯网格模式时关闭永续
+  grid_enabled: true                           # 启用网格交易
+  symbols: [ETH]                               # 网格交易对
+  max_trade_amount: 100                        # 单层投入上限（USD）
+  max_leverage: 5                              # 最大杠杆
   grid_limit_order_take_profit_enabled: true   # 网格成交后是否补止盈单
   grid_limit_order_stop_loss_enabled: true     # 网格成交后是否补止损单
   grid_reduce_only_exit_orders_enabled: true   # 是否启用分层减仓单
@@ -675,9 +694,11 @@ scheduler:
   interval_minutes: 5        # 网格决策间隔
 ```
 
+> 网格周期还接入账户级风控（`ProtectionManager.check_all`）：回撤/连亏/单日亏损熔断时平掉全部持仓、撤销网格挂单并跳过本轮布单。
+
 ## 设计模式
 
-1. **工具回调模式**: `TradingTools` 通过回调函数将 LLM 决策映射到实际交易操作
+1. **工具回调模式**: `SingleSymbolAgent` 通过 Pydantic AI 的 `@agent.tool` 装饰器注册下单工具（buy/sell/sell_short 等），将 LLM 工具调用映射到实际交易操作；回调内置幂等守卫，单次决策周期内同一动作最多执行一次，防止 run_sync 重跑导致重复下单
 2. **延迟导入**: `src/agent/__init__.py` 使用 `__getattr__` 延迟导入避免循环依赖
 3. **单例模式**: `LLMClientManager` 和 `Config` 使用单例确保全局一致性
 4. **结构化输出**: `ExecutionAgent` 使用 Pydantic 模型 (`ExecutionPlan`) 确保决策格式正确
@@ -701,7 +722,7 @@ uv run pytest tests/ --cov=src
 ```
 
 主要测试文件：
-- `test_agents_langgraph.py`: Agent 架构测试
+- `test_trading_tool_idempotency.py`: 下单工具幂等去重测试（FunctionModel 真实工具调用，覆盖此前 0 覆盖的下单路径）
 - `test_decision_validator.py`: 决策验证器测试
 - `test_debate.py`: 多空辩论引擎测试
 - `test_signal_scorer_regime.py`: 信号评分 Regime 自适应测试
@@ -719,6 +740,17 @@ uv run pytest tests/ --cov=src
 - `test_fact_subjective_split.py`: 事实-主观分离测试（改进6d）
 - `test_prompt_meta_reflection.py`: Prompt 自优化测试（改进6e）
 - `test_grid_manager_exit_orders.py`: 网格交易分层减仓单测试
+- `test_account_protection_integration.py`: 保护系统集成测试
+- `test_protection_base.py`: 保护插件基础架构测试
+- `test_protection_drawdown.py`: 最大回撤保护插件测试
+- `test_protection_daily_loss.py`: 单日亏损保护插件测试
+- `test_protection_consecutive_loss.py`: 连续亏损保护插件测试（含 per-symbol）
+- `test_protection_position_timeout.py`: 持仓超时保护插件测试
+- `test_protection_manager.py`: 保护插件管理器测试
+- `test_protection_migration.py`: 保护配置迁移测试
+- `test_decision_recorder.py`: 决策录制/回放测试（确定性回测）
+- `test_candle_align.py`: K 线节拍对齐测试
+- `test_candle_throttle.py`: K 线节拍节流测试
 
 ## 注意事项
 

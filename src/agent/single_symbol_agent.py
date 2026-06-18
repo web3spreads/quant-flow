@@ -6,16 +6,16 @@
 import time
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.prebuilt import create_react_agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.usage import UsageLimitExceeded, UsageLimits
 
 from src.agent.execution_agent import ExecutionAgent
 from src.agent.helpers import send_error_notification
 from src.agent.prompts import SYSTEM_PROMPT
-from src.agent.tools import TradingTools
 from src.config import FEE_RATE_PER_SIDE, MAKER_FEE_RATE_PER_SIDE
 from src.fees import FeeRates
 from src.llm import LLMClientManager
+from src.llm.llm_client import wrap_llm_client
 from src.prompt_manager import PromptManager
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
@@ -131,8 +131,15 @@ class SingleSymbolAgent:
         # 用于去重：记录本次决策周期中已执行的工具调用
         self._executed_callbacks = set()
 
+        # 工具回调执行后写回的交易事件，供 make_decision 合并到 details，
+        # 用于风控插件等下游消费实际成交参数（避免回调结果只通过文本回流到 LLM）
+        self._current_trade_event: dict[str, Any] = {}
+
+        # 用于保存执行决策的类型
+        self._current_decision_type: str | None = None
+
         # 初始化 LLM（从管理器获取）
-        self.llm = self.llm_manager.get_client(temperature=temperature)
+        self.llm = wrap_llm_client(self.llm_manager.get_client(temperature=temperature))
 
         # 初始化执行 Agent（用于解析决策文本并执行）
         self.execution_agent = ExecutionAgent(
@@ -140,20 +147,119 @@ class SingleSymbolAgent:
             temperature=0.0,  # 执行 Agent 使用零温度确保确定性
         )
 
-        # 创建工具
-        self.tools = self._create_tools()
-
-        # 保存工具回调以供执行 Agent 使用
+        # 创建回调并保存
+        self._create_tools()
         self.tools_callbacks = self._get_tool_callbacks()
 
-        self.agent_executor = create_react_agent(model=self.llm, tools=self.tools)
-
-        # 设置系统提示词
+        # 设置系统提示词与 Pydantic AI Agent
         if self.prompt_manager:
             system_prompt_text = self.prompt_manager.get_system_prompt()
         else:
             system_prompt_text = SYSTEM_PROMPT
-        self.system_message = SystemMessage(content=system_prompt_text)
+        self.system_prompt = system_prompt_text
+
+        # 初始化 Pydantic AI Agent
+        self.pydantic_agent = Agent(
+            self.llm, deps_type=SingleSymbolAgent, system_prompt=system_prompt_text
+        )
+        self._register_pydantic_tools()
+
+    def _register_pydantic_tools(self):
+        """注册 Pydantic AI 的工具"""
+
+        @self.pydantic_agent.tool
+        def buy(
+            ctx: RunContext[SingleSymbolAgent],
+            symbol: str,
+            amount: float | None = None,
+            leverage: int | None = None,
+        ) -> str:
+            """执行买入开多操作。当市场出现明确的做多信号时使用此工具。
+
+            使用条件:
+            - 未持有该币种的多头仓位
+            - 未达到最大持仓数量
+            - 技术指标显示看涨信号
+
+            系统会自动设置止盈单（价格上涨 5%）和止损单（价格下跌 2%）。
+            """
+            ctx.deps._current_decision_type = "BUY"
+            return ctx.deps._buy_callback(symbol, amount, leverage)
+
+        @self.pydantic_agent.tool
+        def sell(ctx: RunContext[SingleSymbolAgent], symbol: str) -> str:
+            """执行卖出平多操作。当已持有该币种的多头仓位且出现卖出信号时使用此工具。"""
+            ctx.deps._current_decision_type = "SELL"
+            return ctx.deps._sell_callback(symbol)
+
+        @self.pydantic_agent.tool
+        def sell_short(
+            ctx: RunContext[SingleSymbolAgent],
+            symbol: str,
+            amount: float | None = None,
+            leverage: int | None = None,
+        ) -> str:
+            """执行卖空开空操作。当市场出现明确的做空信号时使用此工具。
+
+            使用条件:
+            - 未持有该币种的空头仓位
+            - 未达到最大持仓数量
+            - 技术指标显示看跌信号
+
+            系统会自动设置止盈单（价格下跌 5%）和止损单（价格上涨 2%）。
+            """
+            ctx.deps._current_decision_type = "SELL_SHORT"
+            return ctx.deps._sell_short_callback(symbol, amount, leverage)
+
+        @self.pydantic_agent.tool
+        def buy_to_cover(ctx: RunContext[SingleSymbolAgent], symbol: str) -> str:
+            """执行买入平空操作。当已持有该币种的空头仓位且出现平仓信号时使用此工具。"""
+            ctx.deps._current_decision_type = "BUY_TO_COVER"
+            return ctx.deps._buy_to_cover_callback(symbol)
+
+        @self.pydantic_agent.tool
+        def do_nothing(ctx: RunContext[SingleSymbolAgent], reason: str) -> str:
+            """不执行任何交易操作。当市场信号不明确或不满足交易条件时使用此工具。
+
+            参数:
+            - reason: 不操作的原因（必须提供）
+            """
+            ctx.deps._current_decision_type = "DO_NOTHING"
+            return ctx.deps._do_nothing_callback(reason)
+
+        if self.limit_order_enabled:
+
+            @self.pydantic_agent.tool
+            def buy_limit(
+                ctx: RunContext[SingleSymbolAgent],
+                symbol: str,
+                amount: float | None = None,
+                leverage: int | None = None,
+                price: float = 0.0,
+            ) -> str:
+                """执行限价开多操作。当市场出现做多信号但希望以更好的价格成交时使用此工具。"""
+                ctx.deps._current_decision_type = "BUY_LIMIT"
+                return ctx.deps._buy_limit_callback(symbol, amount, leverage, price)
+
+            @self.pydantic_agent.tool
+            def sell_short_limit(
+                ctx: RunContext[SingleSymbolAgent],
+                symbol: str,
+                amount: float | None = None,
+                leverage: int | None = None,
+                price: float = 0.0,
+            ) -> str:
+                """执行限价开空操作。当市场出现做空信号但希望以更好的价格成交时使用此工具。"""
+                ctx.deps._current_decision_type = "SELL_SHORT_LIMIT"
+                return ctx.deps._sell_short_limit_callback(symbol, amount, leverage, price)
+
+            @self.pydantic_agent.tool
+            def cancel_limit_order(
+                ctx: RunContext[SingleSymbolAgent], symbol: str, order_id: int
+            ) -> str:
+                """取消待处理的限价单。"""
+                ctx.deps._current_decision_type = "CANCEL_LIMIT_ORDER"
+                return ctx.deps._cancel_limit_order_callback(symbol, order_id)
 
     def _create_tools(self) -> list:
         """创建工具集"""
@@ -163,6 +269,10 @@ class SingleSymbolAgent:
         ) -> str:
             """买入开多回调"""
             try:
+                # 幂等守卫：本轮已下过单则拒绝（防止 run_sync 重跑导致重复下单）
+                dup_msg = self._guard_duplicate_action("BUY")
+                if dup_msg:
+                    return dup_msg
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
                     return "❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
@@ -206,6 +316,17 @@ class SingleSymbolAgent:
                     sl_price = entry_price * (1 - self.stop_loss_ratio)
                     quantity = result.get("quantity", 0)
                     leverage_used = actual_leverage
+
+                    # 写回执行后的真实成交参数（供 main.py 风控插件等下游使用）
+                    self._current_trade_event = {
+                        "action": "BUY",
+                        "entry_price": float(entry_price),
+                        "size": float(quantity),
+                        "amount": float(actual_amount),
+                        "leverage": int(actual_leverage),
+                        "fill_price": float(result.get("fill_price", entry_price)),
+                        "is_long": True,
+                    }
 
                     # 发送开仓通知
                     if self.notifier:
@@ -286,6 +407,10 @@ class SingleSymbolAgent:
         def sell_callback(symbol: str) -> str:
             """卖出平多回调"""
             try:
+                # 幂等守卫：本轮已平过仓则拒绝（防止 run_sync 重跑导致重复平仓）
+                dup_msg = self._guard_duplicate_action("SELL")
+                if dup_msg:
+                    return dup_msg
                 self.logger.print_info(f"[{self.symbol}Agent] 执行卖出平多")
 
                 positions = self.order_manager.get_current_positions()
@@ -313,21 +438,32 @@ class SingleSymbolAgent:
                 )
 
                 if result and result.get("status") == "ok":
+                    # 计算执行结果（独立于通知发送，供风控插件等下游消费）
+                    entry_price = float(position.get("entryPx", 0))
+                    exit_price = result.get("fill_price", self.current_price)
+                    size = abs(float(position.get("szi", 0)))
+                    pnl = (exit_price - entry_price) * size
+                    leverage = safe_leverage(position.get("leverage"), 1)
+                    pnl_percent = (
+                        (exit_price - entry_price) / entry_price * leverage * 100
+                        if entry_price > 0
+                        else 0
+                    )
+
+                    # 写回执行后的真实成交参数
+                    self._current_trade_event = {
+                        "action": "SELL",
+                        "entry_price": entry_price,
+                        "exit_price": float(exit_price),
+                        "fill_price": float(exit_price),
+                        "size": size,
+                        "pnl": float(pnl),
+                        "pnl_percent": float(pnl_percent),
+                        "leverage": int(leverage),
+                    }
+
                     # 发送平仓通知
                     if self.notifier:
-                        entry_price = float(position.get("entryPx", 0))
-                        # 优先使用实际成交价，回退到当前市场价
-                        exit_price = result.get("fill_price", self.current_price)
-                        size = abs(float(position.get("szi", 0)))
-                        # 根据开仓价、平仓价和数量计算实际盈亏金额
-                        pnl = (exit_price - entry_price) * size
-                        leverage = safe_leverage(position.get("leverage"), 1)
-                        pnl_percent = (
-                            (exit_price - entry_price) / entry_price * leverage * 100
-                            if entry_price > 0
-                            else 0
-                        )
-
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
                             side="long",
@@ -396,6 +532,10 @@ class SingleSymbolAgent:
         ) -> str:
             """卖空开空回调"""
             try:
+                # 幂等守卫：本轮已下过单则拒绝（防止 run_sync 重跑导致重复下单）
+                dup_msg = self._guard_duplicate_action("SELL_SHORT")
+                if dup_msg:
+                    return dup_msg
                 # 检查是否允许开新仓（trade_amount > 0 表示允许）
                 if self.trade_amount <= 0:
                     return "❌ 当前余额不足，无法开新仓。请专注于管理现有持仓（止盈/止损）。"
@@ -438,6 +578,17 @@ class SingleSymbolAgent:
                     sl_price = entry_price * (1 + self.stop_loss_ratio)  # 上涨时止损
                     quantity = result.get("quantity", 0)
                     leverage_used = actual_leverage
+
+                    # 写回执行后的真实成交参数（供 main.py 风控插件等下游使用）
+                    self._current_trade_event = {
+                        "action": "SELL_SHORT",
+                        "entry_price": float(entry_price),
+                        "size": float(quantity),
+                        "amount": float(actual_amount),
+                        "leverage": int(actual_leverage),
+                        "fill_price": float(result.get("fill_price", entry_price)),
+                        "is_long": False,
+                    }
 
                     # 发送开仓通知
                     if self.notifier:
@@ -518,6 +669,10 @@ class SingleSymbolAgent:
         def buy_to_cover_callback(symbol: str) -> str:
             """买入平空回调"""
             try:
+                # 幂等守卫：本轮已平过仓则拒绝（防止 run_sync 重跑导致重复平仓）
+                dup_msg = self._guard_duplicate_action("BUY_TO_COVER")
+                if dup_msg:
+                    return dup_msg
                 self.logger.print_info(f"[{self.symbol}Agent] 执行买入平空")
 
                 positions = self.order_manager.get_current_positions()
@@ -545,21 +700,33 @@ class SingleSymbolAgent:
                 )
 
                 if result and result.get("status") == "ok":
+                    # 计算执行结果（独立于通知发送，供风控插件等下游消费）
+                    entry_price = float(position.get("entryPx", 0))
+                    exit_price = result.get("fill_price", self.current_price)
+                    size = abs(float(position.get("szi", 0)))
+                    # 做空盈亏：价格下跌盈利，上涨亏损
+                    pnl = (entry_price - exit_price) * size
+                    leverage = safe_leverage(position.get("leverage"), 1)
+                    pnl_percent = (
+                        ((entry_price - exit_price) / entry_price * leverage * 100)
+                        if entry_price > 0
+                        else 0
+                    )
+
+                    # 写回执行后的真实成交参数
+                    self._current_trade_event = {
+                        "action": "BUY_TO_COVER",
+                        "entry_price": entry_price,
+                        "exit_price": float(exit_price),
+                        "fill_price": float(exit_price),
+                        "size": size,
+                        "pnl": float(pnl),
+                        "pnl_percent": float(pnl_percent),
+                        "leverage": int(leverage),
+                    }
+
                     # 发送平仓通知
                     if self.notifier:
-                        entry_price = float(position.get("entryPx", 0))
-                        # 优先使用实际成交价，回退到当前市场价
-                        exit_price = result.get("fill_price", self.current_price)
-                        size = abs(float(position.get("szi", 0)))
-                        # 做空盈亏：价格下跌盈利，上涨亏损
-                        pnl = (entry_price - exit_price) * size
-                        leverage = safe_leverage(position.get("leverage"), 1)
-                        pnl_percent = (
-                            ((entry_price - exit_price) / entry_price * leverage * 100)
-                            if entry_price > 0
-                            else 0
-                        )
-
                         self.notifier.notify_trade_closed(
                             symbol=self.symbol,
                             side="short",
@@ -647,6 +814,10 @@ class SingleSymbolAgent:
             ) -> str:
                 """限价开多回调"""
                 try:
+                    # 幂等守卫：本轮已下过限价单则拒绝（防止重复挂单造成双重敞口）
+                    dup_msg = self._guard_duplicate_action("BUY_LIMIT")
+                    if dup_msg:
+                        return dup_msg
                     if self.trade_amount <= 0:
                         return "❌ 当前余额不足，无法开新仓。"
 
@@ -710,6 +881,10 @@ class SingleSymbolAgent:
             ) -> str:
                 """限价开空回调"""
                 try:
+                    # 幂等守卫：本轮已下过限价单则拒绝（防止重复挂单造成双重敞口）
+                    dup_msg = self._guard_duplicate_action("SELL_SHORT_LIMIT")
+                    if dup_msg:
+                        return dup_msg
                     if self.trade_amount <= 0:
                         return "❌ 当前余额不足，无法开新仓。"
 
@@ -771,6 +946,13 @@ class SingleSymbolAgent:
                     if order_id <= 0:
                         return f"❌ 订单ID无效: {order_id}"
 
+                    # 幂等守卫（与其他下单/平仓动作一致）：同一周期内对同一 order_id 的重复
+                    # 撤单调用直接拒绝，避免 run_sync 重跑浪费工具额度并刷屏。按 order_id 区分，
+                    # 仍允许同周期撤销多个不同订单。
+                    dup_msg = self._guard_duplicate_action(f"CANCEL_LIMIT_ORDER:{order_id}")
+                    if dup_msg:
+                        return dup_msg
+
                     self.logger.print_info(f"[{self.symbol}Agent] 取消限价单 (订单ID: {order_id})")
 
                     result = self.order_manager.cancel_limit_order(symbol=symbol, order_id=order_id)
@@ -784,17 +966,6 @@ class SingleSymbolAgent:
                     error_msg = f"取消限价单异常: {str(e)}"
                     self.logger.print_error(f"[{self.symbol}Agent] {error_msg}")
                     return f"❌ {error_msg}"
-
-        trading_tools = TradingTools(
-            buy_callback,
-            sell_callback,
-            sell_short_callback,
-            buy_to_cover_callback,
-            do_nothing_callback,
-            buy_limit_callback if self.limit_order_enabled else None,
-            sell_short_limit_callback if self.limit_order_enabled else None,
-            cancel_limit_order_callback if self.limit_order_enabled else None,
-        )
 
         # 保存回调函数引用以供后续使用
         self._buy_callback = buy_callback
@@ -810,8 +981,6 @@ class SingleSymbolAgent:
             self._buy_limit_callback = None
             self._sell_short_limit_callback = None
             self._cancel_limit_order_callback = None
-
-        return trading_tools.get_all_tools()
 
     def _get_tool_callbacks(self) -> dict[str, Any]:
         """
@@ -835,6 +1004,34 @@ class SingleSymbolAgent:
             callbacks["cancel_limit_order"] = self._cancel_limit_order_callback
 
         return callbacks
+
+    def _guard_duplicate_action(self, action: str) -> str | None:
+        """
+        幂等守卫：同一决策周期内，每个真实下单/平仓动作最多执行一次。
+
+        pydantic-ai 的 ``run_sync`` 在一次运行内可被模型多次调用工具，且上层
+        ``_invoke_agent_with_retry`` 在 ``run_sync`` 抛错时会整轮重跑。若放任重复
+        调用，已成交的真实订单会在重跑中再次下单 → 重复开仓/平仓（真实资金损失）。
+        因此每个下单回调入口先调用本方法：本轮已执行过则返回拒绝信息，调用方直接返回不下单。
+
+        去重集合 ``_executed_callbacks`` 在每次 ``make_decision`` 开始时清空，
+        故幂等边界 = 单次决策周期（含其内的应用层重试），跨周期不受影响。
+
+        Args:
+            action: 动作标识，如 "BUY" / "SELL" / "SELL_SHORT" / "BUY_TO_COVER" /
+                "BUY_LIMIT" / "SELL_SHORT_LIMIT"
+
+        Returns:
+            None 表示本轮尚未执行、允许执行（并已登记）；非空字符串表示拒绝原因，
+            调用方应将其直接返回给模型，不再下单。
+        """
+        key = f"action:{action}"
+        if key in self._executed_callbacks:
+            msg = f"❌ 本轮决策已执行过 {action}，拒绝重复下单（幂等保护）"
+            self.logger.print_warning(f"[{self.symbol}Agent] {msg}")
+            return msg
+        self._executed_callbacks.add(key)
+        return None
 
     def _check_fee_guard(self) -> str | None:
         """
@@ -875,6 +1072,9 @@ class SingleSymbolAgent:
         try:
             # 重置去重状态（每次新的决策周期开始时）
             self._executed_callbacks.clear()
+
+            # 重置工具回调写回的交易事件
+            self._current_trade_event = {}
 
             # 更新当前价格
             self.current_price = market_data.get("current_price", 0)
@@ -923,22 +1123,25 @@ class SingleSymbolAgent:
             self.logger.print_prompt(prompt)
 
             # 调用 Agent（含自动重试 1 次机制）
-            messages = [self.system_message, HumanMessage(content=prompt)]
-
-            # 使用 config 参数限制最大迭代次数
-            # recursion_limit 控制图的最大递归深度，防止无限循环
-            config = {"recursion_limit": self.max_iterations * 2}
-
-            all_events, agent_output = self._invoke_agent_with_retry(messages, config, prompt)
+            self._current_decision_type = None
+            agent_output = self._invoke_agent_with_retry(prompt)
 
             # 解析结果
-            decision_type = self._parse_decision_from_events(all_events)
+            if self._current_decision_type:
+                decision_type = self._current_decision_type
+            else:
+                decision_type = self._parse_decision_from_text(agent_output)
+
             decision_details = {
                 "output": agent_output,
-                "events": all_events,
                 "prompt": prompt,
                 "symbol": self.symbol,
             }
+
+            # 合入工具回调写回的真实成交参数
+            # （open/close 事件传递给风控插件、即时反思、决策录制等）
+            if self._current_trade_event:
+                decision_details.update(self._current_trade_event)
 
             return decision_type, decision_details
 
@@ -960,49 +1163,27 @@ class SingleSymbolAgent:
 
     def _invoke_agent_with_retry(
         self,
-        messages: list,
-        config: dict,
         prompt: str,
         max_retries: int = 1,
-    ) -> tuple[list, str]:
+    ) -> str:
         """
         调用 Agent 并在失败时自动重试，重试成功或失败均发送通知
-
-        Args:
-            messages: LLM 消息列表
-            config: LangGraph 配置
-            prompt: 原始 prompt（用于过滤输出）
-            max_retries: 最大重试次数（默认 1 次）
-
-        Returns:
-            (事件列表, agent 输出文本)
         """
+        # 工具调用 / 模型请求上限（接入 agent_max_iterations 配置）。
+        # 迁移到 pydantic-ai 后该配置一度失效，模型可在一轮内无限循环调用工具
+        # （放大重复下单面）；此处用 UsageLimits 重新施加约束。
+        usage_limits = UsageLimits(
+            tool_calls_limit=max(1, self.max_iterations),
+            request_limit=max(5, self.max_iterations * 2),
+        )
+
         for attempt in range(1, max_retries + 2):  # 首次 + 重试次数
             try:
-                all_events = []
-                agent_output = ""
-                last_printed_content = ""
-
-                for event in self.agent_executor.stream(
-                    {"messages": messages}, stream_mode="values", config=config
-                ):
-                    all_events.append(event)
-                    if "messages" in event and len(event["messages"]) > 0:
-                        last_message = event["messages"][-1]
-                        if hasattr(last_message, "content"):
-                            content = last_message.content
-                            if content and content != prompt:
-                                agent_output = content
-
-                            if (
-                                content
-                                and content != prompt
-                                and len(content) > len(last_printed_content)
-                            ):
-                                self.logger.print_ai_response(
-                                    content, f"🎯 {self.symbol} Agent 分析中..."
-                                )
-                                last_printed_content = content
+                # 调用 Pydantic AI agent
+                result = self.pydantic_agent.run_sync(prompt, deps=self, usage_limits=usage_limits)
+                agent_output = (
+                    result.output if isinstance(result.output, str) else str(result.output)
+                )
 
                 # 调用成功，如果是重试成功则记录日志
                 if attempt > 1:
@@ -1010,7 +1191,30 @@ class SingleSymbolAgent:
                         f"[{self.symbol}Agent] LLM API 重试成功（第 {attempt} 次尝试）"
                     )
 
-                return all_events, agent_output
+                return agent_output
+
+            except UsageLimitExceeded as e:
+                # 用量超限（工具调用/模型请求超过 max_iterations）：模型在单轮内失控，
+                # 重试必然再次触顶，故直接失败、不做无意义的指数退避重试
+                self.logger.print_warning(
+                    f"[{self.symbol}Agent] 决策循环超限（工具/请求超过 max_iterations="
+                    f"{self.max_iterations}）: {e}"
+                )
+                send_error_notification(
+                    notifier=self.notifier,
+                    exception=e,
+                    title=f"{self.symbol} 决策循环超限",
+                    context_details={
+                        "交易对": self.symbol,
+                        "当前价": f"${self.current_price}",
+                        "阶段": "LLM 决策分析",
+                        "说明": (
+                            f"模型在一轮决策内工具调用/请求超过上限 "
+                            f"{self.max_iterations}，已拒绝继续"
+                        ),
+                    },
+                )
+                raise
 
             except Exception as e:
                 if attempt <= max_retries:
@@ -1040,70 +1244,11 @@ class SingleSymbolAgent:
                     )
                     raise
 
-    def _parse_decision_from_events(self, events: list) -> str:
+    def _parse_decision_from_text(self, decision_text: str) -> str:
         """
-        从事件中解析决策类型
-
-        优先从工具调用中解析，如果没有则使用 ExecutionAgent 解析文本并执行
-
-        Args:
-            events: LangGraph 事件列表
-
-        Returns:
-            决策类型
+        后备方案：使用 ExecutionAgent 解析文本并执行
         """
         try:
-            # 首先尝试从正式的工具调用中解析
-            for event in reversed(events):
-                if "messages" not in event:
-                    continue
-
-                for message in reversed(event["messages"]):
-                    if hasattr(message, "tool_calls") and message.tool_calls:
-                        for tool_call in message.tool_calls:
-                            tool_name = tool_call.get("name", "")
-                            if tool_name == "buy":
-                                return "BUY"
-                            elif tool_name == "sell":
-                                return "SELL"
-                            elif tool_name == "sell_short":
-                                return "SELL_SHORT"
-                            elif tool_name == "buy_to_cover":
-                                return "BUY_TO_COVER"
-                            elif tool_name == "do_nothing":
-                                return "DO_NOTHING"
-
-                    if hasattr(message, "name"):
-                        if message.name == "buy":
-                            return "BUY"
-                        elif message.name == "sell":
-                            return "SELL"
-                        elif message.name == "sell_short":
-                            return "SELL_SHORT"
-                        elif message.name == "buy_to_cover":
-                            return "BUY_TO_COVER"
-                        elif message.name == "do_nothing":
-                            return "DO_NOTHING"
-
-            # 后备方案：使用 ExecutionAgent 解析文本并执行
-            # 提取 Agent 的决策文本（只提取 AI 消息，不包括用户 prompt）
-            decision_text = ""
-            for event in reversed(events):
-                if "messages" not in event:
-                    continue
-                for message in reversed(event["messages"]):
-                    # 只提取 AI 的响应消息
-                    if (
-                        hasattr(message, "content")
-                        and isinstance(message.content, str)
-                        and hasattr(message, "type")
-                        and message.type == "ai"
-                    ):
-                        decision_text = message.content
-                        break
-                if decision_text:
-                    break
-
             if decision_text:
                 self.logger.print_info(
                     f"[{self.symbol}Agent] 未检测到工具调用，使用 ExecutionAgent 解析决策文本"
@@ -1136,6 +1281,9 @@ class SingleSymbolAgent:
                     "SELL_SHORT": "SELL_SHORT",
                     "BUY_TO_COVER": "BUY_TO_COVER",
                     "DO_NOTHING": "DO_NOTHING",
+                    "BUY_LIMIT": "BUY_LIMIT",
+                    "SELL_SHORT_LIMIT": "SELL_SHORT_LIMIT",
+                    "CANCEL_LIMIT_ORDER": "CANCEL_LIMIT_ORDER",
                 }
                 return decision_map.get(execution_plan.decision.value, "DO_NOTHING")
 

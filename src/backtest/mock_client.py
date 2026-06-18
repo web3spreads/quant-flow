@@ -3,11 +3,87 @@
 用于回测，不实际执行交易，只记录交易意图和模拟账户状态
 """
 
+import math
 from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
+
+# 真实 Hyperliquid 永续合约 szDecimals(数量精度),取自交易所 meta 接口。
+# 价格越高的资产 szDecimals 越大(可交易更小的数量)。此前 mock 对所有币种
+# 硬编码 szDecimals=3,导致 BTC(~$78k)等高价资产的小额网格单 size 被四舍五入
+# 为 0 而遭 place_limit_order 误拒(报"下单数量必须大于0"),网格回测零成交。
+# 仅收录 szDecimals >= 2 的主流(多为高价)资产;低价资产 szDecimals 多为 0-1,
+# 且单位数量较大不会因取整为 0,未收录者按价格量级启发式回退(见 get_asset_info)。
+_HL_SZ_DECIMALS: dict[str, int] = {
+    "BTC": 5,
+    "ETH": 4,
+    "BCH": 3,
+    "BNB": 3,
+    "PAXG": 3,
+    "TAO": 3,
+    "UNIBOT": 3,
+    "XMR": 3,
+    "AAVE": 2,
+    "ACE": 2,
+    "APT": 2,
+    "AR": 2,
+    "ATOM": 2,
+    "AVAX": 2,
+    "BSV": 2,
+    "COMP": 2,
+    "DASH": 2,
+    "EIGEN": 2,
+    "ENS": 2,
+    "ETC": 2,
+    "GMX": 2,
+    "HYPE": 2,
+    "ILV": 2,
+    "LTC": 2,
+    "NEO": 2,
+    "OMNI": 2,
+    "ORDI": 2,
+    "SOL": 2,
+    "TRB": 2,
+    "VVV": 2,
+    "ZEC": 2,
+    "ZEN": 2,
+}
+
+
+def _infer_sz_decimals(symbol: str, price: float | None) -> int:
+    """推断资产数量精度 szDecimals。
+
+    已知主流资产用真实值;未知资产按价格量级回退:szDecimals ≈ round(log10(price)),
+    使最小数量步长的名义价值维持在约 $0.1~$1 量级,与 Hyperliquid 的实际分布一致。
+    高价资产得到更高精度(避免小额单取整为 0);无价格信息时回退到 2(偏保守,
+    不会像旧默认值 3 那样使高价资产 size 归零)。
+    """
+    known = _HL_SZ_DECIMALS.get(symbol)
+    if known is not None:
+        return known
+    if price and price > 0:
+        return max(0, min(5, round(math.log10(price))))
+    return 2
+
+
+class _MockInfo:
+    """模拟 Hyperliquid SDK 的 Info 对象。
+
+    生产代码(如 GridManager._confirm_fill)通过 client.info.user_fills(address)
+    查询成交历史来确认网格挂单是否成交。回测此前未提供 .info,导致该调用抛
+    AttributeError('MockHyperliquidClient' object has no attribute 'info'),
+    网格无法确认成交→层状态滞后→重建时反复尝试撤销已被撮合移除的挂单
+    (报"订单不存在")。这里桥接到 mock 在撮合时累积的成交记录。
+    """
+
+    def __init__(self, client: "MockHyperliquidClient"):
+        self._client = client
+
+    def user_fills(self, address: str | None = None) -> list[dict[str, Any]]:
+        """返回最近成交记录(最新在前),格式对齐真实 user_fills 的关键字段。"""
+        return list(reversed(self._client.fills))
 
 
 class MockHyperliquidClient:
@@ -44,6 +120,14 @@ class MockHyperliquidClient:
 
         # 交易历史（用于记录）
         self.trade_history: list[dict[str, Any]] = []
+
+        # 成交记录（user_fills 模拟）：在 match_limit_orders 撮合时追加，
+        # 供 GridManager._confirm_fill 通过 client.info.user_fills 确认成交。
+        self.fills: list[dict[str, Any]] = []
+
+        # 模拟 SDK Info 对象（暴露 user_fills 等只读查询接口）
+        # 注：account address 已由下方 address 属性提供
+        self.info = _MockInfo(self)
 
         # 资产信息缓存（模拟）
         self.asset_info_cache: dict[str, dict[str, Any]] = {}
@@ -132,10 +216,12 @@ class MockHyperliquidClient:
             交易对元数据
         """
         if symbol not in self.asset_info_cache:
-            # 模拟资产信息
+            # 按真实 Hyperliquid 精度推断 szDecimals(高价资产需更高精度,
+            # 否则小额单 size 取整为 0 被误拒);未知资产按当前价格量级回退。
+            sz_decimals = _infer_sz_decimals(symbol, self.get_current_price(symbol))
             self.asset_info_cache[symbol] = {
                 "name": symbol,
-                "szDecimals": 3,  # 默认3位小数
+                "szDecimals": sz_decimals,
                 "maxLeverage": 50,
                 "tickSize": 0.1,
             }
@@ -243,17 +329,72 @@ class MockHyperliquidClient:
             "response": {"type": "order", "data": {"statuses": [{"resting": {"oid": oid}}]}},
         }
 
+    @staticmethod
+    def check_order_success(order_result: dict[str, Any]) -> tuple[bool, str | None]:
+        """检查订单是否成功(镜像 HyperliquidClient.check_order_success 语义)。
+
+        生产代码(如 GridManager._place_open_order/_place_close_order)依赖此方法
+        校验内层 statuses[].error,以区分"顶层 status==ok 但实际被拒"的情况。
+        mock 此前缺失该方法,导致网格布单/平仓时抛 AttributeError(LN 同步异常),
+        层状态无法推进、残留 oid 反复尝试撤销。逻辑与真实客户端保持一致:
+        顶层 status 必须为 ok;order 响应需检查 statuses 中是否含 error。
+        """
+        if not order_result:
+            return False, "订单结果为空"
+
+        if order_result.get("status") != "ok":
+            error_msg = order_result.get("message", order_result.get("response", "未知错误"))
+            return False, f"订单请求失败: {error_msg}"
+
+        response = order_result.get("response", {})
+        if response.get("type") == "order":
+            statuses = response.get("data", {}).get("statuses", [])
+            if not statuses:
+                return False, "没有返回订单状态"
+
+            errors = [s["error"] for s in statuses if isinstance(s, dict) and "error" in s]
+            if errors:
+                return False, "; ".join(errors)
+
+            for status in statuses:
+                if isinstance(status, dict) and (
+                    "filled" in status or "resting" in status or not status.get("error")
+                ):
+                    return True, None
+            return False, f"未知订单状态: {statuses}"
+
+        return True, None
+
     def cancel_order(self, symbol: str, oid: int) -> dict[str, Any]:
         """
         取消挂单（模拟）
+
+        撤单语义为幂等:订单不存在(通常已成交/已撤)时,真实 Hyperliquid 返回顶层
+        status=ok 且内层 statuses 标注 error(目标态"订单已不在挂单中"已达成)。
+        此前 mock 对 not-found 返回顶层 status=error,使 GridManager._cancel_order_
+        with_retry 误判失败→对已成交单反复重试 3 次并刷屏(实际 drain 靠重读挂单
+        自纠,无安全影响)。这里改为对齐真实幂等语义,消除噪音。
         """
         before = len(self.open_orders)
         self.open_orders = [
             o for o in self.open_orders if not (o.get("coin") == symbol and o.get("oid") == oid)
         ]
         if len(self.open_orders) == before:
-            return {"status": "error", "message": f"订单不存在: {oid}"}
-        return {"status": "ok"}
+            return {
+                "status": "ok",
+                "response": {
+                    "type": "cancel",
+                    "data": {
+                        "statuses": [
+                            {"error": f"Order was never placed, already canceled, or filled: {oid}"}
+                        ]
+                    },
+                },
+            }
+        return {
+            "status": "ok",
+            "response": {"type": "cancel", "data": {"statuses": ["success"]}},
+        }
 
     def match_limit_orders(
         self,
@@ -286,12 +427,53 @@ class MockHyperliquidClient:
             can_fill = (limit_px >= candle_low) if is_buy else (limit_px <= candle_high)
 
             if can_fill:
-                filled_orders.append(deepcopy(order))
+                filled = deepcopy(order)
+                filled_orders.append(filled)
+                self._record_fill(filled, limit_px, is_buy)
             else:
                 remaining_orders.append(order)
 
         self.open_orders = remaining_orders
         return filled_orders
+
+    def _current_time_ms(self) -> int:
+        """返回当前回测时间(毫秒)。DataFrame timestamp 为 datetime,转 epoch 毫秒。"""
+        try:
+            ts = self.historical_data.iloc[self.current_index]["timestamp"]
+            return int(pd.Timestamp(ts).value // 1_000_000)
+        except (IndexError, KeyError, ValueError, TypeError):
+            return 0
+
+    def _record_fill(self, order: dict[str, Any], fill_px: float, is_buy: bool) -> None:
+        """将一笔撮合成交追加到 fills 列表,字段对齐真实 Hyperliquid user_fills。
+
+        GridManager._confirm_fill 按 oid 匹配并读取 px/sz/time,这里补齐这些
+        关键字段;coin/side/dir 等用于对齐真实接口语义,便于其他消费者使用。
+        """
+        try:
+            sz = abs(float(order.get("sz", 0)))
+        except (TypeError, ValueError):
+            sz = 0.0
+        reduce_only = bool(order.get("reduceOnly", False))
+        if is_buy:
+            direction = "Close Short" if reduce_only else "Open Long"
+        else:
+            direction = "Close Long" if reduce_only else "Open Short"
+        self.fills.append(
+            {
+                "oid": order.get("oid"),
+                "coin": order.get("coin"),
+                "px": str(fill_px),
+                "sz": str(sz),
+                "side": "B" if is_buy else "A",
+                "time": self._current_time_ms(),
+                "dir": direction,
+                "closedPnl": "0.0",
+                "fee": "0.0",
+                "hash": "0x0",
+                "crossed": True,
+            }
+        )
 
     def place_order_with_tpsl(
         self,

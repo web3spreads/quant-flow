@@ -333,8 +333,14 @@ class BacktestReportGenerator:
                 if config_path.exists():
                     config_copy = report_dir / "config.yaml"
                     try:
-                        shutil.copy2(config_path, config_copy)
-                        print(f"✅ 配置文件副本已保存: {config_copy}")
+                        # 回测工作空间的 config 可能本就位于报告目录(同一文件),
+                        # 此时 shutil.copy2 会抛 SameFileError。先判断是否同一文件,
+                        # 是则跳过复制,避免无意义的告警噪音。
+                        if config_path.resolve() == config_copy.resolve():
+                            print(f"ℹ️ 配置文件已在报告目录，无需复制: {config_copy}")
+                        else:
+                            shutil.copy2(config_path, config_copy)
+                            print(f"✅ 配置文件副本已保存: {config_copy}")
                     except Exception as e:
                         print(f"⚠️ 保存配置文件副本失败: {e}")
                 else:

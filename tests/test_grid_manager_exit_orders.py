@@ -4,6 +4,7 @@ import time
 import unittest
 from pathlib import Path
 
+from src.trading.client import HyperliquidClient
 from src.trading.grid_manager import GridManager
 
 
@@ -89,6 +90,9 @@ class FakeClient:
         self.open_orders = [o for o in self.open_orders if o.get("oid") != oid]
         return {"status": "ok"}
 
+    # 复用真实客户端的内层 statuses 校验逻辑，保证 mock 与生产行为一致
+    check_order_success = staticmethod(HyperliquidClient.check_order_success)
+
 
 class FakeOrderManager:
     def __init__(self, client, positions=None):
@@ -115,6 +119,7 @@ class FakeOrderManager:
         sl_ratio=None,
         with_take_profit=True,
         with_stop_loss=True,
+        amount_is_notional=False,
     ):
         self.long_calls.append((symbol, usdt_amount, limit_price))
         oid = self._next_oid()
@@ -141,6 +146,7 @@ class FakeOrderManager:
         sl_ratio=None,
         with_take_profit=True,
         with_stop_loss=True,
+        amount_is_notional=False,
     ):
         self.short_calls.append((symbol, usdt_amount, limit_price))
         oid = self._next_oid()

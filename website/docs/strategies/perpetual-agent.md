@@ -6,7 +6,7 @@ description: How the multi-agent perpetual futures trading strategy works
 
 # Perpetual Futures Agent
 
-The perpetual futures agent (`main.py`) is the primary trading strategy. It uses a multi-agent LangGraph architecture where each trading pair runs with its own independent decision context.
+The perpetual futures agent (`main.py`) is the primary trading strategy. It uses a multi-agent Pydantic AI architecture where each trading pair runs with its own independent decision context.
 
 ## Architecture Overview
 
@@ -21,7 +21,7 @@ ExecutionAgent (structured output)
          ↓
 DecisionValidator + PositionSizer + RiskManager
          ↓
-AccountProtector + OrderManager
+ProtectionManager (plugin chain) + OrderManager
          ↓
 HyperliquidClient [safety: SL fail → auto close with retries]
          ↓
@@ -81,7 +81,7 @@ Before any order is placed, the decision passes through multiple validators:
 | `DecisionValidator` | Multi-timeframe trend alignment, signal quality, R:R ratio, market state suitability |
 | `PositionSizer` | Kelly criterion position sizing, volatility adjustment, drawdown shrinkage |
 | `RiskManager` | ATR-based dynamic SL/TP, max risk per trade (default 2%), max total exposure (50%) |
-| `AccountProtector` | Drawdown circuit breaker, daily loss limit, position age timeout |
+| `ProtectionManager` | Plugin chain: max drawdown (close-all + pause), daily loss (pause), consecutive loss (global or per-symbol lock), position timeout (force-close). Each plugin independently togglable via `protections:` config. |
 
 Validation results:
 - `PASS` — proceed with trade
@@ -113,7 +113,7 @@ After each closed position, the `ReviewAgent` records the outcome and updates th
 ## Per-Symbol Independence
 
 Each symbol in `trading.symbols` runs with:
-- Its own LangGraph state graph
+- Its own Pydantic AI agent instance
 - Its own conversation history and context window
 - Its own experience/lesson database
 - Independent cooldown timers for market monitor alerts

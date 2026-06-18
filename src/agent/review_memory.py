@@ -146,29 +146,6 @@ class ReviewMemoryStore:
         scored.sort(key=lambda item: item.get("similarity_score", 0), reverse=True)
         return scored[:limit]
 
-    def get_lessons_summary(self, symbol: str, limit: int = 5) -> str:
-        """
-        将经验格式化为可嵌入 Prompt 的文本。
-
-        Args:
-            symbol: 交易对符号
-            limit: 最多返回的经验条数，默认 5 条
-
-        Returns:
-            格式化的文本字符串，包含标题和编号列表。
-            如果没有经验，返回空字符串。
-        """
-        lessons = self.get_lessons(symbol)[:limit]
-        if not lessons:
-            return ""
-
-        lines = [
-            f"{idx + 1}. {lesson.get('rule')} => {lesson.get('action')} "
-            f"(置信度 {lesson.get('confidence', 0):.2f}, 证据 {lesson.get('support_count', 1)})"
-            for idx, lesson in enumerate(lessons)
-        ]
-        return "### ♻️ 复盘经验\n" + "\n".join(lines)
-
     def get_verbal_finetuning_section(
         self,
         symbol: str,

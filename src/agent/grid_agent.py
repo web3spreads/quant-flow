@@ -4,16 +4,21 @@
 
 import json
 import re
+import time
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
+from src.llm.llm_client import wrap_llm_client
 from src.utils.grid_math import calculate_grid_config
 
 DEFAULT_WIDTH_PCT_MIN = 0.02
 DEFAULT_WIDTH_PCT_MAX = 0.15
 DEFAULT_WIDTH_PCT_FALLBACK = 0.05
 DEFAULT_AI_WIDTH_BLEND_WEIGHT = 0.35
+
+# 合法的网格动作白名单。LLM 输出此集合之外的值（如线上出现过的 UPDATE_GRIDLE）
+# 一律回退到 KEEP_GRID 保守处理，绝不透传到下游执行。
+VALID_GRID_ACTIONS = {"UPDATE_GRID", "KEEP_GRID"}
+VALID_GRID_MODES = {"LONG", "SHORT", "NEUTRAL"}
 
 
 class GridAgent:
@@ -28,71 +33,150 @@ class GridAgent:
         width_pct_max: float = DEFAULT_WIDTH_PCT_MAX,
         width_pct_fallback: float = DEFAULT_WIDTH_PCT_FALLBACK,
         ai_width_blend_weight: float = DEFAULT_AI_WIDTH_BLEND_WEIGHT,
+        force_neutral_mode: bool = False,
     ):
         self.symbol = symbol
         self.order_manager = order_manager
         self.logger = logger
         self.trade_amount = trade_amount
-        self.llm = llm_manager.get_client(temperature=0.1)
+        self.llm = wrap_llm_client(llm_manager.get_client(temperature=0.1))
         self.width_pct_min = float(width_pct_min)
         self.width_pct_max = float(width_pct_max)
         self.width_pct_fallback = float(width_pct_fallback)
         self.ai_width_blend_weight = self._clamp(float(ai_width_blend_weight), 0.0, 1.0)
+        self.force_neutral_mode = bool(force_neutral_mode)
 
     def make_decision(self, market_data, multi_timeframe_trends, current_grid_summary):
         try:
-            messages = [
-                SystemMessage(content=self._get_decision_system_prompt()),
-                HumanMessage(
-                    content=self._format_prompt(
-                        market_data, multi_timeframe_trends, current_grid_summary
+            prompt = self._format_prompt(market_data, multi_timeframe_trends, current_grid_summary)
+
+            from pydantic_ai import Agent
+
+            agent = Agent(self.llm, system_prompt=self._get_decision_system_prompt())
+
+            # 推理模型（如 deepseek-v4-pro）偶发返回「仅含 reasoning、正文为空」的回复，
+            # 触发 Pydantic AI 内部补全重试，把空 assistant 消息回填重发，被 DeepSeek 以
+            # 400 "Invalid assistant message: content or tool_calls must be set" 拒绝。
+            # 单次 run_sync 是独立会话，重跑即可绕开那条坏消息，故对瞬时调用异常做有界重试。
+            # 全部失败时抛出末次异常，由外层 except 归一为 action=ERROR——下游与 KEEP_GRID
+            # 同样仅维持网格并检查减仓单，绝不把 LLM 故障放大成撤换单动作。
+            max_llm_attempts = 3
+            last_run_err: Exception | None = None
+            res = None
+            for attempt in range(1, max_llm_attempts + 1):
+                try:
+                    res = agent.run_sync(prompt)
+                    break
+                except Exception as run_err:
+                    last_run_err = run_err
+                    self.logger.print_warning(
+                        f"[GridAgent] LLM 调用异常（第 {attempt}/{max_llm_attempts} 次），"
+                        f"准备重试: {run_err}"
                     )
-                ),
-            ]
-            response = self.llm.invoke(messages)
-            content = response.content
+                    if attempt < max_llm_attempts:
+                        time.sleep(min(2.0 * attempt, 5.0))
+            if res is None:
+                raise (
+                    last_run_err
+                    if last_run_err is not None
+                    else RuntimeError("LLM run_sync 未返回结果")
+                )
+            # LLM 返回空/None 时显式保守维持网格，而非把 str(None)="None" 喂给解析器
+            # （LLM 故障放大成撤换单动作是历史亏损来源之一）
+            if res.output is None or (isinstance(res.output, str) and not res.output.strip()):
+                self.logger.print_warning("[GridAgent] LLM 返回空输出，回退 KEEP_GRID")
+                return {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": 0.0,
+                    "reason": "LLM 返回空输出，保守维持网格",
+                }
+            content = res.output if isinstance(res.output, str) else str(res.output)
 
             try:
                 ai_decision = self._parse_decision_json(content)
-
-                if ai_decision.get("action") == "UPDATE_GRID":
-                    current_price = float(market_data.get("current_price"))
-                    balance_info = self.order_manager.get_available_balance_info()
-                    available = float(balance_info.get("available", 0))
-                    mode = ai_decision.get("mode", "NEUTRAL")
-                    dynamic_width_pct = self._calculate_dynamic_width_pct(
-                        market_data=market_data,
-                        ai_width_pct=ai_decision.get("width_pct"),
-                        mode=mode,
-                    )
-
-                    math_config = calculate_grid_config(
-                        current_price=current_price,
-                        available_balance=min(available, self.trade_amount),
-                        mode=mode,
-                        width_pct=dynamic_width_pct,
-                        grid_num=ai_decision.get("grid_num", 6),
-                    )
-                    math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
-                    math_config["width_pct"] = dynamic_width_pct
-                    return math_config
-
-                return ai_decision
-            except Exception:
-                fallback_width_pct = self._calculate_dynamic_width_pct(
-                    market_data=market_data,
-                    ai_width_pct=None,
-                    mode="NEUTRAL",
+            except Exception as parse_err:
+                # 解析失败回退保守 KEEP_GRID（仅检查减仓保护单），而非全量重建。
+                # 把 LLM 故障放大成撤换单动作是历史亏损来源之一（线上 19 次解析失败）。
+                self.logger.print_warning(
+                    f"[GridAgent] LLM 决策解析失败，回退 KEEP_GRID: {parse_err}"
                 )
+                return {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": 0.0,
+                    "reason": f"LLM 输出解析失败，保守维持网格: {parse_err}",
+                }
+
+            action = str(ai_decision.get("action", "")).strip().upper()
+            confidence = self._safe_float(ai_decision.get("confidence"), 0.0)
+
+            # action 白名单校验：非法/未知值（如线上出现过的 UPDATE_GRIDLE）不透传，保守维持网格
+            if action not in VALID_GRID_ACTIONS:
+                self.logger.print_warning(
+                    f"[GridAgent] LLM 返回非法 action={ai_decision.get('action')!r}，回退 KEEP_GRID"
+                )
+                return {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": confidence,
+                    "reason": f"非法 action={ai_decision.get('action')!r}，保守维持网格",
+                }
+
+            if action == "UPDATE_GRID":
+                current_price = float(market_data.get("current_price"))
                 balance_info = self.order_manager.get_available_balance_info()
-                available = float(balance_info.get("available", 0.0))
-                return calculate_grid_config(
-                    current_price=float(market_data["current_price"]),
-                    available_balance=min(available, self.trade_amount),
-                    mode="NEUTRAL",
-                    width_pct=fallback_width_pct,
-                    grid_num=6,
+                # 余额接口失败时 available 会回退为 0，若继续 UPDATE_GRID 会以最小单格金额
+                # 触发全量重建、撤光现有挂单却可能挂不出新单，导致网格被意外清空。
+                # 因此余额获取失败时回退 KEEP_GRID，保护现有网格与持仓。
+                if balance_info.get("status") != "ok":
+                    self.logger.print_warning(
+                        f"[GridAgent] 获取可用余额失败: {balance_info.get('message')}，回退 KEEP_GRID"
+                    )
+                    return {
+                        "action": "KEEP_GRID",
+                        "mode": "NEUTRAL",
+                        "confidence": confidence,
+                        "reason": f"获取可用余额失败: {balance_info.get('message')}，保守维持网格",
+                    }
+                available = float(balance_info.get("available", 0))
+                mode = str(ai_decision.get("mode", "NEUTRAL")).strip().upper()
+                if mode not in VALID_GRID_MODES:
+                    mode = "NEUTRAL"
+                # 强制中性：忽略 AI 的 LONG/SHORT 方向，网格只做对称做市。
+                # 线上验证 24h 亏损几乎全部来自 LONG↔SHORT 方向翻转的 taker 反手（whipsaw），
+                # 中性网格不主动建/反方向头寸，从源头消除该亏损与反手手续费。
+                if self.force_neutral_mode and mode != "NEUTRAL":
+                    self.logger.print_info(
+                        f"[GridAgent] 强制中性模式：忽略 AI 方向 {mode}，覆盖为 NEUTRAL"
+                    )
+                    mode = "NEUTRAL"
+                dynamic_width_pct = self._calculate_dynamic_width_pct(
+                    market_data=market_data,
+                    ai_width_pct=ai_decision.get("width_pct"),
+                    mode=mode,
                 )
+
+                math_config = calculate_grid_config(
+                    current_price=current_price,
+                    available_balance=min(available, self.trade_amount),
+                    mode=mode,
+                    width_pct=dynamic_width_pct,
+                    grid_num=ai_decision.get("grid_num", 6),
+                )
+                math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
+                math_config["width_pct"] = dynamic_width_pct
+                # 透传置信度，避免云端监控指标恒为 0
+                math_config["confidence"] = confidence
+                return math_config
+
+            # KEEP_GRID
+            return {
+                "action": "KEEP_GRID",
+                "mode": str(ai_decision.get("mode", "NEUTRAL")).strip().upper(),
+                "confidence": confidence,
+                "reason": ai_decision.get("reason", "AI 维持当前网格"),
+            }
 
         except Exception as e:
             return {"action": "ERROR", "reason": str(e)}
@@ -278,13 +362,13 @@ JSON Schema:
         bb_width_pct = ((bb_upper - bb_lower) / current_price) if current_price > 0 else 0.0
 
         return (
-            f"symbol={self.symbol}\\n"
-            f"current_price={current_price:.4f}\\n"
-            f"rsi={rsi:.2f}\\n"
-            f"macd_hist={macd_hist:.6f}\\n"
-            f"bb_width_pct={bb_width_pct:.4f}\\n"
-            f"volume_change_pct={volume_change:.2f}\\n"
-            f"multi_timeframe_trends={json.dumps(trends, ensure_ascii=False)}\\n"
-            f"current_grid_summary={summary}\\n"
+            f"symbol={self.symbol}\n"
+            f"current_price={current_price:.4f}\n"
+            f"rsi={rsi:.2f}\n"
+            f"macd_hist={macd_hist:.6f}\n"
+            f"bb_width_pct={bb_width_pct:.4f}\n"
+            f"volume_change_pct={volume_change:.2f}\n"
+            f"multi_timeframe_trends={json.dumps(trends, ensure_ascii=False)}\n"
+            f"current_grid_summary={summary}\n"
             "请输出严格 JSON 决策。"
         )

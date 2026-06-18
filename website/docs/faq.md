@@ -10,7 +10,7 @@ description: Frequently asked questions and troubleshooting guide for Quant Flow
 
 ### Q: Which Python version is required?
 
-Python **3.11 or higher** is required. LangGraph and some dependencies use features not available in earlier versions.
+Python **3.11 or higher** is required. Pydantic AI and some dependencies use features not available in earlier versions.
 
 ```bash
 python --version    # should show 3.11+
@@ -61,10 +61,14 @@ Recommended options:
 
 | Model | Provider | Config `client_type` | Notes |
 |---|---|---|---|
-| `deepseek-ai/deepseek-v3.2` | NVIDIA NIM | `langchain_nvidia` | Good balance of speed/quality |
+| `qwen/qwen3.5-122b-a10b` | NVIDIA NIM | `langchain_nvidia` | Good balance of speed/quality (MoE, supports tools) |
 | `gpt-4o-mini` | OpenAI | `openai` | Fast and cheap |
 | `gpt-4o` | OpenAI | `openai` | Higher quality, higher cost |
 | `gemini-1.5-flash` | Google | `google` | Fast, generous free tier |
+
+:::tip Model availability changes over time
+NVIDIA NIM rotates models periodically. Pick any model your provider currently supports — the system is provider-agnostic.
+:::
 
 ### Q: How do I switch between testnet and mainnet?
 
@@ -116,7 +120,7 @@ Your API wallet needs to be authorized on the main Hyperliquid interface:
 3. Go to **Settings → API Wallets**
 4. Add your API wallet address and authorize it
 
-### `ModuleNotFoundError: No module named 'langchain_...'`
+### `ModuleNotFoundError: No module named 'pydantic_ai'`
 
 Dependencies are not installed. Run:
 
@@ -188,18 +192,29 @@ Both strategies run under `supervisord` and log to separate files (`logs/main.lo
 
 ### Q: Is there a maximum loss protection?
 
-Yes — `account_protection`:
+Yes — `protections` (plugin-based, each independently togglable):
 
 ```yaml
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10    # stop trading if account drops 10% from peak
-  max_daily_loss_pct: 0.05  # stop trading if daily loss hits 5%
-  max_position_hours: 48    # force-close any position held > 48 hours
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10    # close all + pause when drawdown ≥ 10% from peak
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05  # pause new trades when daily loss ≥ 5%
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true          # lock only the losing symbol
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48    # force-close any position held > 48 hours
 ```
 
+The legacy `account_protection: { enabled: true, ... }` block is still
+auto-migrated for backward compatibility.
+
 :::warning
-Never disable `account_protection` without understanding the consequences. A runaway LLM or API error could otherwise accumulate unlimited losses.
+Never disable all protection plugins without understanding the consequences. A runaway LLM or API error could otherwise accumulate unlimited losses.
 :::
 
 ### Q: What happens if the stop-loss order fails?

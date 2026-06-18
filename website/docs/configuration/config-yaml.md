@@ -17,7 +17,7 @@ cp config.yaml.example config.yaml
 ```yaml
 llm:
   client_type: langchain_nvidia   # openai | cloudflare | google | litellm | nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b   # pick any model your provider supports
   temperature: 0.2                 # low temperature recommended for trading decisions
 ```
 
@@ -39,8 +39,12 @@ Keep `temperature` at `0.1`–`0.3` for trading decisions. Higher values produce
 
 ```yaml
 trading:
+  # Strategy toggles
+  perp_enabled: true         # Enable perpetual futures agent
+  grid_enabled: false        # Enable grid market-making
+
   symbols: [BTC, ETH]       # use simple symbols, NOT pair format (not BTC/USDT)
-  max_trade_amount: 100     # maximum USD per single trade
+  max_trade_amount: 100     # maximum USD per single trade / grid investment
   max_leverage: 10          # maximum leverage multiplier
   limit_order_enabled: false  # use limit orders for entry (vs. market orders)
 ```
@@ -125,18 +129,34 @@ regime_adaptive:
 
 See [Market Regime Adaptive](../features/regime-adaptive.md) for details.
 
-## Account Protection
+## Account Protection (Plugin-based)
+
+The new format is a list of independently togglable plugins. The legacy
+`account_protection: { enabled: true, ... }` block still works and is
+auto-migrated for backward compatibility.
 
 ```yaml
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10       # pause trading if account drops 10% from peak
-  max_daily_loss_pct: 0.05     # pause trading if daily loss exceeds 5%
-  max_position_hours: 48       # force-close positions held longer than 48 hours
+# Empty list = no risk control
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10       # close all + pause when drawdown ≥ 10% from peak
+    pause_hours: 4
+
+  - name: daily_loss
+    max_daily_loss_pct: 0.05     # pause new trades when daily loss ≥ 5%
+    pause_hours: 4
+
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true             # true = lock only the losing symbol; false = global pause
+    pause_hours: 4
+
+  - name: position_timeout
+    max_position_hours: 48       # force-close positions held longer than this
 ```
 
-:::warning Always Keep This Enabled
-`account_protection` is a critical safety mechanism. Only disable it if you fully understand the risks.
+:::warning Always Keep Some Protections Enabled
+The protection plugins are critical safety mechanisms. Only disable them if you fully understand the risks.
 :::
 
 ## Market Monitor
@@ -197,10 +217,12 @@ data:
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.2
 
 trading:
+  perp_enabled: true
+  grid_enabled: false
   symbols: [BTC, ETH]
   max_trade_amount: 100
   max_leverage: 10
@@ -224,11 +246,19 @@ debate:
 regime_adaptive:
   enabled: true
 
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10
-  max_daily_loss_pct: 0.05
-  max_position_hours: 48
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48
 
 market_monitor:
   enabled: true

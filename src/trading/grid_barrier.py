@@ -35,7 +35,7 @@ class TripleBarrierConfig:
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "TripleBarrierConfig":
-        """从 config.grid.yaml 的 risk_management 段构建。"""
+        """从 config.yaml 的 risk_management 段构建。"""
         if not config:
             return cls()
 

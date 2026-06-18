@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: Introduction
-description: Quant Flow — AI-powered crypto perpetual futures trading bot for Hyperliquid DEX
+description: Quant Flow — AI-powered crypto perpetual futures & grid trading bot for Hyperliquid DEX
 ---
 
 # Quant Flow
 
-**Quant Flow** is an AI-powered cryptocurrency trading system built on [LangChain](https://langchain.com/) / [LangGraph](https://langchain-ai.github.io/langgraph/) for the [Hyperliquid DEX](https://hyperliquid.xyz/). It combines large language models with quantitative trading logic to make autonomous trading decisions on perpetual futures markets.
+**Quant Flow** is an AI-powered cryptocurrency trading system built on [Pydantic AI](https://ai.pydantic.dev) for the [Hyperliquid DEX](https://hyperliquid.xyz/). It combines large language models with quantitative trading logic to make autonomous trading decisions on perpetual futures and grid market-making.
 
 ## What Is Quant Flow?
 
@@ -19,14 +19,14 @@ Quant Flow is **not** a simple rule-based bot. It uses LLMs as the decision engi
 - Market regime detection (trending / ranging / volatile)
 - A persistent review & reflection system that learns from past trades
 
-## Two Independent Strategies
+## Two Integrated Strategies
 
-| Strategy | Entry Point | Description |
+Both strategies are unified into a single runner program (`main.py`) and can be enabled or disabled via configuration flags in `config.yaml`.
+
+| Strategy | Configuration Flag | Description |
 |---|---|---|
-| **Perpetual Agent** | `main.py` | Multi-agent architecture, one independent agent per trading pair with context compression |
-| **Grid Flow** | `grid_main.py` | AI-driven grid market-making; LLM judges direction & grid width, math engine computes parameters |
-
-Both strategies are fully decoupled. You can run either or both simultaneously via Docker `RUN_MODE`.
+| **Perpetual Agent** | `trading.perp_enabled` | Multi-agent architecture, one independent agent per trading pair with context compression |
+| **Grid Flow** | `trading.grid_enabled` | AI-driven grid market-making; LLM judges direction & grid width, math engine computes parameters |
 
 ## Key Features
 
@@ -45,7 +45,7 @@ Both strategies are fully decoupled. You can run either or both simultaneously v
 | Component | Technology |
 |---|---|
 | Language | Python 3.11+ |
-| AI Framework | LangChain, LangGraph |
+| AI Framework | Pydantic AI |
 | Exchange SDK | Hyperliquid Python SDK |
 | Data Validation | Pydantic |
 | Package Manager | uv |
@@ -67,7 +67,7 @@ cp .env.example .env
 
 # 4. Configure trading parameters
 cp config.yaml.example config.yaml
-# Edit config.yaml
+# Edit config.yaml (set perp_enabled or grid_enabled)
 
 # 5. Run (testnet recommended first)
 uv run python main.py

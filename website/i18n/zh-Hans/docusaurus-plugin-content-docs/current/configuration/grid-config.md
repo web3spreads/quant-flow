@@ -1,41 +1,41 @@
 ---
 sidebar_position: 3
 title: 网格模式配置
-description: 网格交易 config.grid.yaml 配置参考
+description: 网格做市在统一配置文件 config.yaml 中的配置参考
 ---
 
 # 网格交易配置
 
-网格交易策略使用独立的配置文件 `config.grid.yaml`：
-
-```bash
-cp config.grid.yaml.example config.grid.yaml
-```
+网格交易策略现在直接在统一的 `config.yaml` 配置文件中进行配置，只需将 `trading.grid_enabled` 设置为 `true` 即可启用。
 
 ## 交易参数
 
 ```yaml
 trading:
-  symbols: [ETH]                 # 网格交易的交易对
-  max_total_investment: 500      # 总投入上限（USD）
+  # 策略总开关
+  perp_enabled: false            # 是否启用永续合约方向交易 Agent
+  grid_enabled: true             # 是否启用网格做市交易
+
+  symbols: [ETH]                 # 网格交易的交易对（当前使用列表中的首个币种）
+  max_trade_amount: 500          # 总投入上限（USD）
   max_leverage: 5                # 最大杠杆
 
   # 网格订单功能
-  grid_limit_order_take_profit_enabled: true   # 网格成交后是否补止盈单
-  grid_limit_order_stop_loss_enabled: true     # 网格成交后是否补止损单
-  grid_reduce_only_exit_orders_enabled: true   # 是否启用分层 reduce-only 退出单
+  grid_limit_order_take_profit_enabled: true   # 网格成交后是否自动挂止盈单
+  grid_limit_order_stop_loss_enabled: true     # 网格成交后是否自动挂止损单
+  grid_reduce_only_exit_orders_enabled: true   # 是否启用分层 reduce-only 退出单（分批止盈）
 ```
 
 ### 退出单模式说明
 
 | 选项 | 说明 |
 |---|---|
-| `grid_limit_order_take_profit_enabled` | 每个网格层成交后，在下一个网格边界处下限价止盈单 |
-| `grid_limit_order_stop_loss_enabled` | 每个网格层成交后，在成交价下方/上方下止损单 |
+| `grid_limit_order_take_profit_enabled` | 每个网格层限价单成交后，自动在下一个网格边界处下挂限价止盈单 |
+| `grid_limit_order_stop_loss_enabled` | 每个网格层限价单成交后，自动在成交价的止损阈值处挂止损单 |
 | `grid_reduce_only_exit_orders_enabled` | 使用分层 reduce-only 退出单代替一次性全平，减少大仓位的滑点 |
 
 :::tip
-建议开启所有三种退出单模式。`grid_reduce_only_exit_orders_enabled` 对大仓位尤为重要。
+建议开启所有三种退出单模式以获得全面保护。`grid_reduce_only_exit_orders_enabled` 对大仓位尤为重要。
 :::
 
 ## Agent（AI 决策）参数
@@ -63,42 +63,44 @@ agent:
 
 ```yaml
 llm:
-  client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
-  temperature: 0.3               # 网格策略可略高——宽度估算允许更多创意
+  client_type: langchain_openai
+  model: qwen/qwen3.5-122b-a10b
+  temperature: 0.3               # 网格模式下建议温度略高 — 提供更弹性的宽度估计
 ```
 
-## 调度器
+## Scheduler 调度
 
 ```yaml
 scheduler:
-  interval_minutes: 5    # 网格重新评估间隔
+  interval_minutes: 5    # 网格重新评估的间隔周期（分钟）
 ```
 
-网格决策每 5 分钟运行一次。在间隔期间，GridManager 自动监控成交并下退出单——成交处理无需 LLM 调用。
+网格决策每 5 分钟运行一次。在两次决策间隔之间，GridManager 会自动监控成交并挂出退出单 — 成交处理无需 LLM 调用。
 
 ## 数据配置
 
 ```yaml
 data:
-  timeframe: 15m    # 较短周期更适合网格——对价格行为更敏感
+  timeframe: 15m    # 较短的周期适合网格做市 — 对价格波动更敏感
 ```
 
 :::info
-与永续合约 Agent（1h）相比，网格交易更适合使用较短周期（15m、5m），这样可以获得更精确的波动率估算用于网格间距计算。
+相比于永续合约 Agent 推荐的 1h 周期，网格交易更受益于 15m 或 5m 等较短的周期，能够获得更细粒度的波动率估计来调整网格宽度。
 :::
 
-## 完整示例
+## 完整配置示例
 
 ```yaml
 llm:
-  client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  client_type: langchain_openai
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.3
 
 trading:
+  perp_enabled: false
+  grid_enabled: true
   symbols: [ETH]
-  max_total_investment: 500
+  max_trade_amount: 500
   max_leverage: 5
   grid_limit_order_take_profit_enabled: true
   grid_limit_order_stop_loss_enabled: true
@@ -120,24 +122,17 @@ data:
 
 ## 网格状态持久化
 
-GridManager 在每次订单操作后将状态**原子写入**到 `grid_state.json`（通过 tempfile + rename 实现），防止意外关机时的文件损坏。
+网格管理器在每次订单操作后，将当前网格的挂单状态原子化写入 `grid_state.json` 文件。如果机器人重启，它将自动读取此状态文件并与交易所当前挂单进行对齐同步。
 
-重启机器人时，GridManager 会读取 `grid_state.json` 并与交易所对账，检测离线期间的成交情况。
-
-:::warning 请勿手动编辑 grid_state.json
-直接编辑 `grid_state.json` 可能导致 GridManager 丢失对活跃订单的追踪，进而在交易所产生孤儿订单。
+:::warning 切勿手动编辑 grid_state.json
+手动编辑可能会导致网格管理器与交易所状态失联，引发孤儿订单或重复挂单问题。
 :::
 
-## 安全机制
+## 安全保护机制
 
-GridManager 内置多项安全功能：
+GridManager 包含多重内置安全保护：
 
-- **孤儿触发单清理** — 检测并撤销没有对应仓位的触发单
-- **分层 reduce-only 退出** — 大仓位逐层退出，降低市场冲击
-- **撤单硬超时（20s）** — 撤单 20 秒未确认则重试并告警
-- **原子写入状态** — 进程中断时防止 JSON 文件损坏
-
-## 下一步
-
-- [网格交易策略](../strategies/grid-flow.md) — 网格交易算法工作原理
-- [网格回测](../backtesting/grid.md) — 实盘前先测试网格配置
+- **孤儿 Trigger 挂单清理** — 自动检测并撤销无持仓对应的止盈止损单
+- **分层 Reduce-only 平仓** — 分步止盈以防大规模市价单产生的严重滑点
+- **撤单 20 秒硬超时** — 撤单如在 20 秒内未获链上确认，立即重试并告警
+- **状态文件原子写入** — 采用临时文件写入后更名方式，防止进程中断导致 JSON 文件损坏

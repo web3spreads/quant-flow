@@ -17,7 +17,7 @@ cp config.yaml.example config.yaml
 ```yaml
 llm:
   client_type: langchain_nvidia   # openai | cloudflare | google | litellm | nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b   # 按你的供应商可用模型填写
   temperature: 0.2                 # 交易决策建议使用低温度
 ```
 
@@ -39,8 +39,12 @@ llm:
 
 ```yaml
 trading:
+  # 策略总开关
+  perp_enabled: true         # 启用永续合约方向交易 Agent
+  grid_enabled: false        # 启用网格交易做市策略
+
   symbols: [BTC, ETH]       # 使用简单符号，不是交易对格式（不要用 BTC/USDT）
-  max_trade_amount: 100     # 单笔交易最大 USD 金额
+  max_trade_amount: 100     # 单笔交易最大 USD 金额 / 网格投入上限
   max_leverage: 10          # 最大杠杆倍数
   limit_order_enabled: false  # 是否使用限价单入场（vs. 市价单）
 ```
@@ -125,18 +129,33 @@ regime_adaptive:
 
 详见[市场 Regime 自适应](../features/regime-adaptive.md)。
 
-## 账户保护
+## 账户保护（插件化）
+
+新格式为插件列表，每个插件可独立开关组合。旧的
+`account_protection: { enabled: true, ... }` 仍可工作并自动迁移到新格式。
 
 ```yaml
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10       # 账户从峰值回撤 10% 时暂停交易
-  max_daily_loss_pct: 0.05     # 单日亏损超过 5% 时暂停交易
-  max_position_hours: 48       # 强制平仓持有超过 48 小时的仓位
+# 空列表 = 关闭所有风控
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10       # 回撤 ≥ 10% → 全部平仓 + 暂停
+    pause_hours: 4
+
+  - name: daily_loss
+    max_daily_loss_pct: 0.05     # 单日亏损 ≥ 5% → 暂停新开仓
+    pause_hours: 4
+
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true             # true = 仅锁定亏损交易对；false = 全局暂停
+    pause_hours: 4
+
+  - name: position_timeout
+    max_position_hours: 48       # 持仓超过此时长 → 自动平仓
 ```
 
-:::warning 请始终保持开启
-`account_protection` 是关键安全机制。只有在充分理解风险的情况下才能禁用。
+:::warning 请保留必要的保护插件
+保护插件是关键安全机制。只有充分理解风险时才能禁用。
 :::
 
 ## 市场监控
@@ -197,10 +216,12 @@ data:
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.2
 
 trading:
+  perp_enabled: true
+  grid_enabled: false
   symbols: [BTC, ETH]
   max_trade_amount: 100
   max_leverage: 10
@@ -224,11 +245,19 @@ debate:
 regime_adaptive:
   enabled: true
 
-account_protection:
-  enabled: true
-  max_drawdown_pct: 0.10
-  max_daily_loss_pct: 0.05
-  max_position_hours: 48
+protections:
+  - name: max_drawdown
+    max_drawdown_pct: 0.10
+    pause_hours: 4
+  - name: daily_loss
+    max_daily_loss_pct: 0.05
+    pause_hours: 4
+  - name: consecutive_loss
+    max_consecutive_losses: 5
+    per_symbol: true
+    pause_hours: 4
+  - name: position_timeout
+    max_position_hours: 48
 
 market_monitor:
   enabled: true

@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: 永续合约 Agent
-description: 基于 LangGraph 的多 Agent 永续合约交易策略
+description: 基于 Pydantic AI 的多 Agent 永续合约交易策略
 ---
 
 # 永续合约 Agent

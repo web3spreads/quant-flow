@@ -294,9 +294,13 @@ class MockOrderManager:
         sl_ratio: float | None = None,
         with_take_profit: bool = True,
         with_stop_loss: bool = True,
+        amount_is_notional: bool = False,
     ) -> dict[str, Any] | None:
         """
         执行限价开多（模拟）
+
+        amount_is_notional 须与生产 OrderManager.execute_long_limit 语义一致：
+        为 True 时 usdt_amount 已是名义额，合约数量 = 名义额 / 价格，不再乘杠杆。
         """
         try:
             if limit_price <= 0:
@@ -313,7 +317,11 @@ class MockOrderManager:
                 return {"success": False, "message": suggested.get("reason", "余额不足")}
 
             actual_amount = float(suggested.get("suggested_amount", usdt_amount))
-            size = (actual_amount * lev) / limit_price
+            size = (
+                (actual_amount / limit_price)
+                if amount_is_notional
+                else (actual_amount * lev) / limit_price
+            )
             asset_info = self.client.get_asset_info(symbol)
             if asset_info and "szDecimals" in asset_info:
                 size = round(size, asset_info["szDecimals"])
@@ -368,9 +376,13 @@ class MockOrderManager:
         sl_ratio: float | None = None,
         with_take_profit: bool = True,
         with_stop_loss: bool = True,
+        amount_is_notional: bool = False,
     ) -> dict[str, Any] | None:
         """
         执行限价开空（模拟）
+
+        amount_is_notional 须与生产 OrderManager.execute_short_limit 语义一致：
+        为 True 时 usdt_amount 已是名义额，合约数量 = 名义额 / 价格，不再乘杠杆。
         """
         try:
             if limit_price <= 0:
@@ -387,7 +399,11 @@ class MockOrderManager:
                 return {"success": False, "message": suggested.get("reason", "余额不足")}
 
             actual_amount = float(suggested.get("suggested_amount", usdt_amount))
-            size = (actual_amount * lev) / limit_price
+            size = (
+                (actual_amount / limit_price)
+                if amount_is_notional
+                else (actual_amount * lev) / limit_price
+            )
             asset_info = self.client.get_asset_info(symbol)
             if asset_info and "szDecimals" in asset_info:
                 size = round(size, asset_info["szDecimals"])

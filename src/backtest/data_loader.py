@@ -185,16 +185,22 @@ class BacktestDataLoader:
                 return None
 
             # 转换timestamp为datetime
-            if df["timestamp"].dtype == "object":
-                # 尝试多种格式
-                try:
-                    df["timestamp"] = pd.to_datetime(df["timestamp"])
-                except Exception:
-                    # 如果是毫秒时间戳
+            # 注意：pandas 3.0 默认 future.infer_string=True，read_csv 会把字符串列
+            # 推断为新的 "str" 类型而非 "object"，故不能用 dtype == "object" 判断，
+            # 否则字符串时间戳不会被转换，导致后续 (df["timestamp"] - current) 报
+            # TypeError: unsupported operand type(s) for -: 'str' and 'str'。
+            # 这里改用 pd.api.types 语义判断，兼容 object/str/数值/已是 datetime 各种情况。
+            if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
+                if pd.api.types.is_numeric_dtype(df["timestamp"]):
+                    # 数值型：假设是毫秒时间戳
                     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            elif df["timestamp"].dtype in ["int64", "float64"]:
-                # 假设是毫秒时间戳
-                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+                else:
+                    # 字符串型（object 或 pandas 3.0 的 str 类型）：尝试多种格式
+                    try:
+                        df["timestamp"] = pd.to_datetime(df["timestamp"])
+                    except Exception:
+                        # 回退：可能是以字符串存储的毫秒时间戳
+                        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
 
             # 确保数值列为float
             for col in ["open", "high", "low", "close", "volume"]:

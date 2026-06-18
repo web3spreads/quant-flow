@@ -31,31 +31,3 @@ class ResearchState(TypedDict):
 
     # ===== 错误处理 =====
     errors: list[str]  # 错误信息列表
-
-
-def create_initial_state(
-    interval_hours: float, symbols: list[str], start_time: datetime, end_time: datetime
-) -> ResearchState:
-    """
-    创建初始状态
-
-    Args:
-        interval_hours: 时间间隔（小时）
-        symbols: 关注的币种列表
-        start_time: 开始时间
-        end_time: 结束时间
-
-    Returns:
-        初始化的研究工作流状态
-    """
-    return ResearchState(
-        interval_hours=interval_hours,
-        symbols=symbols,
-        start_time=start_time,
-        end_time=end_time,
-        search_queries={},
-        search_results={},
-        formatted_results="",
-        report=None,
-        errors=[],
-    )

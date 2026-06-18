@@ -1,23 +1,23 @@
 ---
 sidebar_position: 3
 title: Grid Mode Config
-description: Configuration reference for grid trading (config.grid.yaml)
+description: Configuration reference for grid trading in config.yaml
 ---
 
 # Grid Trading Configuration
 
-The grid trading strategy uses a separate configuration file `config.grid.yaml`:
-
-```bash
-cp config.grid.yaml.example config.grid.yaml
-```
+The grid trading strategy is configured directly in the unified `config.yaml` file and is enabled by setting `trading.grid_enabled` to `true`.
 
 ## Trading Parameters
 
 ```yaml
 trading:
-  symbols: [ETH]                 # trading pair(s) for grid trading
-  max_total_investment: 500      # total capital allocated (USD)
+  # Strategy toggles
+  perp_enabled: false            # Disable/enable perpetual futures agent
+  grid_enabled: true             # Enable grid market-making
+
+  symbols: [ETH]                 # trading pair(s) for grid trading (currently supports first symbol in list)
+  max_trade_amount: 500          # total capital allocated (USD)
   max_leverage: 5                # maximum leverage
 
   # Grid order features
@@ -63,8 +63,8 @@ The market data component uses ATR and volatility to compute a data-driven width
 
 ```yaml
 llm:
-  client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  client_type: langchain_openai
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.3               # slightly higher for grid — more creative width estimation
 ```
 
@@ -88,17 +88,19 @@ data:
 Grid trading benefits from shorter timeframes (15m, 5m) compared to the perpetual agent (1h). This gives more granular volatility estimates for grid spacing.
 :::
 
-## Complete Example
+## Complete Grid Example
 
 ```yaml
 llm:
-  client_type: langchain_nvidia
-  model: deepseek-ai/deepseek-v3.2
+  client_type: langchain_openai
+  model: qwen/qwen3.5-122b-a10b
   temperature: 0.3
 
 trading:
+  perp_enabled: false
+  grid_enabled: true
   symbols: [ETH]
-  max_total_investment: 500
+  max_trade_amount: 500
   max_leverage: 5
   grid_limit_order_take_profit_enabled: true
   grid_limit_order_stop_loss_enabled: true

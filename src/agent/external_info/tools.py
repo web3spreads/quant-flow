@@ -1,20 +1,18 @@
 """
 外部信息收集工具模块
 
-使用 LangChain 和 Exa 集成的搜索工具。
-提供加密货币市场新闻、监管政策、宏观经济等信息的搜索功能。
+提供加密货币市场新闻、监管政策、宏观经济等信息的搜索功能（使用原生 HTTP 请求直接调用 Exa API）。
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnableLambda
-from langchain_core.tools import tool
-from langchain_exa import ExaSearchRetriever
+import requests
+
+logger = logging.getLogger(__name__)
 
 
-@tool
 def search_crypto_market_news(
     query: str,
     exa_api_key: str,
@@ -23,7 +21,7 @@ def search_crypto_market_news(
     end_date: str | None = None,
 ) -> list[str]:
     """
-    搜索加密货币市场新闻和信息
+    搜索加密货币市场新闻 and 信息
 
     Args:
         query: 搜索查询字符串
@@ -35,57 +33,50 @@ def search_crypto_market_news(
     Returns:
         格式化的搜索结果列表
     """
+    url = "https://api.exa.ai/search"
+    headers = {"x-api-key": exa_api_key, "content-type": "application/json"}
 
-    # 初始化 Exa 检索器
-    retriever_kwargs = {
-        "k": num_results,
-        "highlights": True,
-        "text_length_limit": 1000,
-        "exa_api_key": exa_api_key,
-    }
+    payload = {"query": query, "numResults": num_results, "highlights": {"numSentences": 3}}
 
-    # 添加日期过滤
     if start_date:
-        retriever_kwargs["start_published_date"] = start_date
+        payload["startPublishedDate"] = f"{start_date}T00:00:00.000Z"
     if end_date:
-        retriever_kwargs["end_published_date"] = end_date
+        payload["endPublishedDate"] = f"{end_date}T23:59:59.000Z"
 
-    retriever = ExaSearchRetriever(**retriever_kwargs)
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        response.raise_for_status()
+        data = response.json()
 
-    # 定义文档格式化模板
-    document_prompt = PromptTemplate.from_template(
-        """<source>
+        documents = []
+        for result in data.get("results", []):
+            title = result.get("title") or "无标题"
+            res_url = result.get("url") or ""
+            published_date = result.get("publishedDate") or "未知"
+
+            # Exa highlights is a list of strings
+            highlights_list = result.get("highlights", [])
+            highlights = (
+                " ".join(highlights_list)
+                if isinstance(highlights_list, list)
+                else str(highlights_list)
+            )
+            if not highlights:
+                highlights = result.get("text", "")[:500] or "无内容"
+
+            formatted = f"""<source>
 <title>{title}</title>
-<url>{url}</url>
+<url>{res_url}</url>
 <published>{published_date}</published>
 <highlights>{highlights}</highlights>
 </source>"""
-    )
-
-    # 创建文档处理链
-    document_chain = (
-        RunnableLambda(
-            lambda doc: {
-                "title": doc.metadata.get("title", "无标题"),
-                "url": doc.metadata.get("url", ""),
-                "published_date": doc.metadata.get("published_date", "未知"),
-                "highlights": doc.metadata.get("highlights", doc.page_content[:500] or "无内容"),
-            }
-        )
-        | document_prompt
-    )
-
-    # 执行检索和处理链
-    retrieval_chain = retriever | document_chain.map()
-
-    try:
-        documents = retrieval_chain.invoke(query)
+            documents.append(formatted)
         return documents
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Exa search failed: {e}")
         return []
 
 
-@tool
 def search_crypto_regulatory_news(
     query: str,
     exa_api_key: str,
@@ -95,31 +86,18 @@ def search_crypto_regulatory_news(
 ) -> list[str]:
     """
     搜索加密货币监管政策相关新闻
-
-    Args:
-        query: 搜索查询字符串
-        exa_api_key: Exa API 密钥
-        num_results: 返回结果数量
-        start_date: 开始日期 (YYYY-MM-DD 格式)
-        end_date: 结束日期 (YYYY-MM-DD 格式)
-
-    Returns:
-        格式化的搜索结果列表
     """
     # 增强查询以聚焦监管内容
     enhanced_query = f"{query} regulation policy SEC compliance"
-    return search_crypto_market_news.invoke(
-        {
-            "query": enhanced_query,
-            "exa_api_key": exa_api_key,
-            "num_results": num_results,
-            "start_date": start_date,
-            "end_date": end_date,
-        }
+    return search_crypto_market_news(
+        query=enhanced_query,
+        exa_api_key=exa_api_key,
+        num_results=num_results,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
-@tool
 def search_crypto_macro_news(
     query: str,
     exa_api_key: str,
@@ -129,27 +107,15 @@ def search_crypto_macro_news(
 ) -> list[str]:
     """
     搜索影响加密货币的宏观经济新闻
-
-    Args:
-        query: 搜索查询字符串
-        exa_api_key: Exa API 密钥
-        num_results: 返回结果数量
-        start_date: 开始日期 (YYYY-MM-DD 格式)
-        end_date: 结束日期 (YYYY-MM-DD 格式)
-
-    Returns:
-        格式化的搜索结果列表
     """
     # 增强查询以聚焦宏观经济内容
     enhanced_query = f"{query} Federal Reserve interest rate inflation economic impact"
-    return search_crypto_market_news.invoke(
-        {
-            "query": enhanced_query,
-            "exa_api_key": exa_api_key,
-            "num_results": num_results,
-            "start_date": start_date,
-            "end_date": end_date,
-        }
+    return search_crypto_market_news(
+        query=enhanced_query,
+        exa_api_key=exa_api_key,
+        num_results=num_results,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
@@ -224,7 +190,3 @@ def create_period_search_queries(
     )
 
     return queries
-
-
-# 导出所有工具
-ALL_TOOLS = [search_crypto_market_news, search_crypto_regulatory_news, search_crypto_macro_news]

@@ -67,7 +67,8 @@ const config: Config = {
       title: 'Quant Flow',
       logo: {
         alt: 'Quant Flow Logo',
-        src: 'img/logo.svg',
+        src: 'img/logo-light.svg',
+        srcDark: 'img/logo-dark.svg',
       },
       items: [
         {

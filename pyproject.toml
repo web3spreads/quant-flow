@@ -1,23 +1,12 @@
 [project]
 name = "quant-flow"
 version = "0.5.0"
-description = "基于 LangChain Agent 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
+description = "基于 Pydantic AI 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # LangChain 核心（langchain 主包不直接使用，通过子包导入）
-    "langchain-core>=1.2.0",
-    "langgraph>=1.0.4",
-
-    # LLM 供应商（全部通过 llm_client.py 条件导入，按需加载）
-    "langchain-openai>=1.1.0",
-    "langchain-cloudflare>=0.1.11",
-    "langchain-google-genai>=4.1.2",
-    "langchain-litellm>=0.3.5",
-    "langchain-nvidia-ai-endpoints>=1.0.0",
-
-    # 外部信息搜索
-    "langchain-exa>=1.0.0",
+    # Pydantic AI Core
+    "pydantic-ai>=1.0.0",
 
     # 交易所 SDK
     "hyperliquid-python-sdk>=0.21.0",
@@ -65,7 +54,7 @@ packages = ["src"]
 
 # Ruff 配置
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 exclude = [
     ".git",

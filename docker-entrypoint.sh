@@ -48,20 +48,23 @@ useradd -u "$PUID" -g "$PGID" -M -s /bin/false -d /app appuser 2>/dev/null || tr
 export APP_USER=appuser
 
 # ========== 解析运行模式 ==========
+# 统一入口后，RUN_MODE 仅映射为 PERP_ENABLED/GRID_ENABLED 两个开关，
+# 由单一 main.py 进程读取（环境变量优先级高于 config.yaml），决定运行
+# 永续 / 网格 / 两者并行。不再有独立的网格入口与网格配置文件。
 RUN_MODE=${RUN_MODE:-main}
 
 case "$RUN_MODE" in
     main)
-        ENABLE_MAIN=true
-        ENABLE_GRID=false
+        PERP_ENABLED=true
+        GRID_ENABLED=false
         ;;
     grid)
-        ENABLE_MAIN=false
-        ENABLE_GRID=true
+        PERP_ENABLED=false
+        GRID_ENABLED=true
         ;;
     all)
-        ENABLE_MAIN=true
-        ENABLE_GRID=true
+        PERP_ENABLED=true
+        GRID_ENABLED=true
         ;;
     *)
         echo -e "${RED}❌ 无效的 RUN_MODE: ${RUN_MODE}，支持: main / grid / all${NC}"
@@ -69,27 +72,20 @@ case "$RUN_MODE" in
         ;;
 esac
 
-export ENABLE_MAIN ENABLE_GRID
+export PERP_ENABLED GRID_ENABLED
 export MAIN_CONFIG=${MAIN_CONFIG:-config.yaml}
-export GRID_CONFIG=${GRID_CONFIG:-config.grid.yaml}
 
-echo -e "${YELLOW}📋 运行模式: ${RUN_MODE}${NC}"
+echo -e "${YELLOW}📋 运行模式: ${RUN_MODE} (PERP_ENABLED=${PERP_ENABLED}, GRID_ENABLED=${GRID_ENABLED})${NC}"
 
-# ========== 交易模式配置 ==========
-echo -e "${YELLOW}📋 主交易配置: ${MAIN_CONFIG}, 网格配置: ${GRID_CONFIG}${NC}"
+# ========== 交易配置 ==========
+echo -e "${YELLOW}📋 配置文件: ${MAIN_CONFIG}${NC}"
 
 # ========== 验证配置文件 ==========
 echo -e "${YELLOW}📋 检查配置文件...${NC}"
 
-if [ "$ENABLE_MAIN" = "true" ] && [ ! -f "/app/${MAIN_CONFIG}" ]; then
-    echo -e "${RED}❌ 主交易配置文件 ${MAIN_CONFIG} 不存在${NC}"
+if [ ! -f "/app/${MAIN_CONFIG}" ]; then
+    echo -e "${RED}❌ 配置文件 ${MAIN_CONFIG} 不存在${NC}"
     echo -e "${YELLOW}💡 请确保已挂载 ${MAIN_CONFIG} 文件${NC}"
-    exit 1
-fi
-
-if [ "$ENABLE_GRID" = "true" ] && [ ! -f "/app/${GRID_CONFIG}" ]; then
-    echo -e "${RED}❌ 网格配置文件 ${GRID_CONFIG} 不存在${NC}"
-    echo -e "${YELLOW}💡 请确保已挂载 ${GRID_CONFIG} 文件${NC}"
     exit 1
 fi
 
