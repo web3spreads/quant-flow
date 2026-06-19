@@ -54,7 +54,17 @@ class MaxDrawdownProtection(IProtection):
                 if elapsed >= pause_hours:
                     self._is_paused = False
                     self._pause_reason = ""
-                    logger.info("最大回撤保护暂停期已过，恢复交易")
+                    # 冷静期结束后，把高水位峰值重置为当前净值，从新基准重新计量回撤。
+                    # 否则峰值永远停在触发前的旧高点：恢复交易后，同一笔已经发生的回撤会
+                    # 立刻被再次判定超限而重新暂停——"暂停 N 小时后自动恢复"形同死代码，
+                    # 账户被永久锁死（尤其 CLOSE_ALL 平成空仓后净值盯市冻结，永远回不到
+                    # 旧峰值）。重置后从新基准继续保护：再跌一个阈值仍会照常触发。
+                    self._peak_equity = context.equity
+                    self._last_protection_time = None
+                    logger.info(
+                        "最大回撤保护暂停期已过，恢复交易（高水位重置为当前净值 $%.2f）",
+                        context.equity,
+                    )
 
             # 如果仍在暂停中
             if self._is_paused:
