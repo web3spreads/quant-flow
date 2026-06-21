@@ -199,6 +199,29 @@ class Config:
             trading.get("grid_force_neutral_mode"),
             False,
         )
+        # 网格库存硬上限（USD 净持仓名义额）：净持仓名义额达到此值后，禁止再往「加剧当前
+        # 持仓方向」的方向挂开仓单（只放行减仓方向）。专治单边趋势中逆势库存无限累积——
+        # 这是线上最大亏损根因（中性网格在上涨里不断开空、空头库存无上限放大）。
+        # 默认 0 = 关闭（保持历史行为）。
+        self.grid_max_position_notional_usd: float = float(
+            trading.get("grid_max_position_notional_usd", 0) or 0
+        )
+        # 网格趋势过滤：多周期趋势一致强势（强势上涨/下跌票数达阈值）时，本轮暂停网格加仓
+        # （等价于一次 KEEP_GRID，仅维持 reduce_only 减仓保护单），避免逆势做市。默认关闭。
+        self.grid_trend_filter_enabled: bool = self._as_bool(
+            trading.get("grid_trend_filter_enabled"),
+            False,
+        )
+        # 触发趋势过滤所需的「强势」周期票数（多周期趋势里 强势上涨 或 强势下跌 的计数阈值）。
+        self.grid_trend_filter_min_votes: int = int(
+            trading.get("grid_trend_filter_min_votes", 3) or 3
+        )
+        # 趋势过滤触发时，是否市价平掉与趋势相反的逆势库存（强力止血，如上涨趋势里平掉空头）。
+        # 默认关闭（仅暂停加仓，不主动平仓）。
+        self.grid_trend_filter_flatten_adverse: bool = self._as_bool(
+            trading.get("grid_trend_filter_flatten_adverse"),
+            False,
+        )
 
         # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
         # 向后兼容：支持旧字段名 default_leverage

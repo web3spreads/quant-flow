@@ -58,11 +58,14 @@ class GridManager:
         grid_rebuild_min_price_change_ratio: float = DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO,
         barrier_config: TripleBarrierConfig | None = None,
         on_round_trip_close: Callable[[str, float], None] | None = None,
+        max_position_notional_usd: float = 0.0,
     ):
         self.order_manager = order_manager
         self.logger = logger
         self.notifier = notifier
         self.state_file = state_file
+        # 网格库存硬上限（USD 净持仓名义额）：>0 时启用。净持仓名义额达此值后禁止同向加仓。
+        self.max_position_notional_usd = max(0.0, self._safe_float(max_position_notional_usd, 0.0))
         # 每轮 round-trip 平仓回调：把网格逐轮盈亏上报给账户级风控（连亏熔断）。
         # GridManager 不直接依赖 ProtectionManager，仅通过回调解耦上报，main.py 负责接线。
         self.on_round_trip_close = on_round_trip_close
@@ -287,6 +290,16 @@ class GridManager:
         buy_orders = []
         sell_orders = []
 
+        # 库存上限预判（一次性算好，避免逐格查持仓/价格）：挂限价单本身不改变持仓，
+        # 故循环期间净持仓不变，这两个布尔在整轮重建中稳定。超限方向的开仓单整轮跳过。
+        block_buy_open = self._would_exceed_inventory_cap(symbol, is_buy_open=True)
+        block_sell_open = self._would_exceed_inventory_cap(symbol, is_buy_open=False)
+        if block_buy_open or block_sell_open:
+            self.logger.print_warning(
+                f"   [Grid] 🚧 库存达上限 ${self.max_position_notional_usd:.0f}，"
+                f"本轮跳过{'买' if block_buy_open else ''}{'卖' if block_sell_open else ''}开仓单（防逆势累积）"
+            )
+
         # 3. 重新布置
         for i, p in enumerate(prices):
             if i > 0:
@@ -294,6 +307,8 @@ class GridManager:
 
             try:
                 if p < current_price:
+                    if block_buy_open:
+                        continue
                     res = self.order_manager.execute_long_limit(
                         symbol,
                         new_amount,
@@ -322,6 +337,8 @@ class GridManager:
                             f"   [Grid] ⚠️ 买单跳过 @ ${p}: {res.get('message', 'unknown')}"
                         )
                 elif p > current_price:
+                    if block_sell_open:
+                        continue
                     res = self.order_manager.execute_short_limit(
                         symbol,
                         new_amount,
@@ -660,6 +677,67 @@ class GridManager:
             if position.get("coin") == symbol:
                 return self._safe_float(position.get("szi"), 0.0)
         return 0.0
+
+    def _would_exceed_inventory_cap(self, symbol: str, is_buy_open: bool) -> bool:
+        """库存上限守卫：净持仓名义额已达上限时，禁止再往「加剧当前持仓方向」的方向开仓。
+
+        这是单边趋势亏损的根因防线——中性网格在上涨里不断成交上方卖单开空，空头库存
+        无任何上限地累积，最终被市价平掉造成大额亏损。启用后：净空头达上限就不再放行卖开仓单
+        （但仍放行买开仓单以减仓/反向收敛），反之亦然。
+
+        Args:
+            is_buy_open: True=买入开多单（增多头敞口）；False=卖出开空单（增空头敞口）。
+        Returns:
+            True 表示该开仓单会加剧已超限的同向库存，应跳过。
+        """
+        cap = self.max_position_notional_usd
+        if cap <= 0:
+            return False  # 未启用
+        position_size = self._get_symbol_position_size(symbol)
+        if abs(position_size) <= 0:
+            return False  # 当前空仓，任何方向都允许（库存从这里才开始累积）
+        try:
+            price = self.order_manager.client.get_current_price(symbol) or 0.0
+        except Exception:
+            return False  # 取价失败时不拦截，避免误伤正常布单
+        notional = abs(position_size) * float(price)
+        if notional < cap:
+            return False
+        # 已达/超上限：只放行减仓方向。加多(买)且已持多、或加空(卖)且已持空 → 同向加仓，拦截。
+        pos_is_long = position_size > 0
+        adding_same_direction = (is_buy_open and pos_is_long) or (
+            (not is_buy_open) and (not pos_is_long)
+        )
+        return adding_same_direction
+
+    def flatten_adverse_inventory(self, symbol: str, trend_dir: int) -> bool:
+        """趋势过滤的强力止血：当净持仓方向与趋势相反时，市价平掉逆势库存。
+
+        trend_dir: +1=上涨趋势, -1=下跌趋势。上涨却持空、或下跌却持多即为「逆势」，
+        这正是单边趋势中持续放大的亏损头寸，直接平掉以止血。复用 ``_emergency_close_all``
+        （会撤单、市价平仓并把已实现亏损上报连亏熔断）。
+
+        Returns:
+            True 表示确实平掉了逆势库存。
+        """
+        if trend_dir == 0:
+            return False
+        position_size = self._get_symbol_position_size(symbol)
+        if abs(position_size) <= 0:
+            return False
+        adverse = (trend_dir > 0 and position_size < 0) or (
+            trend_dir < 0 and position_size > 0
+        )
+        if not adverse:
+            return False
+        self.logger.print_warning(
+            f"   [Grid] 🩹 趋势({'涨' if trend_dir > 0 else '跌'})与持仓"
+            f"({'空' if position_size < 0 else '多'})相反，市价平掉逆势库存"
+        )
+        self._emergency_close_all(
+            symbol, reason=f"趋势过滤：平逆势库存 (trend_dir={trend_dir})"
+        )
+        return True
 
     def _get_size_step(self, symbol: str) -> float:
         try:
@@ -1079,6 +1157,23 @@ class GridManager:
                 level="warn",
             )
 
+        # 把被市价平掉的持仓盈亏上报连亏熔断：否则该插件对网格里最大的那些止损/紧急平仓
+        # 永远不可见（只数限价 TP 平仓的小赢小输，线上 global_losses 长期为 0 即铁证）。
+        # 用平仓前 OPEN_FILLED 层的未实现盈亏近似市价平仓的已实现盈亏（忽略滑点/taker 费，
+        # 量级足够驱动连亏判定）。必须在删除层级数据之前计算。
+        try:
+            if self.on_round_trip_close is not None:
+                tracker = self.pnl_trackers.get(symbol)
+                levels = self.grid_levels.get(symbol)
+                if tracker and levels:
+                    cp = self.order_manager.client.get_current_price(symbol)
+                    if cp and cp > 0:
+                        closed_pnl = tracker.calculate_unrealized_pnl(levels, to_decimal(cp))
+                        if abs(closed_pnl) > 0:
+                            self.on_round_trip_close(symbol, float(closed_pnl))
+        except Exception as e:
+            self.logger.print_warning(f"   [Grid] 紧急平仓盈亏上报风控失败: {e}")
+
         # 3. 清理层级数据
         if symbol in self.grid_levels:
             del self.grid_levels[symbol]
@@ -1105,6 +1200,55 @@ class GridManager:
             except Exception as e:
                 self.logger.print_warning(f"   [Grid] 发送 Triple Barrier 触发通知失败: {e}")
 
+    def check_barrier(self, symbol: str) -> bool:
+        """Triple Barrier 兜底检查（独立方法，供每个网格周期开头无条件调用）。
+
+        历史问题：barrier 仅在 ``sync_grid_incremental`` 的窄分支里检查，AI 频繁返回
+        KEEP_GRID/ERROR 时根本走不到那里，导致 -5%/超时等兜底止损长期形同虚设。提取为
+        独立方法后由 ``grid_cycle`` 每轮先调用，不受 AI action 分支影响。触发即紧急平仓。
+
+        Returns:
+            True 表示已触发屏障并紧急平仓（本轮应跳过后续布单）。
+        """
+        levels = self.grid_levels.get(symbol)
+        monitor = self.barrier_monitors.get(symbol)
+        tracker = self.pnl_trackers.get(symbol)
+        if not levels or not monitor or not tracker:
+            return False
+        try:
+            current_price_raw = self.order_manager.client.get_current_price(symbol)
+            if not current_price_raw or current_price_raw <= 0:
+                return False
+            current_price_d = to_decimal(current_price_raw)
+            total_investment = sum((level.amount for level in levels), Decimal("0"))
+            net_pnl_pct = tracker.get_net_pnl_pct(levels, current_price_d, total_investment)
+            trigger = monitor.check(
+                current_price=current_price_d,
+                net_pnl_pct=net_pnl_pct,
+                current_time=time.time(),
+            )
+            if trigger:
+                self.logger.print_warning(f"   [Grid] Triple Barrier 触发: {trigger}")
+                cloud = get_cloud_logger()
+                if cloud:
+                    cloud.send_risk_event(
+                        symbol=symbol,
+                        risk_type="triple_barrier_triggered",
+                        details={
+                            "trigger_reason": trigger,
+                            "net_pnl_pct": float(net_pnl_pct),
+                            "current_price": current_price_raw,
+                            "total_investment": float(total_investment),
+                            "active_levels": len(levels),
+                        },
+                        level="error",
+                    )
+                self._emergency_close_all(symbol, reason=trigger)
+                return True
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] Triple Barrier 检查异常: {e}")
+        return False
+
     def sync_grid_incremental(self, symbol: str):
         """增量同步：只处理需要操作的层级，不全撤全建。"""
         levels = self.grid_levels.get(symbol)
@@ -1112,41 +1256,10 @@ class GridManager:
             self.logger.print_warning(f"   [Grid] {symbol} 无层级数据，跳过增量同步")
             return
 
-        # Triple Barrier 屏障检查
-        monitor = self.barrier_monitors.get(symbol)
-        tracker = self.pnl_trackers.get(symbol)
-        if monitor and tracker:
-            try:
-                current_price_raw = self.order_manager.client.get_current_price(symbol)
-                if current_price_raw and current_price_raw > 0:
-                    current_price_d = to_decimal(current_price_raw)
-                    total_investment = sum((level.amount for level in levels), Decimal("0"))
-                    net_pnl_pct = tracker.get_net_pnl_pct(levels, current_price_d, total_investment)
-                    trigger = monitor.check(
-                        current_price=current_price_d,
-                        net_pnl_pct=net_pnl_pct,
-                        current_time=time.time(),
-                    )
-                    if trigger:
-                        self.logger.print_warning(f"   [Grid] Triple Barrier 触发: {trigger}")
-                        cloud = get_cloud_logger()
-                        if cloud:
-                            cloud.send_risk_event(
-                                symbol=symbol,
-                                risk_type="triple_barrier_triggered",
-                                details={
-                                    "trigger_reason": trigger,
-                                    "net_pnl_pct": float(net_pnl_pct),
-                                    "current_price": current_price_raw,
-                                    "total_investment": float(total_investment),
-                                    "active_levels": len(levels),
-                                },
-                                level="error",
-                            )
-                        self._emergency_close_all(symbol, reason=trigger)
-                        return
-            except Exception as e:
-                self.logger.print_error(f"   [Grid] Triple Barrier 检查异常: {e}")
+        # Triple Barrier 屏障检查（与 grid_cycle 顶层调用同一方法；此处保留以覆盖
+        # 非 grid_cycle 路径直接调用 sync_grid 的情况，已平仓时幂等返回 False）
+        if self.check_barrier(symbol):
+            return
 
         exchange_orders = self._get_symbol_open_orders(symbol)
         exchange_oids = {o["oid"] for o in exchange_orders if "oid" in o}
@@ -1233,6 +1346,14 @@ class GridManager:
         if is_buy and price >= current_price:
             return
         if not is_buy and price <= current_price:
+            return
+
+        # 库存上限：净持仓达上限后不再往同方向加仓（防单边趋势逆势累积，本次最大亏损根因）。
+        # 这是主要执行点——增量同步每轮在此重新挂开仓单，超限方向被持续拦截，库存自然收敛。
+        if self._would_exceed_inventory_cap(symbol, is_buy_open=is_buy):
+            self.logger.print_warning(
+                f"   [Grid] 🚧 {level.id} 库存达上限，跳过{'买' if is_buy else '卖'}开仓单（防逆势累积）"
+            )
             return
 
         # 从 state 中获取 tp/sl 配置
