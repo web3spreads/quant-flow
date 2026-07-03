@@ -97,8 +97,14 @@ class PositionTimeoutProtection(IProtection):
             }
             self.save_state()
 
-    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
-        """移除持仓记录"""
+    def on_trade_close(
+        self,
+        symbol: str,
+        pnl: float,
+        timestamp: datetime | None = None,
+        forced: bool = False,
+    ) -> None:
+        """移除持仓记录（forced 与否均只做清理，不涉及盈亏语义）"""
         with self._lock:
             self._position_records.pop(symbol, None)
             self.save_state()

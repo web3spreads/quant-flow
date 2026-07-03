@@ -445,6 +445,7 @@ class TradingLogger:
         stop_loss_price: float = None,
         status: str = "FILLED",
         pnl: float = None,
+        reason: str = None,
     ):
         """
         记录交易日志
@@ -459,6 +460,8 @@ class TradingLogger:
             stop_loss_price: 止损价格
             status: 订单状态
             pnl: 盈亏（如果是平仓）
+            reason: 归因标签（如 GRID_TP / 趋势过滤手术式减仓 / Triple Barrier 文案），
+                用于事后按盈亏来源聚合分析
         """
         timestamp = datetime.now()
         trade_entry = {
@@ -472,6 +475,7 @@ class TradingLogger:
             "stop_loss_price": stop_loss_price,
             "status": status,
             "pnl": pnl,
+            "reason": reason,
         }
 
         # 保存为 JSON 格式
@@ -495,6 +499,35 @@ class TradingLogger:
                 take_profit_price=float(take_profit_price) if take_profit_price else 0.0,
                 stop_loss_price=float(stop_loss_price) if stop_loss_price else 0.0,
             )
+
+    def log_equity_snapshot(
+        self,
+        equity: float,
+        available: float,
+        unrealized_pnl: float = 0.0,
+        position_notional: float = 0.0,
+        symbol: str = "",
+    ):
+        """记录净值快照到 logs/equity/equity_YYYYMMDD.jsonl（净值曲线观测）。
+
+        历史缺陷：账户净值只能从熔断告警文案里反推（峰值 $X → 当前 $Y），
+        12.5 天亏 39% 没有一条结构化记录。每周期一行、每天一个文件，
+        用 jq/pandas 即可直接画净值曲线。
+        """
+        timestamp = datetime.now()
+        entry = {
+            "timestamp": timestamp.isoformat(),
+            "equity": float(equity),
+            "available": float(available),
+            "unrealized_pnl": float(unrealized_pnl),
+            "position_notional": float(position_notional),
+            "symbol": symbol,
+        }
+        equity_dir = self.log_dir / "equity"
+        equity_dir.mkdir(parents=True, exist_ok=True)
+        filename = equity_dir / f"equity_{timestamp.strftime('%Y%m%d')}.jsonl"
+        with open(filename, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, cls=CustomJSONEncoder) + "\n")
 
 
 # 全局日志实例

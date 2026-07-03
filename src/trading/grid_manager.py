@@ -59,6 +59,9 @@ class GridManager:
         barrier_config: TripleBarrierConfig | None = None,
         on_round_trip_close: Callable[[str, float], None] | None = None,
         max_position_notional_usd: float = 0.0,
+        trend_flatten_surgical: bool = False,
+        inventory_cap_strict: bool = False,
+        keep_grid_reconcile: bool = False,
     ):
         self.order_manager = order_manager
         self.logger = logger
@@ -66,6 +69,12 @@ class GridManager:
         self.state_file = state_file
         # 网格库存硬上限（USD 净持仓名义额）：>0 时启用。净持仓名义额达此值后禁止同向加仓。
         self.max_position_notional_usd = max(0.0, self._safe_float(max_position_notional_usd, 0.0))
+        # 手术式平逆势库存：只平超出上限的逆势层级，保留网格挂单与层级状态（默认关闭=全量拆网）
+        self.trend_flatten_surgical = bool(trend_flatten_surgical)
+        # 库存上限严格模式：名义额计入同向未成交挂单，取价/查单失败 fail-closed（默认关闭）
+        self.inventory_cap_strict = bool(inventory_cap_strict)
+        # KEEP_GRID 周期对账：撤掉交易所上与本地状态无对应的非 reduce_only 残留挂单（默认关闭）
+        self.keep_grid_reconcile = bool(keep_grid_reconcile)
         # 每轮 round-trip 平仓回调：把网格逐轮盈亏上报给账户级风控（连亏熔断）。
         # GridManager 不直接依赖 ProtectionManager，仅通过回调解耦上报，main.py 负责接线。
         self.on_round_trip_close = on_round_trip_close
@@ -202,6 +211,11 @@ class GridManager:
                 self.logger.print_info(
                     f"{symbol}: AI 返回 KEEP_GRID，本轮仅检查减仓保护单（reduce_only）"
                 )
+            elif action == "INSUFFICIENT_CAPITAL":
+                self.logger.print_error(
+                    f"{symbol}: 💸 资金不足以支撑最小网格，本轮拒绝布单。"
+                    f"原因: {ai_config.get('reason', 'unknown')}"
+                )
             elif action == "ERROR":
                 reason = str(ai_config.get("reason", "unknown"))
                 self.logger.print_warning(f"{symbol}: AI 决策异常 action=ERROR，reason={reason}")
@@ -213,6 +227,22 @@ class GridManager:
                 self.logger.print_warning(
                     f"{symbol}: AI 返回未知 action={action}，按保守策略仅检查减仓保护单"
                 )
+
+            # 对账：撤掉交易所上与本地层级/状态无对应的非 reduce_only 残单。
+            # 历史缺陷：KEEP_GRID 分支从不清理残单，靠成交后「无对应持仓」事后移除
+            # （线上单日 194 次），期间残单可能意外成交产生计划外库存。
+            if self.keep_grid_reconcile:
+                self._reconcile_orphan_orders(symbol)
+
+            # 网格空转告警：层级已被清空（紧急平仓/熔断后）且无持仓时，网格没有任何
+            # 挂单在工作，只能等 AI 下一次 UPDATE_GRID 重建——这段时间是纯空转，
+            # 醒目提示避免误以为网格还在运行。
+            if not self.grid_levels.get(symbol) and action == "KEEP_GRID":
+                if abs(self._get_symbol_position_size(symbol)) <= 0:
+                    self.logger.print_warning(
+                        f"   [Grid] 💤 {symbol} 网格空转中：无层级、无持仓，"
+                        f"等待 AI 返回 UPDATE_GRID 重建"
+                    )
 
             if self.grid_reduce_only_exit_orders_enabled:
                 self._ensure_min_orders(symbol=symbol)
@@ -666,6 +696,46 @@ class GridManager:
         except Exception as e:
             self.logger.print_error(f"   [Grid] ❌ 清理孤儿 trigger 单失败: {e}")
 
+    def _reconcile_orphan_orders(self, symbol: str):
+        """撤掉交易所上与本地层级/状态无对应的非 reduce_only 残留挂单。
+
+        「孤儿单」来源：全量重建被中断、崩溃恢复后状态漂移、紧急平仓撤单失败残留等。
+        reduce_only 单不动（属于 ``_ensure_min_orders`` 的减仓保护单簿记，撤了会互相打架）；
+        trigger 单由 ``_cleanup_orphan_trigger_orders`` 单独治理。
+        """
+        try:
+            open_orders = self._get_symbol_open_orders(symbol)
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] ❌ 对账查单失败: {e}")
+            return
+
+        known_oids: set[int] = set()
+        for level in self.grid_levels.get(symbol) or []:
+            if level.open_order_id is not None:
+                known_oids.add(level.open_order_id)
+            if level.close_order_id is not None:
+                known_oids.add(level.close_order_id)
+        grid = self.state["active_grids"].get(symbol) or {}
+        for order in list(grid.get("buy_orders") or []) + list(grid.get("sell_orders") or []):
+            if isinstance(order, dict) and order.get("oid") is not None:
+                known_oids.add(order["oid"])
+
+        canceled = 0
+        for order in open_orders:
+            oid = order.get("oid")
+            if oid is None or oid in known_oids:
+                continue
+            if bool(order.get("reduceOnly", False)):
+                continue  # 减仓保护单不属于层级簿记，跳过
+            if self._is_trigger_order(order):
+                continue
+            if self._cancel_order_with_retry(symbol, oid):
+                canceled += 1
+        if canceled:
+            self.logger.print_warning(
+                f"   [Grid] 🧹 对账撤掉无主残单 {canceled} 个（{symbol}）"
+            )
+
     def _get_symbol_position_size(self, symbol: str) -> float:
         try:
             positions = self.order_manager.get_current_positions() or []
@@ -694,31 +764,77 @@ class GridManager:
         if cap <= 0:
             return False  # 未启用
         position_size = self._get_symbol_position_size(symbol)
-        if abs(position_size) <= 0:
-            return False  # 当前空仓，任何方向都允许（库存从这里才开始累积）
+        if not self.inventory_cap_strict and abs(position_size) <= 0:
+            return False  # 宽松模式：当前空仓即放行（历史行为，不看未成交挂单）
         try:
             price = self.order_manager.client.get_current_price(symbol) or 0.0
-        except Exception:
-            return False  # 取价失败时不拦截，避免误伤正常布单
-        notional = abs(position_size) * float(price)
-        if notional < cap:
-            return False
-        # 已达/超上限：只放行减仓方向。加多(买)且已持多、或加空(卖)且已持空 → 同向加仓，拦截。
+            if self.inventory_cap_strict and price <= 0:
+                raise ValueError(f"无效价格 {price}")
+        except Exception as e:
+            if self.inventory_cap_strict:
+                # 严格模式 fail-closed：取价失败时拦截加仓。异常行情/接口抖动时恰恰是
+                # 逆势库存风险最高的时刻，宽松放行（历史行为）等于风控在最需要时缺位。
+                self.logger.print_warning(
+                    f"   [Grid] 🚧 库存上限检查取价失败（{e}），严格模式拦截{symbol}开仓单"
+                )
+                return True
+            return False  # 宽松模式：取价失败不拦截，避免误伤正常布单
+
+        # 方向化敞口：同向持仓 + （严格模式）同向未成交开仓挂单；反向持仓抵扣。
+        # 历史缺陷：只看已成交持仓——一轮布单里同向多格挂单全部成交可把库存推到上限数倍。
+        pos_notional = abs(position_size) * float(price)
         pos_is_long = position_size > 0
-        adding_same_direction = (is_buy_open and pos_is_long) or (
-            (not is_buy_open) and (not pos_is_long)
-        )
-        return adding_same_direction
+        if abs(position_size) <= 0:
+            directional_exposure = 0.0
+        elif (is_buy_open and pos_is_long) or ((not is_buy_open) and (not pos_is_long)):
+            directional_exposure = pos_notional  # 持仓与拟开方向相同
+        else:
+            directional_exposure = -pos_notional  # 反向持仓：新开单先抵消库存
+
+        if self.inventory_cap_strict:
+            try:
+                open_orders = self._get_symbol_open_orders(symbol)
+            except Exception as e:
+                self.logger.print_warning(
+                    f"   [Grid] 🚧 库存上限检查查单失败（{e}），严格模式拦截{symbol}开仓单"
+                )
+                return True
+            side_check = self._is_buy_side if is_buy_open else self._is_sell_side
+            for order in open_orders:
+                # reduce_only 挂单只减仓不加库存，不计入
+                if bool(order.get("reduceOnly", False)):
+                    continue
+                if not side_check(order):
+                    continue
+                px = self._safe_float(order.get("limitPx"), 0.0)
+                sz = self._safe_float(order.get("sz"), 0.0)
+                directional_exposure += abs(px * sz)
+
+        if directional_exposure < cap:
+            return False
+        if not self.inventory_cap_strict:
+            # 宽松模式保持历史语义：仅在已达上限时拦截同向加仓
+            adding_same_direction = (is_buy_open and pos_is_long) or (
+                (not is_buy_open) and (not pos_is_long)
+            )
+            return adding_same_direction
+        return True
 
     def flatten_adverse_inventory(self, symbol: str, trend_dir: int) -> bool:
-        """趋势过滤的强力止血：当净持仓方向与趋势相反时，市价平掉逆势库存。
+        """趋势过滤的止血动作：当净持仓方向与趋势相反时，减掉逆势库存。
 
-        trend_dir: +1=上涨趋势, -1=下跌趋势。上涨却持空、或下跌却持多即为「逆势」，
-        这正是单边趋势中持续放大的亏损头寸，直接平掉以止血。复用 ``_emergency_close_all``
-        （会撤单、市价平仓并把已实现亏损上报连亏熔断）。
+        trend_dir: +1=上涨趋势, -1=下跌趋势。上涨却持空、或下跌却持多即为「逆势」。
+
+        两种模式（trend_flatten_surgical 开关）：
+        - 关闭（历史行为）：``_emergency_close_all`` 全量拆网——撤全部挂单、市价全平、
+          删全部层级、重置重建冷却。线上实证 12.5 天拆网 145 次，每次都在摆动极值
+          实现亏损并支付 taker 费，然后冷却 900s 重建，与网格「持库存等回归」的
+          盈利机制正面对抗，是净值 -39% 的主出血口。
+        - 开启（手术式）：只市价平掉「超出库存上限的逆势层级」，保留顺势挂单、
+          剩余层级与重建冷却状态，网格继续运转。
 
         Returns:
-            True 表示确实平掉了逆势库存。
+            True 表示确实平掉了（全部或部分）逆势库存。
         """
         if trend_dir == 0:
             return False
@@ -730,6 +846,8 @@ class GridManager:
         )
         if not adverse:
             return False
+        if self.trend_flatten_surgical:
+            return self._surgical_reduce_adverse(symbol, trend_dir, position_size)
         self.logger.print_warning(
             f"   [Grid] 🩹 趋势({'涨' if trend_dir > 0 else '跌'})与持仓"
             f"({'空' if position_size < 0 else '多'})相反，市价平掉逆势库存"
@@ -738,6 +856,129 @@ class GridManager:
             symbol, reason=f"趋势过滤：平逆势库存 (trend_dir={trend_dir})"
         )
         return True
+
+    def _surgical_reduce_adverse(self, symbol: str, trend_dir: int, position_size: float) -> bool:
+        """手术式减仓：逐层市价平掉超出库存上限的逆势层级，网格其余部分原样保留。
+
+        与 ``_emergency_close_all`` 的区别：不撤顺势挂单、不删层级数据、不动 PnL tracker
+        与 barrier monitor、不重置重建冷却——被平层级 reset 回 IDLE，趋势解除后由增量
+        同步自然重新挂单（重新挂单仍受库存上限约束）。
+
+        削减目标：逆势名义额 ≤ max_position_notional_usd；上限未启用（=0）时保留一层
+        （给均值回归留出最小仓位，避免整段趋势判定期间空转）。
+        按「入场价最差优先」平仓：多头库存平最高买入价、空头库存平最低卖出价。
+
+        Returns:
+            True 表示至少平掉了一个层级。
+        """
+        try:
+            current_price = self.order_manager.client.get_current_price(symbol) or 0.0
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] 手术式减仓取价失败，跳过本轮: {e}")
+            return False
+        if current_price <= 0:
+            return False
+        cp = to_decimal(current_price)
+
+        adverse_side = "SHORT" if position_size < 0 else "LONG"
+        levels = self.grid_levels.get(symbol) or []
+        adverse_levels = [
+            level
+            for level in levels
+            if level.side == adverse_side
+            and level.state in (GridLevelState.OPEN_FILLED, GridLevelState.CLOSE_PENDING)
+            and level.open_fill_price is not None
+            and level.open_fill_amount is not None
+        ]
+
+        adverse_notional = sum(
+            (level.open_fill_amount * cp for level in adverse_levels), Decimal("0")
+        )
+        cap = to_decimal(self.max_position_notional_usd)
+        if cap <= 0:
+            # 上限未启用：保留一层库存
+            keep_one = max(adverse_levels, key=lambda lv: lv.open_fill_amount * cp, default=None)
+            cap = keep_one.open_fill_amount * cp if keep_one else Decimal("0")
+        if adverse_notional <= cap:
+            return False  # 逆势库存在允许范围内：不动，让网格自己回归
+
+        # 入场价最差优先：多头平最高入场价，空头平最低入场价
+        adverse_levels.sort(
+            key=lambda lv: lv.open_fill_price,
+            reverse=(adverse_side == "LONG"),
+        )
+
+        reduced_count = 0
+        total_reduced_pnl = Decimal("0")
+        tracker = self.pnl_trackers.get(symbol)
+        if tracker is None:
+            tracker = GridPnLTracker()
+            self.pnl_trackers[symbol] = tracker
+
+        for level in adverse_levels:
+            if adverse_notional <= cap:
+                break
+            # 先撤该层挂着的平仓单，避免市价平仓后 reduce_only 平仓单变孤儿
+            if level.state == GridLevelState.CLOSE_PENDING and level.close_order_id:
+                self._cancel_order_with_retry(symbol, level.close_order_id)
+
+            close_size = float(level.open_fill_amount)
+            try:
+                result = self.order_manager.client.close_position(symbol, size=close_size)
+            except Exception as e:
+                self.logger.print_error(f"   [Grid] {level.id} 手术式减仓下单异常: {e}")
+                continue
+            if not result or str(result.get("status", "")).lower() != "ok":
+                self.logger.print_warning(
+                    f"   [Grid] {level.id} 手术式减仓失败: {result}"
+                )
+                continue
+
+            # 以当前价近似成交价记账（忽略滑点；与紧急平仓同一近似口径），
+            # 复用 record_round_trip 保证 realized PnL / 手续费统计口径一致。
+            level.close_fill_price = cp
+            level.close_fill_amount = level.open_fill_amount
+            level.close_fill_time = time.time()
+            pnl = tracker.record_round_trip(level)
+            total_reduced_pnl += pnl
+            adverse_notional -= level.open_fill_amount * cp
+            reduced_count += 1
+
+            self.logger.log_trade(
+                symbol=symbol,
+                action="GRID_FORCED_REDUCE",
+                amount=close_size,
+                price=float(cp),
+                order_id=str(level.close_order_id or ""),
+                status="FILLED",
+                pnl=float(pnl),
+                reason=f"趋势过滤手术式减仓 (trend_dir={trend_dir}, level={level.id})",
+            )
+            # 强制平仓事件：亏损计入连亏熔断，净盈利不重置计数（见 forced 语义）
+            self._report_round_trip_close(symbol, float(pnl), forced=True)
+            level.reset()
+
+        if reduced_count:
+            self.logger.print_warning(
+                f"   [Grid] 🔪 手术式减仓完成: 平掉 {reduced_count} 个逆势层级，"
+                f"实现盈亏 {float(total_reduced_pnl):+.4f}，剩余逆势名义额 "
+                f"${float(adverse_notional):.2f} ≤ 目标 ${float(cap):.2f}"
+            )
+            cloud = get_cloud_logger()
+            if cloud:
+                cloud.send_grid_event(
+                    symbol=symbol,
+                    action="surgical_reduce",
+                    details={
+                        "trend_dir": trend_dir,
+                        "reduced_levels": reduced_count,
+                        "realized_pnl": float(total_reduced_pnl),
+                        "remaining_adverse_notional": float(adverse_notional),
+                    },
+                    level="warn",
+                )
+            self._save_incremental_state(symbol)
+        return reduced_count > 0
 
     def _get_size_step(self, symbol: str) -> float:
         try:
@@ -1161,16 +1402,41 @@ class GridManager:
         # 永远不可见（只数限价 TP 平仓的小赢小输，线上 global_losses 长期为 0 即铁证）。
         # 用平仓前 OPEN_FILLED 层的未实现盈亏近似市价平仓的已实现盈亏（忽略滑点/taker 费，
         # 量级足够驱动连亏判定）。必须在删除层级数据之前计算。
+        # forced=True：强平净盈利不得重置连亏计数（线上 145 次强平 0 次熔断的根因）。
         try:
-            if self.on_round_trip_close is not None:
-                tracker = self.pnl_trackers.get(symbol)
-                levels = self.grid_levels.get(symbol)
-                if tracker and levels:
-                    cp = self.order_manager.client.get_current_price(symbol)
-                    if cp and cp > 0:
-                        closed_pnl = tracker.calculate_unrealized_pnl(levels, to_decimal(cp))
-                        if abs(closed_pnl) > 0:
-                            self.on_round_trip_close(symbol, float(closed_pnl))
+            tracker = self.pnl_trackers.get(symbol)
+            levels = self.grid_levels.get(symbol)
+            if tracker and levels:
+                cp = self.order_manager.client.get_current_price(symbol)
+                if cp and cp > 0:
+                    closed_pnl = tracker.calculate_unrealized_pnl(levels, to_decimal(cp))
+                    if abs(closed_pnl) > 0:
+                        # 归因落盘：紧急平仓的已实现盈亏 + 触发原因（barrier/趋势过滤/熔断）
+                        self.logger.log_trade(
+                            symbol=symbol,
+                            action="GRID_EMERGENCY_CLOSE",
+                            amount=float(
+                                sum(
+                                    (
+                                        lv.open_fill_amount
+                                        for lv in levels
+                                        if lv.state
+                                        in (
+                                            GridLevelState.OPEN_FILLED,
+                                            GridLevelState.CLOSE_PENDING,
+                                        )
+                                        and lv.open_fill_amount is not None
+                                    ),
+                                    Decimal("0"),
+                                )
+                            ),
+                            price=float(cp),
+                            order_id="",
+                            status="FILLED",
+                            pnl=float(closed_pnl),
+                            reason=reason,
+                        )
+                        self._report_round_trip_close(symbol, float(closed_pnl), forced=True)
         except Exception as e:
             self.logger.print_warning(f"   [Grid] 紧急平仓盈亏上报风控失败: {e}")
 
@@ -1512,6 +1778,24 @@ class GridManager:
                     },
                 )
 
+    def _report_round_trip_close(self, symbol: str, pnl: float, forced: bool = False):
+        """把逐轮盈亏上报给账户级风控（连亏熔断），统一处理异常与签名兼容。
+
+        forced=True 表示风控强制平仓（紧急平仓/手术式减仓），连亏熔断据此区分
+        「主动止盈」与「被动强平」语义。失败不得影响网格主流程——风控记账出错
+        绝不能拖垮布单/同步，故吞掉异常仅记日志。
+        """
+        if self.on_round_trip_close is None:
+            return
+        try:
+            try:
+                self.on_round_trip_close(symbol, pnl, forced)
+            except TypeError:
+                # 兼容未升级的两参回调（如自定义接线/旧回测桩）
+                self.on_round_trip_close(symbol, pnl)
+        except Exception as e:
+            self.logger.print_warning(f"   [Grid] round-trip 盈亏上报风控失败: {e}")
+
     def _record_round_trip(self, symbol: str, level: GridLevel):
         """在层级完成一轮开平仓时调用，记录 PnL。"""
         tracker = self.pnl_trackers.get(symbol)
@@ -1524,14 +1808,20 @@ class GridManager:
             f"   [Grid] {level.id} 完成第 {level.round_trip_count} 轮 | "
             f"PnL: {pnl:+.4f} | 累计: {level.cumulative_pnl:+.4f}"
         )
+        # 每轮往返的已实现盈亏落盘（trades jsonl 的 pnl 字段历史上恒为 null，
+        # 12.5 天亏 39% 无从归因即源于此）——归因标签 GRID_TP=主动止盈往返。
+        self.logger.log_trade(
+            symbol=symbol,
+            action="GRID_ROUND_TRIP",
+            amount=float(level.open_fill_amount or 0),
+            price=float(level.close_fill_price or 0),
+            order_id=str(level.close_order_id or ""),
+            status="FILLED",
+            pnl=float(pnl),
+            reason="GRID_TP",
+        )
 
-        # 上报逐轮盈亏给账户级风控（连亏熔断）。失败不得影响网格主流程，
-        # 故吞掉异常仅记日志——风控记账出错绝不能拖垮布单/同步。
-        if self.on_round_trip_close is not None:
-            try:
-                self.on_round_trip_close(symbol, float(pnl))
-            except Exception as e:
-                self.logger.print_warning(f"   [Grid] round-trip 盈亏上报风控失败: {e}")
+        self._report_round_trip_close(symbol, float(pnl), forced=False)
 
         # 记录轮回完成和 PnL 到云端
         cloud = get_cloud_logger()

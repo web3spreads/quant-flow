@@ -234,7 +234,11 @@ class TestDetectStrongTrend(unittest.TestCase):
         from main import QuantFlowBot
 
         stub = types.SimpleNamespace(
-            config=types.SimpleNamespace(grid_trend_filter_min_votes=votes)
+            config=types.SimpleNamespace(
+                grid_trend_filter_min_votes=votes,
+                # None = 全部周期参与计票（历史行为）
+                grid_trend_filter_timeframes=None,
+            )
         )
         return QuantFlowBot._detect_strong_trend(stub, trends)
 

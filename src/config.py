@@ -222,6 +222,63 @@ class Config:
             trading.get("grid_trend_filter_flatten_adverse"),
             False,
         )
+        # 趋势过滤参与计票的周期白名单（如 ["15m","1h","4h","1d"]，支持中文键"15分钟"等）。
+        # None/空 = 全部 5 个周期参与（保持历史行为）。线上验证 1m 周期噪声会把普通回调
+        # 误判成强趋势，触发不必要的平仓——建议生产排除 1m。
+        _tf_whitelist = trading.get("grid_trend_filter_timeframes")
+        self.grid_trend_filter_timeframes: list[str] | None = (
+            [str(tf) for tf in _tf_whitelist] if _tf_whitelist else None
+        )
+        # 趋势需连续确认的周期数：连续 N 个网格周期检测到同向强趋势才生效（迟滞去抖）。
+        # 默认 1 = 立即生效（保持历史行为）。线上 12.5 天 145 次强平大多来自单周期瞬时误判。
+        self.grid_trend_filter_confirm_cycles: int = max(
+            1, int(trading.get("grid_trend_filter_confirm_cycles", 1) or 1)
+        )
+        # 平逆势库存所需的连续确认周期数（≥ confirm_cycles）：暂停加仓先行、市价平仓靠后，
+        # 给均值回归留出空间。默认 1 = 确认即平（保持历史行为）。
+        self.grid_trend_filter_flatten_min_cycles: int = max(
+            self.grid_trend_filter_confirm_cycles,
+            int(trading.get("grid_trend_filter_flatten_min_cycles", 1) or 1),
+        )
+        # 手术式平逆势库存：只平「超出库存上限的逆势部分」，保留网格挂单与层级状态，
+        # 不触发重建冷却。默认关闭 = 沿用历史行为（全量拆网 _emergency_close_all，
+        # 线上验证该行为 12.5 天拆网 145 次、每次都在摆动极值实现亏损并重建）。
+        self.grid_trend_filter_surgical_flatten: bool = self._as_bool(
+            trading.get("grid_trend_filter_surgical_flatten"),
+            False,
+        )
+        # 库存上限严格模式：名义额计入同向未成交挂单（防一轮布单后同向全部成交导致超限数倍），
+        # 且取价/查单失败时 fail-closed（拦截加仓而非放行）。默认关闭（保持历史行为）。
+        self.grid_inventory_cap_strict: bool = self._as_bool(
+            trading.get("grid_inventory_cap_strict"),
+            False,
+        )
+        # KEEP_GRID 周期对账：撤掉交易所上与本地层级/状态无对应的非 reduce_only 残留挂单。
+        # 默认关闭（保持历史行为：残单靠成交后"无对应持仓"事后清理，线上单日出现 194 次）。
+        self.grid_keep_grid_reconcile: bool = self._as_bool(
+            trading.get("grid_keep_grid_reconcile"),
+            False,
+        )
+        # 自适应仓位：单格金额与真实净值挂钩——资金不足时减少格数而非抬高单格金额；
+        # 格数低于下限时返回 INSUFFICIENT_CAPITAL 拒绝布单。默认关闭（保持历史行为：
+        # 单格金额被硬编码钳制在 $15.5~$25.5，线上 $7.71 账户被放大成 16 倍名义敞口）。
+        self.grid_adaptive_sizing_enabled: bool = self._as_bool(
+            trading.get("grid_adaptive_sizing_enabled"),
+            False,
+        )
+        # 自适应仓位允许的最少格数（低于此数视为资金不足，拒绝布单）。
+        self.grid_min_grid_num: int = max(2, int(trading.get("grid_min_grid_num", 3) or 3))
+        # 网格停机线（USD）：净值低于此值且无持仓时，跳过整个网格周期（不拉行情、不调 LLM），
+        # 仅打一行日志。默认 0 = 关闭。线上账户 $7.71 熔断后仍每 5 分钟烧一次 LLM 调用即源于缺此闸。
+        self.grid_halt_below_usd: float = max(
+            0.0, float(trading.get("grid_halt_below_usd", 0) or 0)
+        )
+        # 每周期净值快照：把 equity/available/未实现盈亏写入 logs/equity/*.jsonl（观测净值曲线）。
+        # 默认关闭。线上 12.5 天亏 39% 无一处结构化记录可回答"钱去哪了"，即源于缺此项。
+        self.grid_equity_snapshot_enabled: bool = self._as_bool(
+            trading.get("grid_equity_snapshot_enabled"),
+            False,
+        )
 
         # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
         # 向后兼容：支持旧字段名 default_leverage

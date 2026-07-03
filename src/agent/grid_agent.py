@@ -34,6 +34,9 @@ class GridAgent:
         width_pct_fallback: float = DEFAULT_WIDTH_PCT_FALLBACK,
         ai_width_blend_weight: float = DEFAULT_AI_WIDTH_BLEND_WEIGHT,
         force_neutral_mode: bool = False,
+        max_leverage: int = 10,
+        adaptive_sizing: bool = False,
+        min_grid_num: int = 3,
     ):
         self.symbol = symbol
         self.order_manager = order_manager
@@ -45,6 +48,11 @@ class GridAgent:
         self.width_pct_fallback = float(width_pct_fallback)
         self.ai_width_blend_weight = self._clamp(float(ai_width_blend_weight), 0.0, 1.0)
         self.force_neutral_mode = bool(force_neutral_mode)
+        # 数学引擎参数：真实杠杆上限（历史缺陷：调用方从不传 leverage，恒用默认 10，
+        # 与 config.max_leverage 脱钩）与自适应仓位开关。
+        self.max_leverage = max(1, int(max_leverage))
+        self.adaptive_sizing = bool(adaptive_sizing)
+        self.min_grid_num = max(2, int(min_grid_num))
 
     def make_decision(self, market_data, multi_timeframe_trends, current_grid_summary):
         try:
@@ -163,7 +171,18 @@ class GridAgent:
                     mode=mode,
                     width_pct=dynamic_width_pct,
                     grid_num=ai_decision.get("grid_num", 6),
+                    leverage=self.max_leverage,
+                    adaptive_sizing=self.adaptive_sizing,
+                    min_grid_num=self.min_grid_num,
                 )
+                if math_config.get("action") == "INSUFFICIENT_CAPITAL":
+                    # 资金撑不起最小网格：拒绝布单并醒目告警，避免小账户被最小单格金额
+                    # 反向放大成超额敞口（线上 $7.71 账户 16 倍名义敞口的直接根因）。
+                    self.logger.print_error(
+                        f"[GridAgent] 💸 资金不足拒绝布单: {math_config.get('reason', '')}"
+                    )
+                    math_config["confidence"] = confidence
+                    return math_config
                 math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
                 math_config["width_pct"] = dynamic_width_pct
                 # 透传置信度，避免云端监控指标恒为 0

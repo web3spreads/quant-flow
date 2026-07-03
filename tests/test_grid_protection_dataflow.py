@@ -36,6 +36,9 @@ class _DummyLogger:
     def print_section(self, *a, **k):
         pass
 
+    def log_trade(self, *a, **k):
+        pass
+
 
 def _make_level(close_fill_price: str, open_fill_price: str = "2000") -> GridLevel:
     """构造一个已完成开平仓的层级；close > open 为盈利，close < open 为亏损。"""

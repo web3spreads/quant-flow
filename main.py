@@ -32,7 +32,7 @@ from src.agent.single_symbol_agent import SingleSymbolAgent
 from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
 from src.config import DEFAULT_PERP_FEE_RATES, get_config
 from src.data.data_enricher import MarketDataEnricher
-from src.data.indicators import TechnicalIndicators
+from src.data.indicators import TechnicalIndicators, TrendConfirmTracker, detect_strong_trend
 from src.data.market_data import MarketDataFetcher
 from src.data.market_monitor import MarketMonitor, MonitorConfig, VolatilityAlert
 from src.llm import LLMClientManager
@@ -481,6 +481,9 @@ class QuantFlowBot:
         # 13. 初始化网格交易组件
         self.grid_manager = None
         self.grid_agent = None
+        # 趋势过滤迟滞确认器（按 symbol 独立）：连续 N 周期同向强趋势才动作。
+        # 无条件初始化，避免网格组件构造失败时 grid_cycle 引用缺失属性。
+        self._grid_trend_trackers: dict[str, TrendConfirmTracker] = {}
         if self.config.grid_enabled:
             self.logger.print_info("初始化网格交易组件...")
             try:
@@ -498,6 +501,9 @@ class QuantFlowBot:
                     barrier_config=barrier_config,
                     on_round_trip_close=self._on_grid_round_trip_close,
                     max_position_notional_usd=self.config.grid_max_position_notional_usd,
+                    trend_flatten_surgical=self.config.grid_trend_filter_surgical_flatten,
+                    inventory_cap_strict=self.config.grid_inventory_cap_strict,
+                    keep_grid_reconcile=self.config.grid_keep_grid_reconcile,
                 )
 
                 self.grid_agent = GridAgent(
@@ -511,6 +517,9 @@ class QuantFlowBot:
                     width_pct_fallback=self.config.grid_width_fallback_pct,
                     ai_width_blend_weight=self.config.grid_ai_blend_weight,
                     force_neutral_mode=self.config.grid_force_neutral_mode,
+                    max_leverage=self.config.max_leverage,
+                    adaptive_sizing=self.config.grid_adaptive_sizing_enabled,
+                    min_grid_num=self.config.grid_min_grid_num,
                 )
                 self.logger.print_info("✅ 网格交易组件初始化完成")
             except Exception as e:
@@ -1624,12 +1633,13 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"发送关闭通知失败: {e}")
 
-    def _on_grid_round_trip_close(self, symbol: str, pnl: float) -> None:
+    def _on_grid_round_trip_close(self, symbol: str, pnl: float, forced: bool = False) -> None:
         """网格每轮 round-trip 平仓回调：把逐轮盈亏喂给连亏熔断插件。
 
         连亏保护（``consecutive_loss``）完全由 ``on_trade_close`` 事件驱动；网格此前
         从不上报逐笔盈亏，导致该插件在纯网格模式下形同虚设。此回调由 GridManager 在
-        ``_record_round_trip`` 中触发，补齐这条数据通路。
+        ``_record_round_trip``（forced=False，主动止盈）与紧急平仓/手术式减仓
+        （forced=True，风控强平）中触发，补齐这条数据通路。
 
         注意：仅上报 ``on_trade_close``（盈亏事件），不上报 ``on_trade_open``——网格
         持续滚动库存、没有干净的「单笔开仓」语义，position_timeout 不适用网格，故不接线。
@@ -1637,31 +1647,24 @@ class QuantFlowBot:
         if not self.protection_manager:
             return
         try:
-            self.protection_manager.on_trade_close(symbol=symbol, pnl=float(pnl))
+            self.protection_manager.on_trade_close(symbol=symbol, pnl=float(pnl), forced=forced)
         except Exception as e:
             self.logger.print_warning(f"[网格风控] round-trip 盈亏上报失败: {e}")
 
     def _detect_strong_trend(self, trends: dict[str, str]) -> int:
-        """从多周期趋势判断是否存在「一致强势」趋势。
+        """从多周期趋势判断是否存在「一致强势」趋势（委托纯函数，便于单测）。
 
-        仅把 ``analyze_trend`` 的两个最强状态（``强势上涨``/``强势下跌``）计票，避免在
-        震荡/转折市误判（保守取向：宁可不拦，也不在震荡里错停网格）。票数达到配置阈值
-        ``grid_trend_filter_min_votes`` 且占优方向明确时，返回 +1（上涨）/-1（下跌），
-        否则返回 0（无强趋势）。
+        计票范围受 ``grid_trend_filter_timeframes`` 白名单约束（None=全部周期，
+        历史行为）；票数阈值 ``grid_trend_filter_min_votes``。
 
         Returns:
             +1=强势上涨, -1=强势下跌, 0=无一致强趋势。
         """
-        if not trends:
-            return 0
-        up = sum(1 for v in trends.values() if v == "强势上涨")
-        down = sum(1 for v in trends.values() if v == "强势下跌")
-        votes = self.config.grid_trend_filter_min_votes
-        if up >= votes and up > down:
-            return 1
-        if down >= votes and down > up:
-            return -1
-        return 0
+        return detect_strong_trend(
+            trends,
+            min_votes=self.config.grid_trend_filter_min_votes,
+            allowed_timeframes=self.config.grid_trend_filter_timeframes,
+        )
 
     def _grid_protection_triggered(self, symbol: str) -> bool:
         """
@@ -1779,6 +1782,50 @@ class QuantFlowBot:
                     )
                 return
 
+            # 净值快照 + 停机线短路（均为可选开关，默认关闭保持历史行为）。
+            # 停机线：净值低于阈值且无持仓时跳过整个周期（不拉 5 档 K 线、不调 LLM）——
+            # 线上账户 $7.71 熔断后仍每 5 分钟烧一次 LLM 调用即源于缺此闸。
+            if self.config.grid_equity_snapshot_enabled or self.config.grid_halt_below_usd > 0:
+                try:
+                    balance_info = self.order_manager.get_available_balance_info()
+                except Exception as e:
+                    self.logger.print_warning(f"[Grid] 获取余额失败，跳过快照/停机检查: {e}")
+                    balance_info = None
+                if balance_info and balance_info.get("status") == "ok":
+                    equity = float(
+                        balance_info.get("equity", balance_info.get("total", 0)) or 0
+                    )
+                    if self.config.grid_equity_snapshot_enabled:
+                        self.logger.log_equity_snapshot(
+                            equity=equity,
+                            available=float(balance_info.get("available", 0) or 0),
+                            unrealized_pnl=float(balance_info.get("unrealized_pnl", 0) or 0),
+                            symbol=symbol,
+                        )
+                    halt_line = self.config.grid_halt_below_usd
+                    if 0 < equity < halt_line:
+                        try:
+                            positions = self.order_manager.get_current_positions() or []
+                            has_position = any(
+                                p.get("coin") == symbol or p.get("symbol") == symbol
+                                for p in positions
+                            )
+                        except Exception:
+                            has_position = True  # 查询失败按有持仓处理，不敢停
+                        if not has_position:
+                            self.logger.print_warning(
+                                f"[Grid] 💤 净值 ${equity:.2f} 低于停机线 ${halt_line:.2f} "
+                                f"且无持仓，跳过本轮网格周期（不拉行情/不调 LLM）"
+                            )
+                            if cloud:
+                                cloud.send_cycle_event(
+                                    symbol=symbol,
+                                    phase="skip",
+                                    details={"reason": "低于停机线", "equity": equity},
+                                    level="warn",
+                                )
+                            return
+
             # Triple Barrier 每轮必查：独立于 AI action 分支，KEEP_GRID/ERROR 周期也兜底止损。
             # 触发即已紧急平仓（撤单+市价平仓+上报连亏熔断），本轮跳过布单。
             if self.grid_manager.check_barrier(symbol):
@@ -1823,19 +1870,32 @@ class QuantFlowBot:
             current_grid_summary = self.grid_manager.get_grid_summary(symbol)
 
             # 趋势过滤：多周期一致强势时，本轮暂停网格加仓（合成 KEEP_GRID，仅维持
-            # reduce_only 减仓保护单），可选市价平掉逆势库存。直接阻断「单边趋势里持续
+            # reduce_only 减仓保护单），可选平掉逆势库存。直接阻断「单边趋势里持续
             # 逆势做市」这一最大亏损源——中性网格在上涨里不断开空、空头无上限累积。
-            trend_dir = (
+            # 迟滞确认（confirm_cycles/flatten_min_cycles，默认 1=历史行为）：单周期
+            # 瞬时误判是线上 12.5 天 145 次强平的主要来源，连续同向确认后才动作，
+            # 且「暂停加仓」先行、「平逆势库存」靠后。
+            raw_trend_dir = (
                 self._detect_strong_trend(multi_timeframe_trends)
                 if self.config.grid_trend_filter_enabled
                 else 0
             )
+            trend_tracker = self._grid_trend_trackers.setdefault(
+                symbol,
+                TrendConfirmTracker(
+                    confirm_cycles=self.config.grid_trend_filter_confirm_cycles,
+                    flatten_min_cycles=self.config.grid_trend_filter_flatten_min_cycles,
+                ),
+            )
+            trend_dir, flatten_allowed = trend_tracker.update(raw_trend_dir)
             if trend_dir != 0:
                 arrow = "上涨" if trend_dir > 0 else "下跌"
+                _, streak_count = trend_tracker.streak
                 self.logger.print_warning(
-                    f"[网格风控] 检测到强趋势（{arrow}），本轮暂停网格加仓，仅维持减仓保护单"
+                    f"[网格风控] 检测到强趋势（{arrow}，连续 {streak_count} 周期确认），"
+                    f"本轮暂停网格加仓，仅维持减仓保护单"
                 )
-                if self.config.grid_trend_filter_flatten_adverse:
+                if self.config.grid_trend_filter_flatten_adverse and flatten_allowed:
                     self.grid_manager.flatten_adverse_inventory(symbol, trend_dir)
                 ai_decision = {
                     "action": "KEEP_GRID",
@@ -1844,6 +1904,13 @@ class QuantFlowBot:
                     "reason": f"强趋势({arrow})暂停加仓",
                 }
             else:
+                if raw_trend_dir != 0:
+                    _, streak_count = trend_tracker.streak
+                    self.logger.print_info(
+                        f"[网格风控] 检测到强趋势信号但未达连续确认周期 "
+                        f"({streak_count}/{self.config.grid_trend_filter_confirm_cycles})，"
+                        f"本轮暂不动作"
+                    )
                 ai_decision = self.grid_agent.make_decision(
                     market_data,
                     multi_timeframe_trends,

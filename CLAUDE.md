@@ -86,9 +86,10 @@ uv run python backtest_comparison.py --symbol BTC --compare all
 uv run python backtest_comparison.py --symbol BTC --compare debate
 uv run python backtest_comparison.py --symbol BTC --compare regime
 
-# 分别查看各程序日志（日志文件通过 tee 写入 logs/ 目录）
-tail -f logs/main.log          # 主交易日志
-tail -f logs/grid.log          # 网格交易日志
+# 查看日志（统一入口后所有运行模式均写 main.log；grid.log 为历史遗留文件已停更）
+tail -f logs/main.log          # 主交易/网格日志（RUN_MODE=main/grid/all 均在此）
+tail -f logs/trades/trades_$(date +%Y%m%d).jsonl   # 结构化交易记录（含 pnl/reason 归因）
+tail -f logs/equity/equity_$(date +%Y%m%d).jsonl   # 净值快照（需开启 grid_equity_snapshot_enabled）
 ```
 
 ## 核心架构
@@ -628,6 +629,8 @@ regime_adaptive:
 protections:
   - name: max_drawdown
     max_drawdown_pct: 0.10        # 最大回撤 10%
+    min_drawdown_usd: 0           # 回撤绝对额下限（>0 时须同时达标才触发；防小账户上
+                                  # 纯百分比线成为噪声级触发器，默认 0=关闭）
     pause_hours: 4
   - name: daily_loss
     max_daily_loss_pct: 0.05      # 单日亏损 5%
@@ -635,6 +638,8 @@ protections:
   - name: consecutive_loss
     max_consecutive_losses: 5
     per_symbol: true              # true=只锁该交易对
+    forced_close_no_reset: false  # true=风控强平的净盈利不重置连亏计数（只有主动止盈
+                                  # 才算打破连亏；默认 false=历史行为）
     pause_hours: 4
   - name: position_timeout
     max_position_hours: 48
@@ -682,6 +687,23 @@ trading:
   grid_limit_order_take_profit_enabled: true   # 网格成交后是否补止盈单
   grid_limit_order_stop_loss_enabled: true     # 网格成交后是否补止损单
   grid_reduce_only_exit_orders_enabled: true   # 是否启用分层减仓单
+
+  # ── 网格防护体系（全部默认关闭 = 历史行为）────────────────────────────
+  grid_force_neutral_mode: true                # 强制中性网格（忽略 AI 方向）
+  grid_max_position_notional_usd: 40           # 库存硬上限（USD 净持仓名义额，0=关闭）
+  grid_inventory_cap_strict: true              # 严格模式：名义额计入同向挂单 + 取价失败 fail-closed
+  grid_trend_filter_enabled: true              # 多周期强势一致时暂停加仓
+  grid_trend_filter_min_votes: 3               # 强势周期票数阈值
+  grid_trend_filter_timeframes: ["15m","1h","4h","1d"]  # 计票周期白名单（排除 1m 噪声；缺省=全部）
+  grid_trend_filter_confirm_cycles: 2          # 连续 N 周期同向确认才生效（迟滞去抖，缺省 1=立即）
+  grid_trend_filter_flatten_adverse: true      # 强趋势里减掉逆势库存
+  grid_trend_filter_flatten_min_cycles: 3      # 平逆势库存需更多连续确认（暂停先行、平仓靠后）
+  grid_trend_filter_surgical_flatten: true     # 手术式减仓：只平超限逆势层级（缺省 false=全量拆网）
+  grid_keep_grid_reconcile: true               # KEEP_GRID 周期对账撤无主残单
+  grid_adaptive_sizing_enabled: true           # 单格金额与净值挂钩：钱不够减格数而非抬单格金额
+  grid_min_grid_num: 3                         # 自适应仓位最少格数（低于则 INSUFFICIENT_CAPITAL 拒绝布单）
+  grid_halt_below_usd: 15                      # 净值停机线：低于此值且无持仓时跳过整个周期（0=关闭）
+  grid_equity_snapshot_enabled: true           # 每周期净值快照写 logs/equity/*.jsonl
 
 agent:
   grid_width:

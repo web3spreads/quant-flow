@@ -83,6 +83,16 @@ class MaxDrawdownProtection(IProtection):
 
             drawdown_pct = (self._peak_equity - context.equity) / self._peak_equity
 
+            # 绝对额下限（可选，默认 0=关闭）：小账户上纯百分比触发线是噪声级别——
+            # 线上 $8.61 账户的 10% 触发线只有 $0.86，一根普通 K 线即可击穿；且冷静期后
+            # 高水位重置使熔断变成「下跌节拍器」（$12.64→$11.37→$10.21→$8.94→$7.71，
+            # 每级恰好 ~10%）。要求回撤绝对额同时达标可避免噪声级触发。
+            min_drawdown_usd = float(self.config.get("min_drawdown_usd", 0) or 0)
+            drawdown_usd = self._peak_equity - context.equity
+            if min_drawdown_usd > 0 and drawdown_usd < min_drawdown_usd:
+                self.save_state()
+                return ProtectionReturn(triggered=False)
+
             if drawdown_pct >= max_drawdown_pct:
                 reason = (
                     f"最大回撤保护触发: 回撤 {drawdown_pct:.1%} >= 阈值 {max_drawdown_pct:.1%} "
