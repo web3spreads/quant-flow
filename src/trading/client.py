@@ -195,13 +195,35 @@ class HyperliquidClient:
             margin_summary = user_state.get("marginSummary", {})
             account_value = float(margin_summary.get("accountValue", 0))
             total_margin_used = float(margin_summary.get("totalMarginUsed", 0))
+            withdrawable = user_state.get("withdrawable", "0")
+
+            # 统一账户（unified account）兼容：新式账户 spot/perp 保证金合一，
+            # 经典 perp marginSummary 恒为 0，USDC 抵押显示在 spot 视图
+            # （balances[].total，挂单占用在 hold），usdClassTransfer 也被禁用。
+            # 实测：测试网新账户收到 usdSend 后 perp 视图读 0，导致余额被误判为零
+            # （资金不足拒绝布单）。perp 视图无资产时回退读取 spot USDC。
+            if account_value <= 0:
+                try:
+                    spot_state = self._request_with_fallback("spot_user_state", self.address)
+                    for balance in spot_state.get("balances", []) or []:
+                        if balance.get("coin") != "USDC":
+                            continue
+                        usdc_total = float(balance.get("total", 0))
+                        if usdc_total > 0:
+                            account_value = usdc_total
+                            total_margin_used = float(balance.get("hold", 0))
+                            withdrawable = str(account_value - total_margin_used)
+                        break
+                except Exception as spot_err:
+                    # spot 查询失败时维持 perp 视图结果，不因兼容路径引入新故障
+                    print(f"⚠️ 统一账户 spot 余额回退查询失败: {spot_err}")
 
             return {
                 "accountValue": account_value,
                 "totalMarginUsed": total_margin_used,
                 "totalRawUsd": float(margin_summary.get("totalRawUsd", 0)),
                 "available": account_value - total_margin_used,
-                "withdrawable": user_state.get("withdrawable", "0"),
+                "withdrawable": withdrawable,
             }
         except Exception as e:
             print(f"❌ 获取余额失败: {e}")
