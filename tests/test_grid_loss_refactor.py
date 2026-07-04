@@ -14,6 +14,7 @@
 
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -538,6 +539,78 @@ class TestDrawdownMinUsd(unittest.TestCase):
         plugin.check(self._ctx(8.61))
         result = plugin.check(self._ctx(7.71))
         self.assertTrue(result.triggered)
+
+
+class TestRebuildInventoryBudget(unittest.TestCase):
+    """严格模式批量重建额度制。
+
+    线上实测缺陷：入口布尔检查时空头敞口 $14.6 < 上限 $40 放行，随后一轮
+    批量挂出 4×$50 卖单，潜在同向敞口 $214（上限 5 倍）——循环自己挂出的
+    单不会被入口检查计入。修复后本轮已挂同向名义额计入预算，耗尽即跳过。
+    """
+
+    def _run_sync(self, cap, positions=None, price=1800.0, amount=50.0):
+        gm, om, client, logger = _make_gm(
+            positions=positions, price=price, cap=cap, cap_strict=True
+        )
+        placed = {"buy": [], "sell": []}
+        oid_iter = iter(range(1, 100))
+
+        def _exec_factory(side):
+            def _exec(symbol, amt, p, **kwargs):
+                placed[side].append((p, amt))
+                oid = next(oid_iter)
+                return {
+                    "success": True,
+                    "limit_order": {
+                        "response": {"data": {"statuses": [{"resting": {"oid": oid}}]}}
+                    },
+                }
+
+            return _exec
+
+        om.execute_long_limit = _exec_factory("buy")
+        om.execute_short_limit = _exec_factory("sell")
+        ai_config = {
+            "action": "UPDATE_GRID",
+            "lower_price": 1700.0,
+            "upper_price": 1900.0,
+            "grid_num": 9,  # 等差步长 25：4 买（1700-1775）+ 现价 1800 + 4 卖（1825-1900）
+            "amount_per_grid": amount,
+            "grid_type": "ARITHMETIC",
+        }
+        with mock.patch("src.trading.grid_manager.time.sleep"):
+            gm.sync_grid("ETH", ai_config)
+        return placed
+
+    def test_budget_caps_batch_placement_per_side(self):
+        # 上限 $120、单格 $50：每侧只放得下 2 格（3 格 $150 > $120）
+        placed = self._run_sync(cap=120.0)
+        self.assertEqual(len(placed["buy"]), 2)
+        self.assertEqual(len(placed["sell"]), 2)
+
+    def test_budget_not_binding_places_full_grid(self):
+        # 上限充裕：整轮 4 买 4 卖全部挂出
+        placed = self._run_sync(cap=500.0)
+        self.assertEqual(len(placed["buy"]), 4)
+        self.assertEqual(len(placed["sell"]), 4)
+
+    def test_existing_position_consumes_same_side_budget(self):
+        # 已有空头 0.01×1800=$18：卖侧余量 $102 → 2 格；
+        # 买侧反向抵扣余量 $138 → 仍只放得下 2 格（$150 > $138）
+        placed = self._run_sync(
+            cap=120.0, positions=[{"coin": "ETH", "szi": "-0.01"}]
+        )
+        self.assertEqual(len(placed["sell"]), 2)
+        self.assertEqual(len(placed["buy"]), 2)
+
+    def test_zero_headroom_blocks_side_entirely(self):
+        # 空头敞口 $180 已超上限 $120：卖侧整轮拦截，买侧靠反向抵扣全放行
+        placed = self._run_sync(
+            cap=120.0, positions=[{"coin": "ETH", "szi": "-0.1"}]
+        )
+        self.assertEqual(len(placed["sell"]), 0)
+        self.assertEqual(len(placed["buy"]), 4)
 
 
 if __name__ == "__main__":

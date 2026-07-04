@@ -1796,10 +1796,25 @@ class QuantFlowBot:
                         balance_info.get("equity", balance_info.get("total", 0)) or 0
                     )
                     if self.config.grid_equity_snapshot_enabled:
+                        # 持仓名义额单独取（balance_info 里没有此字段，此前一直记 0）；
+                        # 取失败不阻断快照，记 0 并由 uPnL 字段暴露持仓存在
+                        position_notional = 0.0
+                        try:
+                            for pos in self.order_manager.get_current_positions() or []:
+                                if pos.get("coin") == symbol:
+                                    position_notional = abs(
+                                        float(pos.get("positionValue", 0) or 0)
+                                    )
+                                    break
+                        except Exception as pos_err:
+                            self.logger.print_warning(
+                                f"[Grid] 快照取持仓名义额失败: {pos_err}"
+                            )
                         self.logger.log_equity_snapshot(
                             equity=equity,
                             available=float(balance_info.get("available", 0) or 0),
                             unrealized_pnl=float(balance_info.get("unrealized_pnl", 0) or 0),
+                            position_notional=position_notional,
                             symbol=symbol,
                         )
                     halt_line = self.config.grid_halt_below_usd

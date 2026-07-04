@@ -320,15 +320,29 @@ class GridManager:
         buy_orders = []
         sell_orders = []
 
-        # 库存上限预判（一次性算好，避免逐格查持仓/价格）：挂限价单本身不改变持仓，
-        # 故循环期间净持仓不变，这两个布尔在整轮重建中稳定。超限方向的开仓单整轮跳过。
-        block_buy_open = self._would_exceed_inventory_cap(symbol, is_buy_open=True)
-        block_sell_open = self._would_exceed_inventory_cap(symbol, is_buy_open=False)
+        # 库存上限预判。宽松模式：挂限价单不改变持仓，两个布尔整轮稳定，一次算好即可。
+        # 严格模式：同向挂单计入敞口，而本循环自己挂出的单不会被入口检查看见——
+        # 一次性布尔会放行整轮批量挂单，把潜在同向库存推到上限数倍（线上实测：
+        # 空头敞口 $14.6 < 上限 $40 放行后，一轮挂出 4×$50 卖单，潜在敞口 $214）。
+        # 故严格模式改为额度制：本轮已挂同向名义额计入预算，耗尽即跳过剩余同向单。
+        buy_headroom = sell_headroom = None
+        if self.inventory_cap_strict and self.max_position_notional_usd > 0:
+            buy_headroom = self._inventory_headroom_usd(symbol, is_buy_open=True)
+            sell_headroom = self._inventory_headroom_usd(symbol, is_buy_open=False)
+            block_buy_open = buy_headroom <= 0
+            block_sell_open = sell_headroom <= 0
+        else:
+            block_buy_open = self._would_exceed_inventory_cap(symbol, is_buy_open=True)
+            block_sell_open = self._would_exceed_inventory_cap(symbol, is_buy_open=False)
         if block_buy_open or block_sell_open:
             self.logger.print_warning(
                 f"   [Grid] 🚧 库存达上限 ${self.max_position_notional_usd:.0f}，"
                 f"本轮跳过{'买' if block_buy_open else ''}{'卖' if block_sell_open else ''}开仓单（防逆势累积）"
             )
+        placed_buy_notional = 0.0
+        placed_sell_notional = 0.0
+        budget_warned_buy = False
+        budget_warned_sell = False
 
         # 3. 重新布置
         for i, p in enumerate(prices):
@@ -338,6 +352,14 @@ class GridManager:
             try:
                 if p < current_price:
                     if block_buy_open:
+                        continue
+                    if buy_headroom is not None and placed_buy_notional + new_amount > buy_headroom:
+                        if not budget_warned_buy:
+                            self.logger.print_warning(
+                                f"   [Grid] 🚧 买开仓额度耗尽（本轮已挂 ${placed_buy_notional:.0f}"
+                                f" / 余量 ${buy_headroom:.0f}），剩余买开仓单跳过"
+                            )
+                            budget_warned_buy = True
                         continue
                     res = self.order_manager.execute_long_limit(
                         symbol,
@@ -353,6 +375,7 @@ class GridManager:
                         oid = self._extract_oid(res["limit_order"])
                         if oid:
                             buy_orders.append({"oid": oid, "px": p})
+                            placed_buy_notional += new_amount
                             self.logger.print_info(f"   [Grid] ✅ 买单挂载: ${p}")
                             self.logger.log_trade(
                                 symbol=symbol,
@@ -369,6 +392,14 @@ class GridManager:
                 elif p > current_price:
                     if block_sell_open:
                         continue
+                    if sell_headroom is not None and placed_sell_notional + new_amount > sell_headroom:
+                        if not budget_warned_sell:
+                            self.logger.print_warning(
+                                f"   [Grid] 🚧 卖开仓额度耗尽（本轮已挂 ${placed_sell_notional:.0f}"
+                                f" / 余量 ${sell_headroom:.0f}），剩余卖开仓单跳过"
+                            )
+                            budget_warned_sell = True
+                        continue
                     res = self.order_manager.execute_short_limit(
                         symbol,
                         new_amount,
@@ -383,6 +414,7 @@ class GridManager:
                         oid = self._extract_oid(res["limit_order"])
                         if oid:
                             sell_orders.append({"oid": oid, "px": p})
+                            placed_sell_notional += new_amount
                             self.logger.print_info(f"   [Grid] ✅ 卖单挂载: ${p}")
                             self.logger.log_trade(
                                 symbol=symbol,
@@ -763,25 +795,47 @@ class GridManager:
         cap = self.max_position_notional_usd
         if cap <= 0:
             return False  # 未启用
-        position_size = self._get_symbol_position_size(symbol)
-        if not self.inventory_cap_strict and abs(position_size) <= 0:
-            return False  # 宽松模式：当前空仓即放行（历史行为，不看未成交挂单）
-        try:
-            price = self.order_manager.client.get_current_price(symbol) or 0.0
-            if self.inventory_cap_strict and price <= 0:
-                raise ValueError(f"无效价格 {price}")
-        except Exception as e:
-            if self.inventory_cap_strict:
-                # 严格模式 fail-closed：取价失败时拦截加仓。异常行情/接口抖动时恰恰是
+
+        if self.inventory_cap_strict:
+            try:
+                directional_exposure = self._directional_exposure_usd(symbol, is_buy_open)
+            except Exception as e:
+                # 严格模式 fail-closed：取数失败时拦截加仓。异常行情/接口抖动时恰恰是
                 # 逆势库存风险最高的时刻，宽松放行（历史行为）等于风控在最需要时缺位。
                 self.logger.print_warning(
-                    f"   [Grid] 🚧 库存上限检查取价失败（{e}），严格模式拦截{symbol}开仓单"
+                    f"   [Grid] 🚧 库存上限检查取数失败（{e}），严格模式拦截{symbol}开仓单"
                 )
                 return True
-            return False  # 宽松模式：取价失败不拦截，避免误伤正常布单
+            return directional_exposure >= cap
 
-        # 方向化敞口：同向持仓 + （严格模式）同向未成交开仓挂单；反向持仓抵扣。
-        # 历史缺陷：只看已成交持仓——一轮布单里同向多格挂单全部成交可把库存推到上限数倍。
+        # ── 宽松模式：历史行为，只看已成交持仓，不看未成交挂单 ──
+        position_size = self._get_symbol_position_size(symbol)
+        if abs(position_size) <= 0:
+            return False  # 当前空仓即放行
+        try:
+            price = self.order_manager.client.get_current_price(symbol) or 0.0
+        except Exception:
+            return False  # 取价失败不拦截，避免误伤正常布单
+        pos_notional = abs(position_size) * float(price)
+        pos_is_long = position_size > 0
+        adding_same_direction = (is_buy_open and pos_is_long) or (
+            (not is_buy_open) and (not pos_is_long)
+        )
+        if pos_notional < cap:
+            return False
+        return adding_same_direction  # 仅在已达上限时拦截同向加仓
+
+    def _directional_exposure_usd(self, symbol: str, is_buy_open: bool) -> float:
+        """严格模式口径的方向化敞口名义额（USD）。
+
+        = 同向持仓名义额（反向持仓为负、先抵扣）+ 同向非 reduce-only 挂单名义额。
+        取价/查单失败时抛出异常，由调用方按 fail-closed 语义处理。
+        """
+        position_size = self._get_symbol_position_size(symbol)
+        price = self.order_manager.client.get_current_price(symbol) or 0.0
+        if price <= 0:
+            raise ValueError(f"无效价格 {price}")
+
         pos_notional = abs(position_size) * float(price)
         pos_is_long = position_size > 0
         if abs(position_size) <= 0:
@@ -791,34 +845,34 @@ class GridManager:
         else:
             directional_exposure = -pos_notional  # 反向持仓：新开单先抵消库存
 
-        if self.inventory_cap_strict:
-            try:
-                open_orders = self._get_symbol_open_orders(symbol)
-            except Exception as e:
-                self.logger.print_warning(
-                    f"   [Grid] 🚧 库存上限检查查单失败（{e}），严格模式拦截{symbol}开仓单"
-                )
-                return True
-            side_check = self._is_buy_side if is_buy_open else self._is_sell_side
-            for order in open_orders:
-                # reduce_only 挂单只减仓不加库存，不计入
-                if bool(order.get("reduceOnly", False)):
-                    continue
-                if not side_check(order):
-                    continue
-                px = self._safe_float(order.get("limitPx"), 0.0)
-                sz = self._safe_float(order.get("sz"), 0.0)
-                directional_exposure += abs(px * sz)
+        open_orders = self._get_symbol_open_orders(symbol)
+        side_check = self._is_buy_side if is_buy_open else self._is_sell_side
+        for order in open_orders:
+            # reduce_only 挂单只减仓不加库存，不计入
+            if bool(order.get("reduceOnly", False)):
+                continue
+            if not side_check(order):
+                continue
+            px = self._safe_float(order.get("limitPx"), 0.0)
+            sz = self._safe_float(order.get("sz"), 0.0)
+            directional_exposure += abs(px * sz)
+        return directional_exposure
 
-        if directional_exposure < cap:
-            return False
-        if not self.inventory_cap_strict:
-            # 宽松模式保持历史语义：仅在已达上限时拦截同向加仓
-            adding_same_direction = (is_buy_open and pos_is_long) or (
-                (not is_buy_open) and (not pos_is_long)
+    def _inventory_headroom_usd(self, symbol: str, is_buy_open: bool) -> float:
+        """严格模式下拟开方向距库存上限的剩余名义额度（USD，不小于 0）。
+
+        批量重建用它做额度制预算：本轮已挂同向名义额累计扣减，耗尽即跳过。
+        取数失败返回 0.0（fail-closed，与 _would_exceed_inventory_cap 一致）。
+        """
+        cap = self.max_position_notional_usd
+        try:
+            directional_exposure = self._directional_exposure_usd(symbol, is_buy_open)
+        except Exception as e:
+            self.logger.print_warning(
+                f"   [Grid] 🚧 库存额度计算取数失败（{e}），严格模式按零额度处理（{symbol}）"
             )
-            return adding_same_direction
-        return True
+            return 0.0
+        return max(0.0, cap - directional_exposure)
 
     def flatten_adverse_inventory(self, symbol: str, trend_dir: int) -> bool:
         """趋势过滤的止血动作：当净持仓方向与趋势相反时，减掉逆势库存。
