@@ -176,6 +176,24 @@ class HyperliquidClient:
             growth_mode=growth_mode,
         )
 
+    def _is_unified_account(self) -> bool | None:
+        """判定当前地址是否为保证金合一账户（unifiedAccount/portfolioMargin）。
+
+        经官方 userAbstraction 接口判定，结果缓存（账户模式极少变更），
+        经典账户后续调用零额外开销。查询失败返回 None（未知，交由调用方降级）。
+        """
+        cached = getattr(self, "_abstraction_mode", None)
+        if cached is None:
+            try:
+                cached = self._request_with_fallback(
+                    "query_user_abstraction_state", self.address
+                )
+            except Exception as e:
+                print(f"⚠️ 账户模式查询失败（userAbstraction）: {e}")
+                return None
+            self._abstraction_mode = cached
+        return cached in ("unifiedAccount", "portfolioMargin")
+
     def get_balance(self) -> dict[str, Any] | None:
         """
         获取账户余额信息
@@ -198,11 +216,14 @@ class HyperliquidClient:
             withdrawable = user_state.get("withdrawable", "0")
 
             # 统一账户（unified account）兼容：新式账户 spot/perp 保证金合一，
-            # 经典 perp marginSummary 恒为 0，USDC 抵押显示在 spot 视图
-            # （balances[].total，挂单占用在 hold），usdClassTransfer 也被禁用。
-            # 实测：测试网新账户收到 usdSend 后 perp 视图读 0，导致余额被误判为零
-            # （资金不足拒绝布单）。perp 视图无资产时回退读取 spot USDC。
-            if account_value <= 0:
+            # 总净值以 spot 视图为准（USDC total=总抵押，hold=持仓/挂单占用），
+            # perp marginSummary 无持仓时恒 0、有持仓时仅等于被占用的那部分抵押
+            # （实测：$11 账户开仓后 perp accountValue 只剩 $2.28 == spot hold），
+            # 两种形态都会严重低估净值。官方判定接口 userAbstraction 返回
+            # "unifiedAccount"/"portfolioMargin"（合一模式）或 "default"（经典），
+            # 结果缓存；判定失败时退回启发式（perp 视图无资产才尝试 spot）。
+            unified = self._is_unified_account()
+            if unified or (unified is None and account_value <= 0):
                 try:
                     spot_state = self._request_with_fallback("spot_user_state", self.address)
                     for balance in spot_state.get("balances", []) or []:
