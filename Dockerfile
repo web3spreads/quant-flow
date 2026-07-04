@@ -14,10 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:0.10.5 /uv /uvx /bin/
 
 # Copy dependency files
-COPY pyproject.toml .python-version README.md ./
+COPY pyproject.toml uv.lock .python-version README.md ./
 
-# Install Python dependencies via uv（不使用 lock 文件，因本地 uv 版本较旧）
-RUN uv sync --no-dev --no-install-project
+# Install Python dependencies via uv（--frozen 按 lock 文件精确复现依赖版本，
+# 防止镜像构建时解析到不兼容的新版依赖——曾因未锁定装到删除了
+# pydantic_ai.models.gemini 的新版 pydantic-ai 导致容器循环崩溃）
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Final stage
 FROM python:3.12-slim
