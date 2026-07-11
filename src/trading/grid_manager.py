@@ -24,8 +24,8 @@ DEFAULT_MIN_ORDERS = 4
 DEFAULT_AMOUNT_PER_ORDER = 10.0
 DEFAULT_GRID_NUM = 10
 DEFAULT_GRID_TYPE = "GEOMETRIC"
-DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS = 900
-DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO = 0.004
+DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS = 3600
+DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO = 0.01
 DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS = 2
 
 EXIT_MIN_ORDERS = 3
@@ -155,7 +155,13 @@ class GridManager:
 
         action = ai_config.get("action")
 
-        # 增量同步路由：如果已有层级数据且非重建场景，使用增量同步
+        # 先同步交易所成交状态，再判断是否重建。否则刚成交但尚未被本地识别的
+        # OPEN_PENDING 层级可能被全撤全建直接丢弃，无法完成平仓和 PnL 归因。
+        if symbol in self.grid_levels and self.grid_levels[symbol]:
+            self.sync_grid_incremental(symbol, allow_open_orders=action == "UPDATE_GRID")
+            if symbol not in self.grid_levels or not self.grid_levels[symbol]:
+                return
+
         if action == "UPDATE_GRID" and symbol in self.grid_levels and self.grid_levels[symbol]:
             should_rebuild, reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
             if not should_rebuild:
@@ -167,7 +173,6 @@ class GridManager:
                         action="incremental_sync",
                         details={"reason": reason},
                     )
-                self.sync_grid_incremental(symbol)
                 return
 
         if action != "UPDATE_GRID":
@@ -441,8 +446,27 @@ class GridManager:
         if not current_grid:
             return True, "首次建网格"
 
+        protected_states = {
+            GridLevelState.OPEN_FILLED,
+            GridLevelState.CLOSE_PENDING,
+            GridLevelState.COMPLETED,
+        }
+        protected_levels = [
+            level for level in self.grid_levels.get(symbol, []) if level.state in protected_states
+        ]
+        if protected_levels:
+            return (
+                False,
+                f"存在 {len(protected_levels)} 个已成交/待平仓层级，保护退出闭环，禁止全撤重建",
+            )
+
+        last_sync = self._safe_float(current_grid.get("last_sync"), 0.0)
+        cooldown_remaining = self.grid_rebuild_cooldown_seconds - max(0.0, time.time() - last_sync)
+        if cooldown_remaining > 0:
+            return False, f"重建冷却中，剩余 {cooldown_remaining:.0f} 秒"
+
         if not self._has_sufficient_open_orders(symbol, DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS):
-            return True, "当前挂单数量不足，允许重建补网格"
+            return True, "当前挂单数量不足且冷却已结束，允许重建补网格"
 
         old_params = self._extract_grid_params(current_grid.get("config", {}))
         new_params = self._extract_grid_params(new_config)
@@ -457,11 +481,10 @@ class GridManager:
             return True, "网格参数异常，强制重建"
 
         if (
-            old_params["grid_num"] != new_params["grid_num"]
-            or old_params["grid_type"] != new_params["grid_type"]
+            old_params["grid_type"] != new_params["grid_type"]
             or old_params["mode"] != new_params["mode"]
         ):
-            return True, "网格结构变化（层数/类型/方向），需要重建"
+            return True, "网格类型或方向发生结构性变化，需要重建"
 
         lower_change = abs(new_lower - old_lower) / max(abs(old_lower), 1e-9)
         upper_change = abs(new_upper - old_upper) / max(abs(old_upper), 1e-9)
@@ -471,10 +494,12 @@ class GridManager:
         if old_amount > 0 and new_amount > 0:
             amount_change = abs(new_amount - old_amount) / max(abs(old_amount), 1e-9)
 
+        grid_num_changed = old_params["grid_num"] != new_params["grid_num"]
         if price_change < self.grid_rebuild_min_price_change_ratio and amount_change < 0.20:
             return (
                 False,
-                f"区间变化 {price_change * 100:.3f}% / 单格资金变化 {amount_change * 100:.2f}% 低于阈值",
+                f"区间变化 {price_change * 100:.3f}% / 单格资金变化 {amount_change * 100:.2f}% "
+                f"低于阈值（层数变化={grid_num_changed} 不单独触发重建）",
             )
 
         return True, "满足重建条件"
@@ -1023,8 +1048,8 @@ class GridManager:
             except Exception as e:
                 self.logger.print_warning(f"   [Grid] 发送 Triple Barrier 触发通知失败: {e}")
 
-    def sync_grid_incremental(self, symbol: str):
-        """增量同步：只处理需要操作的层级，不全撤全建。"""
+    def sync_grid_incremental(self, symbol: str, allow_open_orders: bool = True):
+        """增量同步：维护成交闭环；可选择不为 IDLE 层级新增开仓单。"""
         levels = self.grid_levels.get(symbol)
         if not levels:
             self.logger.print_warning(f"   [Grid] {symbol} 无层级数据，跳过增量同步")
@@ -1081,7 +1106,8 @@ class GridManager:
             try:
                 if level.state == GridLevelState.IDLE:
                     # 空闲 -> 挂开仓单
-                    self._place_open_order(symbol, level)
+                    if allow_open_orders:
+                        self._place_open_order(symbol, level)
 
                 elif level.state == GridLevelState.OPEN_PENDING:
                     # 检查开仓单是否还在挂单列表中
@@ -1100,6 +1126,8 @@ class GridManager:
                                 order_id=str(level.open_order_id or ""),
                                 status="FILLED",
                             )
+                            # 同轮立即挂退出单，避免在调度间隔内裸露持仓。
+                            self._place_close_order(symbol, level)
                         else:
                             # 被撤销/失败 -> 回到 IDLE 重新挂
                             level.state = GridLevelState.IDLE
@@ -1123,6 +1151,9 @@ class GridManager:
                                 order_id=str(level.close_order_id or ""),
                                 status="FILLED",
                             )
+                            # 同轮完成 PnL 归因并复位，不再额外等待一个调度周期。
+                            self._record_round_trip(symbol, level)
+                            level.reset()
                         else:
                             # 平仓单被撤 -> 回到 OPEN_FILLED 重挂
                             level.state = GridLevelState.OPEN_FILLED

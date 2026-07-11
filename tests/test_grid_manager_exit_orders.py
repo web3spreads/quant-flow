@@ -2,9 +2,11 @@ import copy
 import tempfile
 import time
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 from src.trading.grid_manager import GridManager
+from src.utils.grid_math import GridLevel, GridLevelState
 
 
 class DummyLogger:
@@ -512,7 +514,7 @@ class TestGridManagerExitOrders(unittest.TestCase):
             },
             "buy_orders": [{"oid": 801, "px": 98.0}],
             "sell_orders": [],
-            "last_sync": time.time(),
+            "last_sync": time.time() - 901,
         }
 
         grid_manager.sync_grid(
@@ -530,6 +532,101 @@ class TestGridManagerExitOrders(unittest.TestCase):
         canceled_ids = [oid for symbol, oid in client.cancel_calls if symbol == "ETH"]
         self.assertIn(801, canceled_ids)
         self.assertGreaterEqual(len(order_manager.long_calls), 1)
+
+    def test_update_grid_does_not_rebuild_during_cooldown(self):
+        client = FakeClient()
+        client.open_orders = [
+            {"oid": 811, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "98.0"},
+        ]
+        grid_manager = GridManager(
+            order_manager=FakeOrderManager(client, positions=[]),
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_rebuild_cooldown_seconds=900,
+        )
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+            "buy_orders": [{"oid": 811, "px": 98.0}],
+            "sell_orders": [],
+            "last_sync": time.time(),
+        }
+
+        should_rebuild, reason = grid_manager._should_rebuild_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 80.0,
+                "upper_price": 120.0,
+                "grid_num": 12,
+                "amount_per_grid": 20.0,
+                "mode": "LONG",
+            },
+        )
+
+        self.assertFalse(should_rebuild)
+        self.assertIn("冷却", reason)
+
+    def test_update_grid_preserves_filled_level_and_close_order(self):
+        client = FakeClient()
+        client.open_orders = [
+            {"oid": 821, "coin": "ETH", "side": "A", "sz": "0.1", "limitPx": "101.0"},
+        ]
+        grid_manager = GridManager(
+            order_manager=FakeOrderManager(client, positions=[{"coin": "ETH", "szi": "0.1"}]),
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_rebuild_cooldown_seconds=0,
+        )
+        level = GridLevel(
+            id="L0",
+            price=Decimal("98"),
+            amount=Decimal("10"),
+            side="LONG",
+            state=GridLevelState.CLOSE_PENDING,
+        )
+        level.open_order_id = 820
+        level.open_fill_price = Decimal("98")
+        level.open_fill_amount = Decimal("0.1")
+        level.close_order_id = 821
+        grid_manager.grid_levels["ETH"] = [level]
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+            "buy_orders": [],
+            "sell_orders": [{"oid": 821, "px": 101.0}],
+            "levels": [level.to_dict()],
+            "last_sync": 0,
+        }
+
+        should_rebuild, reason = grid_manager._should_rebuild_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 80.0,
+                "upper_price": 120.0,
+                "grid_num": 12,
+                "amount_per_grid": 20.0,
+                "mode": "SHORT",
+            },
+        )
+
+        self.assertFalse(should_rebuild)
+        self.assertIn("保护退出闭环", reason)
+        self.assertEqual(client.cancel_calls, [])
+        self.assertEqual(level.close_order_id, 821)
 
     def test_extract_oid_supports_filled_status(self):
         client = FakeClient()
