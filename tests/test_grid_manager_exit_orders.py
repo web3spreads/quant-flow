@@ -628,6 +628,143 @@ class TestGridManagerExitOrders(unittest.TestCase):
         self.assertEqual(client.cancel_calls, [])
         self.assertEqual(level.close_order_id, 821)
 
+    def test_incremental_sync_does_not_extend_rebuild_cooldown(self):
+        client = FakeClient()
+        grid_manager = GridManager(
+            order_manager=FakeOrderManager(client, positions=[]),
+            logger=DummyLogger(),
+            state_file=self.state_file,
+        )
+        last_rebuild_at = time.time() - 1800
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {},
+            "last_sync": last_rebuild_at,
+            "last_rebuild_at": last_rebuild_at,
+        }
+
+        grid_manager._save_incremental_state("ETH")
+
+        saved = grid_manager.state["active_grids"]["ETH"]
+        self.assertEqual(saved["last_rebuild_at"], last_rebuild_at)
+        self.assertGreater(saved["last_sync"], last_rebuild_at)
+
+    def test_rebuild_cooldown_uses_last_rebuild_not_last_sync(self):
+        client = FakeClient()
+        client.open_orders = [
+            {"oid": 831, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "98.0"},
+            {"oid": 832, "coin": "ETH", "side": "A", "sz": "0.1", "limitPx": "102.0"},
+        ]
+        grid_manager = GridManager(
+            order_manager=FakeOrderManager(client, positions=[]),
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_rebuild_cooldown_seconds=900,
+            grid_rebuild_min_price_change_ratio=0.004,
+        )
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+            "buy_orders": [{"oid": 831, "px": 98.0}],
+            "sell_orders": [{"oid": 832, "px": 102.0}],
+            "last_sync": time.time(),
+            "last_rebuild_at": time.time() - 901,
+        }
+
+        should_rebuild, reason = grid_manager._should_rebuild_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 94.0,
+                "upper_price": 106.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+        )
+
+        self.assertTrue(should_rebuild)
+        self.assertEqual(reason, "满足重建条件")
+
+    def test_price_breakout_bypasses_rebuild_cooldown(self):
+        client = FakeClient()
+        client.current_price = 106.0
+        grid_manager = GridManager(
+            order_manager=FakeOrderManager(client, positions=[]),
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_rebuild_cooldown_seconds=3600,
+        )
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+            "last_sync": time.time(),
+            "last_rebuild_at": time.time(),
+        }
+
+        should_rebuild, reason = grid_manager._should_rebuild_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 100.0,
+                "upper_price": 110.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+        )
+
+        self.assertTrue(should_rebuild)
+        self.assertIn("提前解除", reason)
+
+    def test_mode_change_bypasses_cooldown_after_two_confirmations(self):
+        client = FakeClient()
+        grid_manager = GridManager(
+            order_manager=FakeOrderManager(client, positions=[]),
+            logger=DummyLogger(),
+            state_file=self.state_file,
+            grid_rebuild_cooldown_seconds=3600,
+        )
+        grid_manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 6,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+            "last_sync": time.time(),
+            "last_rebuild_at": time.time(),
+        }
+        new_config = {
+            "action": "UPDATE_GRID",
+            "lower_price": 95.0,
+            "upper_price": 105.0,
+            "grid_num": 6,
+            "amount_per_grid": 10.0,
+            "mode": "LONG",
+        }
+
+        first_rebuild, first_reason = grid_manager._should_rebuild_grid("ETH", new_config)
+        second_rebuild, second_reason = grid_manager._should_rebuild_grid("ETH", new_config)
+
+        self.assertFalse(first_rebuild)
+        self.assertIn("1/2", first_reason)
+        self.assertTrue(second_rebuild)
+        self.assertIn("连续确认 2 次", second_reason)
+
     def test_extract_oid_supports_filled_status(self):
         client = FakeClient()
         order_manager = FakeOrderManager(client, positions=[])

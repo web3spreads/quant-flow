@@ -27,6 +27,8 @@ DEFAULT_GRID_TYPE = "GEOMETRIC"
 DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS = 3600
 DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO = 0.01
 DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS = 2
+DEFAULT_GRID_REBUILD_BREAKOUT_RATIO = 0.005
+DEFAULT_GRID_MODE_CHANGE_CONFIRMATIONS = 2
 
 EXIT_MIN_ORDERS = 3
 EXIT_MAX_ORDERS = 8
@@ -87,6 +89,9 @@ class GridManager:
     def _restore_levels_from_state(self):
         """从持久化状态中恢复 grid_levels、pnl_trackers 和 barrier_monitors（崩溃恢复）。"""
         for symbol, grid_data in self.state.get("active_grids", {}).items():
+            # 兼容旧状态：首次升级时把当时的同步时间固定为最后重建时间。
+            # 后续增量同步只更新 last_sync，不再延长重建冷却。
+            grid_data.setdefault("last_rebuild_at", grid_data.get("last_sync", time.time()))
             # 恢复层级
             levels_data = grid_data.get("levels")
             if levels_data and isinstance(levels_data, list):
@@ -116,6 +121,7 @@ class GridManager:
     def _save_state(self):
         """原子写入状态文件，防止进程中断导致文件截断损坏。"""
         state_dir = os.path.dirname(self.state_file) or "."
+        os.makedirs(state_dir, exist_ok=True)
         try:
             fd, tmp_path = tempfile.mkstemp(dir=state_dir, suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -154,6 +160,7 @@ class GridManager:
         self._cleanup_orphan_trigger_orders(symbol)
 
         action = ai_config.get("action")
+        rebuild_evaluation: tuple[bool, str] | None = None
 
         # 先同步交易所成交状态，再判断是否重建。否则刚成交但尚未被本地识别的
         # OPEN_PENDING 层级可能被全撤全建直接丢弃，无法完成平仓和 PnL 归因。
@@ -163,7 +170,8 @@ class GridManager:
                 return
 
         if action == "UPDATE_GRID" and symbol in self.grid_levels and self.grid_levels[symbol]:
-            should_rebuild, reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+            rebuild_evaluation = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+            should_rebuild, reason = rebuild_evaluation
             if not should_rebuild:
                 self.logger.print_info(f"   [Grid] 增量同步模式: {reason}")
                 cloud = get_cloud_logger()
@@ -234,7 +242,9 @@ class GridManager:
             f"AI 新区间: ${new_lower} - ${new_upper} | TP: {tp_ratio} SL: {sl_ratio}"
         )
 
-        should_rebuild, skip_reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+        if rebuild_evaluation is None:
+            rebuild_evaluation = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+        should_rebuild, skip_reason = rebuild_evaluation
         if not should_rebuild:
             self.logger.print_info(f"   [Grid] ⏸️ 跳过重建: {skip_reason}")
             if self.grid_reduce_only_exit_orders_enabled:
@@ -369,13 +379,15 @@ class GridManager:
         )
 
         # 5. 更新状态（含层级和 PnL 数据）
+        rebuild_time = time.time()
         self.state["active_grids"][symbol] = {
             "config": ai_config,
             "buy_orders": buy_orders,
             "sell_orders": sell_orders,
             "levels": [level.to_dict() for level in levels],
             "pnl": self.pnl_trackers[symbol].to_dict(),
-            "last_sync": time.time(),
+            "last_sync": rebuild_time,
+            "last_rebuild_at": rebuild_time,
         }
         self._save_state()
         self.logger.print_info(f"✅ {symbol} 网格调整完成。")
@@ -460,14 +472,6 @@ class GridManager:
                 f"存在 {len(protected_levels)} 个已成交/待平仓层级，保护退出闭环，禁止全撤重建",
             )
 
-        last_sync = self._safe_float(current_grid.get("last_sync"), 0.0)
-        cooldown_remaining = self.grid_rebuild_cooldown_seconds - max(0.0, time.time() - last_sync)
-        if cooldown_remaining > 0:
-            return False, f"重建冷却中，剩余 {cooldown_remaining:.0f} 秒"
-
-        if not self._has_sufficient_open_orders(symbol, DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS):
-            return True, "当前挂单数量不足且冷却已结束，允许重建补网格"
-
         old_params = self._extract_grid_params(current_grid.get("config", {}))
         new_params = self._extract_grid_params(new_config)
         old_lower = old_params["lower_price"]
@@ -480,10 +484,65 @@ class GridManager:
         if min(old_lower, old_upper, new_lower, new_upper) <= 0:
             return True, "网格参数异常，强制重建"
 
-        if (
-            old_params["grid_type"] != new_params["grid_type"]
-            or old_params["mode"] != new_params["mode"]
-        ):
+        try:
+            current_price = self._safe_float(
+                self.order_manager.client.get_current_price(symbol), 0.0
+            )
+        except Exception:
+            current_price = 0.0
+        breakout_lower = old_lower * (1 - DEFAULT_GRID_REBUILD_BREAKOUT_RATIO)
+        breakout_upper = old_upper * (1 + DEFAULT_GRID_REBUILD_BREAKOUT_RATIO)
+        significant_breakout = current_price > 0 and not (
+            breakout_lower <= current_price <= breakout_upper
+        )
+
+        mode_changed = old_params["mode"] != new_params["mode"]
+        if mode_changed:
+            pending_mode = current_grid.get("pending_mode")
+            confirmations = int(self._safe_float(current_grid.get("pending_mode_confirmations"), 0))
+            if pending_mode == new_params["mode"]:
+                confirmations += 1
+            else:
+                confirmations = 1
+            current_grid["pending_mode"] = new_params["mode"]
+            current_grid["pending_mode_confirmations"] = confirmations
+        else:
+            confirmations = 0
+            current_grid.pop("pending_mode", None)
+            current_grid.pop("pending_mode_confirmations", None)
+
+        last_rebuild_at = self._safe_float(
+            current_grid.get("last_rebuild_at"),
+            self._safe_float(current_grid.get("last_sync"), 0.0),
+        )
+        cooldown_remaining = self.grid_rebuild_cooldown_seconds - max(
+            0.0, time.time() - last_rebuild_at
+        )
+
+        if significant_breakout:
+            return True, (
+                f"价格 ${current_price:.4f} 明显突破旧网格 ${old_lower:.4f}-${old_upper:.4f}，"
+                "提前解除重建冷却"
+            )
+
+        if mode_changed and confirmations >= DEFAULT_GRID_MODE_CHANGE_CONFIRMATIONS:
+            return True, (
+                f"方向从 {old_params['mode']} 变为 {new_params['mode']}，"
+                f"已连续确认 {confirmations} 次，提前解除重建冷却"
+            )
+
+        if cooldown_remaining > 0:
+            mode_hint = (
+                f"；方向变化确认 {confirmations}/{DEFAULT_GRID_MODE_CHANGE_CONFIRMATIONS}"
+                if mode_changed
+                else ""
+            )
+            return False, f"重建冷却中，剩余 {cooldown_remaining:.0f} 秒{mode_hint}"
+
+        if not self._has_sufficient_open_orders(symbol, DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS):
+            return True, "当前挂单数量不足且冷却已结束，允许重建补网格"
+
+        if old_params["grid_type"] != new_params["grid_type"] or mode_changed:
             return True, "网格类型或方向发生结构性变化，需要重建"
 
         lower_change = abs(new_lower - old_lower) / max(abs(old_lower), 1e-9)
@@ -682,7 +741,7 @@ class GridManager:
                 sell_orders.append(snapshot)
 
         self.state["active_grids"][symbol] = {
-            "config": grid.get("config", {}),
+            **grid,
             "buy_orders": buy_orders,
             "sell_orders": sell_orders,
             "last_sync": time.time(),
