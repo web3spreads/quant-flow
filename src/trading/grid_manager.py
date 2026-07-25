@@ -1977,18 +1977,23 @@ class GridManager:
             if is_forced:
                 consumed_forced.add(oid)
 
-            self.logger.log_trade(
-                symbol=symbol,
-                action="GRID_NET_CLOSE",
-                amount=self._safe_float(fill.get("sz"), 0.0),
-                price=self._safe_float(fill.get("px"), 0.0),
-                order_id=oid,
-                status="FILLED",
-                pnl=net,
-                reason=(
-                    f"{'GRID_FORCED' if is_forced else 'GRID_NETTING'}:{fill.get('dir', '')}"
-                ).strip(":"),
-            )
+            # 落盘失败不得中断循环：异常逃逸会让游标停在本批之前，下一轮把这批
+            # 已上报过的盈亏再喂一遍风控，凭空制造连亏。宁可丢一条归因日志。
+            try:
+                self.logger.log_trade(
+                    symbol=symbol,
+                    action="GRID_NET_CLOSE",
+                    amount=self._safe_float(fill.get("sz"), 0.0),
+                    price=self._safe_float(fill.get("px"), 0.0),
+                    order_id=oid,
+                    status="FILLED",
+                    pnl=net,
+                    reason=(
+                        f"{'GRID_FORCED' if is_forced else 'GRID_NETTING'}:{fill.get('dir', '')}"
+                    ).strip(":"),
+                )
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] 净额归因写交易日志失败(tid={tid}): {e}")
             self._dispatch_round_trip_close(symbol, net, forced=is_forced)
 
         if max_ts > cursor_ms or newest_tids or consumed_forced:

@@ -293,6 +293,34 @@ class TestNettingAttribution(_GridManagerTestBase):
         self.assertEqual(len(stored), MAX_FORCED_OIDS)
         self.assertIn(str(MAX_FORCED_OIDS + 19), stored, "应保留最近的 oid")
 
+    def test_trade_log_failure_still_advances_cursor(self):
+        """写交易日志失败不得中断归因——否则游标停滞，下轮把同一批盈亏再喂一遍风控
+
+        这比丢一条归因日志危险得多：重复上报会凭空制造连亏，误触发熔断锁仓。
+        """
+        gm = self._make_gm()
+        gm.reconcile_netting_closes("ETH", fills=[_fill("t0", 1000)])
+
+        def _boom(**kwargs):
+            raise RuntimeError("磁盘满了")
+
+        gm.logger.log_trade = _boom
+        fills = [
+            _fill("t0", 1000),
+            _fill("t1", 2000, closed_pnl="1.0"),
+            _fill("t2", 3000, closed_pnl="-2.0"),
+        ]
+        res = gm.reconcile_netting_closes("ETH", fills=fills)
+
+        self.assertEqual(res["processed"], 2, "日志失败不应中断后续归因")
+        self.assertEqual(len(self.reported), 2, "风控上报不受日志失败影响")
+        self.assertEqual(gm.state["netting_attribution"]["ETH"]["cursor_ms"], 3000)
+
+        # 关键：下一轮不得重复上报
+        gm.logger.log_trade = lambda **kw: None
+        gm.reconcile_netting_closes("ETH", fills=fills)
+        self.assertEqual(len(self.reported), 2, "游标已推进，不得重复上报")
+
     def test_fetch_failure_is_contained(self):
         """取成交失败不得抛出，跳过本轮即可"""
         om = MagicMock()
