@@ -748,6 +748,9 @@ scheduler:
 > 背景：Hyperliquid 是单向持仓，中性网格的库存大多被对侧格子的普通开仓单净额对冲平掉（成交 `dir` 为 `Close Long`/`Close Short`），走不到层级状态机的 `CLOSE_PENDING → COMPLETED` 路径。线上三周实测：1051 笔带盈亏的平仓腿只有 24 笔（2.3%）进了归因，连亏熔断状态文件三周纹丝不动，trades 日志的 `pnl` 恒为 null。
 >
 > **归因源互斥**：开启后本方法独占风控上报，`_report_round_trip_close` 直接让路（层级状态机与紧急平仓只写日志），否则同一笔平仓会被计两次、连亏计数翻倍。
+>
+> **forced 语义靠 oid 还原**：链上成交本身分不清「网格正常止盈」与「风控强平」，而 `consecutive_loss` 的 `forced_close_no_reset` 依赖这个区分。故 `_emergency_close_all` / `_surgical_reduce_adverse` 下单后调 `_mark_forced_close_oid()` 登记订单号，归因时按 oid 精确匹配上报 `forced=True`，消费后即清除。
+> 注意 taker/maker 不是可靠判据——网格限价单穿价成交同样是 taker（线上三天 50 笔 taker 成交里只有 3 笔真是强平）。
 
 ## 设计模式
 

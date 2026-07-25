@@ -30,6 +30,10 @@ DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS = 900
 DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO = 0.004
 DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS = 2
 
+# 净额归因中保留的强平订单号上限：强平成交一般在下一轮就被归因消费，
+# 留存过多只会让状态文件无谓膨胀
+MAX_FORCED_OIDS = 50
+
 EXIT_MIN_ORDERS = 3
 EXIT_MAX_ORDERS = 8
 EXIT_TARGET_COVERAGE_RATIO = 1.0
@@ -991,6 +995,8 @@ class GridManager:
                     f"   [Grid] {level.id} 手术式减仓失败: {result}"
                 )
                 continue
+            # 登记强平订单号：净额归因接管上报时据此还原 forced 语义
+            self._mark_forced_close_oid(symbol, result)
 
             # 以当前价近似成交价记账（忽略滑点；与紧急平仓同一近似口径），
             # 复用 record_round_trip 保证 realized PnL / 手续费统计口径一致。
@@ -1433,6 +1439,8 @@ class GridManager:
             if result:
                 close_success = True
                 self.logger.print_info(f"   [Grid] {symbol} 市价平仓完成: {result}")
+                # 登记强平订单号：净额归因接管上报时据此还原 forced 语义
+                self._mark_forced_close_oid(symbol, result)
         except Exception as e:
             self.logger.print_error(f"   [Grid] {symbol} 市价平仓失败: {e}")
             if cloud:
@@ -1851,6 +1859,31 @@ class GridManager:
             # 查不到持仓时保守认为「不空转」，不触发兜底重建（宁可不动也不误建网格）
             return False
 
+    def _mark_forced_close_oid(self, symbol: str, result: Any) -> None:
+        """登记一笔风控强平的订单号，供净额归因还原 forced 语义。
+
+        净额归因以链上成交为准，本身无从分辨「网格正常止盈」与「风控强平」，而
+        consecutive_loss 的 ``forced_close_no_reset`` 恰恰依赖这个区分（强平的净
+        盈利不得重置连亏计数）。taker/maker 不是可靠判据——网格限价单穿价成交
+        同样是 taker（线上三天 50 笔 taker 成交里只有 3 笔是强平），故在强平下单
+        处直接登记 oid，归因时按 oid 精确匹配。
+        """
+        if not self.netting_attribution_enabled:
+            return
+        try:
+            oid = self._extract_oid(result)
+        except Exception:
+            oid = None
+        if not oid:
+            return
+        bucket = self.state.setdefault("netting_attribution", {}).setdefault(symbol, {})
+        forced = [str(o) for o in (bucket.get("forced_oids") or [])]
+        forced.append(str(oid))
+        # 只保留最近若干个：强平成交通常在下一轮就被归因消费掉，留存过多只会让
+        # 状态文件无谓膨胀
+        bucket["forced_oids"] = forced[-MAX_FORCED_OIDS:]
+        self._save_state()
+
     def reconcile_netting_closes(
         self, symbol: str, fills: list[dict[str, Any]] | None = None
     ) -> dict[str, Any]:
@@ -1907,6 +1940,9 @@ class GridManager:
             return {"processed": 0, "pnl": 0.0, "skipped": "primed"}
 
         seen_tids = {str(t) for t in (bucket.get("seen_tids") or [])}
+        # 风控强平登记的订单号：命中即以 forced=True 上报，保住 forced_close_no_reset 语义
+        forced_oids = {str(o) for o in (bucket.get("forced_oids") or [])}
+        consumed_forced: set[str] = set()
         processed = 0
         total_pnl = 0.0
         max_ts = cursor_ms
@@ -1936,25 +1972,33 @@ class GridManager:
             processed += 1
             total_pnl += net
 
+            oid = str(fill.get("oid") or "")
+            is_forced = oid in forced_oids
+            if is_forced:
+                consumed_forced.add(oid)
+
             self.logger.log_trade(
                 symbol=symbol,
                 action="GRID_NET_CLOSE",
                 amount=self._safe_float(fill.get("sz"), 0.0),
                 price=self._safe_float(fill.get("px"), 0.0),
-                order_id=str(fill.get("oid") or ""),
+                order_id=oid,
                 status="FILLED",
                 pnl=net,
-                reason=f"GRID_NETTING:{fill.get('dir', '')}".strip(":"),
+                reason=(
+                    f"{'GRID_FORCED' if is_forced else 'GRID_NETTING'}:{fill.get('dir', '')}"
+                ).strip(":"),
             )
-            # forced=False：净额对冲是网格的正常止盈/止损成交，不是风控强平
-            self._dispatch_round_trip_close(symbol, net, forced=False)
+            self._dispatch_round_trip_close(symbol, net, forced=is_forced)
 
-        if max_ts > cursor_ms or newest_tids:
+        if max_ts > cursor_ms or newest_tids or consumed_forced:
             # 游标停在同一毫秒时，旧 tid 仍需保留，否则那一毫秒的成交下轮会被重复归因
             if max_ts == cursor_ms:
                 newest_tids |= seen_tids
             bucket["cursor_ms"] = max_ts
             bucket["seen_tids"] = sorted(newest_tids)
+            if consumed_forced:
+                bucket["forced_oids"] = sorted(forced_oids - consumed_forced)
             self._save_state()
 
         if processed:

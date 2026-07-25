@@ -220,6 +220,79 @@ class TestNettingAttribution(_GridManagerTestBase):
         self.assertIn("GRID_NETTING", record["reason"])
         self.assertIn("Close Short", record["reason"])
 
+    def test_forced_close_semantics_survive_attribution(self):
+        """风控强平的成交必须以 forced=True 上报。
+
+        consecutive_loss 的 forced_close_no_reset 依赖这个区分（强平的净盈利不得
+        重置连亏计数）。归因以链上成交为准，本身分不清强平与正常止盈，故靠强平
+        下单处登记的 oid 精确匹配——taker/maker 不是可靠判据，网格限价单穿价成交
+        同样是 taker。
+        """
+        gm = self._make_gm()
+        gm.reconcile_netting_closes("ETH", fills=[_fill("t0", 1000)])
+        gm._mark_forced_close_oid(
+            "ETH", {"status": "ok", "response": {"data": {"statuses": [{"filled": {"oid": 777}}]}}}
+        )
+
+        gm.reconcile_netting_closes(
+            "ETH",
+            fills=[
+                _fill("t0", 1000),
+                _fill("t1", 2000, closed_pnl="1.0", oid=777),  # 强平成交
+                _fill("t2", 3000, closed_pnl="2.0", oid=888),  # 普通网格成交
+            ],
+        )
+
+        self.assertEqual([r[2] for r in self.reported], [True, False])
+        reasons = [t["reason"] for t in self.logger.trades]
+        self.assertTrue(reasons[0].startswith("GRID_FORCED"))
+        self.assertTrue(reasons[1].startswith("GRID_NETTING"))
+
+    def test_consumed_forced_oid_is_cleared(self):
+        """强平 oid 归因后即从状态移除，不得污染后续同号成交"""
+        gm = self._make_gm()
+        gm.reconcile_netting_closes("ETH", fills=[_fill("t0", 1000)])
+        gm._mark_forced_close_oid(
+            "ETH", {"status": "ok", "response": {"data": {"statuses": [{"filled": {"oid": 777}}]}}}
+        )
+        gm.reconcile_netting_closes(
+            "ETH", fills=[_fill("t0", 1000), _fill("t1", 2000, closed_pnl="1.0", oid=777)]
+        )
+
+        self.assertEqual(gm.state["netting_attribution"]["ETH"]["forced_oids"], [])
+
+    def test_forced_oid_not_registered_when_disabled(self):
+        """未开启净额归因时不写 forced_oids——历史路径自己带 forced 语义"""
+        gm = self._make_gm(netting_enabled=False)
+        gm._mark_forced_close_oid(
+            "ETH", {"status": "ok", "response": {"data": {"statuses": [{"filled": {"oid": 777}}]}}}
+        )
+        self.assertEqual(gm.state.get("netting_attribution", {}), {})
+
+    def test_unextractable_oid_is_ignored(self):
+        """平仓返回里取不到 oid 时静默跳过，不得抛出打断强平流程"""
+        gm = self._make_gm()
+        gm._mark_forced_close_oid("ETH", {"status": "err"})
+        gm._mark_forced_close_oid("ETH", None)
+        self.assertEqual(
+            gm.state.get("netting_attribution", {}).get("ETH", {}).get("forced_oids"), None
+        )
+
+    def test_forced_oid_list_is_bounded(self):
+        """强平 oid 集合有上限，不得让状态文件无限膨胀"""
+        from src.trading.grid_manager import MAX_FORCED_OIDS
+
+        gm = self._make_gm()
+        for i in range(MAX_FORCED_OIDS + 20):
+            gm._mark_forced_close_oid(
+                "ETH",
+                {"status": "ok", "response": {"data": {"statuses": [{"filled": {"oid": i}}]}}},
+            )
+
+        stored = gm.state["netting_attribution"]["ETH"]["forced_oids"]
+        self.assertEqual(len(stored), MAX_FORCED_OIDS)
+        self.assertIn(str(MAX_FORCED_OIDS + 19), stored, "应保留最近的 oid")
+
     def test_fetch_failure_is_contained(self):
         """取成交失败不得抛出，跳过本轮即可"""
         om = MagicMock()
