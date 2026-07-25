@@ -14,6 +14,8 @@ DEFAULT_WIDTH_PCT_MIN = 0.02
 DEFAULT_WIDTH_PCT_MAX = 0.15
 DEFAULT_WIDTH_PCT_FALLBACK = 0.05
 DEFAULT_AI_WIDTH_BLEND_WEIGHT = 0.35
+# LLM 未给出格数时的默认层数（正常决策与兜底建网格共用，保证两条路径形态一致）
+DEFAULT_GRID_NUM = 6
 
 # 合法的网格动作白名单。LLM 输出此集合之外的值（如线上出现过的 UPDATE_GRIDLE）
 # 一律回退到 KEEP_GRID 保守处理，绝不透传到下游执行。
@@ -93,12 +95,7 @@ class GridAgent:
             # （LLM 故障放大成撤换单动作是历史亏损来源之一）
             if res.output is None or (isinstance(res.output, str) and not res.output.strip()):
                 self.logger.print_warning("[GridAgent] LLM 返回空输出，回退 KEEP_GRID")
-                return {
-                    "action": "KEEP_GRID",
-                    "mode": "NEUTRAL",
-                    "confidence": 0.0,
-                    "reason": "LLM 返回空输出，保守维持网格",
-                }
+                return self._degraded_keep_grid("LLM 返回空输出，保守维持网格")
             content = res.output if isinstance(res.output, str) else str(res.output)
 
             try:
@@ -109,12 +106,7 @@ class GridAgent:
                 self.logger.print_warning(
                     f"[GridAgent] LLM 决策解析失败，回退 KEEP_GRID: {parse_err}"
                 )
-                return {
-                    "action": "KEEP_GRID",
-                    "mode": "NEUTRAL",
-                    "confidence": 0.0,
-                    "reason": f"LLM 输出解析失败，保守维持网格: {parse_err}",
-                }
+                return self._degraded_keep_grid(f"LLM 输出解析失败，保守维持网格: {parse_err}")
 
             action = str(ai_decision.get("action", "")).strip().upper()
             confidence = self._safe_float(ai_decision.get("confidence"), 0.0)
@@ -124,12 +116,10 @@ class GridAgent:
                 self.logger.print_warning(
                     f"[GridAgent] LLM 返回非法 action={ai_decision.get('action')!r}，回退 KEEP_GRID"
                 )
-                return {
-                    "action": "KEEP_GRID",
-                    "mode": "NEUTRAL",
-                    "confidence": confidence,
-                    "reason": f"非法 action={ai_decision.get('action')!r}，保守维持网格",
-                }
+                return self._degraded_keep_grid(
+                    f"非法 action={ai_decision.get('action')!r}，保守维持网格",
+                    confidence=confidence,
+                )
 
             if action == "UPDATE_GRID":
                 current_price = float(market_data.get("current_price"))
@@ -141,12 +131,12 @@ class GridAgent:
                     self.logger.print_warning(
                         f"[GridAgent] 获取可用余额失败: {balance_info.get('message')}，回退 KEEP_GRID"
                     )
-                    return {
-                        "action": "KEEP_GRID",
-                        "mode": "NEUTRAL",
-                        "confidence": confidence,
-                        "reason": f"获取可用余额失败: {balance_info.get('message')}，保守维持网格",
-                    }
+                    # llm_ok=True：LLM 本身正常，故障在交易所余额接口，不该计入 LLM 连续失败告警
+                    return self._degraded_keep_grid(
+                        f"获取可用余额失败: {balance_info.get('message')}，保守维持网格",
+                        confidence=confidence,
+                        llm_ok=True,
+                    )
                 available = float(balance_info.get("available", 0))
                 mode = str(ai_decision.get("mode", "NEUTRAL")).strip().upper()
                 if mode not in VALID_GRID_MODES:
@@ -170,7 +160,7 @@ class GridAgent:
                     available_balance=min(available, self.trade_amount),
                     mode=mode,
                     width_pct=dynamic_width_pct,
-                    grid_num=ai_decision.get("grid_num", 6),
+                    grid_num=ai_decision.get("grid_num", DEFAULT_GRID_NUM),
                     leverage=self.max_leverage,
                     adaptive_sizing=self.adaptive_sizing,
                     min_grid_num=self.min_grid_num,
@@ -182,11 +172,13 @@ class GridAgent:
                         f"[GridAgent] 💸 资金不足拒绝布单: {math_config.get('reason', '')}"
                     )
                     math_config["confidence"] = confidence
+                    math_config["llm_ok"] = True
                     return math_config
                 math_config["reason"] = ai_decision.get("reason", "AI 触发数学引擎更新")
                 math_config["width_pct"] = dynamic_width_pct
                 # 透传置信度，避免云端监控指标恒为 0
                 math_config["confidence"] = confidence
+                math_config["llm_ok"] = True
                 return math_config
 
             # KEEP_GRID
@@ -195,10 +187,87 @@ class GridAgent:
                 "mode": str(ai_decision.get("mode", "NEUTRAL")).strip().upper(),
                 "confidence": confidence,
                 "reason": ai_decision.get("reason", "AI 维持当前网格"),
+                "llm_ok": True,
             }
 
         except Exception as e:
-            return {"action": "ERROR", "reason": str(e)}
+            return {"action": "ERROR", "reason": str(e), "llm_ok": False}
+
+    def _degraded_keep_grid(
+        self,
+        reason: str,
+        confidence: float = 0.0,
+        llm_ok: bool = False,
+    ) -> dict[str, Any]:
+        """构造「保守维持网格」的兜底决策。
+
+        llm_ok=False 表示本轮 LLM 自身不可用（调用异常/空输出/输出不可解析/action 非法）。
+        历史上这类兜底与 AI 真实的 KEEP_GRID 返回值完全同形，调用方无从分辨，线上
+        模型下线后连续 13 小时决策失败却无任何升级告警即源于此。
+        """
+        return {
+            "action": "KEEP_GRID",
+            "mode": "NEUTRAL",
+            "confidence": confidence,
+            "reason": reason,
+            "llm_ok": llm_ok,
+        }
+
+    def build_fallback_config(self, market_data: dict[str, Any]) -> dict[str, Any]:
+        """不经 LLM，纯用市场数据 + 数学引擎生成一份中性网格配置。
+
+        用途：LLM 持续不可用时把网格从「空转」中救出。空转死锁的根源是只有
+        UPDATE_GRID 会重建网格，而 LLM 故障期间每轮只能产出 ERROR 或兜底
+        KEEP_GRID——层级已被清空时「维持现有网格」等于永远维持一片空白，
+        线上实测模型下线后 13 小时零挂单零成交、靠自身无法复活。
+
+        只产出 NEUTRAL 对称网格：判断方向是 LLM 的职责，LLM 不可用时不猜方向。
+        宽度与格数全部由市场波动率推导（ai_width_pct=None 时不掺入任何 AI 输入），
+        因此本方法的结果完全可复现、与 LLM 无关。
+        """
+        current_price = self._safe_float(market_data.get("current_price"), 0.0)
+        if current_price <= 0:
+            return self._degraded_keep_grid("兜底建网格失败：当前价不可用，保守维持网格")
+
+        balance_info = self.order_manager.get_available_balance_info()
+        if balance_info.get("status") != "ok":
+            # 与 UPDATE_GRID 同样的理由：余额取不到时重建会撤光旧单又挂不出新单
+            return self._degraded_keep_grid(
+                f"兜底建网格失败：获取可用余额失败({balance_info.get('message')})，保守维持网格",
+                llm_ok=True,
+            )
+
+        available = self._safe_float(balance_info.get("available"), 0.0)
+        width_pct = self._calculate_dynamic_width_pct(
+            market_data=market_data,
+            ai_width_pct=None,
+            mode="NEUTRAL",
+        )
+        math_config = calculate_grid_config(
+            current_price=current_price,
+            available_balance=min(available, self.trade_amount),
+            mode="NEUTRAL",
+            width_pct=width_pct,
+            grid_num=DEFAULT_GRID_NUM,
+            leverage=self.max_leverage,
+            adaptive_sizing=self.adaptive_sizing,
+            min_grid_num=self.min_grid_num,
+        )
+        if math_config.get("action") == "INSUFFICIENT_CAPITAL":
+            self.logger.print_error(
+                f"[GridAgent] 💸 兜底建网格资金不足，拒绝布单: {math_config.get('reason', '')}"
+            )
+        else:
+            self.logger.print_warning(
+                f"[GridAgent] 🛟 LLM 持续不可用，按市场数据兜底重建中性网格 "
+                f"(宽度 {width_pct:.2%}，{DEFAULT_GRID_NUM} 格)"
+            )
+            math_config["reason"] = f"LLM 持续不可用，按市场数据兜底重建中性网格(宽度{width_pct:.2%})"
+            math_config["width_pct"] = width_pct
+        math_config["confidence"] = 0.0
+        math_config["llm_ok"] = False
+        math_config["fallback"] = True
+        return math_config
 
     @staticmethod
     def _extract_first_json_object(text: str) -> str:

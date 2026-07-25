@@ -62,6 +62,7 @@ class GridManager:
         trend_flatten_surgical: bool = False,
         inventory_cap_strict: bool = False,
         keep_grid_reconcile: bool = False,
+        netting_attribution_enabled: bool = False,
     ):
         self.order_manager = order_manager
         self.logger = logger
@@ -75,6 +76,9 @@ class GridManager:
         self.inventory_cap_strict = bool(inventory_cap_strict)
         # KEEP_GRID 周期对账：撤掉交易所上与本地状态无对应的非 reduce_only 残留挂单（默认关闭）
         self.keep_grid_reconcile = bool(keep_grid_reconcile)
+        # 净额对冲平仓归因：以链上成交为准补齐层级状态机漏掉的平仓盈亏（默认关闭）。
+        # 开启后由 reconcile_netting_closes 独占风控上报，见 _report_round_trip_close。
+        self.netting_attribution_enabled = bool(netting_attribution_enabled)
         # 每轮 round-trip 平仓回调：把网格逐轮盈亏上报给账户级风控（连亏熔断）。
         # GridManager 不直接依赖 ProtectionManager，仅通过回调解耦上报，main.py 负责接线。
         self.on_round_trip_close = on_round_trip_close
@@ -1832,6 +1836,133 @@ class GridManager:
                     },
                 )
 
+    def is_grid_idle(self, symbol: str) -> bool:
+        """网格是否处于「空转」：既无层级也无持仓，等于没有任何东西在工作。
+
+        这是 LLM 故障期间的终局状态——层级被紧急平仓/熔断清空后，只有
+        UPDATE_GRID 能重建，而故障期每轮只产出 ERROR 或兜底 KEEP_GRID，
+        于是永远停在空转。调用方据此计数并触发兜底重建。
+        """
+        if self.grid_levels.get(symbol):
+            return False
+        try:
+            return abs(self._get_symbol_position_size(symbol)) <= 0
+        except Exception:
+            # 查不到持仓时保守认为「不空转」，不触发兜底重建（宁可不动也不误建网格）
+            return False
+
+    def reconcile_netting_closes(
+        self, symbol: str, fills: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """以链上成交为准，回补被层级状态机漏掉的平仓盈亏归因。
+
+        Hyperliquid 是单向持仓：中性网格的库存大多被对侧格子的普通开仓单净额
+        对冲平掉（成交 dir 为 "Close Long"/"Close Short"），根本走不到层级的
+        CLOSE_PENDING→COMPLETED 路径，也就不会触发 _record_round_trip。线上三周
+        实测 1051 笔带盈亏的平仓腿只有 24 笔（2.3%）进了归因，连亏熔断的状态文件
+        三周纹丝不动——该保护在中性网格下等同失效，trades 日志的 pnl 也恒为 null。
+
+        开启后本方法独占风控上报（见 _report_round_trip_close），层级状态机与紧急
+        平仓只负责写日志，避免同一笔平仓被计两次。
+
+        Returns:
+            {"processed": 归因笔数, "pnl": 净盈亏合计, "skipped": 跳过原因或 None}
+        """
+        if not self.netting_attribution_enabled:
+            return {"processed": 0, "pnl": 0.0, "skipped": "disabled"}
+
+        if fills is None:
+            try:
+                user_address = self.order_manager.client.address
+                fills = self.order_manager.client.info.user_fills(user_address) or []
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] 净额归因取成交记录失败: {e}")
+                return {"processed": 0, "pnl": 0.0, "skipped": "fetch_failed"}
+
+        bucket = self.state.setdefault("netting_attribution", {}).setdefault(symbol, {})
+        cursor_ms = int(self._safe_float(bucket.get("cursor_ms"), 0.0))
+
+        symbol_fills = [f for f in fills if f.get("coin") == symbol]
+
+        # 首次启用：把游标置于当前最新成交，不回溯历史。否则历史上几百笔亏损腿会
+        # 在一个周期内全部灌进连亏熔断，瞬间把交易对误锁死。
+        if cursor_ms <= 0:
+            newest = max(
+                (int(self._safe_float(f.get("time"), 0.0)) for f in symbol_fills),
+                default=0,
+            )
+            if newest <= 0:
+                # 该交易对还没有任何成交，游标无从锚定：等有成交的那一轮再落盘
+                return {"processed": 0, "pnl": 0.0, "skipped": "no_fills"}
+            bucket["cursor_ms"] = newest
+            bucket["seen_tids"] = [
+                str(f.get("tid"))
+                for f in symbol_fills
+                if int(self._safe_float(f.get("time"), 0.0)) == newest
+            ]
+            self._save_state()
+            self.logger.print_info(
+                f"   [Grid] 净额归因首次启用，游标置于 {newest}（不回溯历史成交）"
+            )
+            return {"processed": 0, "pnl": 0.0, "skipped": "primed"}
+
+        seen_tids = {str(t) for t in (bucket.get("seen_tids") or [])}
+        processed = 0
+        total_pnl = 0.0
+        max_ts = cursor_ms
+        # 下轮去重只需记住「游标那一毫秒」的 tid：更早的成交靠 ts < cursor_ms 直接跳过。
+        newest_tids: set[str] = set()
+
+        for fill in sorted(symbol_fills, key=lambda f: self._safe_float(f.get("time"), 0.0)):
+            ts = int(self._safe_float(fill.get("time"), 0.0))
+            if ts < cursor_ms:
+                continue
+            tid = str(fill.get("tid"))
+            if ts == cursor_ms and tid in seen_tids:
+                continue
+
+            if ts > max_ts:
+                max_ts = ts
+                newest_tids = {tid}
+            elif ts == max_ts:
+                newest_tids.add(tid)
+
+            gross = self._safe_float(fill.get("closedPnl"), 0.0)
+            if gross == 0:
+                continue
+            # 扣掉这笔成交自身的手续费，与 GridPnLTracker.record_round_trip 的净额口径
+            # 保持一致——网格的小额止盈常被手续费吃穿，连亏熔断必须看净额才有意义。
+            net = gross - self._safe_float(fill.get("fee"), 0.0)
+            processed += 1
+            total_pnl += net
+
+            self.logger.log_trade(
+                symbol=symbol,
+                action="GRID_NET_CLOSE",
+                amount=self._safe_float(fill.get("sz"), 0.0),
+                price=self._safe_float(fill.get("px"), 0.0),
+                order_id=str(fill.get("oid") or ""),
+                status="FILLED",
+                pnl=net,
+                reason=f"GRID_NETTING:{fill.get('dir', '')}".strip(":"),
+            )
+            # forced=False：净额对冲是网格的正常止盈/止损成交，不是风控强平
+            self._dispatch_round_trip_close(symbol, net, forced=False)
+
+        if max_ts > cursor_ms or newest_tids:
+            # 游标停在同一毫秒时，旧 tid 仍需保留，否则那一毫秒的成交下轮会被重复归因
+            if max_ts == cursor_ms:
+                newest_tids |= seen_tids
+            bucket["cursor_ms"] = max_ts
+            bucket["seen_tids"] = sorted(newest_tids)
+            self._save_state()
+
+        if processed:
+            self.logger.print_info(
+                f"   [Grid] 净额归因: 补记 {processed} 笔平仓，净盈亏 {total_pnl:+.4f}"
+            )
+        return {"processed": processed, "pnl": total_pnl, "skipped": None}
+
     def _report_round_trip_close(self, symbol: str, pnl: float, forced: bool = False):
         """把逐轮盈亏上报给账户级风控（连亏熔断），统一处理异常与签名兼容。
 
@@ -1839,6 +1970,14 @@ class GridManager:
         「主动止盈」与「被动强平」语义。失败不得影响网格主流程——风控记账出错
         绝不能拖垮布单/同步，故吞掉异常仅记日志。
         """
+        # 净额归因接管时，风控上报统一以链上成交为准（reconcile_netting_closes），
+        # 此处必须让路：同一笔平仓若既走层级状态机又走链上 fill，连亏计数会翻倍。
+        if self.netting_attribution_enabled:
+            return
+        self._dispatch_round_trip_close(symbol, pnl, forced=forced)
+
+    def _dispatch_round_trip_close(self, symbol: str, pnl: float, forced: bool = False):
+        """实际派发 round-trip 回调（两条归因通路共用），吞异常仅记日志。"""
         if self.on_round_trip_close is None:
             return
         try:

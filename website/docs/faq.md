@@ -61,7 +61,7 @@ Recommended options:
 
 | Model | Provider | Config `client_type` | Notes |
 |---|---|---|---|
-| `qwen/qwen3.5-122b-a10b` | NVIDIA NIM | `langchain_nvidia` | Good balance of speed/quality (MoE, supports tools) |
+| `qwen/qwen3-next-80b-a3b-instruct` | NVIDIA NIM | `langchain_nvidia` | Good balance of speed/quality (MoE, supports tools) |
 | `gpt-4o-mini` | OpenAI | `openai` | Fast and cheap |
 | `gpt-4o` | OpenAI | `openai` | Higher quality, higher cost |
 | `gemini-1.5-flash` | Google | `google` | Fast, generous free tier |

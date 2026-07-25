@@ -64,7 +64,7 @@ The market data component uses ATR and volatility to compute a data-driven width
 ```yaml
 llm:
   client_type: langchain_openai
-  model: qwen/qwen3.5-122b-a10b
+  model: qwen/qwen3-next-80b-a3b-instruct
   temperature: 0.3               # slightly higher for grid — more creative width estimation
 ```
 
@@ -93,7 +93,7 @@ Grid trading benefits from shorter timeframes (15m, 5m) compared to the perpetua
 ```yaml
 llm:
   client_type: langchain_openai
-  model: qwen/qwen3.5-122b-a10b
+  model: qwen/qwen3-next-80b-a3b-instruct
   temperature: 0.3
 
 trading:

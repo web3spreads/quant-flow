@@ -17,6 +17,10 @@ DEFAULT_PERP_FEE_RATES = default_perp_fee_rates()
 FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.taker_rate
 MAKER_FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.maker_rate
 
+# 未显式配置模型时的兜底型号。DeepSeek 在售型号仅 deepseek-v4-flash / deepseek-v4-pro；
+# flash 推理开销约为 pro 的 43%，5 分钟一轮的网格决策用它足够且更省。
+DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+
 
 class Config:
     """配置管理类"""
@@ -102,8 +106,11 @@ class Config:
             "LLM_CLIENT_TYPE", "langchain_openai"
         )
 
-        # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取
-        self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", "deepseek-chat")
+        # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取。
+        # 默认值随供应商在售型号走：DeepSeek 已下线 deepseek-chat，现仅接受
+        # deepseek-v4-flash / deepseek-v4-pro，旧名一律 400 invalid_request_error。
+        # 线上因此静默停摆 13 小时（每轮决策失败 → 网格空转），故默认值必须是在售型号。
+        self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", DEFAULT_LLM_MODEL)
 
         # 基础参数（可选）
         self.llm_temperature = llm_config.get("temperature")
@@ -135,7 +142,7 @@ class Config:
         """初始化 OpenAI API 配置"""
         self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
+        self.openai_model = os.getenv("OPENAI_MODEL", DEFAULT_LLM_MODEL)
 
         # LLM Fallback 配置
         self.llm_fallback_api_base = os.getenv("LLM_FALLBACK_API_BASE", "")
@@ -277,6 +284,27 @@ class Config:
         # 默认关闭。线上 12.5 天亏 39% 无一处结构化记录可回答"钱去哪了"，即源于缺此项。
         self.grid_equity_snapshot_enabled: bool = self._as_bool(
             trading.get("grid_equity_snapshot_enabled"),
+            False,
+        )
+        # LLM 连续失败告警：连续 N 个网格周期 LLM 不可用（调用异常/空输出/输出不可解析）
+        # 就走通知渠道升级告警。默认 0 = 关闭（保持历史行为：只打日志）。
+        # 线上 DeepSeek 下线 deepseek-chat 后连续 13 小时决策全失败、网格零成交，
+        # 钉钉通道明明是开的却一条没发，全靠人工翻日志才发现。
+        self.grid_llm_failure_alert_cycles: int = max(
+            0, int(trading.get("grid_llm_failure_alert_cycles", 0) or 0)
+        )
+        # 空转自愈：连续 N 个周期处于「无层级 + 无持仓 + 拿不到 UPDATE_GRID」时，
+        # 用纯市场数据（不经 LLM）兜底重建一次中性网格。默认 0 = 关闭。
+        # 这是 LLM 故障期的恢复死锁解药：层级被清空后只有 UPDATE_GRID 能重建，
+        # 而故障期每轮只产出 ERROR 或兜底 KEEP_GRID，网格永远躺平。
+        self.grid_llm_fallback_rebuild_cycles: int = max(
+            0, int(trading.get("grid_llm_fallback_rebuild_cycles", 0) or 0)
+        )
+        # 净额对冲平仓归因：以链上成交为准补齐层级状态机漏掉的平仓盈亏，喂连亏熔断
+        # 并把 pnl/reason 写进 trades 日志。默认关闭（保持历史行为）。
+        # 线上三周实测归因覆盖率仅 2.3%，连亏熔断在中性网格下形同虚设。
+        self.grid_netting_attribution_enabled: bool = self._as_bool(
+            trading.get("grid_netting_attribution_enabled"),
             False,
         )
 

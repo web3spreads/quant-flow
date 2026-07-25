@@ -705,6 +705,11 @@ trading:
   grid_halt_below_usd: 15                      # 净值停机线：低于此值且无持仓时跳过整个周期（0=关闭）
   grid_equity_snapshot_enabled: true           # 每周期净值快照写 logs/equity/*.jsonl
 
+  # ── LLM 故障韧性与盈亏归因（同样默认关闭 = 历史行为）──────────────────
+  grid_llm_failure_alert_cycles: 6             # 连续 N 周期 LLM 不可用即走通知渠道告警（0=关闭）
+  grid_llm_fallback_rebuild_cycles: 12         # 空转 N 周期后用纯市场数据兜底重建网格（0=关闭）
+  grid_netting_attribution_enabled: true       # 以链上成交补齐净额对冲平仓的盈亏归因
+
 agent:
   grid_width:
     min_pct: 0.02            # 最小网格宽度 2%
@@ -717,6 +722,32 @@ scheduler:
 ```
 
 > 网格周期还接入账户级风控（`ProtectionManager.check_all`）：回撤/连亏/单日亏损熔断时平掉全部持仓、撤销网格挂单并跳过本轮布单。
+
+### 网格的 LLM 故障韧性与盈亏归因
+
+三项针对测试网浸泡暴露问题的机制，均由上表开关控制、默认关闭：
+
+**1. LLM 连续失败告警（`grid_llm_failure_alert_cycles`）**
+
+`GridAgent` 给每份决策打 `llm_ok` 标：LLM 调用异常、返回空输出、输出不可解析、action 非法这四种兜底路径标 `False`，AI 真实判断标 `True`（余额接口故障也标 `True`——那不是 LLM 的问题）。`main.py` 据此累计连续故障周期，达阈值经 `Notifier` 升级告警，故障期间只发一次、恢复后复位。
+
+> 背景：这四种兜底路径都返回形态相同的 `KEEP_GRID`，此前无法与 AI 的真实判断区分。供应商下线 `deepseek-chat` 后，线上连续 13 小时每轮决策 400 失败、网格零成交，钉钉通道开着却一条告警都没发出。
+
+**2. 空转自愈（`grid_llm_fallback_rebuild_cycles`）**
+
+连续 N 个周期处于「无层级 + 无持仓 + 拿不到 `UPDATE_GRID`」时，调用 `GridAgent.build_fallback_config()` 用纯市场数据（不经 LLM）重建一次中性网格。
+
+> 背景：网格层级被紧急平仓/熔断清空后，只有 `UPDATE_GRID` 能重建，而 LLM 故障期每轮只产出 `ERROR` 或兜底 `KEEP_GRID`——「维持现有网格」在无层级时等于永远维持一片空白，网格再也活不过来。
+>
+> 边界：兜底只出 `NEUTRAL` 对称网格（判断方向是 LLM 的职责，不可用时不猜方向）；趋势过滤主动暂停的周期不计入空转；兜底失败后重新攒够 N 周期才重试，避免每轮刷屏。
+
+**3. 净额对冲平仓归因（`grid_netting_attribution_enabled`）**
+
+`GridManager.reconcile_netting_closes()` 以链上 `user_fills` 为准，把 `closedPnl != 0` 的成交按「扣除该笔手续费后的净额」上报连亏熔断，并把 `pnl`/`reason` 写进 trades 日志。游标（`cursor_ms` + 同毫秒 `tid` 集合）持久化在 `grid_state.json`，首次启用只锚定游标、绝不回溯历史。
+
+> 背景：Hyperliquid 是单向持仓，中性网格的库存大多被对侧格子的普通开仓单净额对冲平掉（成交 `dir` 为 `Close Long`/`Close Short`），走不到层级状态机的 `CLOSE_PENDING → COMPLETED` 路径。线上三周实测：1051 笔带盈亏的平仓腿只有 24 笔（2.3%）进了归因，连亏熔断状态文件三周纹丝不动，trades 日志的 `pnl` 恒为 null。
+>
+> **归因源互斥**：开启后本方法独占风控上报，`_report_round_trip_close` 直接让路（层级状态机与紧急平仓只写日志），否则同一笔平仓会被计两次、连亏计数翻倍。
 
 ## 设计模式
 

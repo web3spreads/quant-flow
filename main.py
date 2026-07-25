@@ -484,6 +484,11 @@ class QuantFlowBot:
         # 趋势过滤迟滞确认器（按 symbol 独立）：连续 N 周期同向强趋势才动作。
         # 无条件初始化，避免网格组件构造失败时 grid_cycle 引用缺失属性。
         self._grid_trend_trackers: dict[str, TrendConfirmTracker] = {}
+        # LLM 连续故障计数与空转连续计数（按 symbol 独立），供告警升级与空转自愈使用。
+        self._grid_llm_failure_streak: dict[str, int] = {}
+        self._grid_idle_streak: dict[str, int] = {}
+        # 已就该轮故障发过告警的标记：故障持续期间只发一次，恢复后复位，避免 5 分钟一条刷屏
+        self._grid_llm_alert_sent: dict[str, bool] = {}
         if self.config.grid_enabled:
             self.logger.print_info("初始化网格交易组件...")
             try:
@@ -504,6 +509,7 @@ class QuantFlowBot:
                     trend_flatten_surgical=self.config.grid_trend_filter_surgical_flatten,
                     inventory_cap_strict=self.config.grid_inventory_cap_strict,
                     keep_grid_reconcile=self.config.grid_keep_grid_reconcile,
+                    netting_attribution_enabled=self.config.grid_netting_attribution_enabled,
                 )
 
                 self.grid_agent = GridAgent(
@@ -1750,6 +1756,128 @@ class QuantFlowBot:
 
         return False
 
+    def _track_grid_llm_health(self, symbol: str, ai_decision: dict) -> None:
+        """跟踪 LLM 连续故障，达阈值时经通知渠道升级告警。
+
+        依据 GridAgent 打的 ``llm_ok`` 标：False 表示本轮 LLM 自身不可用（调用异常/
+        空输出/输出不可解析/action 非法）。这类兜底与 AI 真实的 KEEP_GRID 返回值同形，
+        此前无从分辨——线上 DeepSeek 下线 deepseek-chat 后连续 13 小时决策全失败、
+        网格零成交，钉钉通道开着却一条没发，只能靠人工翻日志发现。
+
+        故障持续期间只告警一次（恢复后复位），避免 5 分钟一条刷屏。
+        """
+        threshold = self.config.grid_llm_failure_alert_cycles
+        if threshold <= 0:
+            return
+
+        if ai_decision.get("llm_ok", True):
+            if self._grid_llm_failure_streak.get(symbol):
+                self.logger.print_info(
+                    f"   [Grid] ✅ {symbol} LLM 决策已恢复正常"
+                    f"（此前连续失败 {self._grid_llm_failure_streak[symbol]} 周期）"
+                )
+            self._grid_llm_failure_streak[symbol] = 0
+            self._grid_llm_alert_sent[symbol] = False
+            return
+
+        streak = self._grid_llm_failure_streak.get(symbol, 0) + 1
+        self._grid_llm_failure_streak[symbol] = streak
+        if streak < threshold or self._grid_llm_alert_sent.get(symbol):
+            return
+
+        reason = str(ai_decision.get("reason", ""))[:300]
+        message = (
+            f"{symbol} 网格 LLM 决策连续 {streak} 个周期失败，网格已停止更新，"
+            f"仅维持减仓保护单。最近一次原因: {reason}"
+        )
+        self.logger.print_error(f"🚨 {message}")
+        self._grid_llm_alert_sent[symbol] = True
+
+        if self.notifier and self.notifier.enabled:
+            try:
+                self.notifier.notify_error(
+                    title="网格 LLM 决策连续失败",
+                    error_message=message,
+                    context="请检查 LLM 供应商模型名是否已下线、API 余额与网络连通性",
+                )
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] 发送 LLM 故障告警失败: {e}")
+
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_alert(
+                symbol=symbol,
+                alert_type="grid_llm_failure",
+                severity="high",
+                message=message,
+                details={"streak": streak, "reason": reason},
+            )
+
+    def _maybe_fallback_rebuild(
+        self, symbol: str, ai_decision: dict, market_data: dict
+    ) -> dict:
+        """网格因 LLM 持续不可用而空转时，用纯市场数据兜底重建，返回替换后的决策。
+
+        空转死锁：层级被紧急平仓/熔断清空后，只有 UPDATE_GRID 能重建网格，而 LLM
+        故障期每轮只产出 ERROR 或兜底 KEEP_GRID（「维持现有网格」在无层级时等于
+        维持一片空白），网格再也活不过来——线上实测停摆 13 小时零挂单零成交。
+
+        趋势过滤主动暂停的周期不算空转：那时候不建网格正是趋势过滤的目的。
+        """
+        cycles = self.config.grid_llm_fallback_rebuild_cycles
+        if cycles <= 0 or not self.grid_agent or not self.grid_manager:
+            return ai_decision
+
+        if (
+            ai_decision.get("action") == "UPDATE_GRID"
+            or ai_decision.get("trend_paused")
+            or not self.grid_manager.is_grid_idle(symbol)
+        ):
+            self._grid_idle_streak[symbol] = 0
+            return ai_decision
+
+        streak = self._grid_idle_streak.get(symbol, 0) + 1
+        self._grid_idle_streak[symbol] = streak
+        if streak < cycles:
+            self.logger.print_warning(
+                f"   [Grid] 💤 {symbol} 网格空转 {streak}/{cycles} 周期，"
+                f"达阈值后将按市场数据兜底重建"
+            )
+            return ai_decision
+
+        # 无论兜底成功与否都清零：失败时也要重新攒够 cycles 周期才再试，
+        # 避免资金不足等持续性原因导致每轮都重试刷屏。
+        self._grid_idle_streak[symbol] = 0
+        try:
+            fallback = self.grid_agent.build_fallback_config(market_data)
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] 兜底重建网格失败: {e}")
+            return ai_decision
+
+        if fallback.get("action") == "UPDATE_GRID":
+            if self.notifier and self.notifier.enabled:
+                try:
+                    self.notifier.notify_error(
+                        title="网格空转自愈",
+                        error_message=(
+                            f"{symbol} 网格连续 {streak} 周期空转（LLM 不可用），"
+                            f"已按市场数据兜底重建中性网格"
+                        ),
+                        context="网格已恢复挂单，但 LLM 仍需修复才能恢复智能决策",
+                    )
+                except Exception as e:
+                    self.logger.print_warning(f"   [Grid] 发送空转自愈通知失败: {e}")
+            cloud = get_cloud_logger()
+            if cloud:
+                cloud.send_alert(
+                    symbol=symbol,
+                    alert_type="grid_fallback_rebuild",
+                    severity="high",
+                    message=f"{symbol} 网格空转 {streak} 周期，已按市场数据兜底重建",
+                    details={"idle_cycles": streak, "reason": fallback.get("reason", "")},
+                )
+        return fallback
+
     def grid_cycle(self):
         """执行一个网格交易周期"""
         symbol = self.config.symbols[0] if self.config.symbols else "UNKNOWN"
@@ -1769,6 +1897,15 @@ class QuantFlowBot:
             )
             if cloud:
                 cloud.send_cycle_event(symbol=symbol, phase="start")
+
+            # 净额对冲平仓归因（默认关闭）：先按链上成交补记被层级状态机漏掉的平仓盈亏，
+            # 再做风控判定——这样本轮新增的亏损当轮就能被连亏熔断看到，而不是迟一个周期。
+            # 归因出错绝不能拖垮交易周期，故整体兜住异常仅记日志。
+            if self.grid_manager:
+                try:
+                    self.grid_manager.reconcile_netting_closes(symbol)
+                except Exception as e:
+                    self.logger.print_warning(f"[Grid] 净额归因异常（不影响主流程）: {e}")
 
             # 账户级风控熔断（回撤/单日亏损，按权益判定）：在布单前拦截，熔断时已平仓/撤单并跳过布单。
             # 连亏熔断走另一条逐轮通路（_on_grid_round_trip_close → on_trade_close），不在此处。
@@ -1917,6 +2054,11 @@ class QuantFlowBot:
                     "mode": "NEUTRAL",
                     "confidence": 0.0,
                     "reason": f"强趋势({arrow})暂停加仓",
+                    # llm_ok：本轮压根没调 LLM，不能计入 LLM 故障；
+                    # trend_paused：这是主动暂停而非空转，不得触发兜底重建（强趋势里
+                    # 建网格正是趋势过滤要阻止的事）
+                    "llm_ok": True,
+                    "trend_paused": True,
                 }
             else:
                 if raw_trend_dir != 0:
@@ -1931,6 +2073,11 @@ class QuantFlowBot:
                     multi_timeframe_trends,
                     current_grid_summary,
                 )
+
+            # LLM 健康度跟踪 → 连续故障升级告警（默认关闭）
+            self._track_grid_llm_health(symbol, ai_decision)
+            # 空转自愈：LLM 持续不可用把网格拖成空转时，用纯市场数据兜底重建（默认关闭）
+            ai_decision = self._maybe_fallback_rebuild(symbol, ai_decision, market_data)
 
             # 记录网格决策到本地日志 + 云端
             action = ai_decision.get("action", "UNKNOWN")

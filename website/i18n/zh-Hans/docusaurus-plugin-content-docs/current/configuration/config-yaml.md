@@ -17,7 +17,7 @@ cp config.yaml.example config.yaml
 ```yaml
 llm:
   client_type: langchain_nvidia   # openai | cloudflare | google | litellm | nvidia
-  model: qwen/qwen3.5-122b-a10b   # 按你的供应商可用模型填写
+  model: qwen/qwen3-next-80b-a3b-instruct   # 按你的供应商可用模型填写
   temperature: 0.2                 # 交易决策建议使用低温度
 ```
 
@@ -216,7 +216,7 @@ data:
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: qwen/qwen3.5-122b-a10b
+  model: qwen/qwen3-next-80b-a3b-instruct
   temperature: 0.2
 
 trading:
