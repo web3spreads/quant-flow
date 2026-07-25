@@ -249,15 +249,16 @@ class GridManager:
             if self.keep_grid_reconcile:
                 self._reconcile_orphan_orders(symbol)
 
-            # 网格空转告警：层级已被清空（紧急平仓/熔断后）且无持仓时，网格没有任何
-            # 挂单在工作，只能等 AI 下一次 UPDATE_GRID 重建——这段时间是纯空转，
-            # 醒目提示避免误以为网格还在运行。
-            if not self.grid_levels.get(symbol) and action == "KEEP_GRID":
-                if abs(self._get_symbol_position_size(symbol)) <= 0:
-                    self.logger.print_warning(
-                        f"   [Grid] 💤 {symbol} 网格空转中：无层级、无持仓，"
-                        f"等待 AI 返回 UPDATE_GRID 重建"
-                    )
+            # 网格空转告警：层级已被清空（紧急平仓/熔断后）、无持仓、交易所上也没有
+            # 活跃挂单时，网格没有任何东西在工作，只能等 AI 下一次 UPDATE_GRID 重建
+            # ——这段时间是纯空转，醒目提示避免误以为网格还在运行。
+            # 判据与 is_grid_idle 共用：此前只看层级，而全量重建路径不写 levels，
+            # 线上因此在挂着 12 个网格单时连刷 4 个周期「空转」误报。
+            if action == "KEEP_GRID" and self.is_grid_idle(symbol):
+                self.logger.print_warning(
+                    f"   [Grid] 💤 {symbol} 网格空转中：无层级、无持仓、无挂单，"
+                    f"等待 AI 返回 UPDATE_GRID 重建"
+                )
 
             if self.grid_reduce_only_exit_orders_enabled:
                 self._ensure_min_orders(symbol=symbol)

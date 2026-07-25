@@ -437,6 +437,33 @@ class TestIsGridIdle(_GridManagerTestBase):
         gm2._get_symbol_open_orders = _boom
         self.assertFalse(gm2.is_grid_idle("ETH"))
 
+    def test_sync_grid_idle_warning_shares_the_same_judgement(self):
+        """KEEP_GRID 周期的空转告警必须与 is_grid_idle 同判据，否则日志误导人。
+
+        线上就是被这条误报坑过：交易所挂着 12 个网格单，日志连刷 4 个周期「空转」。
+        """
+        warnings = []
+        gm = self._make_idle_gm(
+            orders=[{"oid": 1, "coin": "ETH", "side": "B", "limitPx": "1837.9"}]
+        )
+        gm.logger.print_warning = lambda *a, **k: warnings.append(" ".join(str(x) for x in a))
+        gm._cleanup_orphan_trigger_orders = lambda s: None
+        gm._ensure_min_orders = lambda symbol: None
+
+        gm.sync_grid("ETH", {"action": "KEEP_GRID"})
+        self.assertFalse(
+            any("空转" in w for w in warnings), "交易所还有网格挂单时不得报空转"
+        )
+
+        gm2 = self._make_idle_gm()  # 真空转：无层级、无持仓、无挂单
+        warnings2 = []
+        gm2.logger.print_warning = lambda *a, **k: warnings2.append(" ".join(str(x) for x in a))
+        gm2._cleanup_orphan_trigger_orders = lambda s: None
+        gm2._ensure_min_orders = lambda symbol: None
+
+        gm2.sync_grid("ETH", {"action": "KEEP_GRID"})
+        self.assertTrue(any("空转" in w for w in warnings2), "真空转时仍须告警")
+
 
 class TestRoundTripCallbackCompat(_GridManagerTestBase):
     """round-trip 回调的签名兼容：探测而非 try/except TypeError"""
