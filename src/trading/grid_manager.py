@@ -19,6 +19,7 @@ from src.trading.grid_pnl import GridPnLTracker
 from src.trading.order_manager import OrderManager
 from src.utils.cloud_logger import get_cloud_logger
 from src.utils.grid_math import GridLevel, GridLevelState, extract_order_id
+from src.utils.introspect import accepts_parameter
 from src.utils.logger import TradingLogger
 from src.utils.precision import to_decimal
 
@@ -61,7 +62,9 @@ class GridManager:
         grid_rebuild_cooldown_seconds: int = DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS,
         grid_rebuild_min_price_change_ratio: float = DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO,
         barrier_config: TripleBarrierConfig | None = None,
-        on_round_trip_close: Callable[[str, float], None] | None = None,
+        on_round_trip_close: (
+            Callable[[str, float, bool], None] | Callable[[str, float], None] | None
+        ) = None,
         max_position_notional_usd: float = 0.0,
         trend_flatten_surgical: bool = False,
         inventory_cap_strict: bool = False,
@@ -86,6 +89,10 @@ class GridManager:
         # 每轮 round-trip 平仓回调：把网格逐轮盈亏上报给账户级风控（连亏熔断）。
         # GridManager 不直接依赖 ProtectionManager，仅通过回调解耦上报，main.py 负责接线。
         self.on_round_trip_close = on_round_trip_close
+        # round-trip 回调是否接受 forced 参数：签名探测约 46 微秒，缓存避免每笔平仓
+        # 重复求值。回调允许构造后被替换（测试桩/自定义接线），故按身份比对惰性重探。
+        self._forced_probe_target: Any = None
+        self._forced_probe_result: bool = False
         self.grid_limit_order_take_profit_enabled = bool(grid_limit_order_take_profit_enabled)
         self.grid_limit_order_stop_loss_enabled = bool(grid_limit_order_stop_loss_enabled)
         self.grid_reduce_only_exit_orders_enabled = bool(grid_reduce_only_exit_orders_enabled)
@@ -1845,18 +1852,32 @@ class GridManager:
                 )
 
     def is_grid_idle(self, symbol: str) -> bool:
-        """网格是否处于「空转」：既无层级也无持仓，等于没有任何东西在工作。
+        """网格是否真的「空转」：无层级、无持仓，且交易所上也没有活跃网格挂单。
 
         这是 LLM 故障期间的终局状态——层级被紧急平仓/熔断清空后，只有
         UPDATE_GRID 能重建，而故障期每轮只产出 ERROR 或兜底 KEEP_GRID，
         于是永远停在空转。调用方据此计数并触发兜底重建。
+
+        **必须查交易所挂单**：本地 ``grid_levels`` 为空不等于网格没在工作——全量
+        重建路径只把订单快照写进状态文件，``levels`` 要等下一轮增量同步才建立。
+        线上实测过这个窗口：交易所挂着完整的 12 个网格单，本地层级却是空的，
+        只看层级会判成空转，进而触发一次没必要的撤单重布。
+
+        reduce_only 单不算数：那是减仓保护单，持仓清零后仍可能残留，不代表网格在做市。
         """
         if self.grid_levels.get(symbol):
             return False
         try:
-            return abs(self._get_symbol_position_size(symbol)) <= 0
+            if abs(self._get_symbol_position_size(symbol)) > 0:
+                return False
+            live_orders = [
+                o
+                for o in self._get_symbol_open_orders(symbol)
+                if not bool(o.get("reduceOnly", False))
+            ]
+            return not live_orders
         except Exception:
-            # 查不到持仓时保守认为「不空转」，不触发兜底重建（宁可不动也不误建网格）
+            # 查不到持仓/挂单时保守认为「不空转」，不触发兜底重建（宁可不动也不误建网格）
             return False
 
     def _mark_forced_close_oid(self, symbol: str, result: Any) -> None:
@@ -2025,16 +2046,28 @@ class GridManager:
             return
         self._dispatch_round_trip_close(symbol, pnl, forced=forced)
 
+    def _callback_accepts_forced(self, callback: Any) -> bool:
+        """探测并缓存「回调是否接受 forced 参数」，回调换了才重新求值。"""
+        if self._forced_probe_target is not callback:
+            self._forced_probe_target = callback
+            self._forced_probe_result = accepts_parameter(callback, "forced")
+        return self._forced_probe_result
+
     def _dispatch_round_trip_close(self, symbol: str, pnl: float, forced: bool = False):
-        """实际派发 round-trip 回调（两条归因通路共用），吞异常仅记日志。"""
-        if self.on_round_trip_close is None:
+        """实际派发 round-trip 回调（两条归因通路共用），吞异常仅记日志。
+
+        兼容未升级的两参回调（自定义接线/旧回测桩）走签名探测，而非
+        try/except TypeError 降级重调——后者在回调内部自己抛 TypeError 时会把
+        同一笔盈亏上报两次，凭空制造连亏。
+        """
+        callback = self.on_round_trip_close
+        if callback is None:
             return
         try:
-            try:
-                self.on_round_trip_close(symbol, pnl, forced)
-            except TypeError:
-                # 兼容未升级的两参回调（如自定义接线/旧回测桩）
-                self.on_round_trip_close(symbol, pnl)
+            if self._callback_accepts_forced(callback):
+                callback(symbol, pnl, forced)
+            else:
+                callback(symbol, pnl)
         except Exception as e:
             self.logger.print_warning(f"   [Grid] round-trip 盈亏上报风控失败: {e}")
 

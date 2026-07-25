@@ -735,7 +735,9 @@ scheduler:
 
 **2. 空转自愈（`grid_llm_fallback_rebuild_cycles`）**
 
-连续 N 个周期处于「无层级 + 无持仓 + 拿不到 `UPDATE_GRID`」时，调用 `GridAgent.build_fallback_config()` 用纯市场数据（不经 LLM）重建一次中性网格。
+连续 N 个周期处于「无层级 + 无持仓 + 交易所无活跃网格挂单 + 拿不到 `UPDATE_GRID`」时，调用 `GridAgent.build_fallback_config()` 用纯市场数据（不经 LLM）重建一次中性网格。
+
+> 判据里的「交易所无活跃挂单」不能省：本地 `grid_levels` 为空不等于网格没在工作——全量重建路径只把订单快照写进状态文件，`levels` 要等下一轮增量同步才建立。线上实测过这个窗口：交易所挂着完整的 12 个网格单、本地层级却是空的。reduce_only 单不计入（持仓清零后可能残留，不代表在做市）。
 
 > 背景：网格层级被紧急平仓/熔断清空后，只有 `UPDATE_GRID` 能重建，而 LLM 故障期每轮只产出 `ERROR` 或兜底 `KEEP_GRID`——「维持现有网格」在无层级时等于永远维持一片空白，网格再也活不过来。
 >

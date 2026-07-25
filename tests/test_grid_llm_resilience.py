@@ -382,33 +382,111 @@ class TestAttributionOwnershipIsExclusive(_GridManagerTestBase):
 
 
 class TestIsGridIdle(_GridManagerTestBase):
-    """空转判定：无层级且无持仓"""
+    """空转判定：无层级、无持仓，且交易所上也没有活跃网格挂单"""
 
-    def test_idle_when_no_levels_and_no_position(self):
+    def _make_idle_gm(self, orders=None, position=0.0):
         gm = self._make_gm()
-        gm._get_symbol_position_size = lambda s: 0.0
-        self.assertTrue(gm.is_grid_idle("ETH"))
+        gm._get_symbol_position_size = lambda s: position
+        gm._get_symbol_open_orders = lambda s, include_trigger=False: list(orders or [])
+        return gm
+
+    def test_idle_when_nothing_is_working(self):
+        self.assertTrue(self._make_idle_gm().is_grid_idle("ETH"))
 
     def test_not_idle_with_levels(self):
-        gm = self._make_gm()
+        gm = self._make_idle_gm()
         gm.grid_levels["ETH"] = [GridLevel(id="L0", price=2000, amount=25, side="LONG")]
-        gm._get_symbol_position_size = lambda s: 0.0
         self.assertFalse(gm.is_grid_idle("ETH"))
 
     def test_not_idle_with_position(self):
-        gm = self._make_gm()
-        gm._get_symbol_position_size = lambda s: -0.05
+        self.assertFalse(self._make_idle_gm(position=-0.05).is_grid_idle("ETH"))
+
+    def test_not_idle_when_exchange_still_has_grid_orders(self):
+        """本地层级为空不代表网格没在工作。
+
+        全量重建路径只把订单快照写进状态文件，levels 要等下一轮增量同步才建立。
+        线上实测过这个窗口：交易所挂着完整的 12 个网格单、本地层级却是空的，
+        只看层级会误判成空转，触发一次没必要的撤单重布。
+        """
+        gm = self._make_idle_gm(
+            orders=[
+                {"oid": 1, "coin": "ETH", "side": "B", "limitPx": "1837.9"},
+                {"oid": 2, "coin": "ETH", "side": "A", "limitPx": "1881.7"},
+            ]
+        )
         self.assertFalse(gm.is_grid_idle("ETH"))
 
-    def test_position_query_failure_is_conservative(self):
-        """查不到持仓时按「非空转」处理：宁可不动，也不误建网格"""
-        gm = self._make_gm()
+    def test_reduce_only_orders_do_not_count_as_working(self):
+        """减仓保护单在持仓清零后可能残留，不代表网格在做市"""
+        gm = self._make_idle_gm(
+            orders=[{"oid": 1, "coin": "ETH", "side": "A", "reduceOnly": True}]
+        )
+        self.assertTrue(gm.is_grid_idle("ETH"))
 
-        def _boom(symbol):
+    def test_query_failure_is_conservative(self):
+        """查不到持仓/挂单时按「非空转」处理：宁可不动，也不误建网格"""
+
+        def _boom(*a, **k):
             raise RuntimeError("查询失败")
 
+        gm = self._make_idle_gm()
         gm._get_symbol_position_size = _boom
         self.assertFalse(gm.is_grid_idle("ETH"))
+
+        gm2 = self._make_idle_gm()
+        gm2._get_symbol_open_orders = _boom
+        self.assertFalse(gm2.is_grid_idle("ETH"))
+
+
+class TestRoundTripCallbackCompat(_GridManagerTestBase):
+    """round-trip 回调的签名兼容：探测而非 try/except TypeError"""
+
+    def test_three_arg_callback_receives_forced(self):
+        got = []
+        gm = self._make_gm(netting_enabled=False)
+        gm.on_round_trip_close = lambda s, p, forced=False: got.append((s, p, forced))
+        gm._dispatch_round_trip_close("ETH", -1.0, forced=True)
+        self.assertEqual(got, [("ETH", -1.0, True)])
+
+    def test_two_arg_callback_still_supported(self):
+        """未升级的两参回调（旧回测桩/自定义接线）仍可用"""
+        got = []
+        gm = self._make_gm(netting_enabled=False)
+        gm.on_round_trip_close = lambda s, p: got.append((s, p))
+        gm._dispatch_round_trip_close("ETH", -1.0, forced=True)
+        self.assertEqual(got, [("ETH", -1.0)])
+
+    def test_callback_raising_typeerror_is_not_retried(self):
+        """回调内部抛 TypeError 不得被误判成「签名不兼容」而重调。
+
+        旧实现用 try/except TypeError 降级重调，回调内部自己抛 TypeError 时会把
+        同一笔盈亏上报两次，凭空制造连亏。
+        """
+        calls = []
+
+        def _cb(symbol, pnl, forced=False):
+            calls.append((symbol, pnl))
+            raise TypeError("回调内部自己炸了，不是签名问题")
+
+        gm = self._make_gm(netting_enabled=False)
+        gm.on_round_trip_close = _cb
+        gm._dispatch_round_trip_close("ETH", -1.0)  # 异常被吞，不抛出
+
+        self.assertEqual(len(calls), 1, "同一笔盈亏不得上报两次")
+
+    def test_probe_is_cached_and_refreshed_on_swap(self):
+        """签名探测结果被缓存；换了回调要重新探测"""
+        gm = self._make_gm(netting_enabled=False)
+        three = []
+        gm.on_round_trip_close = lambda s, p, forced=False: three.append(forced)
+        gm._dispatch_round_trip_close("ETH", 1.0, forced=True)
+        gm._dispatch_round_trip_close("ETH", 1.0, forced=True)
+        self.assertEqual(three, [True, True])
+
+        two = []
+        gm.on_round_trip_close = lambda s, p: two.append((s, p))
+        gm._dispatch_round_trip_close("ETH", 2.0, forced=True)
+        self.assertEqual(two, [("ETH", 2.0)], "换成两参回调后应重新探测")
 
 
 def _make_agent(available=1000.0, balance_status="ok", adaptive_sizing=False) -> GridAgent:
