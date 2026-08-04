@@ -408,7 +408,10 @@ class GridManager:
                 elif p > current_price:
                     if block_sell_open:
                         continue
-                    if sell_headroom is not None and placed_sell_notional + new_amount > sell_headroom:
+                    if (
+                        sell_headroom is not None
+                        and placed_sell_notional + new_amount > sell_headroom
+                    ):
                         if not budget_warned_sell:
                             self.logger.print_warning(
                                 f"   [Grid] 🚧 卖开仓额度耗尽（本轮已挂 ${placed_sell_notional:.0f}"
@@ -780,9 +783,7 @@ class GridManager:
             if self._cancel_order_with_retry(symbol, oid):
                 canceled += 1
         if canceled:
-            self.logger.print_warning(
-                f"   [Grid] 🧹 对账撤掉无主残单 {canceled} 个（{symbol}）"
-            )
+            self.logger.print_warning(f"   [Grid] 🧹 对账撤掉无主残单 {canceled} 个（{symbol}）")
 
     def _get_symbol_position_size(self, symbol: str) -> float:
         try:
@@ -911,9 +912,7 @@ class GridManager:
         position_size = self._get_symbol_position_size(symbol)
         if abs(position_size) <= 0:
             return False
-        adverse = (trend_dir > 0 and position_size < 0) or (
-            trend_dir < 0 and position_size > 0
-        )
+        adverse = (trend_dir > 0 and position_size < 0) or (trend_dir < 0 and position_size > 0)
         if not adverse:
             return False
         if self.trend_flatten_surgical:
@@ -922,9 +921,7 @@ class GridManager:
             f"   [Grid] 🩹 趋势({'涨' if trend_dir > 0 else '跌'})与持仓"
             f"({'空' if position_size < 0 else '多'})相反，市价平掉逆势库存"
         )
-        self._emergency_close_all(
-            symbol, reason=f"趋势过滤：平逆势库存 (trend_dir={trend_dir})"
-        )
+        self._emergency_close_all(symbol, reason=f"趋势过滤：平逆势库存 (trend_dir={trend_dir})")
         return True
 
     def _surgical_reduce_adverse(self, symbol: str, trend_dir: int, position_size: float) -> bool:
@@ -999,9 +996,7 @@ class GridManager:
                 self.logger.print_error(f"   [Grid] {level.id} 手术式减仓下单异常: {e}")
                 continue
             if not result or str(result.get("status", "")).lower() != "ok":
-                self.logger.print_warning(
-                    f"   [Grid] {level.id} 手术式减仓失败: {result}"
-                )
+                self.logger.print_warning(f"   [Grid] {level.id} 手术式减仓失败: {result}")
                 continue
             # 登记强平订单号：净额归因接管上报时据此还原 forced 语义
             self._mark_forced_close_oid(symbol, result)

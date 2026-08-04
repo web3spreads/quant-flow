@@ -185,9 +185,7 @@ class HyperliquidClient:
         cached = getattr(self, "_abstraction_mode", None)
         if cached is None:
             try:
-                cached = self._request_with_fallback(
-                    "query_user_abstraction_state", self.address
-                )
+                cached = self._request_with_fallback("query_user_abstraction_state", self.address)
             except Exception as e:
                 print(f"⚠️ 账户模式查询失败（userAbstraction）: {e}")
                 return None

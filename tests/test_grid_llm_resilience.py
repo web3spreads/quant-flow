@@ -418,9 +418,7 @@ class TestIsGridIdle(_GridManagerTestBase):
 
     def test_reduce_only_orders_do_not_count_as_working(self):
         """减仓保护单在持仓清零后可能残留，不代表网格在做市"""
-        gm = self._make_idle_gm(
-            orders=[{"oid": 1, "coin": "ETH", "side": "A", "reduceOnly": True}]
-        )
+        gm = self._make_idle_gm(orders=[{"oid": 1, "coin": "ETH", "side": "A", "reduceOnly": True}])
         self.assertTrue(gm.is_grid_idle("ETH"))
 
     def test_query_failure_is_conservative(self):
@@ -451,9 +449,7 @@ class TestIsGridIdle(_GridManagerTestBase):
         gm._ensure_min_orders = lambda symbol: None
 
         gm.sync_grid("ETH", {"action": "KEEP_GRID"})
-        self.assertFalse(
-            any("空转" in w for w in warnings), "交易所还有网格挂单时不得报空转"
-        )
+        self.assertFalse(any("空转" in w for w in warnings), "交易所还有网格挂单时不得报空转")
 
         gm2 = self._make_idle_gm()  # 真空转：无层级、无持仓、无挂单
         warnings2 = []
@@ -580,8 +576,9 @@ class TestGridAgentLlmOkFlag(unittest.TestCase):
         agent = _make_agent()
         fake_agent = MagicMock()
         fake_agent.run_sync.side_effect = RuntimeError("status_code: 400, model not supported")
-        with patch("pydantic_ai.Agent", return_value=fake_agent), patch(
-            "src.agent.grid_agent.time.sleep"
+        with (
+            patch("pydantic_ai.Agent", return_value=fake_agent),
+            patch("src.agent.grid_agent.time.sleep"),
         ):
             decision = agent.make_decision(_MARKET_DATA, {}, "")
 
@@ -767,7 +764,9 @@ class TestIdleSelfHealing(unittest.TestCase):
         bot.grid_manager.is_grid_idle.return_value = False
 
         for _ in range(10):
-            bot._maybe_fallback_rebuild("ETH", {"action": "KEEP_GRID", "llm_ok": False}, _MARKET_DATA)
+            bot._maybe_fallback_rebuild(
+                "ETH", {"action": "KEEP_GRID", "llm_ok": False}, _MARKET_DATA
+            )
         bot.grid_agent.build_fallback_config.assert_not_called()
 
     def test_update_grid_resets_streak(self):
@@ -782,7 +781,9 @@ class TestIdleSelfHealing(unittest.TestCase):
     def test_disabled_by_default(self):
         bot = _make_bot(rebuild_cycles=0)
         for _ in range(50):
-            bot._maybe_fallback_rebuild("ETH", {"action": "KEEP_GRID", "llm_ok": False}, _MARKET_DATA)
+            bot._maybe_fallback_rebuild(
+                "ETH", {"action": "KEEP_GRID", "llm_ok": False}, _MARKET_DATA
+            )
         bot.grid_agent.build_fallback_config.assert_not_called()
 
     def test_failed_rebuild_backs_off_instead_of_retrying_every_cycle(self):
@@ -808,7 +809,9 @@ class TestIdleSelfHealing(unittest.TestCase):
         bot = _make_bot(rebuild_cycles=1)
         bot.grid_agent.build_fallback_config.side_effect = RuntimeError("建网格炸了")
 
-        out = bot._maybe_fallback_rebuild("ETH", {"action": "KEEP_GRID", "llm_ok": False}, _MARKET_DATA)
+        out = bot._maybe_fallback_rebuild(
+            "ETH", {"action": "KEEP_GRID", "llm_ok": False}, _MARKET_DATA
+        )
         self.assertEqual(out["action"], "KEEP_GRID", "异常时返回原决策，不得中断周期")
 
 

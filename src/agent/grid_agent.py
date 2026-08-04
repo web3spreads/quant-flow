@@ -262,7 +262,9 @@ class GridAgent:
                 f"[GridAgent] 🛟 LLM 持续不可用，按市场数据兜底重建中性网格 "
                 f"(宽度 {width_pct:.2%}，{DEFAULT_GRID_NUM} 格)"
             )
-            math_config["reason"] = f"LLM 持续不可用，按市场数据兜底重建中性网格(宽度{width_pct:.2%})"
+            math_config["reason"] = (
+                f"LLM 持续不可用，按市场数据兜底重建中性网格(宽度{width_pct:.2%})"
+            )
             math_config["width_pct"] = width_pct
         math_config["confidence"] = 0.0
         math_config["llm_ok"] = False

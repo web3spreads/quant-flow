@@ -328,8 +328,14 @@ class TestInventoryCapStrict(unittest.TestCase):
             positions=[{"coin": "ETH", "szi": "0.01"}], price=1800.0, cap=40.0, cap_strict=True
         )
         client.open_orders = [
-            {"oid": 1, "coin": "ETH", "side": "B", "limitPx": "1790", "sz": "0.02",
-             "reduceOnly": True},
+            {
+                "oid": 1,
+                "coin": "ETH",
+                "side": "B",
+                "limitPx": "1790",
+                "sz": "0.02",
+                "reduceOnly": True,
+            },
         ]
         # reduce_only 不计入 → 敞口只有持仓 $18 < $40 → 放行
         self.assertFalse(gm._would_exceed_inventory_cap("ETH", is_buy_open=True))
@@ -453,9 +459,10 @@ class TestSurgicalReduce(unittest.TestCase):
             surgical=False,
         )
         gm.grid_levels["ETH"] = [_filled_level("L0", "LONG", 1800, 0.01)]
-        gm.pnl_trackers["ETH"] = gm.pnl_trackers.get("ETH") or __import__(
-            "src.trading.grid_pnl", fromlist=["GridPnLTracker"]
-        ).GridPnLTracker()
+        gm.pnl_trackers["ETH"] = (
+            gm.pnl_trackers.get("ETH")
+            or __import__("src.trading.grid_pnl", fromlist=["GridPnLTracker"]).GridPnLTracker()
+        )
         result = gm.flatten_adverse_inventory("ETH", trend_dir=-1)
         self.assertTrue(result)
         self.assertEqual(client.closed, [("ETH", None)])  # 全平
@@ -482,8 +489,13 @@ class TestKeepGridReconcile(unittest.TestCase):
             {"oid": 100, "coin": "ETH", "side": "B", "limitPx": "1800"},  # 层级已知
             {"oid": 101, "coin": "ETH", "side": "B", "limitPx": "1790"},  # state 已知
             {"oid": 102, "coin": "ETH", "side": "A", "limitPx": "1850"},  # 无主 → 撤
-            {"oid": 103, "coin": "ETH", "side": "A", "limitPx": "1860",
-             "reduceOnly": True},  # 减仓保护单 → 保留
+            {
+                "oid": 103,
+                "coin": "ETH",
+                "side": "A",
+                "limitPx": "1860",
+                "reduceOnly": True,
+            },  # 减仓保护单 → 保留
         ]
         gm.sync_grid("ETH", {"action": "KEEP_GRID"})
         remaining = {o["oid"] for o in client.open_orders}
@@ -598,17 +610,13 @@ class TestRebuildInventoryBudget(unittest.TestCase):
     def test_existing_position_consumes_same_side_budget(self):
         # 已有空头 0.01×1800=$18：卖侧余量 $102 → 2 格；
         # 买侧反向抵扣余量 $138 → 仍只放得下 2 格（$150 > $138）
-        placed = self._run_sync(
-            cap=120.0, positions=[{"coin": "ETH", "szi": "-0.01"}]
-        )
+        placed = self._run_sync(cap=120.0, positions=[{"coin": "ETH", "szi": "-0.01"}])
         self.assertEqual(len(placed["sell"]), 2)
         self.assertEqual(len(placed["buy"]), 2)
 
     def test_zero_headroom_blocks_side_entirely(self):
         # 空头敞口 $180 已超上限 $120：卖侧整轮拦截，买侧靠反向抵扣全放行
-        placed = self._run_sync(
-            cap=120.0, positions=[{"coin": "ETH", "szi": "-0.1"}]
-        )
+        placed = self._run_sync(cap=120.0, positions=[{"coin": "ETH", "szi": "-0.1"}])
         self.assertEqual(len(placed["sell"]), 0)
         self.assertEqual(len(placed["buy"]), 4)
 

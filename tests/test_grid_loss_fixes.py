@@ -93,11 +93,17 @@ class FakeOM:
 
     def execute_long_limit(self, symbol, amount, price, **kwargs):
         self.long_calls.append((symbol, amount, price))
-        return {"success": True, "limit_order": {"response": {"data": {"statuses": [{"resting": {"oid": 1}}]}}}}
+        return {
+            "success": True,
+            "limit_order": {"response": {"data": {"statuses": [{"resting": {"oid": 1}}]}}},
+        }
 
     def execute_short_limit(self, symbol, amount, price, **kwargs):
         self.short_calls.append((symbol, amount, price))
-        return {"success": True, "limit_order": {"response": {"data": {"statuses": [{"resting": {"oid": 2}}]}}}}
+        return {
+            "success": True,
+            "limit_order": {"response": {"data": {"statuses": [{"resting": {"oid": 2}}]}}},
+        }
 
 
 def _make_gm(positions=None, price=1800.0, cap=0.0, on_close=None):
@@ -152,11 +158,16 @@ class TestInventoryCap(unittest.TestCase):
         gm, om, _ = _make_gm(positions=[{"coin": "ETH", "szi": -0.02}], price=1800, cap=30.0)
         # 卖开仓层（SHORT），价格高于市价以通过价格守卫
         level = GridLevel(
-            id="L0", price=Decimal("1850"), amount=Decimal("20"),
-            side="SHORT", state=GridLevelState.IDLE,
+            id="L0",
+            price=Decimal("1850"),
+            amount=Decimal("20"),
+            side="SHORT",
+            state=GridLevelState.IDLE,
         )
         gm.grid_levels["ETH"] = [level]
-        gm.state["active_grids"]["ETH"] = {"config": {"parameters": {"tp_ratio": 0.005, "sl_ratio": 0.01}}}
+        gm.state["active_grids"]["ETH"] = {
+            "config": {"parameters": {"tp_ratio": 0.005, "sl_ratio": 0.01}}
+        }
         gm._place_open_order("ETH", level)
         # 库存超限 → 不应挂卖开仓单，层级仍为 IDLE
         self.assertEqual(len(om.short_calls), 0)
@@ -216,7 +227,9 @@ class TestCheckBarrier(unittest.TestCase):
         gm.grid_levels["ETH"] = [_filled_short_level()]  # 空头 @1800，现价 1801 几乎无亏
         gm.pnl_trackers["ETH"] = GridPnLTracker()
         gm.barrier_monitors["ETH"] = GridBarrierMonitor(
-            config=TripleBarrierConfig(stop_loss_pct=Decimal("0.05"), take_profit_pct=None, time_limit_seconds=None),
+            config=TripleBarrierConfig(
+                stop_loss_pct=Decimal("0.05"), take_profit_pct=None, time_limit_seconds=None
+            ),
             start_time=time.time(),
         )
         self.assertFalse(gm.check_barrier("ETH"))
@@ -247,7 +260,12 @@ class TestDetectStrongTrend(unittest.TestCase):
         self.assertEqual(self._detect(trends), 1)
 
     def test_strong_down(self):
-        trends = {"日线": "强势下跌", "4小时": "强势下跌", "1小时": "强势下跌", "15分钟": "下跌转强"}
+        trends = {
+            "日线": "强势下跌",
+            "4小时": "强势下跌",
+            "1小时": "强势下跌",
+            "15分钟": "下跌转强",
+        }
         self.assertEqual(self._detect(trends), -1)
 
     def test_no_trend_when_choppy(self):
@@ -264,8 +282,11 @@ class TestDetectStrongTrend(unittest.TestCase):
 
 def _filled_short_level():
     level = GridLevel(
-        id="L0", price=Decimal("1850"), amount=Decimal("36"),
-        side="SHORT", state=GridLevelState.OPEN_FILLED,
+        id="L0",
+        price=Decimal("1850"),
+        amount=Decimal("36"),
+        side="SHORT",
+        state=GridLevelState.OPEN_FILLED,
     )
     level.open_fill_price = Decimal("1800")
     level.open_fill_amount = Decimal("0.02")
