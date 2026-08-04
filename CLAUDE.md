@@ -31,799 +31,126 @@
 
 ## 项目概述
 
-Quant Flow 是一个基于 Pydantic AI 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
+Quant Flow 是一个 AI 驱动的加密货币自动交易系统，专为 Hyperliquid DEX 设计。核心原则：
+**LLM 只产出结构化 JSON 决策，下单、止盈止损与风控永远由确定性代码完成。**
 
-- **永续合约 Agent**（`main.py`，`perp_enabled: true`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
-- **网格交易 Grid Flow**（`main.py`，`grid_enabled: true`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
+两种独立策略，由 `config.yaml` 的 `trading.perp_enabled` / `grid_enabled` 开关控制，
+可独立或并行运行（共用 `main.py` 统一入口）：
 
-两种策略共用 `main.py` 统一入口，由 `config.yaml` 的 `perp_enabled` / `grid_enabled` 开关控制；可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
+- **永续策略**（`src/strategy/perp.py`）：K 线收盘节拍触发，LLM 输出
+  `BUY / SELL_SHORT / CLOSE / HOLD` JSON 决策，经边界校验后由 OrderManager 执行
+- **网格策略**（`src/strategy/grid.py`）：固定间隔触发，LLM 判断方向与宽度，
+  数学引擎（`grid_math`）计算参数，GridManager 布单管理
 
-**技术栈**: Python 3.11+, Pydantic AI, Hyperliquid SDK, Pydantic
+**技术栈**: Python 3.11+，Hyperliquid SDK，pandas/numpy，Jinja2；LLM 走任意 OpenAI 兼容端点。
 
 ## 常用命令
 
 ```bash
-# 安装依赖（uv 管理）
-uv sync                       # 安装所有依赖
-uv sync --group dev           # 安装开发依赖
+uv sync                        # 安装依赖
+uv sync --group dev            # 含开发依赖
 
-# 运行主程序（永续合约 Agent）
-uv run python main.py
-
-# 指定配置文件运行
-uv run python main.py --config config.yaml --env .env
-
-# 运行网格交易（在 config.yaml 中设 grid_enabled: true、perp_enabled: false）
+uv run python main.py          # 运行（策略开关在 config.yaml）
 uv run python main.py --config config.yaml --env-file .env
 
-# 运行测试
-uv run pytest tests/
-uv run pytest tests/test_decision_validator.py -v  # 单个文件
+uv run pytest tests/           # 全部测试（无需网络与密钥）
+uv run pytest tests/test_perp_strategy.py -v   # 单个文件
+uv run ruff check src/ tests/  # 静态检查
+uv run ruff format src/ tests/ # 格式化
 
-# 语法检查
-uv run python -m py_compile src/trading/client.py
-
-# 添加新依赖
-uv add <package>              # 添加运行时依赖
-uv add --group dev <package>  # 添加开发依赖
-
-# Docker 部署（通过 RUN_MODE 环境变量选择运行模式）
-# RUN_MODE=main     仅主交易（默认）
-# RUN_MODE=grid     仅网格交易
-# RUN_MODE=all      同时运行主交易和网格交易
-docker compose up -d
+docker compose up -d           # Docker 部署
 docker compose logs -f
 
-# 回测（支持 single/grid 策略 + 确定性回测）
-uv run python backtest.py --symbol BTC --strategy single --start-date 2024-01-01 --end-date 2024-12-01
-uv run python backtest.py --symbol BTC --strategy grid --start-date 2024-01-01 --end-date 2024-12-01
-uv run python backtest.py --symbol BTC --resume-from workspace/BTC_xxx/live_report.json  # 中断恢复
-uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --record-decisions decisions.jsonl  # 录制决策
-uv run python backtest.py --symbol BTC --start-date 2024-01-01 --end-date 2024-03-01 --replay-decisions decisions.jsonl  # 回放决策（跳过 LLM）
-
-# A/B 回测对比（对比不同功能配置的效果差异）
-uv run python backtest_comparison.py --symbol BTC --compare all
-uv run python backtest_comparison.py --symbol BTC --compare debate
-uv run python backtest_comparison.py --symbol BTC --compare regime
-
-# 查看日志（统一入口后所有运行模式均写 main.log；grid.log 为历史遗留文件已停更）
-tail -f logs/main.log          # 主交易/网格日志（RUN_MODE=main/grid/all 均在此）
-tail -f logs/trades/trades_$(date +%Y%m%d).jsonl   # 结构化交易记录（含 pnl/reason 归因）
-tail -f logs/equity/equity_$(date +%Y%m%d).jsonl   # 净值快照（需开启 grid_equity_snapshot_enabled）
+tail -f logs/main.log                            # 运行日志
+tail -f logs/trades/trades_$(date +%Y%m%d).jsonl # 成交记录（含 pnl/reason 归因）
+tail -f logs/equity/equity_$(date +%Y%m%d).jsonl # 净值快照
 ```
 
-## 核心架构
+## 架构
 
-### 系统数据流
-
-```
-                          ┌─────────────────────┐
-                          │   ExternalInfoAgent │  (Exa API 市场资讯)
-                          └──────────┬──────────┘
-                                     ↓
-┌──────────────┐    ┌─────────────────────────────────────┐    ┌────────────────┐
-│  MarketData  │───→│  EnhancedSingleSymbolAgent / Agent  │───→│ ExecutionAgent │
-│  (K线/指标)   │    │  (每个交易对独立决策上下文)            │    │ (结构化输出)    │
-└──────────────┘    └──────────────────┬──────────────────┘    └───────┬────────┘
-                                       ↑                               │
-                    ┌──────────────────┘ (异常波动触发)                 │
-                    │                                                   │
-              ┌─────────────┐                                          │
-              │MarketMonitor│  (独立线程，持续监控价格波动)              │
-              │(波动检测)    │                                          │
-              └─────────────┘                                          │
-                                       │                               │
-                    ┌──────────────────┼──────────────────┐           │
-                    ↓                  ↓                  ↓           ↓
-            ┌──────────────┐  ┌───────────────┐  ┌──────────────┐    │
-            │DecisionValid.│  │PositionSizer  │  │ RiskManager  │    │
-            │(多维度验证)   │  │(凯利公式仓位) │  │(ATR止盈止损) │    │
-            └──────┬───────┘  └───────┬───────┘  └──────┬───────┘    │
-                   │                  │                  │            │
-                   └──────────────────┼──────────────────┘            │
-                                      ↓                               ↓
-                          ┌─────────────────────┐           ┌────────────────┐
-                          │ProtectionManager   │           │  OrderManager  │
-                          │ (插件链风控保护)     │           │  (订单执行)     │
-                          └──────────┬──────────┘           └───────┬────────┘
-                                     │                               │
-                                     └───────────────┬───────────────┘
-                                                     ↓
-                          ┌─────────────────────────────────────────────┐
-                          │          HyperliquidClient (交易执行)        │
-                          │  ┌─────────────────────────────────────┐    │
-                          │  │ 安全机制：止损失败自动平仓 (带重试)   │    │
-                          │  └─────────────────────────────────────┘    │
-                          └─────────────────────────────────────────────┘
-                                                     │
-                          ┌──────────────────────────┴──────────────────────────┐
-                          ↓                                                     ↓
-                  ┌──────────────┐                                     ┌───────────────┐
-                  │SummaryAgentV2│                                     │  ReviewAgent  │
-                  │(历史压缩)     │                                     │ (复盘学习)    │
-                  └──────────────┘                                     └───────────────┘
-```
-
-### 网格交易数据流（Grid Flow，由 `main.py` 在 `grid_enabled` 时驱动）
+### 数据流
 
 ```
-┌──────────────┐    ┌─────────────────────────────────────┐
-│  MarketData  │───→│  GridAgent (AI 决策)                 │
-│  (K线/指标)   │    │  判断方向 LONG/SHORT/NEUTRAL         │
-└──────────────┘    │  + 网格宽度/层数                     │
-                    └──────────────────┬──────────────────┘
-                                       ↓
-                    ┌──────────────────────────────────────┐
-                    │  calculate_grid_config (数学引擎)     │
-                    │  65% 市场数据 + 35% AI 融合计算       │
-                    └──────────────────┬───────────────────┘
-                                       ↓
-                    ┌──────────────────────────────────────┐
-                    │  GridManager (网格管理器)              │
-                    │  ┌────────────────────────────────┐  │
-                    │  │ 安全机制：                       │  │
-                    │  │ • 孤儿 trigger 单清理            │  │
-                    │  │ • reduce-only 分层减仓           │  │
-                    │  │ • 撤单硬超时保护 (20s)           │  │
-                    │  │ • 状态文件原子写入               │  │
-                    │  └────────────────────────────────┘  │
-                    └──────────────────┬───────────────────┘
-                                       ↓
-                    ┌──────────────────────────────────────┐
-                    │  HyperliquidClient + OrderManager    │
-                    │  (共享组件，限价单布置/撤销)          │
-                    └──────────────────────────────────────┘
+                 ┌───────────────── Engine（src/engine.py）─────────────────┐
+                 │  K 线节拍主循环（永续） + 固定间隔线程（网格），共享交易锁   │
+                 └──────┬──────────────────────────────────┬────────────────┘
+                        ↓                                  ↓
+   ┌─── 永续周期 ────────────────────┐      ┌─── 网格周期 ─────────────────────┐
+   │ 行情+指标+多周期趋势              │      │ 净额归因 → 账户熔断 → 停机线      │
+   │   → PerpStrategy                │      │   → Triple Barrier → 趋势过滤    │
+   │     Prompt → LLM → JSON 决策    │      │   → GridAgent（LLM JSON 决策）   │
+   │     → 校验（置信度/重复仓/上限） │      │   → LLM 健康跟踪 → 空转自愈      │
+   │     → OrderManager 执行         │      │   → GridManager.sync_grid 布单   │
+   └────────────┬────────────────────┘      └────────────┬─────────────────────┘
+                ↓                                        ↓
+        ┌─────────────────────────────────────────────────────────┐
+        │ ProtectionManager 账户保护链（回撤/日亏/连亏/超时，插件化）│
+        └─────────────────────────────────────────────────────────┘
+                ↓
+        ┌─────────────────────────────────────────────────────────┐
+        │ 交易层：OrderManager + HyperliquidClient                 │
+        │ 【关键安全机制】止损单失败 → 立即回滚平仓（带重试）        │
+        └─────────────────────────────────────────────────────────┘
 ```
 
 ### 目录结构
 
 ```
+main.py                    # 薄入口：参数解析 → Config → Engine
 src/
-├── agent/                    # Agent 实现
-│   ├── single_symbol_agent.py      # 单币种交易决策
-│   ├── enhanced_single_symbol_agent.py  # 增强版 Agent (集成风控+辩论+Regime)
-│   ├── grid_agent.py               # 网格交易 AI 决策引擎
-│   ├── debate.py                   # 多空辩论引擎
-│   ├── summary_agent_v2.py         # 历史压缩
-│   ├── review_agent.py             # 复盘学习
-│   ├── generalization.py           # 经验泛化器（抗过拟合）
-│   ├── helpers.py                  # 通用辅助函数
-│   ├── instant_reflection.py       # 即时反思（每笔平仓后）
-│   ├── weekly_reflection.py        # 每周策略级反思
-│   ├── prompt_meta_reflection.py   # Prompt 自优化元反思
-│   └── execution_agent.py          # 执行计划生成
-├── trading/                  # 交易核心模块
-│   ├── client.py                   # Hyperliquid SDK 封装
-│   ├── order_manager.py            # 订单管理（支持限价单 TP/SL 开关）
-│   ├── grid_manager.py             # 网格交易管理器（布单/同步/安全机制）
-│   ├── decision_validator.py       # 决策多维度验证
-│   ├── risk_manager.py             # ATR动态止盈止损与仓位计算（固定金额/固定风险/凯利公式）
-│   └── enhanced_engine.py          # 增强交易引擎 (Regime 参数覆盖)
-├── plugins/                  # 插件系统
-│   └── protections/                # 保护插件
-│       ├── base.py                     # IProtection 抽象基类 + 数据结构
-│       ├── manager.py                  # ProtectionManager 插件编排器
-│       ├── drawdown.py                 # 最大回撤保护
-│       ├── daily_loss.py               # 单日亏损保护
-│       ├── consecutive_loss.py         # 连续亏损保护（支持 per-symbol 锁定）
-│       └── position_timeout.py         # 持仓超时保护
-├── data/                     # 数据模块
-│   ├── market_data.py              # K线和市场数据
-│   ├── indicators.py               # 技术指标 (MA, RSI, MACD, Bollinger)
-│   ├── data_enricher.py            # 数据增强 (CEX费率/链上数据/恐惧贪婪)
-│   ├── market_monitor.py           # 市场主动监控 (异常波动触发决策)
-│   ├── market_state.py             # 市场状态分析 (11种状态枚举)
-│   ├── signal_scorer.py            # 多因子信号评分 (Regime自适应权重)
-│   └── regime_adapter.py           # 市场Regime自适应参数切换
-├── utils/                    # 工具模块
-│   ├── hyperliquid.py              # SDK 安全初始化（spotMeta 越界过滤）
-│   ├── grid_math.py                # 网格数学计算引擎
-│   ├── logger.py                   # 日志工具
-│   └── cloud_logger.py             # 云端日志同步（aepipe 服务）
-├── llm/                      # LLM 客户端
-│   └── llm_client.py               # 多供应商支持 (OpenAI/Cloudflare/Google/LiteLLM/NVIDIA)
-├── backtest/                 # 回测模块（支持 single/grid 策略 + 中断恢复 + 确定性录制/回放）
-└── notification/             # 通知模块
+├── engine.py              # 调度引擎：组件装配、主循环、风控接线
+├── config.py              # 配置（frozen dataclass，全默认值）
+├── llm.py                 # OpenAI 兼容客户端 + extract_json（容错 JSON 提取）
+├── fees.py                # Hyperliquid 费率计算
+├── strategy/
+│   ├── perp.py            # 永续策略：Prompt → JSON 决策 → 校验 → 执行
+│   ├── grid.py            # 网格策略编排（熔断/屏障/趋势过滤/自愈的检查顺序）
+│   └── grid_agent.py      # 网格 AI 决策引擎（AI 判方向，数学引擎定参数）
+├── trading/
+│   ├── client.py          # Hyperliquid SDK 封装（含止损失败回滚）
+│   ├── order_manager.py   # 订单管理（TP/SL 挂单、余额/持仓查询）
+│   ├── grid_manager.py    # 网格布单/同步/对账/紧急平仓
+│   ├── grid_barrier.py    # Triple Barrier 网格级风控
+│   └── grid_pnl.py        # 网格 PnL 追踪
+├── data/
+│   ├── market_data.py     # K 线与行情获取
+│   └── indicators.py      # 技术指标 + 强趋势检测 + 迟滞确认器
+├── plugins/protections/   # 保护插件链（IProtection 基类 + 4 个内置插件）
+└── utils/                 # logger / candle_align / precision / grid_math / introspect
+prompts/                   # perp_system.md + perp_decision.md（唯一一套 Prompt）
+tests/                     # pytest 测试（全部离线，桩件在 conftest.py）
+docs/                      # architecture.md + configuration.md
 ```
 
-## LLM 决策增强功能
-
-项目实现了五项 LLM 决策增强功能，**全部通过 `config.yaml` 独立开关控制，默认不影响现有流程**：
-
-### 1. FinCoT 结构化推理链
-
-**论文依据**: [FinCoT (arXiv:2506.16123)](https://arxiv.org/abs/2506.16123) — 准确率 +17.3pp，token 消耗 -8.9x
-
-将 Prompt 决策框架从「条件罗列」改为「6步强制推理链」，强制 LLM 按固定步骤分析：
-
-```
-步骤1 趋势确认 → 多周期趋势是否一致？
-步骤2 入场信号 → 哪些技术指标触发？（列出具体数值）
-步骤3 情绪校验 → 资金费率/恐惧贪婪/多空辩论是否有逆向信号？
-步骤4 复盘比对 → 当前情况匹配哪条历史经验？
-步骤5 风险计算 → 止损/止盈距离、盈亏比、手续费覆盖率
-步骤6 最终决策 → 综合以上 5 步，给出决策和置信度
-```
-
-**使用方式**: 选择带 FinCoT 的 Prompt 集（推荐 `nof1-improved`）：
-
-```yaml
-# config.yaml
-prompt:
-  set: nof1-improved   # 已集成 FinCoT 的增强 Prompt
-```
-
-**已同步模板**: default, aggressive, conservative, realtime（全部 8 套模板均已集成）
-
-### 2. 多空辩论 Agent
-
-**论文依据**: [TradingAgents (arXiv:2412.20138)](https://arxiv.org/abs/2412.20138) — 多 Agent 全面超越单 Agent 基线
-
-两个独立 Agent 分别从看多/看空角度分析，消除单 Agent 确认偏见：
-
-```
-数据 → BullAgent（强制看多，输出 3 条论点 + 置信度）
-     → BearAgent（强制看空，输出 3 条论点 + 置信度）
-     → 综合双方论点 → 注入主决策 Prompt
-```
-
-**使用方式**:
-
-```yaml
-# config.yaml
-debate:
-  enabled: true   # 开启后每次决策额外 2 次 LLM 调用
-```
-
-**核心代码**: `src/agent/debate.py` — `run_bull_bear_debate()` 函数
-
-### 3. CEX 领先信号 + 链上数据
-
-**论文依据**:
-- [MDPI Mathematics 2026](https://www.mdpi.com/2227-7390/14/2/346) — CEX 价格发现能力比 DEX 高 61%
-- [ScienceDirect 2025](https://www.sciencedirect.com/science/article/pii/S266682702500057X) — MVRV/SOPR 被验证为强方向信号
-
-新增 3 个外部数据源（自动优雅降级，API 不可用不影响主流程）：
-
-| 数据源 | API | 信号逻辑 |
-|--------|-----|----------|
-| Binance CEX 资金费率 | 公开 API | CEX 费率急变但 HL 未跟随 → 领先预警 |
-| 恐惧贪婪指数 | alternative.me | 极端恐惧/贪婪 → 逆向信号 |
-| 链上 MVRV/SOPR | blockchain.info | MVRV>3.5 过热，<1.0 低估 |
-
-**使用方式**: 数据增强默认启用（通过 `enhanced_analysis.enabled`），数据自动采集注入 Prompt：
-
-```yaml
-# config.yaml
-enhanced_analysis:
-  enabled: true   # 启用后自动采集 CEX 费率、链上数据
-```
-
-**核心代码**: `src/data/data_enricher.py` — `MarketDataEnricher` 类
-
-### 4. 市场 Regime 自适应策略切换
-
-**论文依据**: [Springer Digital Finance 2025](https://link.springer.com/article/10.1007/s42521-024-00123-2) — Regime 感知策略显著优于静态策略
-
-根据市场状态（趋势/震荡/高波动）动态调整交易参数：
-
-```python
-# 11 种 MarketState → 3 种 Regime
-"trending"  → 信号阈值放宽 (0.5)，允许高杠杆 (10x)，大仓位 (80%)
-"ranging"   → 信号阈值收严 (0.75)，限制杠杆 (5x)，小仓位 (40%)
-"volatile"  → 极严阈值 (0.85)，低杠杆 (3x)，极小仓位 (30%)
-```
-
-**使用方式**:
-
-```yaml
-# config.yaml
-regime_adaptive:
-  enabled: true   # 启用 Regime 自适应（依赖 enhanced_analysis）
-  # 可选：覆盖默认参数
-  # trending:
-  #   signal_threshold: 0.5
-  #   min_confidence: 0.35
-  #   max_leverage: 10
-```
-
-**核心代码**:
-- `src/data/regime_adapter.py` — Regime 映射和参数查表
-- `src/data/signal_scorer.py` — Regime 自适应因子权重
-- `src/trading/enhanced_engine.py` — `_apply_filters()` 动态阈值覆盖
-
-### 5. 市场主动监控（异常波动触发决策）
-
-在常规决策周期间隔内，独立线程持续轻量级监控市场价格。检测到异常波动时主动触发决策循环，无需等待下一个定时周期。
-
-```
-监控线程 (30s 间隔) → all_mids() 获取最新价格
-  → 与参考窗口内基准价格对比
-  → 波动超阈值 → 生成 VolatilityAlert
-  → 回调触发 trading_cycle(triggered_by_alert=True)
-  → 告警上下文通过 {{ volatility_alert }} 注入 LLM Prompt
-```
-
-**告警等级**:
-
-| 等级 | 阈值 | 行为 |
-|------|------|------|
-| NORMAL | < 1.5% | 忽略 |
-| ELEVATED | ≥ 1.5% | 记录日志（节流 60s），不触发决策 |
-| HIGH | ≥ 3.0% | 触发决策循环 + 进入冷却期 |
-| EXTREME | ≥ 5.0% | 触发决策循环 + 进入冷却期 + 额外告警 |
-
-**线程安全机制**:
-- `_history_lock`: 保护 `_price_history`（监控线程写入，主线程读取）
-- `_stats_lock`: 保护统计计数器
-- `_alert_lock`: 保护待处理告警队列（`main.py` 中）
-- 冷却期按交易对独立管理，避免频繁触发
-
-**使用方式**:
-
-```yaml
-# config.yaml
-market_monitor:
-  enabled: true                    # 启用市场主动监控
-  check_interval_seconds: 30       # 检查间隔（秒）
-  alert_threshold_pct: 3.0         # HIGH 告警阈值（%）
-  elevated_threshold_pct: 1.5      # ELEVATED 阈值（%）
-  extreme_threshold_pct: 5.0       # EXTREME 阈值（%）
-  cooldown_minutes: 5              # 触发后冷却时间（分钟）
-  reference_window_minutes: 10     # 价格基准窗口（分钟）
-```
-
-**核心代码**:
-- `src/data/market_monitor.py` — `MarketMonitor` 类，独立线程监控
-- `main.py` — `_on_market_alert()` 回调，`_consume_pending_alert()` 消费告警
-
-### 6. 复盘系统增强（5 项改进）
-
-基于学术论文验证的 5 项复盘/反思系统增量改进，全部通过 `config.yaml` 独立开关控制，默认关闭。
-
-#### 6a. 双粒度反思
-
-**论文依据**: [Adaptive Multi-Agent Bitcoin Trading (arXiv:2510.08068)](https://arxiv.org/abs/2510.08068) — 双粒度反思
-
-- **即时反思**（每笔平仓后）：纯规则、无 LLM 调用，更新匹配经验的置信度（盈利 ×1.05、亏损 ×0.95）
-- **每周反思**（周策略级）：调用 LLM 生成策略级调整建议，检测系统性偏差和反复错误
-
-**核心代码**:
-- `src/agent/instant_reflection.py` — `InstantReflector` 类
-- `src/agent/weekly_reflection.py` — `WeeklyReflector` 类
-
-#### 6b. Regime 感知记忆
-
-**论文依据**: [Adaptive Memory for Bitcoin Regime Detection (engrXiv 2025)](https://engrxiv.org/)
-
-经验存储附带 `source_regime` 字段（trending/ranging/volatile/unknown），Regime 不匹配时相似度降权（默认 ×0.4），VFT 段落标注 `[趋势市经验]`/`[震荡市经验]` 等。
-
-**核心代码**: `src/agent/review_memory.py` — `get_similar_lessons()` 和 `get_verbal_finetuning_section()` 增强
-
-#### 6c. 记忆确认偏差防护
-
-**论文依据**: [FinCon (arXiv:2407.06567)](https://arxiv.org/abs/2407.06567) + Selective Memory Equilibrium
-
-经验存储附带 `lesson_type` 字段（positive/negative/unknown），淘汰经验时保护 negative 经验不被过度淘汰，negative 经验的置信度给予加成（默认 ×1.15），VFT 段落中 negative 经验使用 `[避免]` 前缀。
-
-**核心代码**:
-- `src/agent/review_memory.py` — `_evict_with_bias_protection()` 和 `get_lesson_type_stats()`
-- `src/agent/review_agent.py` — `_infer_lesson_type()` 静态方法
-
-#### 6d. 事实-主观分离反思
-
-**论文依据**: [FS-ReasoningAgent (arXiv:2410.12464, ICLR 2025)](https://arxiv.org/abs/2410.12464)
-
-经验存储附带 `source_type` 字段（factual/subjective/mixed），趋势市中主观经验权重提升（默认 ×1.3），震荡/高波动市中事实经验权重提升（默认 ×1.3），VFT 段落标注 `[事实型]`/`[主观型]`。
-
-**核心代码**: `src/agent/review_agent.py` — `_infer_source_type()` 静态方法
-
-#### 6e. Prompt 自优化（元反思）
-
-**论文依据**: [ATLAS Adaptive-OPRO (arXiv:2510.15949)](https://arxiv.org/abs/2510.15949)
-
-4 个评估维度：FinCoT 6步完成度、经验引用率、决策一致性、置信度校准。在每周反思后触发，生成 Prompt 微调建议（需人工审核后手动应用）。
-
-**核心代码**: `src/agent/prompt_meta_reflection.py` — `PromptMetaReflector` 类
-
-**使用方式**:
-
-```yaml
-# config.yaml
-review_agent:
-  # 6a: 双粒度反思
-  instant_reflection_enabled: false     # 即时反思
-  weekly_reflection_enabled: false      # 每周反思
-  weekly_reflection_day: 0              # 0=周一
-  weekly_reflection_hour: 8
-
-  # 6b: Regime 感知记忆
-  regime_aware_enabled: false
-  regime_mismatch_factor: 0.4           # Regime 不匹配时降权因子
-
-  # 6c: 确认偏差防护
-  bias_protection_enabled: false
-  max_positive_ratio: 0.7               # 最大正面经验比例
-  negative_confidence_boost: 1.15       # negative 经验置信度加成
-
-  # 6d: 事实-主观分离
-  fact_subjective_split_enabled: false
-  trending_subjective_boost: 1.3        # 趋势市主观经验权重提升
-  ranging_factual_boost: 1.3            # 震荡市事实经验权重提升
-
-  # 6e: Prompt 自优化
-  prompt_meta_reflection_enabled: false
-  prompt_optimization_dir: "logs/prompt_optimization"
-```
-
-### 功能依赖关系
-
-```
-enhanced_analysis.enabled: true       ← 基础开关，启用增强分析和数据采集
-  ├── debate.enabled: true            ← 可选，独立开关
-  └── regime_adaptive.enabled: true   ← 可选，依赖 enhanced_analysis
-market_monitor.enabled: true          ← 独立开关，不依赖其他功能
-review_agent:                         ← 复盘系统增强（全部独立开关）
-  ├── instant_reflection_enabled      ← 即时反思
-  ├── weekly_reflection_enabled       ← 每周反思
-  ├── regime_aware_enabled            ← Regime 感知（依赖 enhanced_analysis 获取 regime）
-  ├── bias_protection_enabled         ← 确认偏差防护
-  ├── fact_subjective_split_enabled   ← 事实-主观分离
-  └── prompt_meta_reflection_enabled  ← Prompt 自优化（依赖 weekly_reflection）
-cloud_logging.enabled: true          ← 独立开关，云端日志同步（aepipe 服务）
-```
-
-### A/B 回测对比
-
-使用 `backtest_comparison.py` 对比不同功能配置的效果：
-
-```bash
-# 对比所有功能
-uv run python backtest_comparison.py --symbol BTC --compare all
-
-# 对比特定功能
-uv run python backtest_comparison.py --symbol BTC --compare fincot    # FinCoT
-uv run python backtest_comparison.py --symbol BTC --compare debate    # 辩论
-uv run python backtest_comparison.py --symbol BTC --compare onchain   # 链上数据
-uv run python backtest_comparison.py --symbol BTC --compare regime    # Regime
-```
-
-## 关键模块详解
-
-### 决策验证 (`decision_validator.py`)
-
-在执行交易前进行多维度验证：
-- **多周期趋势共振**: 确保不同时间周期趋势一致
-- **信号质量验证**: 确保信号强度达到阈值
-- **风险回报验证**: 确保风险回报比合理
-- **市场环境验证**: 避开不适合交易的市场状态
-- **入场时机验证**: 等待更好的入场点
-
-```python
-# 验证结果类型
-ValidationResult.PASS   # 通过验证
-ValidationResult.WARN   # 警告但允许
-ValidationResult.BLOCK  # 阻止交易
-```
-
-### 风险与仓位管理 (`risk_manager.py`)
-
-提供动态止盈止损（基于 ATR）和最优仓位大小计算（支持固定金额、固定风险、凯利公式）：
-
-```python
-# 仓位计算方法
-PositionSizingMethod.FIXED_AMOUNT   # 固定金额法
-PositionSizingMethod.FIXED_RISK     # 固定风险法
-PositionSizingMethod.KELLY          # 凯利公式
-
-# 核心风控参数
-max_risk_per_trade: 0.02      # 单笔最大风险 2%
-max_total_exposure: 0.5       # 最大总敞口 50%
-min_risk_reward_ratio: 1.5    # 最小风险回报比
-```
-
-### 保护插件系统 (`src/plugins/protections/`)
-
-插件化风控架构，每个保护规则可独立启用/禁用/配置：
-
-```python
-# 4 个内置插件
-MaxDrawdownProtection     # 最大回撤 → 全部平仓
-DailyLossProtection       # 单日亏损 → 暂停新开仓
-ConsecutiveLossProtection # 连续亏损 → 暂停或锁定交易对（per-symbol）
-PositionTimeoutProtection # 持仓超时 → 自动平仓
-
-# 核心接口
-ProtectionManager.check_all(context)       # 执行所有插件检查
-ProtectionManager.is_symbol_locked(symbol) # 查询交易对级锁定
-ProtectionManager.on_trade_open/close()    # 分发开平仓事件
-```
-
-### 交易客户端 (`client.py`)
-
-Hyperliquid SDK 封装，包含关键安全机制：
-
-```python
-# 【关键安全机制】止损单失败时立即平仓（带重试）
-if require_stop_loss and not stop_loss_success:
-    max_rollback_retries = 3
-    for attempt in range(1, max_rollback_retries + 1):
-        rollback_result = self.close_position(symbol, size)
-        if rollback_success:
-            break
-```
-
-## Prompt 策略系统
-
-项目支持多套 Prompt 策略，位于 `prompts/` 目录，全部已集成 FinCoT 6 步推理链：
-
-| 策略 | 说明 |
-|------|------|
-| `default` | 默认策略（标准 FinCoT） |
-| `conservative` | 保守策略（趋势分歧即 HOLD，盈亏比 ≥ 2.0） |
-| `aggressive` | 激进策略（3 条件即可入场，盈亏比 ≥ 1.2） |
-| `nof1` / `nof1-improved` | 增强版策略（推荐，完整 FinCoT + 增强数据集成） |
-| `realtime` / `realtime-eng` | 实时策略（价格行为优先于滞后指标） |
-
-通过 `config.yaml` 中的 `prompt.set` 切换策略。`PromptManager` 负责加载和渲染 Jinja2 模板。
-
-模板支持的动态变量包括：`{{ debate_summary }}`（辩论结果）、`{{ volatility_alert }}`（异常波动告警）、`{{ regime_hint }}`（Regime 策略提示）、`{{ cex_funding_signal }}`（CEX 领先信号）、`{{ onchain_summary }}`（链上数据摘要）等。
-
-## 配置结构
-
-### 环境变量 (`.env`)
-
-```bash
-# LLM API 密钥
-OPENAI_API_KEY=xxx
-CLOUDFLARE_ACCOUNT_ID=xxx
-CLOUDFLARE_API_TOKEN=xxx
-GOOGLE_API_KEY=xxx
-
-# Hyperliquid
-HYPERLIQUID_PRIVATE_KEY=xxx
-HYPERLIQUID_TESTNET=true/false   # 测试网/主网切换
-```
-
-### 配置文件 (`config.yaml`)
-
-```yaml
-llm:
-  client_type: langchain_nvidia  # openai/cloudflare/google/litellm/nvidia
-  temperature: 0.2               # 交易决策建议低温度
-
-trading:
-  symbols: [BTC, ETH]            # 交易对（简单符号，非交易对格式）
-  max_trade_amount: 100           # 单笔上限（美元）
-  max_leverage: 10                # 最大杠杆
-
-# 调度配置
-scheduler:
-  interval_minutes: 30            # 兜底巡检，突发由 market_monitor 覆盖
-  # K 线节拍参数（Q-03）：主循环对齐到 K 线收盘后 timeframe_offset 秒触发决策
-  # timeframe_offset: 2.0         # K 线收盘后等待秒数（确保数据可获取）
-  # min_throttle_secs: 30.0       # 两次决策之间最小间隔（防止过快循环）
-
-# 数据配置
-data:
-  timeframe: 1h                   # 兜底决策用大周期 K 线，减少噪音
-                                  # ⚠️ 建议 ≥ 5m：若 trading_cycle 单次耗时 > timeframe，
-                                  # K 线节拍会持续返回 min_throttle_secs 跳过 K 线
-
-prompt:
-  set: nof1-improved              # Prompt 集（推荐 nof1-improved）
-
-# 增强分析（启用后自动采集 CEX/链上数据）
-enhanced_analysis:
-  enabled: true
-
-# 多空辩论（每次决策额外 2 次 LLM 调用）
-debate:
-  enabled: true
-
-# Regime 自适应策略（根据市场状态动态调整参数）
-regime_adaptive:
-  enabled: true
-
-# 保护插件（可任意组合/禁用，空列表=关闭所有风控）
-protections:
-  - name: max_drawdown
-    max_drawdown_pct: 0.10        # 最大回撤 10%
-    min_drawdown_usd: 0           # 回撤绝对额下限（>0 时须同时达标才触发；防小账户上
-                                  # 纯百分比线成为噪声级触发器，默认 0=关闭）
-    pause_hours: 4
-  - name: daily_loss
-    max_daily_loss_pct: 0.05      # 单日亏损 5%
-    pause_hours: 4
-  - name: consecutive_loss
-    max_consecutive_losses: 5
-    per_symbol: true              # true=只锁该交易对
-    forced_close_no_reset: false  # true=风控强平的净盈利不重置连亏计数（只有主动止盈
-                                  # 才算打破连亏；默认 false=历史行为）
-    pause_hours: 4
-  - name: position_timeout
-    max_position_hours: 48
-
-# 市场主动监控（异常波动触发决策循环）
-market_monitor:
-  enabled: true                   # 突发行情由 monitor 30s 一检覆盖
-  check_interval_seconds: 30      # 检查间隔（秒）
-  alert_threshold_pct: 3.0        # HIGH 告警阈值（%）
-  elevated_threshold_pct: 1.5     # ELEVATED 阈值（%）
-  extreme_threshold_pct: 5.0      # EXTREME 阈值（%）
-  cooldown_minutes: 5             # 触发后冷却时间（分钟）
-  reference_window_minutes: 10    # 价格基准窗口（分钟）
-
-# 复盘系统增强
-review_agent:
-  instant_reflection_enabled: true      # 即时反思
-  weekly_reflection_enabled: true       # 每周反思
-  regime_aware_enabled: true            # Regime 感知记忆
-  bias_protection_enabled: true         # 确认偏差防护
-  fact_subjective_split_enabled: true   # 事实-主观分离
-  prompt_meta_reflection_enabled: true  # Prompt 自优化
-
-# 云端日志同步（aepipe 服务）
-cloud_logging:
-  enabled: false                        # 启用后日志异步同步到云端
-  base_url: "https://xxx.workers.dev"   # aepipe 服务地址
-  token: "your_admin_token"             # ADMIN_TOKEN 认证令牌
-  project: "quant-flow"                 # 项目名称
-  logstore: "trading"                   # 日志存储名称
-  flush_interval: 5.0                   # 批量发送间隔（秒）
-```
-
-### 网格交易配置
-
-网格配置已合并进统一的 `config.yaml`，由 `trading.grid_enabled` 开关启用（关闭 `perp_enabled` 即为纯网格模式）。关键键：
-
-```yaml
-trading:
-  perp_enabled: false                          # 纯网格模式时关闭永续
-  grid_enabled: true                           # 启用网格交易
-  symbols: [ETH]                               # 网格交易对
-  max_trade_amount: 100                        # 单层投入上限（USD）
-  max_leverage: 5                              # 最大杠杆
-  grid_limit_order_take_profit_enabled: true   # 网格成交后是否补止盈单
-  grid_limit_order_stop_loss_enabled: true     # 网格成交后是否补止损单
-  grid_reduce_only_exit_orders_enabled: true   # 是否启用分层减仓单
-
-  # ── 网格防护体系（全部默认关闭 = 历史行为）────────────────────────────
-  grid_force_neutral_mode: true                # 强制中性网格（忽略 AI 方向）
-  grid_max_position_notional_usd: 40           # 库存硬上限（USD 净持仓名义额，0=关闭）
-  grid_inventory_cap_strict: true              # 严格模式：名义额计入同向挂单 + 取价失败 fail-closed
-  grid_trend_filter_enabled: true              # 多周期强势一致时暂停加仓
-  grid_trend_filter_min_votes: 3               # 强势周期票数阈值
-  grid_trend_filter_timeframes: ["15m","1h","4h","1d"]  # 计票周期白名单（排除 1m 噪声；缺省=全部）
-  grid_trend_filter_confirm_cycles: 2          # 连续 N 周期同向确认才生效（迟滞去抖，缺省 1=立即）
-  grid_trend_filter_flatten_adverse: true      # 强趋势里减掉逆势库存
-  grid_trend_filter_flatten_min_cycles: 3      # 平逆势库存需更多连续确认（暂停先行、平仓靠后）
-  grid_trend_filter_surgical_flatten: true     # 手术式减仓：只平超限逆势层级（缺省 false=全量拆网）
-  grid_keep_grid_reconcile: true               # KEEP_GRID 周期对账撤无主残单
-  grid_adaptive_sizing_enabled: true           # 单格金额与净值挂钩：钱不够减格数而非抬单格金额
-  grid_min_grid_num: 3                         # 自适应仓位最少格数（低于则 INSUFFICIENT_CAPITAL 拒绝布单）
-  grid_halt_below_usd: 15                      # 净值停机线：低于此值且无持仓时跳过整个周期（0=关闭）
-  grid_equity_snapshot_enabled: true           # 每周期净值快照写 logs/equity/*.jsonl
-
-  # ── LLM 故障韧性与盈亏归因（同样默认关闭 = 历史行为）──────────────────
-  grid_llm_failure_alert_cycles: 6             # 连续 N 周期 LLM 不可用即走通知渠道告警（0=关闭）
-  grid_llm_fallback_rebuild_cycles: 12         # 空转 N 周期后用纯市场数据兜底重建网格（0=关闭）
-  grid_netting_attribution_enabled: true       # 以链上成交补齐净额对冲平仓的盈亏归因
-
-agent:
-  grid_width:
-    min_pct: 0.02            # 最小网格宽度 2%
-    max_pct: 0.15            # 最大网格宽度 15%
-    fallback_pct: 0.05       # 数据异常回退宽度
-    ai_blend_weight: 0.35    # AI 输出与市场数据融合权重
-
-scheduler:
-  interval_minutes: 5        # 网格决策间隔
-```
-
-> 网格周期还接入账户级风控（`ProtectionManager.check_all`）：回撤/连亏/单日亏损熔断时平掉全部持仓、撤销网格挂单并跳过本轮布单。
-
-### 网格的 LLM 故障韧性与盈亏归因
-
-三项针对测试网浸泡暴露问题的机制，均由上表开关控制、默认关闭：
-
-**1. LLM 连续失败告警（`grid_llm_failure_alert_cycles`）**
-
-`GridAgent` 给每份决策打 `llm_ok` 标：LLM 调用异常、返回空输出、输出不可解析、action 非法这四种兜底路径标 `False`，AI 真实判断标 `True`（余额接口故障也标 `True`——那不是 LLM 的问题）。`main.py` 据此累计连续故障周期，达阈值经 `Notifier` 升级告警，故障期间只发一次、恢复后复位。
-
-> 背景：这四种兜底路径都返回形态相同的 `KEEP_GRID`，此前无法与 AI 的真实判断区分。供应商下线 `deepseek-chat` 后，线上连续 13 小时每轮决策 400 失败、网格零成交，钉钉通道开着却一条告警都没发出。
-
-**2. 空转自愈（`grid_llm_fallback_rebuild_cycles`）**
-
-连续 N 个周期处于「无层级 + 无持仓 + 交易所无活跃网格挂单 + 拿不到 `UPDATE_GRID`」时，调用 `GridAgent.build_fallback_config()` 用纯市场数据（不经 LLM）重建一次中性网格。
-
-> 判据里的「交易所无活跃挂单」不能省：本地 `grid_levels` 为空不等于网格没在工作——全量重建路径只把订单快照写进状态文件，`levels` 要等下一轮增量同步才建立。线上实测过这个窗口：交易所挂着完整的 12 个网格单、本地层级却是空的。reduce_only 单不计入（持仓清零后可能残留，不代表在做市）。
-
-> 背景：网格层级被紧急平仓/熔断清空后，只有 `UPDATE_GRID` 能重建，而 LLM 故障期每轮只产出 `ERROR` 或兜底 `KEEP_GRID`——「维持现有网格」在无层级时等于永远维持一片空白，网格再也活不过来。
->
-> 边界：兜底只出 `NEUTRAL` 对称网格（判断方向是 LLM 的职责，不可用时不猜方向）；趋势过滤主动暂停的周期不计入空转；兜底失败后重新攒够 N 周期才重试，避免每轮刷屏。
-
-**3. 净额对冲平仓归因（`grid_netting_attribution_enabled`）**
-
-`GridManager.reconcile_netting_closes()` 以链上 `user_fills` 为准，把 `closedPnl != 0` 的成交按「扣除该笔手续费后的净额」上报连亏熔断，并把 `pnl`/`reason` 写进 trades 日志。游标（`cursor_ms` + 同毫秒 `tid` 集合）持久化在 `grid_state.json`，首次启用只锚定游标、绝不回溯历史。
-
-> 背景：Hyperliquid 是单向持仓，中性网格的库存大多被对侧格子的普通开仓单净额对冲平掉（成交 `dir` 为 `Close Long`/`Close Short`），走不到层级状态机的 `CLOSE_PENDING → COMPLETED` 路径。线上三周实测：1051 笔带盈亏的平仓腿只有 24 笔（2.3%）进了归因，连亏熔断状态文件三周纹丝不动，trades 日志的 `pnl` 恒为 null。
->
-> **归因源互斥**：开启后本方法独占风控上报，`_report_round_trip_close` 直接让路（层级状态机与紧急平仓只写日志），否则同一笔平仓会被计两次、连亏计数翻倍。
->
-> **forced 语义靠 oid 还原**：链上成交本身分不清「网格正常止盈」与「风控强平」，而 `consecutive_loss` 的 `forced_close_no_reset` 依赖这个区分。故 `_emergency_close_all` / `_surgical_reduce_adverse` 下单后调 `_mark_forced_close_oid()` 登记订单号，归因时按 oid 精确匹配上报 `forced=True`，消费后即清除。
-> 注意 taker/maker 不是可靠判据——网格限价单穿价成交同样是 taker（线上三天 50 笔 taker 成交里只有 3 笔真是强平）。
-
-## 设计模式
-
-1. **工具回调模式**: `SingleSymbolAgent` 通过 Pydantic AI 的 `@agent.tool` 装饰器注册下单工具（buy/sell/sell_short 等），将 LLM 工具调用映射到实际交易操作；回调内置幂等守卫，单次决策周期内同一动作最多执行一次，防止 run_sync 重跑导致重复下单
-2. **延迟导入**: `src/agent/__init__.py` 使用 `__getattr__` 延迟导入避免循环依赖
-3. **单例模式**: `LLMClientManager` 和 `Config` 使用单例确保全局一致性
-4. **结构化输出**: `ExecutionAgent` 使用 Pydantic 模型 (`ExecutionPlan`) 确保决策格式正确
-5. **防御性编程**: 风险管理模块默认值初始化防止空值异常
-6. **功能开关模式**: 所有增强功能通过 `config.yaml` 独立开关控制，默认关闭
-7. **原子写入**: `GridManager` 的状态文件使用 tempfile + move 实现原子写入，防止进程中断导致文件损坏
-
-## 测试
-
-测试位于 `tests/` 目录，使用 pytest：
-
-```bash
-# 运行所有测试
-uv run pytest tests/
-
-# 运行特定测试
-uv run pytest tests/test_decision_validator.py -v
-
-# 带覆盖率
-uv run pytest tests/ --cov=src
-```
-
-主要测试文件：
-- `test_trading_tool_idempotency.py`: 下单工具幂等去重测试（FunctionModel 真实工具调用，覆盖此前 0 覆盖的下单路径）
-- `test_decision_validator.py`: 决策验证器测试
-- `test_debate.py`: 多空辩论引擎测试
-- `test_signal_scorer_regime.py`: 信号评分 Regime 自适应测试
-- `test_enhanced_engine_regime.py`: 增强引擎 Regime 集成测试
-- `test_regime_adapter.py`: Regime 适配器测试
-- `test_data_enricher_extended.py`: 数据增强扩展测试
-- `test_review_memory_vft.py`: 复盘记忆测试
-- `test_external_info_agent.py`: 外部信息收集测试
-- `test_review_daily_logger.py`: 复盘日志测试
-- `test_market_monitor.py`: 市场主动监控测试
-- `test_instant_reflection.py`: 即时反思测试（改进6a）
-- `test_weekly_reflection.py`: 每周反思测试（改进6a）
-- `test_regime_aware_memory.py`: Regime 感知记忆测试（改进6b）
-- `test_confirmation_bias_protection.py`: 确认偏差防护测试（改进6c）
-- `test_fact_subjective_split.py`: 事实-主观分离测试（改进6d）
-- `test_prompt_meta_reflection.py`: Prompt 自优化测试（改进6e）
-- `test_grid_manager_exit_orders.py`: 网格交易分层减仓单测试
-- `test_account_protection_integration.py`: 保护系统集成测试
-- `test_protection_base.py`: 保护插件基础架构测试
-- `test_protection_drawdown.py`: 最大回撤保护插件测试
-- `test_protection_daily_loss.py`: 单日亏损保护插件测试
-- `test_protection_consecutive_loss.py`: 连续亏损保护插件测试（含 per-symbol）
-- `test_protection_position_timeout.py`: 持仓超时保护插件测试
-- `test_protection_manager.py`: 保护插件管理器测试
-- `test_protection_migration.py`: 保护配置迁移测试
-- `test_decision_recorder.py`: 决策录制/回放测试（确定性回测）
-- `test_candle_align.py`: K 线节拍对齐测试
-- `test_candle_throttle.py`: K 线节拍节流测试
-
-## 注意事项
-
-### 开发规范
-- 代码和注释主要使用中文
-- 新增代码需要删除未使用的导入和变量
-- 异常处理的 except 块需要命名异常变量（如 `except Exception as e`）
-- 安全机制需要包含重试逻辑
-- 所有新功能必须通过 config 开关控制，默认关闭
-
-### Hyperliquid 特性
-- 使用简单符号格式（`BTC`, `ETH`），不是交易对格式（不是 `BTC/USDT`）
-- 测试网和主网通过 `HYPERLIQUID_TESTNET` 环境变量切换
-- 手续费率从 API 动态获取，失败时回退到默认 Tier0
-
-### Git 注意事项
-- `.gitignore` 中 `/data/` 只忽略根目录的 data 文件夹，不影响 `src/data/`
-- 敏感配置（`.env`, `config.yaml`）不应提交
+## 设计原则
+
+1. **决策与执行分离**：LLM 输出只经 `extract_json` 归一为 JSON 决策；非法 action、
+   解析失败、调用异常一律降级为保守动作（HOLD / KEEP_GRID），绝不透传到执行层
+2. **故障标记**：兜底决策与 AI 真实决策同形，必须打 `llm_ok=False` 标区分，
+   供连续故障告警与网格空转自愈使用
+3. **配置能省则省**：所有配置键有内置默认值（`src/config.py` 的 frozen dataclass），
+   安全机制默认启用；新增功能不得要求用户新增配置才能获得安全行为
+4. **插件化风控**：账户级保护实现 `IProtection` 接口并注册到 `PROTECTION_REGISTRY`，
+   由 `ProtectionManager` 统一编排；风控强平不向连亏插件上报虚假 pnl
+5. **原子写入**：状态文件（如 `data/grid_state.json`）使用 tempfile + move 写入
+6. **Decimal 精度**：核心计算路径用 Decimal（`utils/precision.py`），仅在 API 边界转 float
+
+## 开发规范
+
+- 代码注释与 docstring 使用中文；日志输出使用中文
+- 新增代码需删除未使用的导入和变量；异常变量必须命名（`except Exception as e`）
+- 涉及资金安全的机制必须包含重试逻辑，且失败路径要有日志
+- 修改后运行 `uv run pytest tests/` 与 `uv run ruff check src/ tests/`
+- 测试不得依赖网络与真实密钥：LLM 用 `conftest.FakeLLM`，订单层用 `FakeOrderManager`
+
+## Hyperliquid 特性
+
+- 使用简单符号格式（`BTC`、`ETH`），不是交易对格式（不是 `BTC/USDT`）
+- 测试网/主网通过环境变量 `HYPERLIQUID_TESTNET` 切换（默认测试网）
+- 持仓 `szi` 为带符号字符串：正数=多仓，负数=空仓
+- 手续费率从 API 动态获取，失败回退默认 Tier0（`src/fees.py`）
+
+## Git 注意事项
+
+- 敏感文件（`.env`、`config.yaml`）已在 `.gitignore`，不应提交
+- `logs/` 与 `/data/` 为运行时产物，不入库

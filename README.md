@@ -1,244 +1,84 @@
-<div align="center">
-
 # Quant Flow
 
-**AI-powered crypto perp & grid trading bot for Hyperliquid DEX, built on Pydantic AI**
+AI 驱动的加密货币自动交易系统，专为 [Hyperliquid](https://hyperliquid.xyz) DEX 设计。
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
-[![Pydantic AI](https://img.shields.io/badge/Pydantic%20AI-latest-red.svg)](https://ai.pydantic.dev)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-blue)](https://web3spreads.github.io/quant-flow/)
+LLM 负责判断，代码负责执行：所有策略都遵循同一条铁律——**AI 只产出结构化 JSON 决策，
+下单、止盈止损与风控永远由确定性代码完成**，LLM 故障绝不放大成交易动作。
 
-[**📖 Full Documentation**](https://web3spreads.github.io/quant-flow/) · [**中文**](README.zh-Hans.md)
+## 两种策略
 
-</div>
+| 策略 | 说明 | 开关 |
+|------|------|------|
+| **永续合约** | 每根 K 线收盘后，LLM 按技术指标与多周期趋势输出 BUY/SELL_SHORT/CLOSE/HOLD 决策，经边界校验后执行，自动挂止盈止损单 | `trading.perp_enabled` |
+| **网格做市** | LLM 判断方向与宽度，数学引擎计算布单参数，GridManager 管理层级生命周期（含 Triple Barrier、趋势过滤、库存上限等安全机制） | `trading.grid_enabled` |
 
-> ⚠️ **Disclaimer**: This project is for educational and research purposes only. Leveraged trading carries substantial risk of loss. Always test on testnet before using real funds.
+两种策略共用一个入口 `main.py`，可独立或并行运行。
 
----
-
-## What is Quant Flow?
-
-Quant Flow is an AI-powered automated trading system for [Hyperliquid DEX](https://hyperliquid.xyz/). Originally built on LangChain/LangGraph, it has been **fully refactored onto Pydantic AI** for native type safety, structured outputs, and performance.
-
-Both perpetual futures trading and grid market-making strategies are unified into a single program (`main.py`), and can be toggled on/off independently via configuration switches.
-
-| Strategy | Config Key | Description |
-|----------|------------|-------------|
-| **Perpetual Agent** | `trading.perp_enabled` | Multi-agent architecture with one independent decision context per trading pair |
-| **Grid Flow** | `trading.grid_enabled` | AI-driven grid market making — LLM judges direction & width, math engine calculates params |
-
-## Key Features
-
-### Core Capabilities
-
-- 🤖 **Multi-Agent Architecture** — Independent Pydantic AI agents per trading pair
-- 🔌 **Multi-LLM Support** — OpenAI, NVIDIA, Google, Cloudflare, LiteLLM
-- 📊 **Unified Runner** — Run perp trading and grid market making concurrently in a single process
-- 📐 **Kelly Formula Position Sizing** — Dynamic optimal position calculation
-- 🛡️ **ATR Dynamic Stop-Loss/Take-Profit** — Volatility-adaptive risk management
-- 🔒 **Account Protection** — Plugin-based: max drawdown / daily loss / consecutive loss / position timeout, each independently togglable
-- 🔍 **Decision Validation** — Multi-timeframe trend resonance, signal quality
-- 📈 **Backtesting** — `single/grid` strategies with checkpoint resume
-- 🔄 **API Fallback** — LLM and Hyperliquid API fallback mechanisms
-
-### AI Decision Enhancements (Research-Backed)
-
-| Feature | Paper | Config | Description |
-|---------|-------|--------|-------------|
-| **FinCoT Reasoning** | [arXiv:2506.16123](https://arxiv.org/abs/2506.16123) | `prompt.set: nof1-improved` | 6-step forced reasoning chain, +17% accuracy, -8.9x token cost |
-| **Bull/Bear Debate** | [arXiv:2412.20138](https://arxiv.org/abs/2412.20138) | `debate.enabled` | Two agents debate bull/bear to eliminate confirmation bias |
-| **CEX Signals + On-chain** | [MDPI Mathematics 14(2):346](https://www.mdpi.com/2227-7390/14/2/346) | `enhanced_analysis.enabled` | Binance funding rate, Fear&Greed, MVRV/SOPR signals |
-| **Regime Adaptive** | [Springer Digital Finance](https://link.springer.com/article/10.1007/s42521-024-00123-2) | `regime_adaptive.enabled` | Dynamic params for trending/ranging/volatile market states |
-| **Market Monitor** | — | `market_monitor.enabled` | Independent thread triggers decisions on volatility spikes |
-
-All enhancements are **controlled by independent config flags** and are **off by default**.
-
-## Quick Start
-
-### Docker (Recommended)
+## 快速开始
 
 ```bash
-# 1. Initialize (auto-configure UID/GID, create directories)
-bash init-deployment.sh
-
-# 2. Configure
-cp config.yaml.example config.yaml
-vim .env           # API keys and private key
-vim config.yaml    # Enable/disable perp or grid, adjust trading parameters
-
-# 3. Start (Runs enabled strategies concurrently in a single process)
-docker compose up -d
-
-# View logs
-docker compose logs -f
-```
-
-### Local Development
-
-```bash
-# Install uv (if not installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install dependencies (Python 3.11+ required)
+# 1. 安装依赖（uv 管理）
 uv sync
 
-# Configure
-cp .env.example .env
-cp config.yaml.example config.yaml
+# 2. 配置密钥与策略
+cp .env.example .env              # 填入私钥与 LLM API Key
+cp config.yaml.example config.yaml  # 按需调整策略参数（所有键都有默认值）
 
-# Run the trading bot
+# 3. 运行
 uv run python main.py
 ```
 
-## Configuration
+默认连接 **测试网**（`HYPERLIQUID_TESTNET=true`），主网需显式设为 `false`。
 
-### Environment Variables (`.env`)
-
-```bash
-# LLM API (configure based on client_type in config.yaml)
-NVIDIA_API_KEY=xxx
-OPENAI_API_KEY=xxx
-OPENAI_API_BASE=xxx
-
-# Hyperliquid
-HYPERLIQUID_PRIVATE_KEY=0x...   # wallet private key
-HYPERLIQUID_TESTNET=true        # true=testnet, false=mainnet
-```
-
-> **Wallet modes**: Single wallet (fill `HYPERLIQUID_PRIVATE_KEY` only) or API wallet proxy (also fill `HYPERLIQUID_ACCOUNT_ADDRESS`, requires authorization on the main wallet webpage).
-
-### Trading Config (`config.yaml`)
-
-```yaml
-llm:
-  client_type: langchain_openai   # openai / cloudflare / google / litellm / nvidia
-  model: qwen/qwen3-next-80b-a3b-instruct   # pick any model your provider supports
-  temperature: 0.2
-
-trading:
-  # Strategy toggles
-  perp_enabled: true
-  grid_enabled: false
-
-  symbols: [BTC, ETH]
-  max_trade_amount: 100
-  max_leverage: 10
-
-prompt:
-  set: nof1-improved   # recommended: integrates FinCoT 6-step reasoning
-
-enhanced_analysis:
-  enabled: true
-
-debate:
-  enabled: false       # +2 LLM calls per decision
-
-regime_adaptive:
-  enabled: false       # requires enhanced_analysis: true
-
-# Plugin-based protection. Empty list = no risk control.
-protections:
-  - name: max_drawdown
-    max_drawdown_pct: 0.10
-    pause_hours: 4
-  - name: daily_loss
-    max_daily_loss_pct: 0.05
-    pause_hours: 4
-  - name: consecutive_loss
-    max_consecutive_losses: 5
-    per_symbol: true   # true = lock only the losing symbol
-    pause_hours: 4
-  - name: position_timeout
-    max_position_hours: 48
-
-market_monitor:
-  enabled: false
-  alert_threshold_pct: 3.0
-```
-
-See [`config.yaml.example`](config.yaml.example) for the full reference.
-
-## Backtesting
+### Docker 部署
 
 ```bash
-# Single agent backtest
-uv run python backtest.py --symbol BTC --strategy single \
-  --start-date 2024-01-01 --end-date 2024-12-01
-
-# Grid strategy backtest
-uv run python backtest.py --symbol BTC --strategy grid \
-  --start-date 2024-01-01 --end-date 2024-12-01
-
-# Resume from checkpoint
-uv run python backtest.py --resume-from backtest_results/backtest_BTC_xxx/live_report.json
-
-# Deterministic replay: record once, replay deterministically (single strategy only)
-uv run python backtest.py --symbol BTC --strategy single \
-  --start-date 2024-01-01 --end-date 2024-03-01 \
-  --record-decisions decisions.jsonl
-uv run python backtest.py --symbol BTC --strategy single \
-  --start-date 2024-01-01 --end-date 2024-03-01 \
-  --replay-decisions decisions.jsonl   # skips LLM, runs in seconds
+docker compose up -d
+docker compose logs -f
 ```
 
-See [`BACKTEST_README.md`](BACKTEST_README.md) for full backtest documentation.
+## 系统结构
 
-## Testing
+```
+市场数据 ─→ 策略层（LLM JSON 决策 + 校验）─→ 交易层（下单/止盈止损/回滚）
+                    │                              │
+              账户保护链（回撤/日亏/连亏/超时熔断）──┘
+```
+
+```
+main.py              # 入口：加载配置 → 启动引擎
+src/
+├── engine.py        # 调度引擎：K 线节拍主循环 + 网格周期线程 + 风控接线
+├── config.py        # 配置（全默认值，能省则省）
+├── llm.py           # OpenAI 兼容 LLM 客户端（重试 + JSON 提取）
+├── strategy/        # 策略层：perp（永续）/ grid + grid_agent（网格）
+├── trading/         # 交易层：client / order_manager / grid_manager / barrier / pnl
+├── data/            # 行情与技术指标
+├── plugins/protections/  # 账户保护插件链（可插拔）
+└── utils/           # 日志、K 线对齐、精度、网格数学
+prompts/             # 永续策略 Prompt（系统提示 + 决策模板）
+docs/                # 架构与配置文档
+```
+
+详见 [docs/architecture.md](docs/architecture.md) 与 [docs/configuration.md](docs/configuration.md)。
+
+## 关键安全机制
+
+- **止损单失败自动回滚**：开仓后止损单挂不上 → 立即平仓（带重试），绝不留裸仓
+- **Triple Barrier**：网格级全局兜底（止损/止盈/时限/追踪止损），每周期无条件检查
+- **账户保护链**：最大回撤全平、单日亏损暂停、连亏锁定交易对、持仓超时强平
+- **LLM 故障降级**：调用失败/输出非法一律回退保守动作（HOLD / KEEP_GRID）并计数告警，
+  网格空转达阈值后用纯市场数据兜底重建
+- **强制中性网格**：默认忽略 AI 方向判断，从源头消除方向反手（whipsaw）亏损
+
+## 测试
 
 ```bash
-uv run pytest tests/
-uv run pytest tests/test_decision_validator.py -v
-uv run pytest tests/ --cov=src
+uv run pytest tests/          # 全部测试（无需网络与密钥）
+uv run ruff check src/ tests/ # 静态检查
 ```
 
-## Project Structure
+## 风险提示
 
-```
-quant-flow/
-├── main.py                    # bot entry point (runs perp & grid)
-├── backtest.py                # Backtest runner
-├── src/
-│   ├── agent/                 # Pydantic AI agent implementations
-│   ├── trading/               # Trading core (client, orders, grid manager)
-│   ├── plugins/protections/   # Plugin-based risk control (drawdown, daily loss, etc.)
-│   ├── data/                  # Market data, indicators, enricher, candle align
-│   ├── llm/                   # LLM client wrappers
-│   ├── backtest/              # Backtest engine + decision recorder/replayer
-│   └── notification/          # Notification module
-├── prompts/                   # 8 prompt strategy sets
-├── website/                   # Docusaurus documentation site
-└── tests/                     # Test suite
-```
-
-## Docker Management
-
-```bash
-docker compose up -d           # Start
-docker compose down            # Stop
-docker compose logs -f         # Logs
-docker compose ps              # Status
-
-# Update
-git pull && docker compose build && docker compose up -d
-```
-
-## Troubleshooting
-
-| Error | Solution |
-|-------|----------|
-| `PermissionError: /app/logs/...` | Run `bash init-deployment.sh` |
-| `open interest is at cap` | Asset hit OI cap, use a different trading pair |
-| `Leverage exceeds maximum allowed` | Lower `max_leverage` in config |
-| API wallet can't trade | Authorize the API wallet on the main wallet webpage |
-
-## Links
-
-- 📖 [Full Documentation](https://web3spreads.github.io/quant-flow/)
-- 🏦 [Hyperliquid DEX](https://hyperliquid.xyz/)
-- 🚰 [Testnet Faucet](https://app.hyperliquid-testnet.xyz/faucet)
-- ⚙️ [Pydantic AI](https://ai.pydantic.dev)
-
----
-
-[🇨🇳 中文说明 README.zh-Hans.md](README.zh-Hans.md)
+本项目仅供学习研究。加密货币合约交易风险极高，可能损失全部本金；
+请先在测试网充分验证，并只投入可承受损失的资金。

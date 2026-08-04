@@ -44,7 +44,6 @@ class PositionTimeoutProtection(IProtection):
 
             if timeout_symbols:
                 reason = f"持仓超时保护触发: {', '.join(timeout_symbols)} 持仓超过 {max_hours}h"
-                self._send_cloud_event(timeout_symbols, max_hours)
 
                 return ProtectionReturn(
                     triggered=True,
@@ -114,23 +113,6 @@ class PositionTimeoutProtection(IProtection):
         with self._lock:
             if self._position_records.pop(symbol, None) is not None:
                 self.save_state()
-
-    def _send_cloud_event(self, symbols: list[str], max_hours: float) -> None:
-        """上报风控事件到云端"""
-        try:
-            from src.utils.cloud_logger import get_cloud_logger
-
-            cloud = get_cloud_logger()
-            if cloud:
-                for symbol in symbols:
-                    cloud.send_risk_event(
-                        symbol=symbol,
-                        risk_type="position_timeout",
-                        details={"max_position_hours": max_hours},
-                        level="warning",
-                    )
-        except Exception as e:
-            logger.warning("上报超时风控事件失败: %s", e)
 
     def _reset_state(self) -> None:
         self._position_records = {}

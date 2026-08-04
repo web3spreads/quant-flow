@@ -95,8 +95,6 @@ class DailyLossProtection(IProtection):
                 self._last_protection_time = context.timestamp
                 self.save_state()
 
-                self._send_cloud_event(daily_loss_pct, max_daily_loss_pct)
-
                 return ProtectionReturn(
                     triggered=True,
                     action=ProtectionAction.PAUSE_NEW_TRADES,
@@ -111,26 +109,6 @@ class DailyLossProtection(IProtection):
 
             self.save_state()
             return ProtectionReturn(triggered=False)
-
-    def _send_cloud_event(self, loss_pct: float, threshold: float) -> None:
-        """上报风控事件到云端"""
-        try:
-            from src.utils.cloud_logger import get_cloud_logger
-
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_risk_event(
-                    symbol="ALL",
-                    risk_type="daily_loss",
-                    details={
-                        "daily_loss_pct": loss_pct,
-                        "threshold": threshold,
-                        "daily_start_equity": self._daily_start_equity,
-                    },
-                    level="error",
-                )
-        except Exception as e:
-            logger.warning("上报日亏损风控事件失败: %s", e)
 
     def _reset_state(self) -> None:
         self._daily_start_equity = 0.0

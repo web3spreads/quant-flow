@@ -17,7 +17,6 @@ from typing import Any
 from src.trading.grid_barrier import GridBarrierMonitor, TripleBarrierConfig
 from src.trading.grid_pnl import GridPnLTracker
 from src.trading.order_manager import OrderManager
-from src.utils.cloud_logger import get_cloud_logger
 from src.utils.grid_math import GridLevel, GridLevelState, extract_order_id
 from src.utils.introspect import accepts_parameter
 from src.utils.logger import TradingLogger
@@ -55,7 +54,6 @@ class GridManager:
         order_manager: OrderManager,
         logger: TradingLogger,
         state_file: str = "grid_state.json",
-        notifier=None,
         grid_limit_order_take_profit_enabled: bool = True,
         grid_limit_order_stop_loss_enabled: bool = True,
         grid_reduce_only_exit_orders_enabled: bool = True,
@@ -73,7 +71,6 @@ class GridManager:
     ):
         self.order_manager = order_manager
         self.logger = logger
-        self.notifier = notifier
         self.state_file = state_file
         # 网格库存硬上限（USD 净持仓名义额）：>0 时启用。净持仓名义额达此值后禁止同向加仓。
         self.max_position_notional_usd = max(0.0, self._safe_float(max_position_notional_usd, 0.0))
@@ -208,13 +205,6 @@ class GridManager:
             should_rebuild, reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
             if not should_rebuild:
                 self.logger.print_info(f"   [Grid] 增量同步模式: {reason}")
-                cloud = get_cloud_logger()
-                if cloud:
-                    cloud.send_grid_event(
-                        symbol=symbol,
-                        action="incremental_sync",
-                        details={"reason": reason},
-                    )
                 self.sync_grid_incremental(symbol)
                 return
 
@@ -499,44 +489,15 @@ class GridManager:
         self._save_state()
         self.logger.print_info(f"✅ {symbol} 网格调整完成。")
 
-        # 记录网格重建事件到云端
-        cloud = get_cloud_logger()
-        if cloud:
-            cloud.send_grid_event(
-                symbol=symbol,
-                action="rebuild",
-                details={
-                    "lower_price": new_lower,
-                    "upper_price": new_upper,
-                    "grid_num": new_num,
-                    "amount_per_grid": new_amount,
-                    "tp_ratio": tp_ratio,
-                    "sl_ratio": sl_ratio,
-                    "buy_count": len(buy_orders),
-                    "sell_count": len(sell_orders),
-                    "current_price": current_price,
-                    "reason": ai_config.get("reason", "N/A"),
-                },
-            )
-
         # 无论 AI 如何，始终检查减仓保护单（不强制补基础开仓单）
         if self.grid_reduce_only_exit_orders_enabled:
             self._ensure_min_orders(symbol=symbol)
 
-        # 发送通知
-        if self.notifier:
-            self.notifier.notify_grid_update(
-                symbol=symbol,
-                lower=new_lower,
-                upper=new_upper,
-                num=new_num,
-                amount=new_amount,
-                tp=tp_ratio,
-                sl=sl_ratio,
-                buy_count=len(buy_orders),
-                sell_count=len(sell_orders),
-                reason=ai_config.get("reason", "N/A"),
-            )
+        self.logger.print_info(
+            f"   [Grid] 网格已更新: 区间 [{new_lower}, {new_upper}] × {new_num} 格，"
+            f"买单 {len(buy_orders)} / 卖单 {len(sell_orders)}，"
+            f"原因: {ai_config.get('reason', 'N/A')}"
+        )
 
     def _extract_grid_params(self, config: dict[str, Any]) -> dict[str, Any]:
         payload = config or {}
@@ -1031,19 +992,6 @@ class GridManager:
                 f"实现盈亏 {float(total_reduced_pnl):+.4f}，剩余逆势名义额 "
                 f"${float(adverse_notional):.2f} ≤ 目标 ${float(cap):.2f}"
             )
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_grid_event(
-                    symbol=symbol,
-                    action="surgical_reduce",
-                    details={
-                        "trend_dir": trend_dir,
-                        "reduced_levels": reduced_count,
-                        "realized_pnl": float(total_reduced_pnl),
-                        "remaining_adverse_notional": float(adverse_notional),
-                    },
-                    level="warn",
-                )
             self._save_incremental_state(symbol)
         return reduced_count > 0
 
@@ -1430,42 +1378,19 @@ class GridManager:
     def _emergency_close_all(self, symbol: str, reason: str):
         """紧急全部平仓（Triple Barrier 触发时调用）。"""
         self.logger.print_warning(f"   [Grid] 紧急平仓: {reason}")
-        cloud = get_cloud_logger()
 
         # 1. 撤掉所有挂单
         self._cancel_all_orders(symbol)
 
         # 2. 市价平仓
-        close_success = False
         try:
             result = self.order_manager.client.close_position(symbol)
             if result:
-                close_success = True
                 self.logger.print_info(f"   [Grid] {symbol} 市价平仓完成: {result}")
                 # 登记强平订单号：净额归因接管上报时据此还原 forced 语义
                 self._mark_forced_close_oid(symbol, result)
         except Exception as e:
             self.logger.print_error(f"   [Grid] {symbol} 市价平仓失败: {e}")
-            if cloud:
-                cloud.send_alert(
-                    symbol=symbol,
-                    alert_type="emergency_close_failed",
-                    severity="extreme",
-                    message=f"Triple Barrier 紧急平仓失败: {e}",
-                    details={"reason": reason, "error": str(e)},
-                )
-
-        # 记录紧急平仓事件到云端
-        if cloud:
-            cloud.send_grid_event(
-                symbol=symbol,
-                action="emergency_close",
-                details={
-                    "reason": reason,
-                    "close_success": close_success,
-                },
-                level="warn",
-            )
 
         # 把被市价平掉的持仓盈亏上报连亏熔断：否则该插件对网格里最大的那些止损/紧急平仓
         # 永远不可见（只数限价 TP 平仓的小赢小输，线上 global_losses 长期为 0 即铁证）。
@@ -1517,23 +1442,7 @@ class GridManager:
         if symbol in self.pnl_trackers:
             del self.pnl_trackers[symbol]
 
-        # 通知
-        if self.notifier:
-            try:
-                self.notifier.notify_grid_update(
-                    symbol=symbol,
-                    lower=0,
-                    upper=0,
-                    num=0,
-                    amount=0,
-                    tp=0,
-                    sl=0,
-                    buy_count=0,
-                    sell_count=0,
-                    reason=f"Triple Barrier 触发: {reason}",
-                )
-            except Exception as e:
-                self.logger.print_warning(f"   [Grid] 发送 Triple Barrier 触发通知失败: {e}")
+        self.logger.print_warning(f"   [Grid] 网格已清空（Triple Barrier 触发: {reason}）")
 
     def check_barrier(self, symbol: str) -> bool:
         """Triple Barrier 兜底检查（独立方法，供每个网格周期开头无条件调用）。
@@ -1564,20 +1473,6 @@ class GridManager:
             )
             if trigger:
                 self.logger.print_warning(f"   [Grid] Triple Barrier 触发: {trigger}")
-                cloud = get_cloud_logger()
-                if cloud:
-                    cloud.send_risk_event(
-                        symbol=symbol,
-                        risk_type="triple_barrier_triggered",
-                        details={
-                            "trigger_reason": trigger,
-                            "net_pnl_pct": float(net_pnl_pct),
-                            "current_price": current_price_raw,
-                            "total_investment": float(total_investment),
-                            "active_levels": len(levels),
-                        },
-                        level="error",
-                    )
                 self._emergency_close_all(symbol, reason=trigger)
                 return True
         except Exception as e:
@@ -1829,23 +1724,6 @@ class GridManager:
             self.logger.print_warning(
                 f"   [Grid] {level.id} 平仓单失败/被拒 @ ${formatted_price}: {order_err}"
             )
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_alert(
-                    symbol=symbol,
-                    alert_type="grid_close_order_failed",
-                    severity="high",
-                    message=f"层级 {level.id} 平仓单失败 @ ${formatted_price}",
-                    details={
-                        "level_id": level.id,
-                        "side": level.side,
-                        "close_price": float(formatted_price),
-                        "open_fill_price": float(level.open_fill_price)
-                        if level.open_fill_price
-                        else 0,
-                        "result": str(result),
-                    },
-                )
 
     def is_grid_idle(self, symbol: str) -> bool:
         """网格是否真的「空转」：无层级、无持仓，且交易所上也没有活跃网格挂单。
@@ -2093,27 +1971,6 @@ class GridManager:
         )
 
         self._report_round_trip_close(symbol, float(pnl), forced=False)
-
-        # 记录轮回完成和 PnL 到云端
-        cloud = get_cloud_logger()
-        if cloud:
-            cloud.send_grid_event(
-                symbol=symbol,
-                action="round_trip_completed",
-                details={
-                    "level_id": level.id,
-                    "side": level.side,
-                    "round_trip_count": level.round_trip_count,
-                    "pnl": float(pnl),
-                    "cumulative_pnl": float(level.cumulative_pnl),
-                    "open_price": float(level.open_fill_price) if level.open_fill_price else 0,
-                    "close_price": float(level.close_fill_price) if level.close_fill_price else 0,
-                    "amount": float(level.open_fill_amount) if level.open_fill_amount else 0,
-                    "realized_pnl": float(tracker.realized_pnl),
-                    "total_fees": float(tracker.realized_fees),
-                    "total_round_trips": tracker.completed_round_trips,
-                },
-            )
 
     def _save_incremental_state(self, symbol: str):
         """保存增量同步后的层级状态和 PnL 数据。"""

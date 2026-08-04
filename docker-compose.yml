@@ -1,103 +1,20 @@
 services:
   quant-flow:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: quant-flow-bot
+    build: .
+    container_name: quant-flow
     restart: unless-stopped
-
-    # Environment variables (override with .env file)
     environment:
-      # 容器运行用户 UID/GID，设置为宿主机用户的 id 以解决挂载卷权限问题
-      # 获取方式: id -u (UID), id -g (GID)
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-
-      # 运行模式: main（仅永续）/ grid（仅网格）/ all（同时运行）
-      # 由 docker-entrypoint.sh 映射为 PERP_ENABLED/GRID_ENABLED，交单一 main.py 进程读取
-      - RUN_MODE=${RUN_MODE:-main}
-      # 统一配置文件路径（相对于 /app，永续与网格共用）
-      - MAIN_CONFIG=${MAIN_CONFIG:-config.yaml}
-
-      # LLM Client Configuration
-      # OpenAI/DeepSeek API Configuration
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.deepseek.com/v1}
-      # Cloudflare Workers AI Configuration
-      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
-      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      # Google Gemini Configuration
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      # LiteLLM Configuration
-      - LITELLM_API_BASE=${LITELLM_API_BASE}
-      - LITELLM_API_KEY=${LITELLM_API_KEY}
-      # NVIDIA AI Endpoints Configuration
-      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-
-      # Exa Search API Configuration (Optional)
-      - EXA_API_KEY=${EXA_API_KEY:-}
-
-      # Hyperliquid Configuration
+      - LLM_API_KEY=${LLM_API_KEY}
       - HYPERLIQUID_PRIVATE_KEY=${HYPERLIQUID_PRIVATE_KEY}
       - HYPERLIQUID_ACCOUNT_ADDRESS=${HYPERLIQUID_ACCOUNT_ADDRESS:-}
       - HYPERLIQUID_TESTNET=${HYPERLIQUID_TESTNET:-true}
-
-      # Application Configuration
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - TRADE_AMOUNT=${TRADE_AMOUNT:-}
-      - TAKE_PROFIT_RATIO=${TAKE_PROFIT_RATIO:-}
-      - STOP_LOSS_RATIO=${STOP_LOSS_RATIO:-}
-      - DEFAULT_LEVERAGE=${DEFAULT_LEVERAGE:-}
-
-    # Mount volumes for configuration and persistence
     volumes:
-      # 统一配置文件（只读，永续与网格共用）
-      - ./config.yaml:/app/config.yaml:ro
-
-      # Prompts directory (read-only)
-      - ./prompts:/app/prompts:ro
-
-      # 数据目录（读写，回填数据 + 模型训练数据持久化）
-      - ./data:/app/data
-
-      # Logs directory (persistent, read-write)
-      # 容器 entrypoint 会根据 PUID/PGID 自动修复权限，无需手动 chmod
-      - ./logs:/app/logs
-
-      # Optional: Mount .env file if you prefer file-based config
-      # - ./.env:/app/.env:ro
-
-    # Resource limits (adjust based on your needs)
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
-
-    # Logging configuration
+      - ./config.yaml:/app/config.yaml:ro   # 策略配置（永续/网格开关都在这里）
+      - ./logs:/app/logs                    # 运行日志与结构化记录
+      - ./data:/app/data                    # 网格状态与风控状态持久化
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
-    # Network configuration
-    networks:
-      - quant-network
-
-    # Security options
-    security_opt:
-      - no-new-privileges:true
-
-    # Read-only root filesystem (except mounted volumes)
-    # Commented out as the app may need to write temporary files
-    # read_only: true
-
-    # Health check 由 Dockerfile 中的 HEALTHCHECK 指令定义，此处不重复配置
-
-networks:
-  quant-network:
-    driver: bridge

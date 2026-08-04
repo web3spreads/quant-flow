@@ -15,7 +15,6 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
 
 from src.fees import FeeRates, calculate_fee_rates
-from src.utils.cloud_logger import get_cloud_logger
 from src.utils.hyperliquid import create_info, safe_spot_meta
 
 
@@ -752,19 +751,6 @@ class HyperliquidClient:
                     # 【关键安全机制】止损单失败，立即平仓避免裸仓（带退避重试 + 全平兜底 + 失败告警）
                     if require_stop_loss:
                         print("⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
-                        cloud = get_cloud_logger()
-                        if cloud:
-                            cloud.send_risk_event(
-                                symbol=symbol,
-                                risk_type="stop_loss_failed_rollback",
-                                details={
-                                    "is_buy": is_buy,
-                                    "size": size,
-                                    "stop_loss_price": stop_loss_price,
-                                    "sl_error": sl_error,
-                                },
-                                level="error",
-                            )
                         rb_ok, rb_result = self._emergency_close_with_retry(
                             symbol, size, reason="止损单失败"
                         )
@@ -1217,19 +1203,6 @@ class HyperliquidClient:
             f"紧急平仓在 {max_retries} 次重试+全平兜底后仍失败: {last_error}，请立即手动处理！"
         )
         print(f"❌ 【严重】{critical_msg}")
-        cloud = get_cloud_logger()
-        if cloud:
-            cloud.send_risk_event(
-                symbol=symbol,
-                risk_type="emergency_close_failed_critical",
-                details={
-                    "size": size,
-                    "reason": reason,
-                    "last_error": str(last_error),
-                    "message": critical_msg,
-                },
-                level="error",
-            )
         return False, last_result
 
     def close_position(self, symbol: str, size: float | None = None) -> dict[str, Any]:

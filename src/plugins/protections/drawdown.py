@@ -103,8 +103,6 @@ class MaxDrawdownProtection(IProtection):
                 self._last_protection_time = context.timestamp
                 self.save_state()
 
-                self._send_cloud_event(drawdown_pct, max_drawdown_pct)
-
                 return ProtectionReturn(
                     triggered=True,
                     action=ProtectionAction.CLOSE_ALL_POSITIONS,
@@ -119,26 +117,6 @@ class MaxDrawdownProtection(IProtection):
 
             self.save_state()
             return ProtectionReturn(triggered=False)
-
-    def _send_cloud_event(self, drawdown_pct: float, threshold: float) -> None:
-        """上报风控事件到云端"""
-        try:
-            from src.utils.cloud_logger import get_cloud_logger
-
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_risk_event(
-                    symbol="ALL",
-                    risk_type="max_drawdown",
-                    details={
-                        "drawdown_pct": drawdown_pct,
-                        "threshold": threshold,
-                        "peak_equity": self._peak_equity,
-                    },
-                    level="error",
-                )
-        except Exception as e:
-            logger.warning("上报回撤风控事件失败: %s", e)
 
     def _reset_state(self) -> None:
         self._peak_equity = 0.0

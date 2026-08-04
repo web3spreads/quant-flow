@@ -69,8 +69,6 @@ class ConsecutiveLossProtection(IProtection):
                 self._last_protection_time = context.timestamp
                 self.save_state()
 
-                self._send_cloud_event("global", self._global_losses, max_losses)
-
                 return ProtectionReturn(
                     triggered=True,
                     action=ProtectionAction.PAUSE_NEW_TRADES,
@@ -128,7 +126,6 @@ class ConsecutiveLossProtection(IProtection):
                         self._symbol_losses[symbol],
                         lock_until.strftime("%H:%M"),
                     )
-                    self._send_cloud_event(symbol, self._symbol_losses[symbol], max_losses)
 
             self.save_state()
 
@@ -169,26 +166,6 @@ class ConsecutiveLossProtection(IProtection):
         for sym in expired:
             del self._locked_symbols[sym]
             self._symbol_losses[sym] = 0
-
-    def _send_cloud_event(self, scope: str, losses: int, threshold: int) -> None:
-        """上报风控事件到云端"""
-        try:
-            from src.utils.cloud_logger import get_cloud_logger
-
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_risk_event(
-                    symbol=scope,
-                    risk_type="consecutive_loss",
-                    details={
-                        "consecutive_losses": losses,
-                        "threshold": threshold,
-                        "per_symbol": self.config.get("per_symbol", False),
-                    },
-                    level="warning",
-                )
-        except Exception as e:
-            logger.warning("上报连续亏损风控事件失败: %s", e)
 
     def _reset_state(self) -> None:
         self._global_losses = 0

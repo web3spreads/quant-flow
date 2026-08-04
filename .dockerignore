@@ -1,75 +1,27 @@
-# Git files
+# 版本控制与 CI
 .git
-.gitignore
 .github
 
-# Python cache
+# Python 产物
 __pycache__
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-venv/
-env/
-ENV/
 .venv
+.pytest_cache
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Logs (will be mounted as volume)
+# 运行时产物（以卷挂载）
 logs/
+data/
 *.log
 
-# Environment files (will be provided via docker-compose)
+# 敏感与本地配置
 .env
 .env.*
+config.yaml
 
-# Documentation
-# README.md is needed for package metadata
+# 开发资料
 docs/
-QUICKSTART.md
-CHANGES.md
-INTEGRATION_GUIDE.md
-FLEXIBLE_CONFIG_GUIDE.md
-
-# Docker files
+tests/
 Dockerfile
 docker-compose.yml
 .dockerignore
-
-# Configuration examples
-config.yaml.example
-.env.example
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
-# Other
-*.bak
-*.tmp

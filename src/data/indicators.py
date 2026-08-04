@@ -549,38 +549,6 @@ class TechnicalIndicators:
         return " | ".join(summary_parts)
 
 
-def test_indicators():
-    """测试技术指标计算"""
-    print("=== 测试技术指标计算（纯 pandas/numpy 实现）===\n")
-
-    # 创建示例数据
-    from src.data.market_data import MarketDataFetcher
-
-    fetcher = MarketDataFetcher(demo_trading=False)
-    df = fetcher.fetch_ohlcv("BTC/USDT", "15m", limit=100)
-
-    if df is None:
-        print("无法获取数据")
-        return
-
-    print("1. 计算所有技术指标...")
-    df = TechnicalIndicators.calculate_all_indicators(df)
-    print(df.tail())
-
-    print("\n2. 获取最新指标...")
-    indicators = TechnicalIndicators.get_latest_indicators(df)
-    for key, value in indicators.items():
-        if isinstance(value, (int, float)):
-            if not np.isnan(value):
-                print(f"{key}: {value:.4f}")
-        else:
-            print(f"{key}: {value}")
-
-    print("\n3. 生成市场摘要...")
-    summary = TechnicalIndicators.generate_market_summary(indicators)
-    print(summary)
-
-
 # ── 强趋势检测（网格趋势过滤用，纯函数便于单测）─────────────────────────────
 
 # 英文周期名 → get_multi_timeframe_trend 输出的中文键
@@ -668,7 +636,3 @@ class TrendConfirmTracker:
     def streak(self) -> tuple[int, int]:
         """当前连续方向与计数（调试/日志用）。"""
         return self._streak_dir, self._streak_count
-
-
-if __name__ == "__main__":
-    test_indicators()

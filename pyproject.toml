@@ -1,53 +1,31 @@
 [project]
 name = "quant-flow"
-version = "0.5.0"
-description = "基于 Pydantic AI 的 AI 驱动加密货币自动交易机器人 - Hyperliquid 永续合约"
+version = "0.6.0"
+description = "AI 驱动的加密货币自动交易系统 - Hyperliquid 永续合约与网格策略"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # Pydantic AI Core（钉在 1.107.0：1.108+ 移除 pydantic_ai.models.gemini 模块路径，
-    # llm_client 的 GeminiModel 导入会崩；升级需先适配新导入路径）
-    "pydantic-ai==1.107.0",
-
     # 交易所 SDK
     "hyperliquid-python-sdk>=0.21.0",
     "eth-account>=0.13.7",
 
-    # 数据处理
+    # 数据处理与技术指标
     "pandas>=2.3.0",
     "numpy>=2.0.0",
 
-    # HTTP 客户端（external_info 的 Exa 搜索与 utils.hyperliquid 直接使用，
-    # 此前仅作为 apprise 的传递依赖存在，须显式声明）
+    # LLM 调用与外部 HTTP
     "requests>=2.31.0",
 
-    # 配置和环境
+    # 配置与模板
     "pyyaml>=6.0.0",
     "python-dotenv>=1.0.0",
     "jinja2>=3.1.0",
-
-    # 调度和通知
-    "apscheduler>=3.11.0",
-    "apprise>=1.9.0",
-
-    # 终端 UI
-    "rich>=14.0.0",
-
-    # 云端日志（aepipe 服务 SDK）
-    "aepipe-sdk>=0.1.1",
-
-    # 容器内多进程管理（Docker 部署需要，supervisord 通过 PATH 调用）
-    "supervisor>=4.2.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
-    "pytest-cov>=7.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pre-commit>=3.6.0",
     "ruff>=0.8.0",
-    "mypy>=1.8.0",
 ]
 
 [build-system]
@@ -59,16 +37,9 @@ packages = ["src"]
 
 # Ruff 配置
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 100
-exclude = [
-    ".git",
-    ".venv",
-    "__pycache__",
-    "*.pyc",
-    "build",
-    "dist",
-]
+exclude = [".git", ".venv", "__pycache__", "build", "dist"]
 
 [tool.ruff.lint]
 select = [
@@ -82,17 +53,14 @@ select = [
     "SIM",    # flake8-simplify
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
-    "B008",   # function call in default argument
-    "B905",   # zip without strict
-    "SIM108", # ternary operator
-    "SIM102", # nested if (intentional for readability in complex conditions)
-    "SIM116", # dict lookup instead of if/elif (if/elif is clearer for few cases)
-    "B904",   # raise from (can cause traceback noise)
+    "E501",   # 行长由 formatter 处理
+    "B008",   # 默认参数中的函数调用
+    "B905",   # zip 缺省 strict
+    "SIM108", # 三元表达式（按可读性取舍）
+    "SIM102", # 嵌套 if（复杂条件下更可读）
+    "SIM116", # if/elif 换字典查表（少量分支时 if/elif 更清晰）
+    "B904",   # raise from（避免回溯噪音）
 ]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/*.py" = ["E402"] # Allow non-top imports in test files (needed for path setup)
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
@@ -100,25 +68,11 @@ known-first-party = ["src"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-skip-magic-trailing-comma = false
 
 # Pytest 配置
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
-
-# MyPy 配置（逐步启用）
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = false
-warn_unused_configs = true
-ignore_missing_imports = true
-exclude = [
-    "tests/",
-    ".venv/",
-]
+addopts = "-q --tb=short"
+filterwarnings = ["ignore::DeprecationWarning"]
