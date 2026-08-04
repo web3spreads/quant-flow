@@ -176,6 +176,24 @@ class HyperliquidClient:
             growth_mode=growth_mode,
         )
 
+    def _is_unified_account(self) -> bool | None:
+        """判定当前地址是否为保证金合一账户（unifiedAccount/portfolioMargin）。
+
+        经官方 userAbstraction 接口判定，结果缓存（账户模式极少变更），
+        经典账户后续调用零额外开销。查询失败返回 None（未知，交由调用方降级）。
+        """
+        cached = getattr(self, "_abstraction_mode", None)
+        if cached is None:
+            try:
+                cached = self._request_with_fallback(
+                    "query_user_abstraction_state", self.address
+                )
+            except Exception as e:
+                print(f"⚠️ 账户模式查询失败（userAbstraction）: {e}")
+                return None
+            self._abstraction_mode = cached
+        return cached in ("unifiedAccount", "portfolioMargin")
+
     def get_balance(self) -> dict[str, Any] | None:
         """
         获取账户余额信息
@@ -195,13 +213,38 @@ class HyperliquidClient:
             margin_summary = user_state.get("marginSummary", {})
             account_value = float(margin_summary.get("accountValue", 0))
             total_margin_used = float(margin_summary.get("totalMarginUsed", 0))
+            withdrawable = user_state.get("withdrawable", "0")
+
+            # 统一账户（unified account）兼容：新式账户 spot/perp 保证金合一，
+            # 总净值以 spot 视图为准（USDC total=总抵押，hold=持仓/挂单占用），
+            # perp marginSummary 无持仓时恒 0、有持仓时仅等于被占用的那部分抵押
+            # （实测：$11 账户开仓后 perp accountValue 只剩 $2.28 == spot hold），
+            # 两种形态都会严重低估净值。官方判定接口 userAbstraction 返回
+            # "unifiedAccount"/"portfolioMargin"（合一模式）或 "default"（经典），
+            # 结果缓存；判定失败时退回启发式（perp 视图无资产才尝试 spot）。
+            unified = self._is_unified_account()
+            if unified or (unified is None and account_value <= 0):
+                try:
+                    spot_state = self._request_with_fallback("spot_user_state", self.address)
+                    for balance in spot_state.get("balances", []) or []:
+                        if balance.get("coin") != "USDC":
+                            continue
+                        usdc_total = float(balance.get("total", 0))
+                        if usdc_total > 0:
+                            account_value = usdc_total
+                            total_margin_used = float(balance.get("hold", 0))
+                            withdrawable = str(account_value - total_margin_used)
+                        break
+                except Exception as spot_err:
+                    # spot 查询失败时维持 perp 视图结果，不因兼容路径引入新故障
+                    print(f"⚠️ 统一账户 spot 余额回退查询失败: {spot_err}")
 
             return {
                 "accountValue": account_value,
                 "totalMarginUsed": total_margin_used,
                 "totalRawUsd": float(margin_summary.get("totalRawUsd", 0)),
                 "available": account_value - total_margin_used,
-                "withdrawable": user_state.get("withdrawable", "0"),
+                "withdrawable": withdrawable,
             }
         except Exception as e:
             print(f"❌ 获取余额失败: {e}")

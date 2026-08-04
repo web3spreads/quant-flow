@@ -117,6 +117,56 @@ class TestPausePeriod:
         assert result.triggered is False
 
 
+class TestDeadlockRecovery:
+    """死锁恢复：冷静期结束后即使净值未回到旧峰值，也应重置高水位并恢复交易。
+
+    回归此前死锁：峰值是只升不降的高水位，触发并（CLOSE_ALL）平成空仓后净值盯市
+    冻结，冷静期结束→解除暂停→立刻用同一笔已发生的回撤再次判超限→重新暂停，
+    "自动恢复"形同死代码，账户被永久锁死。修复后冷静期结束应把峰值重置为当前净值。
+    """
+
+    def test_resumes_even_if_equity_stays_low(self, plugin):
+        """净值停在低位（未回到旧峰值）也应在冷静期后恢复，并把峰值重置为当前净值"""
+        now = datetime.now()
+        plugin.check(make_ctx(10000, timestamp=now))
+        plugin.check(make_ctx(8500, timestamp=now))  # 15% 回撤触发，暂停
+
+        # 冷静期结束，但净值仍停在低位——模拟空仓现金冻结、盯市不动
+        later = now + timedelta(hours=2)
+        result = plugin.check(make_ctx(8500, timestamp=later))
+
+        assert result.triggered is False  # 恢复交易，不再暂停
+        assert plugin._is_paused is False
+        assert plugin._peak_equity == 8500  # 高水位重置为当前净值
+
+    def test_no_immediate_retrigger_after_resume(self, plugin):
+        """恢复后净值不变，不应被同一笔旧回撤立刻再次触发（死锁的核心）"""
+        now = datetime.now()
+        plugin.check(make_ctx(10000, timestamp=now))
+        plugin.check(make_ctx(8500, timestamp=now))  # 触发暂停
+
+        later = now + timedelta(hours=2)
+        plugin.check(make_ctx(8500, timestamp=later))  # 解除暂停 + 重置峰值
+        # 紧接着再查一次，净值不变：旧逻辑会因旧峰值 10000 重新触发，修复后不应触发
+        result = plugin.check(make_ctx(8500, timestamp=later + timedelta(minutes=1)))
+        assert result.triggered is False
+        assert plugin._is_paused is False
+
+    def test_fresh_drawdown_from_new_peak_still_triggers(self, plugin):
+        """重置不等于关闭保护：从新基准再跌一个阈值仍应正常触发"""
+        now = datetime.now()
+        plugin.check(make_ctx(10000, timestamp=now))
+        plugin.check(make_ctx(8500, timestamp=now))  # 触发，峰值 10000
+
+        later = now + timedelta(hours=2)
+        plugin.check(make_ctx(8500, timestamp=later))  # 解除暂停，峰值重置为 8500
+
+        # 从新基准 8500 再跌 10% → 7650，应再次触发
+        result = plugin.check(make_ctx(7650, timestamp=later + timedelta(minutes=1)))
+        assert result.triggered is True
+        assert result.action == ProtectionAction.CLOSE_ALL_POSITIONS
+
+
 class TestStatePersistence:
     """状态持久化"""
 

@@ -113,7 +113,7 @@ HYPERLIQUID_TESTNET=true        # true=testnet, false=mainnet
 ```yaml
 llm:
   client_type: langchain_openai   # openai / cloudflare / google / litellm / nvidia
-  model: qwen/qwen3.5-122b-a10b   # pick any model your provider supports
+  model: qwen/qwen3-next-80b-a3b-instruct   # pick any model your provider supports
   temperature: 0.2
 
 trading:

@@ -64,7 +64,7 @@ agent:
 ```yaml
 llm:
   client_type: langchain_openai
-  model: qwen/qwen3.5-122b-a10b
+  model: qwen/qwen3-next-80b-a3b-instruct
   temperature: 0.3               # 网格模式下建议温度略高 — 提供更弹性的宽度估计
 ```
 
@@ -93,7 +93,7 @@ data:
 ```yaml
 llm:
   client_type: langchain_openai
-  model: qwen/qwen3.5-122b-a10b
+  model: qwen/qwen3-next-80b-a3b-instruct
   temperature: 0.3
 
 trading:
