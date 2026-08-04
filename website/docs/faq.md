@@ -10,7 +10,7 @@ description: Frequently asked questions and troubleshooting guide for Quant Flow
 
 ### Q: Which Python version is required?
 
-Python **3.11 or higher** is required. LangGraph and some dependencies use features not available in earlier versions.
+Python **3.11 or higher** is required. Pydantic AI and some dependencies use features not available in earlier versions.
 
 ```bash
 python --version    # should show 3.11+
@@ -61,7 +61,7 @@ Recommended options:
 
 | Model | Provider | Config `client_type` | Notes |
 |---|---|---|---|
-| `qwen/qwen3.5-122b-a10b` | NVIDIA NIM | `langchain_nvidia` | Good balance of speed/quality (MoE, supports tools) |
+| `qwen/qwen3-next-80b-a3b-instruct` | NVIDIA NIM | `langchain_nvidia` | Good balance of speed/quality (MoE, supports tools) |
 | `gpt-4o-mini` | OpenAI | `openai` | Fast and cheap |
 | `gpt-4o` | OpenAI | `openai` | Higher quality, higher cost |
 | `gemini-1.5-flash` | Google | `google` | Fast, generous free tier |
@@ -120,7 +120,7 @@ Your API wallet needs to be authorized on the main Hyperliquid interface:
 3. Go to **Settings → API Wallets**
 4. Add your API wallet address and authorize it
 
-### `ModuleNotFoundError: No module named 'langchain_...'`
+### `ModuleNotFoundError: No module named 'pydantic_ai'`
 
 Dependencies are not installed. Run:
 

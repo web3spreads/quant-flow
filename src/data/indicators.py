@@ -581,5 +581,94 @@ def test_indicators():
     print(summary)
 
 
+# ── 强趋势检测（网格趋势过滤用，纯函数便于单测）─────────────────────────────
+
+# 英文周期名 → get_multi_timeframe_trend 输出的中文键
+TREND_TIMEFRAME_ALIASES = {
+    "1d": "日线",
+    "4h": "4小时",
+    "1h": "1小时",
+    "15m": "15分钟",
+    "1m": "1分钟",
+}
+
+
+def detect_strong_trend(
+    trends: dict[str, str] | None,
+    min_votes: int,
+    allowed_timeframes: list[str] | None = None,
+) -> int:
+    """从多周期趋势判断是否存在「一致强势」趋势。
+
+    仅把 ``analyze_trend`` 的两个最强状态（``强势上涨``/``强势下跌``）计票，避免在
+    震荡/转折市误判（保守取向：宁可不拦，也不在震荡里错停网格）。票数达到 ``min_votes``
+    且占优方向明确时返回 ±1。
+
+    Args:
+        trends: get_multi_timeframe_trend 的输出（中文键 → 趋势文案）。
+        min_votes: 触发所需的强势周期票数。
+        allowed_timeframes: 参与计票的周期白名单（支持英文 "1m" 或中文 "1分钟"）。
+            None/空 = 全部周期参与（历史行为）。用于排除 1m 等噪声周期。
+
+    Returns:
+        +1=强势上涨, -1=强势下跌, 0=无一致强趋势。
+    """
+    if not trends:
+        return 0
+    if allowed_timeframes:
+        allowed_keys = {TREND_TIMEFRAME_ALIASES.get(tf, tf) for tf in allowed_timeframes}
+        trends = {k: v for k, v in trends.items() if k in allowed_keys}
+    up = sum(1 for v in trends.values() if v == "强势上涨")
+    down = sum(1 for v in trends.values() if v == "强势下跌")
+    if up >= min_votes and up > down:
+        return 1
+    if down >= min_votes and down > up:
+        return -1
+    return 0
+
+
+class TrendConfirmTracker:
+    """趋势连续确认器（迟滞去抖）。
+
+    单周期的强趋势判定噪声很大——线上 12.5 天里趋势过滤强平 145 次，多数由
+    瞬时误判触发。本类要求同向信号连续出现 N 个周期才放行动作：
+    ``confirm_cycles`` 控制「暂停加仓」生效门槛，``flatten_min_cycles`` 控制
+    「市价平逆势库存」生效门槛（更高，让暂停先行、平仓靠后）。
+    方向翻转或消失时计数即归零，无跨方向记忆。
+    """
+
+    def __init__(self, confirm_cycles: int = 1, flatten_min_cycles: int = 1):
+        self.confirm_cycles = max(1, int(confirm_cycles))
+        self.flatten_min_cycles = max(self.confirm_cycles, int(flatten_min_cycles))
+        self._streak_dir = 0
+        self._streak_count = 0
+
+    def update(self, raw_dir: int) -> tuple[int, bool]:
+        """输入本周期原始趋势方向，返回 (生效方向, 是否允许平逆势库存)。
+
+        Returns:
+            (effective_dir, flatten_allowed)：
+            effective_dir 在连续同向 ≥ confirm_cycles 时等于 raw_dir，否则 0；
+            flatten_allowed 仅在连续同向 ≥ flatten_min_cycles 时为 True。
+        """
+        if raw_dir == 0:
+            self._streak_dir = 0
+            self._streak_count = 0
+            return 0, False
+        if raw_dir == self._streak_dir:
+            self._streak_count += 1
+        else:
+            self._streak_dir = raw_dir
+            self._streak_count = 1
+        effective = raw_dir if self._streak_count >= self.confirm_cycles else 0
+        flatten_allowed = self._streak_count >= self.flatten_min_cycles
+        return effective, flatten_allowed
+
+    @property
+    def streak(self) -> tuple[int, int]:
+        """当前连续方向与计数（调试/日志用）。"""
+        return self._streak_dir, self._streak_count
+
+
 if __name__ == "__main__":
     test_indicators()

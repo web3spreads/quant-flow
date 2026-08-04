@@ -31,14 +31,14 @@
 
 ## 项目概述
 
-Quant Flow 是一个基于 LangChain/LangGraph 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
+Quant Flow 是一个基于 Pydantic AI 的 AI 加密货币自动交易系统，专为 Hyperliquid DEX 设计。支持两种独立的交易策略：
 
-- **永续合约 Agent**（`main.py`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
-- **网格交易 Grid Flow**（`grid_main.py`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
+- **永续合约 Agent**（`main.py`，`perp_enabled: true`）：多 Agent 架构，每个交易对独立决策，支持上下文压缩以降低 Token 成本
+- **网格交易 Grid Flow**（`main.py`，`grid_enabled: true`）：AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数，GridManager 布单管理
 
-两种策略完全解耦，可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
+两种策略共用 `main.py` 统一入口，由 `config.yaml` 的 `perp_enabled` / `grid_enabled` 开关控制；可独立或并行运行（Docker `RUN_MODE=main|grid|all`）。
 
-**技术栈**: Python 3.11+, LangChain, LangGraph, Hyperliquid SDK, Pydantic
+**技术栈**: Python 3.11+, Pydantic AI, Hyperliquid SDK, Pydantic
 
 ## 常用命令
 
@@ -53,12 +53,12 @@ uv run python main.py
 # 指定配置文件运行
 uv run python main.py --config config.yaml --env .env
 
-# 运行网格交易
-uv run python grid_main.py --config config.grid.yaml --env-file .env
+# 运行网格交易（在 config.yaml 中设 grid_enabled: true、perp_enabled: false）
+uv run python main.py --config config.yaml --env-file .env
 
 # 运行测试
 uv run pytest tests/
-uv run pytest tests/test_agents_langgraph.py -v  # 单个文件
+uv run pytest tests/test_decision_validator.py -v  # 单个文件
 
 # 语法检查
 uv run python -m py_compile src/trading/client.py
@@ -86,9 +86,10 @@ uv run python backtest_comparison.py --symbol BTC --compare all
 uv run python backtest_comparison.py --symbol BTC --compare debate
 uv run python backtest_comparison.py --symbol BTC --compare regime
 
-# 分别查看各程序日志（日志文件通过 tee 写入 logs/ 目录）
-tail -f logs/main.log          # 主交易日志
-tail -f logs/grid.log          # 网格交易日志
+# 查看日志（统一入口后所有运行模式均写 main.log；grid.log 为历史遗留文件已停更）
+tail -f logs/main.log          # 主交易/网格日志（RUN_MODE=main/grid/all 均在此）
+tail -f logs/trades/trades_$(date +%Y%m%d).jsonl   # 结构化交易记录（含 pnl/reason 归因）
+tail -f logs/equity/equity_$(date +%Y%m%d).jsonl   # 净值快照（需开启 grid_equity_snapshot_enabled）
 ```
 
 ## 核心架构
@@ -143,7 +144,7 @@ tail -f logs/grid.log          # 网格交易日志
                   └──────────────┘                                     └───────────────┘
 ```
 
-### 网格交易数据流（Grid Flow，独立入口 `grid_main.py`）
+### 网格交易数据流（Grid Flow，由 `main.py` 在 `grid_enabled` 时驱动）
 
 ```
 ┌──────────────┐    ┌─────────────────────────────────────┐
@@ -196,8 +197,7 @@ src/
 │   ├── order_manager.py            # 订单管理（支持限价单 TP/SL 开关）
 │   ├── grid_manager.py             # 网格交易管理器（布单/同步/安全机制）
 │   ├── decision_validator.py       # 决策多维度验证
-│   ├── position_sizer.py           # 凯利公式仓位计算
-│   ├── risk_manager.py             # ATR动态止盈止损
+│   ├── risk_manager.py             # ATR动态止盈止损与仓位计算（固定金额/固定风险/凯利公式）
 │   └── enhanced_engine.py          # 增强交易引擎 (Regime 参数覆盖)
 ├── plugins/                  # 插件系统
 │   └── protections/                # 保护插件
@@ -506,29 +506,17 @@ ValidationResult.WARN   # 警告但允许
 ValidationResult.BLOCK  # 阻止交易
 ```
 
-### 仓位管理 (`position_sizer.py`)
+### 风险与仓位管理 (`risk_manager.py`)
 
-基于凯利公式动态计算最优仓位：
+提供动态止盈止损（基于 ATR）和最优仓位大小计算（支持固定金额、固定风险、凯利公式）：
 
 ```python
 # 仓位计算方法
-PositionSizeMethod.KELLY                # 凯利公式
-PositionSizeMethod.VOLATILITY_ADJUSTED  # 波动率调整
-PositionSizeMethod.SIGNAL_BASED         # 基于信号强度
+PositionSizingMethod.FIXED_AMOUNT   # 固定金额法
+PositionSizingMethod.FIXED_RISK     # 固定风险法
+PositionSizingMethod.KELLY          # 凯利公式
 
-# 调整因子
-kelly_factor      # 凯利系数调整
-signal_factor     # 信号强度调整
-volatility_factor # 波动率调整
-drawdown_factor   # 连续亏损收缩
-```
-
-### 风险管理 (`risk_manager.py`)
-
-提供动态止盈止损（基于 ATR）：
-
-```python
-# 核心参数
+# 核心风控参数
 max_risk_per_trade: 0.02      # 单笔最大风险 2%
 max_total_exposure: 0.5       # 最大总敞口 50%
 min_risk_reward_ratio: 1.5    # 最小风险回报比
@@ -641,6 +629,8 @@ regime_adaptive:
 protections:
   - name: max_drawdown
     max_drawdown_pct: 0.10        # 最大回撤 10%
+    min_drawdown_usd: 0           # 回撤绝对额下限（>0 时须同时达标才触发；防小账户上
+                                  # 纯百分比线成为噪声级触发器，默认 0=关闭）
     pause_hours: 4
   - name: daily_loss
     max_daily_loss_pct: 0.05      # 单日亏损 5%
@@ -648,6 +638,8 @@ protections:
   - name: consecutive_loss
     max_consecutive_losses: 5
     per_symbol: true              # true=只锁该交易对
+    forced_close_no_reset: false  # true=风控强平的净盈利不重置连亏计数（只有主动止盈
+                                  # 才算打破连亏；默认 false=历史行为）
     pause_hours: 4
   - name: position_timeout
     max_position_hours: 48
@@ -681,16 +673,42 @@ cloud_logging:
   flush_interval: 5.0                   # 批量发送间隔（秒）
 ```
 
-### 网格交易配置 (`config.grid.yaml`)
+### 网格交易配置
+
+网格配置已合并进统一的 `config.yaml`，由 `trading.grid_enabled` 开关启用（关闭 `perp_enabled` 即为纯网格模式）。关键键：
 
 ```yaml
 trading:
-  symbols: [ETH]                          # 网格交易对
-  max_total_investment: 500               # 总投入上限（USD）
-  max_leverage: 5                         # 最大杠杆
+  perp_enabled: false                          # 纯网格模式时关闭永续
+  grid_enabled: true                           # 启用网格交易
+  symbols: [ETH]                               # 网格交易对
+  max_trade_amount: 100                        # 单层投入上限（USD）
+  max_leverage: 5                              # 最大杠杆
   grid_limit_order_take_profit_enabled: true   # 网格成交后是否补止盈单
   grid_limit_order_stop_loss_enabled: true     # 网格成交后是否补止损单
   grid_reduce_only_exit_orders_enabled: true   # 是否启用分层减仓单
+
+  # ── 网格防护体系（全部默认关闭 = 历史行为）────────────────────────────
+  grid_force_neutral_mode: true                # 强制中性网格（忽略 AI 方向）
+  grid_max_position_notional_usd: 40           # 库存硬上限（USD 净持仓名义额，0=关闭）
+  grid_inventory_cap_strict: true              # 严格模式：名义额计入同向挂单 + 取价失败 fail-closed
+  grid_trend_filter_enabled: true              # 多周期强势一致时暂停加仓
+  grid_trend_filter_min_votes: 3               # 强势周期票数阈值
+  grid_trend_filter_timeframes: ["15m","1h","4h","1d"]  # 计票周期白名单（排除 1m 噪声；缺省=全部）
+  grid_trend_filter_confirm_cycles: 2          # 连续 N 周期同向确认才生效（迟滞去抖，缺省 1=立即）
+  grid_trend_filter_flatten_adverse: true      # 强趋势里减掉逆势库存
+  grid_trend_filter_flatten_min_cycles: 3      # 平逆势库存需更多连续确认（暂停先行、平仓靠后）
+  grid_trend_filter_surgical_flatten: true     # 手术式减仓：只平超限逆势层级（缺省 false=全量拆网）
+  grid_keep_grid_reconcile: true               # KEEP_GRID 周期对账撤无主残单
+  grid_adaptive_sizing_enabled: true           # 单格金额与净值挂钩：钱不够减格数而非抬单格金额
+  grid_min_grid_num: 3                         # 自适应仓位最少格数（低于则 INSUFFICIENT_CAPITAL 拒绝布单）
+  grid_halt_below_usd: 15                      # 净值停机线：低于此值且无持仓时跳过整个周期（0=关闭）
+  grid_equity_snapshot_enabled: true           # 每周期净值快照写 logs/equity/*.jsonl
+
+  # ── LLM 故障韧性与盈亏归因（同样默认关闭 = 历史行为）──────────────────
+  grid_llm_failure_alert_cycles: 6             # 连续 N 周期 LLM 不可用即走通知渠道告警（0=关闭）
+  grid_llm_fallback_rebuild_cycles: 12         # 空转 N 周期后用纯市场数据兜底重建网格（0=关闭）
+  grid_netting_attribution_enabled: true       # 以链上成交补齐净额对冲平仓的盈亏归因
 
 agent:
   grid_width:
@@ -703,9 +721,42 @@ scheduler:
   interval_minutes: 5        # 网格决策间隔
 ```
 
+> 网格周期还接入账户级风控（`ProtectionManager.check_all`）：回撤/连亏/单日亏损熔断时平掉全部持仓、撤销网格挂单并跳过本轮布单。
+
+### 网格的 LLM 故障韧性与盈亏归因
+
+三项针对测试网浸泡暴露问题的机制，均由上表开关控制、默认关闭：
+
+**1. LLM 连续失败告警（`grid_llm_failure_alert_cycles`）**
+
+`GridAgent` 给每份决策打 `llm_ok` 标：LLM 调用异常、返回空输出、输出不可解析、action 非法这四种兜底路径标 `False`，AI 真实判断标 `True`（余额接口故障也标 `True`——那不是 LLM 的问题）。`main.py` 据此累计连续故障周期，达阈值经 `Notifier` 升级告警，故障期间只发一次、恢复后复位。
+
+> 背景：这四种兜底路径都返回形态相同的 `KEEP_GRID`，此前无法与 AI 的真实判断区分。供应商下线 `deepseek-chat` 后，线上连续 13 小时每轮决策 400 失败、网格零成交，钉钉通道开着却一条告警都没发出。
+
+**2. 空转自愈（`grid_llm_fallback_rebuild_cycles`）**
+
+连续 N 个周期处于「无层级 + 无持仓 + 交易所无活跃网格挂单 + 拿不到 `UPDATE_GRID`」时，调用 `GridAgent.build_fallback_config()` 用纯市场数据（不经 LLM）重建一次中性网格。
+
+> 判据里的「交易所无活跃挂单」不能省：本地 `grid_levels` 为空不等于网格没在工作——全量重建路径只把订单快照写进状态文件，`levels` 要等下一轮增量同步才建立。线上实测过这个窗口：交易所挂着完整的 12 个网格单、本地层级却是空的。reduce_only 单不计入（持仓清零后可能残留，不代表在做市）。
+
+> 背景：网格层级被紧急平仓/熔断清空后，只有 `UPDATE_GRID` 能重建，而 LLM 故障期每轮只产出 `ERROR` 或兜底 `KEEP_GRID`——「维持现有网格」在无层级时等于永远维持一片空白，网格再也活不过来。
+>
+> 边界：兜底只出 `NEUTRAL` 对称网格（判断方向是 LLM 的职责，不可用时不猜方向）；趋势过滤主动暂停的周期不计入空转；兜底失败后重新攒够 N 周期才重试，避免每轮刷屏。
+
+**3. 净额对冲平仓归因（`grid_netting_attribution_enabled`）**
+
+`GridManager.reconcile_netting_closes()` 以链上 `user_fills` 为准，把 `closedPnl != 0` 的成交按「扣除该笔手续费后的净额」上报连亏熔断，并把 `pnl`/`reason` 写进 trades 日志。游标（`cursor_ms` + 同毫秒 `tid` 集合）持久化在 `grid_state.json`，首次启用只锚定游标、绝不回溯历史。
+
+> 背景：Hyperliquid 是单向持仓，中性网格的库存大多被对侧格子的普通开仓单净额对冲平掉（成交 `dir` 为 `Close Long`/`Close Short`），走不到层级状态机的 `CLOSE_PENDING → COMPLETED` 路径。线上三周实测：1051 笔带盈亏的平仓腿只有 24 笔（2.3%）进了归因，连亏熔断状态文件三周纹丝不动，trades 日志的 `pnl` 恒为 null。
+>
+> **归因源互斥**：开启后本方法独占风控上报，`_report_round_trip_close` 直接让路（层级状态机与紧急平仓只写日志），否则同一笔平仓会被计两次、连亏计数翻倍。
+>
+> **forced 语义靠 oid 还原**：链上成交本身分不清「网格正常止盈」与「风控强平」，而 `consecutive_loss` 的 `forced_close_no_reset` 依赖这个区分。故 `_emergency_close_all` / `_surgical_reduce_adverse` 下单后调 `_mark_forced_close_oid()` 登记订单号，归因时按 oid 精确匹配上报 `forced=True`，消费后即清除。
+> 注意 taker/maker 不是可靠判据——网格限价单穿价成交同样是 taker（线上三天 50 笔 taker 成交里只有 3 笔真是强平）。
+
 ## 设计模式
 
-1. **工具回调模式**: `TradingTools` 通过回调函数将 LLM 决策映射到实际交易操作
+1. **工具回调模式**: `SingleSymbolAgent` 通过 Pydantic AI 的 `@agent.tool` 装饰器注册下单工具（buy/sell/sell_short 等），将 LLM 工具调用映射到实际交易操作；回调内置幂等守卫，单次决策周期内同一动作最多执行一次，防止 run_sync 重跑导致重复下单
 2. **延迟导入**: `src/agent/__init__.py` 使用 `__getattr__` 延迟导入避免循环依赖
 3. **单例模式**: `LLMClientManager` 和 `Config` 使用单例确保全局一致性
 4. **结构化输出**: `ExecutionAgent` 使用 Pydantic 模型 (`ExecutionPlan`) 确保决策格式正确
@@ -729,7 +780,7 @@ uv run pytest tests/ --cov=src
 ```
 
 主要测试文件：
-- `test_agents_langgraph.py`: Agent 架构测试
+- `test_trading_tool_idempotency.py`: 下单工具幂等去重测试（FunctionModel 真实工具调用，覆盖此前 0 覆盖的下单路径）
 - `test_decision_validator.py`: 决策验证器测试
 - `test_debate.py`: 多空辩论引擎测试
 - `test_signal_scorer_regime.py`: 信号评分 Regime 自适应测试

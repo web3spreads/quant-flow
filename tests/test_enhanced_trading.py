@@ -196,6 +196,43 @@ class TestRiskManager:
         assert rm.params.default_stop_loss_pct == 0.025
         assert rm.params.atr_stop_loss_multiplier == 2.0
 
+    def test_stop_loss_rejects_nonpositive_entry_price(self):
+        """入场价为 0/负（行情缺失）时止损计算应抛 ValueError 而非除零崩溃"""
+        rm = RiskManager()
+        for bad_price in (0.0, -100.0):
+            with pytest.raises(ValueError):
+                rm.calculate_dynamic_stop_loss(
+                    entry_price=bad_price, is_long=True, current_atr=500.0
+                )
+
+    def test_take_profit_rejects_nonpositive_entry_price(self):
+        """入场价为 0/负时止盈计算应抛 ValueError"""
+        rm = RiskManager()
+        with pytest.raises(ValueError):
+            rm.calculate_dynamic_take_profit(
+                entry_price=0.0, stop_loss_price=100.0, is_long=True, current_atr=10.0
+            )
+
+    def test_position_size_rejects_nonpositive_entry_price(self):
+        """入场价为 0/负时仓位计算应抛 ValueError，避免 ZeroDivisionError"""
+        rm = RiskManager()
+        with pytest.raises(ValueError):
+            rm.calculate_position_size(
+                account_balance=10000.0, entry_price=0.0, stop_loss_price=0.0, leverage=5
+            )
+
+    def test_position_size_handles_zero_stop_distance(self):
+        """入场价==止损价（止损距离为0）时不应除零崩溃，应回退最小风险距离"""
+        rm = RiskManager()
+        result = rm.calculate_position_size(
+            account_balance=10000.0,
+            entry_price=50000.0,
+            stop_loss_price=50000.0,  # 与入场价相同 → risk_per_unit=0
+            leverage=5,
+        )
+        assert isinstance(result, PositionSizeResult)
+        assert result.position_size >= 0  # 不崩溃且产出有限仓位
+
     def test_calculate_dynamic_stop_loss_long(self):
         """测试多头动态止损计算"""
         rm = RiskManager()

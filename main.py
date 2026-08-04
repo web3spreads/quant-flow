@@ -11,13 +11,16 @@ import threading
 import time
 import traceback
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.agent.enhanced_single_symbol_agent import EnhancedSingleSymbolAgent, create_enhanced_agent
-from src.agent.external_info_agent import ExternalInfoAgent, ExternalInfoScheduler
+from src.agent.external_info_agent import ExternalInfoAgent
+from src.agent.grid_agent import GridAgent
+from src.agent.helpers import send_error_notification
 from src.agent.market_info_store import MarketInfoStore
 from src.agent.review_agent import ReviewAgent
 from src.agent.review_daily_logger import ReviewDailyLogger
@@ -25,13 +28,11 @@ from src.agent.review_memory import ReviewMemoryStore
 from src.agent.single_symbol_agent import SingleSymbolAgent
 
 # 改进1: 双粒度反思（延迟导入在初始化时使用）
-
 # RiskParameters 用于增强型 Agent 配置，由 create_enhanced_agent 内部处理
 from src.agent.summary_agent_v2 import DecisionHistory, SummaryAgentV2
-from src.agent.helpers import send_error_notification
 from src.config import DEFAULT_PERP_FEE_RATES, get_config
 from src.data.data_enricher import MarketDataEnricher
-from src.data.indicators import TechnicalIndicators
+from src.data.indicators import TechnicalIndicators, TrendConfirmTracker, detect_strong_trend
 from src.data.market_data import MarketDataFetcher
 from src.data.market_monitor import MarketMonitor, MonitorConfig, VolatilityAlert
 from src.llm import LLMClientManager
@@ -39,11 +40,14 @@ from src.notification import Notifier
 from src.plugins.protections import ProtectionAction, ProtectionContext, ProtectionManager
 from src.prompt_manager import PromptManager
 from src.trading.client import HyperliquidClient
+from src.trading.grid_barrier import TripleBarrierConfig
+from src.trading.grid_manager import GridManager
 from src.trading.order_manager import OrderManager
 from src.utils.banner import print_startup_banner
 from src.utils.candle_align import next_candle_close_ts
 from src.utils.cloud_logger import get_cloud_logger, init_cloud_logger
 from src.utils.logger import get_logger
+from src.utils.precision import to_decimal
 
 
 class QuantFlowBot:
@@ -102,6 +106,8 @@ class QuantFlowBot:
         self.scheduler = None
         self.is_running = False
         self._skipped_cycles = 0  # 跳过的周期计数
+        # 立即执行的网格周期线程引用（停机时 join，避免腰斩首次布单序列）
+        self._grid_immediate_thread = None
 
         # 交易统计
         self.statistics = {
@@ -369,7 +375,6 @@ class QuantFlowBot:
 
         # 9. 外部信息收集 Agent
         self.external_info_agent = None
-        self.external_info_scheduler = None
         self.market_info_store = None
 
         if getattr(self.config, "external_info_enabled", False):
@@ -400,18 +405,10 @@ class QuantFlowBot:
                     base_dir=getattr(self.config, "external_info_store_dir", "data/market_info")
                 )
 
-                # 创建调度器
-                self.external_info_scheduler = ExternalInfoScheduler(
-                    agent=self.external_info_agent,
-                    interval_hours=getattr(self.config, "external_info_interval_hours", 3.0),
-                    logger=self.logger,
-                )
-
                 self.logger.print_info("✅ 外部信息收集 Agent 初始化完成")
             except Exception as e:
                 self.logger.print_warning(f"外部信息收集 Agent 初始化失败: {e}")
                 self.external_info_agent = None
-                self.external_info_scheduler = None
         else:
             # 即使未启用 Agent，也创建存储实例以便读取已有的报告
             store_dir = getattr(self.config, "external_info_store_dir", "data/market_info")
@@ -454,8 +451,19 @@ class QuantFlowBot:
                 on_protection_triggered=self._on_protection_triggered,
             )
             plugin_names = [p.name for p in self.protection_manager.plugins]
-            self.logger.print_info(
-                f"保护插件管理器初始化完成 | 已加载: {', '.join(plugin_names)}"
+            if plugin_names:
+                self.logger.print_info(
+                    f"保护插件管理器初始化完成 | 已加载: {', '.join(plugin_names)}"
+                )
+            else:
+                self.logger.print_warning(
+                    "⚠️ protections 配置非空但未加载任何有效保护插件（插件名未知或全部 enabled=false），"
+                    "账户风控已全部关闭"
+                )
+        else:
+            self.logger.print_warning(
+                "⚠️ 未配置任何风控保护插件（protections 为空），账户风控已全部关闭。"
+                "如需启用，请在 config.yaml 的 protections 段添加插件（参考 config.yaml.example）"
             )
 
         self.logger.print_info("✅ 多 Agent 架构初始化完成！")
@@ -469,6 +477,64 @@ class QuantFlowBot:
             self.logger.print_info("  - 1 个市场主动监控器")
         if self.protection_manager:
             self.logger.print_info("  - 1 个保护插件管理器 (ProtectionManager)")
+
+        # 13. 初始化网格交易组件
+        self.grid_manager = None
+        self.grid_agent = None
+        # 趋势过滤迟滞确认器（按 symbol 独立）：连续 N 周期同向强趋势才动作。
+        # 无条件初始化，避免网格组件构造失败时 grid_cycle 引用缺失属性。
+        self._grid_trend_trackers: dict[str, TrendConfirmTracker] = {}
+        # LLM 连续故障计数与空转连续计数（按 symbol 独立），供告警升级与空转自愈使用。
+        self._grid_llm_failure_streak: dict[str, int] = {}
+        self._grid_idle_streak: dict[str, int] = {}
+        # 已就该轮故障发过告警的标记：故障持续期间只发一次，恢复后复位，避免 5 分钟一条刷屏
+        self._grid_llm_alert_sent: dict[str, bool] = {}
+        if self.config.grid_enabled:
+            self.logger.print_info("初始化网格交易组件...")
+            try:
+                risk_cfg = self.config.config_data.get("risk_management", {})
+                barrier_config = TripleBarrierConfig.from_config(risk_cfg)
+
+                self.grid_manager = GridManager(
+                    self.order_manager,
+                    self.logger,
+                    notifier=self.notifier,
+                    state_file="data/grid_state.json",
+                    grid_limit_order_take_profit_enabled=self.config.grid_limit_order_take_profit_enabled,
+                    grid_limit_order_stop_loss_enabled=self.config.grid_limit_order_stop_loss_enabled,
+                    grid_reduce_only_exit_orders_enabled=self.config.grid_reduce_only_exit_orders_enabled,
+                    barrier_config=barrier_config,
+                    on_round_trip_close=self._on_grid_round_trip_close,
+                    max_position_notional_usd=self.config.grid_max_position_notional_usd,
+                    trend_flatten_surgical=self.config.grid_trend_filter_surgical_flatten,
+                    inventory_cap_strict=self.config.grid_inventory_cap_strict,
+                    keep_grid_reconcile=self.config.grid_keep_grid_reconcile,
+                    netting_attribution_enabled=self.config.grid_netting_attribution_enabled,
+                )
+
+                self.grid_agent = GridAgent(
+                    symbol=self.config.symbols[0],
+                    order_manager=self.order_manager,
+                    logger=self.logger,
+                    llm_manager=self.llm_manager,
+                    trade_amount=self.config.max_trade_amount,
+                    width_pct_min=self.config.grid_width_min_pct,
+                    width_pct_max=self.config.grid_width_max_pct,
+                    width_pct_fallback=self.config.grid_width_fallback_pct,
+                    ai_width_blend_weight=self.config.grid_ai_blend_weight,
+                    force_neutral_mode=self.config.grid_force_neutral_mode,
+                    max_leverage=self.config.max_leverage,
+                    adaptive_sizing=self.config.grid_adaptive_sizing_enabled,
+                    min_grid_num=self.config.grid_min_grid_num,
+                )
+                self.logger.print_info("✅ 网格交易组件初始化完成")
+            except Exception as e:
+                self.logger.print_warning(f"网格交易组件初始化失败: {e}")
+                self.grid_manager = None
+                self.grid_agent = None
+
+        if self.grid_manager:
+            self.logger.print_info("  - 1 个网格交易管理器 (GridManager)")
 
         # 启动时检查账户余额
         self._check_and_display_balance()
@@ -727,6 +793,9 @@ class QuantFlowBot:
                         if sym:
                             try:
                                 self.order_manager.close_position(sym)
+                                # 强平属于风控主动行为：清理持仓状态记录（如超时记录），
+                                # 不向连续亏损插件上报虚假 pnl
+                                self.protection_manager.on_position_dropped(sym)
                                 self.logger.print_info(f"[风控]已平仓: {sym}")
                             except Exception as e:
                                 self.logger.print_error(f"[风控]平仓失败 {sym}: {e}")
@@ -751,9 +820,9 @@ class QuantFlowBot:
                     self.logger.print_warning(f"[风控]持仓超时: {ts}，执行平仓")
                     try:
                         self.order_manager.close_position(ts)
-                        for plugin in self.protection_manager.plugins:
-                            if plugin.name == "position_timeout":
-                                plugin.on_trade_close(ts, 0)
+                        # 超时强平属于风控主动行为：仅清理 position_timeout 记录，
+                        # 不向连续亏损插件上报虚假 pnl
+                        self.protection_manager.on_position_dropped(ts)
                     except Exception as e:
                         self.logger.print_error(f"[风控]超时平仓失败 {ts}: {e}")
 
@@ -993,16 +1062,22 @@ class QuantFlowBot:
                     # 显示决策
                     self.logger.print_info(f"[{symbol}Agent] 决策: {decision}")
 
-                    # 记录决策历史
-                    self.decision_history.add_decision(
-                        symbol=symbol,
-                        decision=decision,
-                        market_data=market_data,
-                        reason=details.get("output", "")[:200],  # 截取前200字符
-                        action_details=details,
-                    )
+                    # 判定真实决策状态：Agent 内部异常时返回 decision=="ERROR" 或 details 含 error 字段
+                    decision_failed = decision == "ERROR" or bool(details.get("error"))
+                    decision_status = "ERROR" if decision_failed else "SUCCESS"
+                    decision_error = details.get("error") if decision_failed else None
 
-                    # 记录决策日志
+                    # 记录决策历史（ERROR 决策不写入，避免污染历史压缩与复盘记忆）
+                    if not decision_failed:
+                        self.decision_history.add_decision(
+                            symbol=symbol,
+                            decision=decision,
+                            market_data=market_data,
+                            reason=details.get("output", "")[:200],  # 截取前200字符
+                            action_details=details,
+                        )
+
+                    # 记录决策日志（按真实状态记录，不再硬编码 SUCCESS）
                     self.logger.log_decision(
                         symbol=symbol,
                         market_data=market_data,
@@ -1010,7 +1085,8 @@ class QuantFlowBot:
                         ai_response=details.get("output", ""),
                         decision=decision,
                         action_details=details,
-                        status="SUCCESS",
+                        status=decision_status,
+                        error_message=decision_error,
                     )
 
                     # 改进1a: 即时反思（平仓类型时触发）
@@ -1150,6 +1226,26 @@ class QuantFlowBot:
                 self.logger.print_info("立即执行首次外部信息收集...")
                 self._run_external_info_collection()
 
+            # 网格交易定时任务
+            if self.grid_manager and self.grid_agent:
+                self.scheduler.add_job(
+                    self.grid_cycle,
+                    trigger=IntervalTrigger(minutes=self.config.interval_minutes),
+                    id="grid_cycle",
+                    name="AI网格决策循环",
+                    replace_existing=True,
+                )
+                self.logger.print_info(f"网格交易决策任务已添加，间隔: {self.config.interval_minutes} 分钟")
+
+                # 如果配置了立即执行，在后台线程中立即运行一次网格循环
+                if self.config.run_immediately:
+                    self.logger.print_info("立即执行首次网格交易循环...")
+                    self._grid_immediate_thread = threading.Thread(
+                        target=self.grid_cycle, daemon=True,
+                        name="grid-immediate",
+                    )
+                    self._grid_immediate_thread.start()
+
             # 启动后台调度器
             self.scheduler.start()
 
@@ -1164,30 +1260,48 @@ class QuantFlowBot:
             self.is_running = True
             self.start_time = datetime.now()
 
-            # 如果配置了立即执行，先执行一次
-            if self.config.run_immediately:
-                self.logger.print_info("立即执行第一次交易循环...")
-                self.trading_cycle()
-
-            self.logger.print_section(
-                f"K 线节拍驱动已启动 | "
-                f"周期: {self.config.timeframe} | "
-                f"偏移: {self.config.timeframe_offset}s",
-                style="bold green",
-            )
-
-            # 主循环：K 线节拍驱动
-            while self.is_running:
-                self._wait_next_candle()
-                if self.is_running:
+            # 永续合约主流程
+            if self.config.perp_enabled:
+                # 如果配置了立即执行，先执行一次
+                if self.config.run_immediately:
+                    self.logger.print_info("立即执行第一次交易循环...")
                     self.trading_cycle()
 
+                self.logger.print_section(
+                    f"K 线节拍驱动已启动 | "
+                    f"周期: {self.config.timeframe} | "
+                    f"偏移: {self.config.timeframe_offset}s",
+                    style="bold green",
+                )
+
+                # 主循环：K 线节拍驱动
+                while self.is_running:
+                    self._wait_next_candle()
+                    if self.is_running:
+                        self.trading_cycle()
+            else:
+                self.logger.print_section(
+                    "永续合约交易已禁用。程序运行在纯网格模式下。",
+                    style="bold green",
+                )
+                # 主循环：保持程序存活
+                while self.is_running:
+                    time.sleep(1)
+
         except KeyboardInterrupt:
-            self.stop("用户手动停止 (Ctrl+C)")
+            self.logger.print_info("收到 Ctrl+C，触发优雅停机")
         except Exception as e:
             self.logger.print_error(f"启动失败: {e}")
             self.logger.logger.exception(e)
-            sys.exit(1)
+            raise
+        finally:
+            # 优雅停机：循环退出（停止信号 / Ctrl+C / 异常）后统一清理。stop() 内部对各
+            # 组件做了存在性守卫，初始化中途失败调用也安全；scheduler.shutdown(wait=True)
+            # 会等待进行中的网格周期跑完，避免腰斩撤单/布单序列而留下无保护裸仓。
+            try:
+                self.stop("收到停止信号或异常退出")
+            except Exception as cleanup_err:
+                self.logger.print_error(f"停机清理异常: {cleanup_err}")
 
     def _wait_next_candle(self):
         """等待到下一根 K 线收盘后 offset 秒（分段 sleep 以便快速响应停止信号）"""
@@ -1212,6 +1326,16 @@ class QuantFlowBot:
         # 停止市场监控线程
         if self.market_monitor:
             self.market_monitor.stop()
+
+        # 等待「立即执行的网格周期」完成（首次布单可能仍在运行中）。
+        # 该线程由 start() 直接派生、不走调度器，scheduler.shutdown(wait=True) 不会等它，
+        # 故单独 join，避免腰斩布单/撤单序列而留下无保护裸仓。
+        if (
+            getattr(self, "_grid_immediate_thread", None) is not None
+            and self._grid_immediate_thread.is_alive()
+        ):
+            self.logger.print_info("等待进行中的网格周期完成（最多 30s）...")
+            self._grid_immediate_thread.join(timeout=30)
 
         if self.scheduler and self.scheduler.running:
             self.scheduler.shutdown()
@@ -1515,11 +1639,542 @@ class QuantFlowBot:
         except Exception as e:
             self.logger.print_error(f"发送关闭通知失败: {e}")
 
+    def _on_grid_round_trip_close(self, symbol: str, pnl: float, forced: bool = False) -> None:
+        """网格每轮 round-trip 平仓回调：把逐轮盈亏喂给连亏熔断插件。
+
+        连亏保护（``consecutive_loss``）完全由 ``on_trade_close`` 事件驱动；网格此前
+        从不上报逐笔盈亏，导致该插件在纯网格模式下形同虚设。此回调由 GridManager 在
+        ``_record_round_trip``（forced=False，主动止盈）与紧急平仓/手术式减仓
+        （forced=True，风控强平）中触发，补齐这条数据通路。
+
+        注意：仅上报 ``on_trade_close``（盈亏事件），不上报 ``on_trade_open``——网格
+        持续滚动库存、没有干净的「单笔开仓」语义，position_timeout 不适用网格，故不接线。
+        """
+        if not self.protection_manager:
+            return
+        try:
+            self.protection_manager.on_trade_close(symbol=symbol, pnl=float(pnl), forced=forced)
+        except Exception as e:
+            self.logger.print_warning(f"[网格风控] round-trip 盈亏上报失败: {e}")
+
+    def _detect_strong_trend(self, trends: dict[str, str]) -> int:
+        """从多周期趋势判断是否存在「一致强势」趋势（委托纯函数，便于单测）。
+
+        计票范围受 ``grid_trend_filter_timeframes`` 白名单约束（None=全部周期，
+        历史行为）；票数阈值 ``grid_trend_filter_min_votes``。
+
+        Returns:
+            +1=强势上涨, -1=强势下跌, 0=无一致强趋势。
+        """
+        return detect_strong_trend(
+            trends,
+            min_votes=self.config.grid_trend_filter_min_votes,
+            allowed_timeframes=self.config.grid_trend_filter_timeframes,
+        )
+
+    def _grid_protection_triggered(self, symbol: str) -> bool:
+        """
+        网格周期的账户级风控熔断检查。
+
+        网格风控分两条通路：
+        - 账户级（本方法，``ProtectionManager.check_all``，按权益快照判定）：回撤
+          （max_drawdown）与单日亏损（daily_loss）熔断，布单前拦截。
+        - 逐轮级（``_on_grid_round_trip_close`` → ``on_trade_close``）：连亏熔断
+          （consecutive_loss），由每轮 round-trip 盈亏驱动。
+        position_timeout 依赖逐笔开仓事件，不适用持续滚动库存的网格，故未接入。
+
+        本方法处理 check_all 的拦截动作：
+
+        - ``CLOSE_ALL_POSITIONS``：平掉全部持仓 + 撤销该 symbol 的网格挂单（含
+          trigger）并清理网格状态，跳过本轮布单。
+        - ``PAUSE_NEW_TRADES``：仅跳过本轮布单（不新增挂单）。
+
+        余额/持仓查询失败时不误熔断（返回 False），避免网络抖动把网格误停。
+
+        Returns:
+            True 表示已熔断、本轮网格应跳过布单；False 表示正常继续。
+        """
+        # 自包含守卫：未配置风控时不熔断（当前调用方虽已先判 protection_manager，
+        # 但此处再判一次可避免未来其他调用路径触发 None.check_all 崩溃）
+        if not self.protection_manager:
+            return False
+
+        try:
+            balance_info = self.order_manager.get_available_balance_info()
+        except Exception as e:
+            self.logger.print_warning(f"[网格风控] 获取余额失败，跳过风控检查: {e}")
+            return False
+
+        if balance_info.get("status") != "ok":
+            self.logger.print_warning(
+                f"[网格风控] 余额查询异常({balance_info.get('message')})，跳过风控检查"
+            )
+            return False
+
+        try:
+            current_positions = self.order_manager.get_current_positions()
+        except Exception as e:
+            self.logger.print_warning(f"[网格风控] 获取持仓失败，跳过风控检查: {e}")
+            return False
+
+        context = ProtectionContext(
+            balance=balance_info.get("available", 0),
+            equity=balance_info.get("total", 0),
+            unrealized_pnl=balance_info.get("unrealized_pnl", 0),
+            margin_used=balance_info.get("occupied", 0),
+            current_positions=current_positions or [],
+        )
+        results = self.protection_manager.check_all(context)
+        action = ProtectionManager.get_most_severe_action(results)
+        for r in results:
+            self.logger.print_warning(f"[网格风控]{r.reason}")
+
+        if action == ProtectionAction.CLOSE_ALL_POSITIONS:
+            self.logger.print_warning("[网格风控]账户熔断触发，平掉全部持仓并撤销网格挂单")
+            for pos in (current_positions or []):
+                sym = pos.get("coin", "")
+                if sym:
+                    try:
+                        self.order_manager.close_position(sym)
+                        # 强平属风控主动行为：清理持仓记录，不向连亏插件上报虚假 pnl
+                        self.protection_manager.on_position_dropped(sym)
+                    except Exception as e:
+                        self.logger.print_error(f"[网格风控]平仓失败 {sym}: {e}")
+            # 撤销该 symbol 的全部网格挂单（含 trigger）并清理本地网格状态，
+            # 避免熔断期间挂单成交新增敞口
+            if self.grid_manager:
+                try:
+                    self.grid_manager.cancel_all_orders(symbol)
+                    self.logger.print_info(f"[网格风控]已撤销 {symbol} 的全部网格挂单")
+                except Exception as e:
+                    self.logger.print_error(f"[网格风控]撤销网格挂单失败: {e}")
+            return True
+
+        if action == ProtectionAction.PAUSE_NEW_TRADES:
+            self.logger.print_warning("[网格风控]账户风控暂停新开仓，本轮跳过网格布单")
+            return True
+
+        return False
+
+    def _track_grid_llm_health(self, symbol: str, ai_decision: dict) -> None:
+        """跟踪 LLM 连续故障，达阈值时经通知渠道升级告警。
+
+        依据 GridAgent 打的 ``llm_ok`` 标：False 表示本轮 LLM 自身不可用（调用异常/
+        空输出/输出不可解析/action 非法）。这类兜底与 AI 真实的 KEEP_GRID 返回值同形，
+        此前无从分辨——线上 DeepSeek 下线 deepseek-chat 后连续 13 小时决策全失败、
+        网格零成交，钉钉通道开着却一条没发，只能靠人工翻日志发现。
+
+        故障持续期间只告警一次（恢复后复位），避免 5 分钟一条刷屏。
+        """
+        threshold = self.config.grid_llm_failure_alert_cycles
+        if threshold <= 0:
+            return
+
+        if ai_decision.get("llm_ok", True):
+            if self._grid_llm_failure_streak.get(symbol):
+                self.logger.print_info(
+                    f"   [Grid] ✅ {symbol} LLM 决策已恢复正常"
+                    f"（此前连续失败 {self._grid_llm_failure_streak[symbol]} 周期）"
+                )
+            self._grid_llm_failure_streak[symbol] = 0
+            self._grid_llm_alert_sent[symbol] = False
+            return
+
+        streak = self._grid_llm_failure_streak.get(symbol, 0) + 1
+        self._grid_llm_failure_streak[symbol] = streak
+        if streak < threshold or self._grid_llm_alert_sent.get(symbol):
+            return
+
+        reason = str(ai_decision.get("reason", ""))[:300]
+        message = (
+            f"{symbol} 网格 LLM 决策连续 {streak} 个周期失败，网格已停止更新，"
+            f"仅维持减仓保护单。最近一次原因: {reason}"
+        )
+        self.logger.print_error(f"🚨 {message}")
+        self._grid_llm_alert_sent[symbol] = True
+
+        if self.notifier and self.notifier.enabled:
+            try:
+                self.notifier.notify_error(
+                    title="网格 LLM 决策连续失败",
+                    error_message=message,
+                    context="请检查 LLM 供应商模型名是否已下线、API 余额与网络连通性",
+                )
+            except Exception as e:
+                self.logger.print_warning(f"   [Grid] 发送 LLM 故障告警失败: {e}")
+
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_alert(
+                symbol=symbol,
+                alert_type="grid_llm_failure",
+                severity="high",
+                message=message,
+                details={"streak": streak, "reason": reason},
+            )
+
+    def _maybe_fallback_rebuild(
+        self, symbol: str, ai_decision: dict, market_data: dict
+    ) -> dict:
+        """网格因 LLM 持续不可用而空转时，用纯市场数据兜底重建，返回替换后的决策。
+
+        空转死锁：层级被紧急平仓/熔断清空后，只有 UPDATE_GRID 能重建网格，而 LLM
+        故障期每轮只产出 ERROR 或兜底 KEEP_GRID（「维持现有网格」在无层级时等于
+        维持一片空白），网格再也活不过来——线上实测停摆 13 小时零挂单零成交。
+
+        趋势过滤主动暂停的周期不算空转：那时候不建网格正是趋势过滤的目的。
+        """
+        cycles = self.config.grid_llm_fallback_rebuild_cycles
+        if cycles <= 0 or not self.grid_agent or not self.grid_manager:
+            return ai_decision
+
+        if (
+            ai_decision.get("action") == "UPDATE_GRID"
+            or ai_decision.get("trend_paused")
+            or not self.grid_manager.is_grid_idle(symbol)
+        ):
+            self._grid_idle_streak[symbol] = 0
+            return ai_decision
+
+        streak = self._grid_idle_streak.get(symbol, 0) + 1
+        self._grid_idle_streak[symbol] = streak
+        if streak < cycles:
+            self.logger.print_warning(
+                f"   [Grid] 💤 {symbol} 网格空转 {streak}/{cycles} 周期，"
+                f"达阈值后将按市场数据兜底重建"
+            )
+            return ai_decision
+
+        # 无论兜底成功与否都清零：失败时也要重新攒够 cycles 周期才再试，
+        # 避免资金不足等持续性原因导致每轮都重试刷屏。
+        self._grid_idle_streak[symbol] = 0
+        try:
+            fallback = self.grid_agent.build_fallback_config(market_data)
+        except Exception as e:
+            self.logger.print_error(f"   [Grid] 兜底重建网格失败: {e}")
+            return ai_decision
+
+        if fallback.get("action") == "UPDATE_GRID":
+            if self.notifier and self.notifier.enabled:
+                try:
+                    self.notifier.notify_error(
+                        title="网格空转自愈",
+                        error_message=(
+                            f"{symbol} 网格连续 {streak} 周期空转（LLM 不可用），"
+                            f"已按市场数据兜底重建中性网格"
+                        ),
+                        context="网格已恢复挂单，但 LLM 仍需修复才能恢复智能决策",
+                    )
+                except Exception as e:
+                    self.logger.print_warning(f"   [Grid] 发送空转自愈通知失败: {e}")
+            cloud = get_cloud_logger()
+            if cloud:
+                cloud.send_alert(
+                    symbol=symbol,
+                    alert_type="grid_fallback_rebuild",
+                    severity="high",
+                    message=f"{symbol} 网格空转 {streak} 周期，已按市场数据兜底重建",
+                    details={"idle_cycles": streak, "reason": fallback.get("reason", "")},
+                )
+        return fallback
+
+    def grid_cycle(self):
+        """执行一个网格交易周期"""
+        symbol = self.config.symbols[0] if self.config.symbols else "UNKNOWN"
+        cloud = get_cloud_logger()
+
+        # 与永续 trading_cycle 共享交易锁：RUN_MODE=all 时两者会并发操作同一 symbol，
+        # 不加锁会踩乱持仓/挂单状态。冲突时跳过本轮（网格下一周期再布）。
+        if not self._trading_lock.acquire(blocking=False):
+            self.logger.print_warning(
+                f"⏭️ 交易周期运行中，跳过本次网格周期 ({symbol})"
+            )
+            return
+
+        try:
+            self.logger.print_header(
+                f"🔄 网格交易周期开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            if cloud:
+                cloud.send_cycle_event(symbol=symbol, phase="start")
+
+            # 净额对冲平仓归因（默认关闭）：先按链上成交补记被层级状态机漏掉的平仓盈亏，
+            # 再做风控判定——这样本轮新增的亏损当轮就能被连亏熔断看到，而不是迟一个周期。
+            # 归因出错绝不能拖垮交易周期，故整体兜住异常仅记日志。
+            if self.grid_manager:
+                try:
+                    self.grid_manager.reconcile_netting_closes(symbol)
+                except Exception as e:
+                    self.logger.print_warning(f"[Grid] 净额归因异常（不影响主流程）: {e}")
+
+            # 账户级风控熔断（回撤/单日亏损，按权益判定）：在布单前拦截，熔断时已平仓/撤单并跳过布单。
+            # 连亏熔断走另一条逐轮通路（_on_grid_round_trip_close → on_trade_close），不在此处。
+            if self.protection_manager and self._grid_protection_triggered(symbol):
+                if cloud:
+                    cloud.send_cycle_event(
+                        symbol=symbol,
+                        phase="skip",
+                        details={"reason": "账户级风控熔断"},
+                        level="warn",
+                    )
+                return
+
+            # 净值快照 + 停机线短路（均为可选开关，默认关闭保持历史行为）。
+            # 停机线：净值低于阈值且无持仓时跳过整个周期（不拉 5 档 K 线、不调 LLM）——
+            # 线上账户 $7.71 熔断后仍每 5 分钟烧一次 LLM 调用即源于缺此闸。
+            if self.config.grid_equity_snapshot_enabled or self.config.grid_halt_below_usd > 0:
+                try:
+                    balance_info = self.order_manager.get_available_balance_info()
+                except Exception as e:
+                    self.logger.print_warning(f"[Grid] 获取余额失败，跳过快照/停机检查: {e}")
+                    balance_info = None
+                if balance_info and balance_info.get("status") == "ok":
+                    equity = float(
+                        balance_info.get("equity", balance_info.get("total", 0)) or 0
+                    )
+                    if self.config.grid_equity_snapshot_enabled:
+                        # 持仓名义额单独取（balance_info 里没有此字段，此前一直记 0）；
+                        # 取失败不阻断快照，记 0 并由 uPnL 字段暴露持仓存在
+                        position_notional = 0.0
+                        try:
+                            for pos in self.order_manager.get_current_positions() or []:
+                                if pos.get("coin") == symbol:
+                                    position_notional = abs(
+                                        float(pos.get("positionValue", 0) or 0)
+                                    )
+                                    break
+                        except Exception as pos_err:
+                            self.logger.print_warning(
+                                f"[Grid] 快照取持仓名义额失败: {pos_err}"
+                            )
+                        self.logger.log_equity_snapshot(
+                            equity=equity,
+                            available=float(balance_info.get("available", 0) or 0),
+                            unrealized_pnl=float(balance_info.get("unrealized_pnl", 0) or 0),
+                            position_notional=position_notional,
+                            symbol=symbol,
+                        )
+                    halt_line = self.config.grid_halt_below_usd
+                    if 0 < equity < halt_line:
+                        try:
+                            positions = self.order_manager.get_current_positions() or []
+                            has_position = any(
+                                p.get("coin") == symbol or p.get("symbol") == symbol
+                                for p in positions
+                            )
+                        except Exception:
+                            has_position = True  # 查询失败按有持仓处理，不敢停
+                        if not has_position:
+                            self.logger.print_warning(
+                                f"[Grid] 💤 净值 ${equity:.2f} 低于停机线 ${halt_line:.2f} "
+                                f"且无持仓，跳过本轮网格周期（不拉行情/不调 LLM）"
+                            )
+                            if cloud:
+                                cloud.send_cycle_event(
+                                    symbol=symbol,
+                                    phase="skip",
+                                    details={"reason": "低于停机线", "equity": equity},
+                                    level="warn",
+                                )
+                            return
+
+            # Triple Barrier 每轮必查：独立于 AI action 分支，KEEP_GRID/ERROR 周期也兜底止损。
+            # 触发即已紧急平仓（撤单+市价平仓+上报连亏熔断），本轮跳过布单。
+            if self.grid_manager.check_barrier(symbol):
+                self.logger.print_warning(
+                    "[网格风控] Triple Barrier 触发，已紧急平仓，跳过本轮布单"
+                )
+                if cloud:
+                    cloud.send_cycle_event(
+                        symbol=symbol,
+                        phase="skip",
+                        details={"reason": "Triple Barrier 触发"},
+                        level="warn",
+                    )
+                return
+
+            df = self.market_fetcher.fetch_ohlcv(
+                symbol=symbol,
+                timeframe=self.config.timeframe,
+                limit=100,
+            )
+
+            if df is None or df.empty:
+                self.logger.print_error("无法获取市场数据")
+                if cloud:
+                    cloud.send_cycle_event(
+                        symbol=symbol,
+                        phase="skip",
+                        details={"reason": "无法获取市场数据"},
+                        level="warn",
+                    )
+                return
+
+            df = TechnicalIndicators.calculate_all_indicators(df)
+            market_data = TechnicalIndicators.get_latest_indicators(df)
+            self.logger.print_market_data(symbol, market_data)
+
+            multi_timeframe_trends = TechnicalIndicators.get_multi_timeframe_trend(
+                self.market_fetcher,
+                symbol,
+                cached_ohlcv={self.config.timeframe: df},
+            )
+            current_grid_summary = self.grid_manager.get_grid_summary(symbol)
+
+            # 趋势过滤：多周期一致强势时，本轮暂停网格加仓（合成 KEEP_GRID，仅维持
+            # reduce_only 减仓保护单），可选平掉逆势库存。直接阻断「单边趋势里持续
+            # 逆势做市」这一最大亏损源——中性网格在上涨里不断开空、空头无上限累积。
+            # 迟滞确认（confirm_cycles/flatten_min_cycles，默认 1=历史行为）：单周期
+            # 瞬时误判是线上 12.5 天 145 次强平的主要来源，连续同向确认后才动作，
+            # 且「暂停加仓」先行、「平逆势库存」靠后。
+            raw_trend_dir = (
+                self._detect_strong_trend(multi_timeframe_trends)
+                if self.config.grid_trend_filter_enabled
+                else 0
+            )
+            trend_tracker = self._grid_trend_trackers.setdefault(
+                symbol,
+                TrendConfirmTracker(
+                    confirm_cycles=self.config.grid_trend_filter_confirm_cycles,
+                    flatten_min_cycles=self.config.grid_trend_filter_flatten_min_cycles,
+                ),
+            )
+            trend_dir, flatten_allowed = trend_tracker.update(raw_trend_dir)
+            if trend_dir != 0:
+                arrow = "上涨" if trend_dir > 0 else "下跌"
+                _, streak_count = trend_tracker.streak
+                self.logger.print_warning(
+                    f"[网格风控] 检测到强趋势（{arrow}，连续 {streak_count} 周期确认），"
+                    f"本轮暂停网格加仓，仅维持减仓保护单"
+                )
+                if self.config.grid_trend_filter_flatten_adverse and flatten_allowed:
+                    self.grid_manager.flatten_adverse_inventory(symbol, trend_dir)
+                ai_decision = {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": 0.0,
+                    "reason": f"强趋势({arrow})暂停加仓",
+                    # llm_ok：本轮压根没调 LLM，不能计入 LLM 故障；
+                    # trend_paused：这是主动暂停而非空转，不得触发兜底重建（强趋势里
+                    # 建网格正是趋势过滤要阻止的事）
+                    "llm_ok": True,
+                    "trend_paused": True,
+                }
+            else:
+                if raw_trend_dir != 0:
+                    _, streak_count = trend_tracker.streak
+                    self.logger.print_info(
+                        f"[网格风控] 检测到强趋势信号但未达连续确认周期 "
+                        f"({streak_count}/{self.config.grid_trend_filter_confirm_cycles})，"
+                        f"本轮暂不动作"
+                    )
+                ai_decision = self.grid_agent.make_decision(
+                    market_data,
+                    multi_timeframe_trends,
+                    current_grid_summary,
+                )
+
+            # LLM 健康度跟踪 → 连续故障升级告警（默认关闭）
+            self._track_grid_llm_health(symbol, ai_decision)
+            # 空转自愈：LLM 持续不可用把网格拖成空转时，用纯市场数据兜底重建（默认关闭）
+            ai_decision = self._maybe_fallback_rebuild(symbol, ai_decision, market_data)
+
+            # 记录网格决策到本地日志 + 云端
+            action = ai_decision.get("action", "UNKNOWN")
+            reason = ai_decision.get("reason", "")
+            confidence = float(ai_decision.get("confidence", 0.0))
+            decision_ok = action in ("UPDATE_GRID", "KEEP_GRID")
+            self.logger.log_decision(
+                symbol=symbol,
+                market_data=market_data,
+                prompt="[GridAgent]",
+                ai_response=reason,
+                decision=action,
+                action_details=ai_decision,
+                status="SUCCESS" if decision_ok else "ERROR",
+                error_message=None if decision_ok else reason,
+                confidence=confidence,
+            )
+
+            self.grid_manager.sync_grid(symbol, ai_decision)
+            self.logger.print_header("✅ 网格交易周期完成")
+
+            # 记录周期结束事件，附带网格 PnL 摘要
+            if cloud:
+                grid_summary = self.grid_manager.get_grid_summary(symbol)
+                pnl_data = {}
+                tracker = self.grid_manager.pnl_trackers.get(symbol)
+                levels = self.grid_manager.grid_levels.get(symbol)
+                if tracker and levels:
+                    try:
+                        cp = self.grid_manager.order_manager.client.get_current_price(symbol)
+                        if cp and cp > 0:
+                            total_inv = sum((lv.amount for lv in levels), Decimal("0"))
+                            pnl_data = tracker.get_summary(levels, to_decimal(cp), total_inv)
+                            # Decimal 转 float 以便 JSON 序列化
+                            pnl_data = {
+                                k: float(v) if isinstance(v, Decimal) else v
+                                for k, v in pnl_data.items()
+                            }
+                    except Exception as e:
+                        self.logger.print_warning(f"PnL 摘要计算失败: {e}")
+                cloud.send_cycle_event(
+                    symbol=symbol,
+                    phase="end",
+                    details={
+                        "action": action,
+                        "confidence": confidence,
+                        "grid_summary": grid_summary,
+                        **pnl_data,
+                    },
+                )
+
+        except Exception as e:
+            self.logger.print_error(f"网格周期执行异常: {e}")
+            self.logger.logger.exception(e)
+            if cloud:
+                cloud.send_alert(
+                    symbol=symbol,
+                    alert_type="grid_cycle_error",
+                    severity="high",
+                    message=str(e),
+                    details={"traceback": traceback.format_exc()},
+                )
+        finally:
+            # 释放交易锁，确保永续/网格下一周期可正常获取
+            self._trading_lock.release()
+
+
+# 模块级引用：信号处理器需访问当前 bot 实例以触发优雅停机
+_running_bot: "QuantFlowBot | None" = None
+_signal_count = 0
+
 
 def signal_handler(signum, frame):
-    """信号处理器"""
-    print("\n\n收到停止信号，正在关闭...")
-    sys.exit(0)
+    """
+    信号处理器：触发优雅停机（覆盖永续 + 网格两条路径）。
+
+    首次收到 SIGINT/SIGTERM：仅置停止标志并立即返回，不调用 sys.exit —— 让主循环
+    退出、进行中的永续/网格周期自然跑完（grid_manager 的撤单/布单序列不会被腰斩，
+    避免留下无保护裸仓）。统一的 stop() 清理由 start() 的 finally 负责。
+
+    第二次收到信号：用户要求强制退出，立即 sys.exit。
+    """
+    global _signal_count
+    _signal_count += 1
+    if _signal_count >= 2:
+        print("\n\n收到第二次停止信号，强制退出。")
+        sys.exit(1)
+
+    print(
+        f"\n\n收到停止信号({signum})，正在优雅停机"
+        "（等待当前周期完成；再次按 Ctrl+C 强制退出）..."
+    )
+    if _running_bot is not None:
+        _running_bot.is_running = False
+    else:
+        # bot 尚未创建完成，无状态可清理，直接退出
+        sys.exit(0)
 
 
 def main():
@@ -1555,9 +2210,11 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    global _running_bot
     try:
         # 创建并启动机器人
         bot = QuantFlowBot(config_path=args.config, env_file=args.env_file)
+        _running_bot = bot  # 供信号处理器触发优雅停机
         bot.start()
 
     except FileNotFoundError as e:

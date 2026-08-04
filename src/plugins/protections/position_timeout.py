@@ -57,10 +57,15 @@ class PositionTimeoutProtection(IProtection):
 
             return ProtectionReturn(triggered=False)
 
-    def get_timeout_symbols(self) -> list[str]:
-        """返回所有超时持仓的符号列表"""
+    def get_timeout_symbols(self, timestamp: datetime | None = None) -> list[str]:
+        """返回所有超时持仓的符号列表
+
+        Args:
+            timestamp: 当前时间戳（回测时传入模拟时间，默认 datetime.now()），
+                与 check() 使用 context.timestamp 保持一致。
+        """
         max_hours = self.config.get("max_position_hours", 48.0)
-        now = datetime.now()
+        now = timestamp or datetime.now()
         result = []
 
         with self._lock:
@@ -92,11 +97,23 @@ class PositionTimeoutProtection(IProtection):
             }
             self.save_state()
 
-    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
-        """移除持仓记录"""
+    def on_trade_close(
+        self,
+        symbol: str,
+        pnl: float,
+        timestamp: datetime | None = None,
+        forced: bool = False,
+    ) -> None:
+        """移除持仓记录（forced 与否均只做清理，不涉及盈亏语义）"""
         with self._lock:
             self._position_records.pop(symbol, None)
             self.save_state()
+
+    def on_position_dropped(self, symbol: str) -> None:
+        """风控强制平仓（回撤强平/超时强平）后清理该持仓的超时记录"""
+        with self._lock:
+            if self._position_records.pop(symbol, None) is not None:
+                self.save_state()
 
     def _send_cloud_event(self, symbols: list[str], max_hours: float) -> None:
         """上报风控事件到云端"""

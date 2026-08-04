@@ -17,7 +17,7 @@ cp config.yaml.example config.yaml
 ```yaml
 llm:
   client_type: langchain_nvidia   # openai | cloudflare | google | litellm | nvidia
-  model: qwen/qwen3.5-122b-a10b   # 按你的供应商可用模型填写
+  model: qwen/qwen3-next-80b-a3b-instruct   # 按你的供应商可用模型填写
   temperature: 0.2                 # 交易决策建议使用低温度
 ```
 
@@ -39,8 +39,12 @@ llm:
 
 ```yaml
 trading:
+  # 策略总开关
+  perp_enabled: true         # 启用永续合约方向交易 Agent
+  grid_enabled: false        # 启用网格交易做市策略
+
   symbols: [BTC, ETH]       # 使用简单符号，不是交易对格式（不要用 BTC/USDT）
-  max_trade_amount: 100     # 单笔交易最大 USD 金额
+  max_trade_amount: 100     # 单笔交易最大 USD 金额 / 网格投入上限
   max_leverage: 10          # 最大杠杆倍数
   limit_order_enabled: false  # 是否使用限价单入场（vs. 市价单）
 ```
@@ -212,10 +216,12 @@ data:
 ```yaml
 llm:
   client_type: langchain_nvidia
-  model: qwen/qwen3.5-122b-a10b
+  model: qwen/qwen3-next-80b-a3b-instruct
   temperature: 0.2
 
 trading:
+  perp_enabled: true
+  grid_enabled: false
   symbols: [BTC, ETH]
   max_trade_amount: 100
   max_leverage: 10

@@ -19,13 +19,14 @@ import re
 from datetime import datetime
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic_ai import Agent
 
 from src.agent.context_extractor import ContextExtractor
 from src.agent.review_daily_logger import ReviewDailyLogger
 from src.agent.review_memory import ReviewMemoryStore
 from src.agent.similarity_scorer import SimilarityScorer
 from src.llm import LLMClientManager
+from src.llm.llm_client import wrap_llm_client
 from src.prompt_manager import PromptManager
 from src.utils.logger import TradingLogger
 
@@ -342,10 +343,11 @@ class ReviewAgent:
         self.enable_lesson_validation = enable_lesson_validation
         self.time_decay_days = time_decay_days
 
-        self.llm = self.llm_manager.get_client(json_mode=True, temperature=temperature)
+        self.llm = wrap_llm_client(
+            self.llm_manager.get_client(json_mode=True, temperature=temperature)
+        )
 
-        system_prompt = self.prompt_manager.get_review_system_prompt()
-        self.system_message = SystemMessage(content=system_prompt)
+        self.system_prompt = self.prompt_manager.get_review_system_prompt()
         self.context_extractor = ContextExtractor()
         self.similarity_scorer = SimilarityScorer(
             weights=similarity_weights, method=similarity_method
@@ -431,9 +433,9 @@ class ReviewAgent:
                 f"最大连亏 {effectiveness.get('max_consecutive_losses', 0)}次"
             )
 
-        response = self.llm.invoke([self.system_message, HumanMessage(content=prompt)])
-
-        raw_text = response.content if isinstance(response.content, str) else str(response.content)
+        agent = Agent(self.llm, system_prompt=self.system_prompt)
+        res = agent.run_sync(prompt)
+        raw_text = res.output if isinstance(res.output, str) else str(res.output)
         parsed = self._parse_response(raw_text)
         lessons = parsed.get("lessons", [])
 

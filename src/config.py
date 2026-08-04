@@ -17,6 +17,10 @@ DEFAULT_PERP_FEE_RATES = default_perp_fee_rates()
 FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.taker_rate
 MAKER_FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.maker_rate
 
+# 未显式配置模型时的兜底型号。DeepSeek 在售型号仅 deepseek-v4-flash / deepseek-v4-pro；
+# flash 推理开销约为 pro 的 43%，5 分钟一轮的网格决策用它足够且更省。
+DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+
 
 class Config:
     """配置管理类"""
@@ -102,8 +106,11 @@ class Config:
             "LLM_CLIENT_TYPE", "langchain_openai"
         )
 
-        # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取
-        self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", "deepseek-chat")
+        # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取。
+        # 默认值随供应商在售型号走：DeepSeek 已下线 deepseek-chat，现仅接受
+        # deepseek-v4-flash / deepseek-v4-pro，旧名一律 400 invalid_request_error。
+        # 线上因此静默停摆 13 小时（每轮决策失败 → 网格空转），故默认值必须是在售型号。
+        self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", DEFAULT_LLM_MODEL)
 
         # 基础参数（可选）
         self.llm_temperature = llm_config.get("temperature")
@@ -135,7 +142,7 @@ class Config:
         """初始化 OpenAI API 配置"""
         self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1")
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
+        self.openai_model = os.getenv("OPENAI_MODEL", DEFAULT_LLM_MODEL)
 
         # LLM Fallback 配置
         self.llm_fallback_api_base = os.getenv("LLM_FALLBACK_API_BASE", "")
@@ -192,6 +199,114 @@ class Config:
             trading.get("grid_reduce_only_exit_orders_enabled"),
             True,
         )
+        # 强制网格走 NEUTRAL：忽略 AI 的 LONG/SHORT 方向输出，网格只做对称做市。
+        # 默认关闭（保持历史行为）。开启后可消除 LONG↔SHORT 方向翻转带来的 whipsaw 亏损
+        # 与 taker 反手手续费——线上验证 24h 亏损几乎全部来自方向反转。
+        self.grid_force_neutral_mode: bool = self._as_bool(
+            trading.get("grid_force_neutral_mode"),
+            False,
+        )
+        # 网格库存硬上限（USD 净持仓名义额）：净持仓名义额达到此值后，禁止再往「加剧当前
+        # 持仓方向」的方向挂开仓单（只放行减仓方向）。专治单边趋势中逆势库存无限累积——
+        # 这是线上最大亏损根因（中性网格在上涨里不断开空、空头库存无上限放大）。
+        # 默认 0 = 关闭（保持历史行为）。
+        self.grid_max_position_notional_usd: float = float(
+            trading.get("grid_max_position_notional_usd", 0) or 0
+        )
+        # 网格趋势过滤：多周期趋势一致强势（强势上涨/下跌票数达阈值）时，本轮暂停网格加仓
+        # （等价于一次 KEEP_GRID，仅维持 reduce_only 减仓保护单），避免逆势做市。默认关闭。
+        self.grid_trend_filter_enabled: bool = self._as_bool(
+            trading.get("grid_trend_filter_enabled"),
+            False,
+        )
+        # 触发趋势过滤所需的「强势」周期票数（多周期趋势里 强势上涨 或 强势下跌 的计数阈值）。
+        self.grid_trend_filter_min_votes: int = int(
+            trading.get("grid_trend_filter_min_votes", 3) or 3
+        )
+        # 趋势过滤触发时，是否市价平掉与趋势相反的逆势库存（强力止血，如上涨趋势里平掉空头）。
+        # 默认关闭（仅暂停加仓，不主动平仓）。
+        self.grid_trend_filter_flatten_adverse: bool = self._as_bool(
+            trading.get("grid_trend_filter_flatten_adverse"),
+            False,
+        )
+        # 趋势过滤参与计票的周期白名单（如 ["15m","1h","4h","1d"]，支持中文键"15分钟"等）。
+        # None/空 = 全部 5 个周期参与（保持历史行为）。线上验证 1m 周期噪声会把普通回调
+        # 误判成强趋势，触发不必要的平仓——建议生产排除 1m。
+        _tf_whitelist = trading.get("grid_trend_filter_timeframes")
+        self.grid_trend_filter_timeframes: list[str] | None = (
+            [str(tf) for tf in _tf_whitelist] if _tf_whitelist else None
+        )
+        # 趋势需连续确认的周期数：连续 N 个网格周期检测到同向强趋势才生效（迟滞去抖）。
+        # 默认 1 = 立即生效（保持历史行为）。线上 12.5 天 145 次强平大多来自单周期瞬时误判。
+        self.grid_trend_filter_confirm_cycles: int = max(
+            1, int(trading.get("grid_trend_filter_confirm_cycles", 1) or 1)
+        )
+        # 平逆势库存所需的连续确认周期数（≥ confirm_cycles）：暂停加仓先行、市价平仓靠后，
+        # 给均值回归留出空间。默认 1 = 确认即平（保持历史行为）。
+        self.grid_trend_filter_flatten_min_cycles: int = max(
+            self.grid_trend_filter_confirm_cycles,
+            int(trading.get("grid_trend_filter_flatten_min_cycles", 1) or 1),
+        )
+        # 手术式平逆势库存：只平「超出库存上限的逆势部分」，保留网格挂单与层级状态，
+        # 不触发重建冷却。默认关闭 = 沿用历史行为（全量拆网 _emergency_close_all，
+        # 线上验证该行为 12.5 天拆网 145 次、每次都在摆动极值实现亏损并重建）。
+        self.grid_trend_filter_surgical_flatten: bool = self._as_bool(
+            trading.get("grid_trend_filter_surgical_flatten"),
+            False,
+        )
+        # 库存上限严格模式：名义额计入同向未成交挂单（防一轮布单后同向全部成交导致超限数倍），
+        # 且取价/查单失败时 fail-closed（拦截加仓而非放行）。默认关闭（保持历史行为）。
+        self.grid_inventory_cap_strict: bool = self._as_bool(
+            trading.get("grid_inventory_cap_strict"),
+            False,
+        )
+        # KEEP_GRID 周期对账：撤掉交易所上与本地层级/状态无对应的非 reduce_only 残留挂单。
+        # 默认关闭（保持历史行为：残单靠成交后"无对应持仓"事后清理，线上单日出现 194 次）。
+        self.grid_keep_grid_reconcile: bool = self._as_bool(
+            trading.get("grid_keep_grid_reconcile"),
+            False,
+        )
+        # 自适应仓位：单格金额与真实净值挂钩——资金不足时减少格数而非抬高单格金额；
+        # 格数低于下限时返回 INSUFFICIENT_CAPITAL 拒绝布单。默认关闭（保持历史行为：
+        # 单格金额被硬编码钳制在 $15.5~$25.5，线上 $7.71 账户被放大成 16 倍名义敞口）。
+        self.grid_adaptive_sizing_enabled: bool = self._as_bool(
+            trading.get("grid_adaptive_sizing_enabled"),
+            False,
+        )
+        # 自适应仓位允许的最少格数（低于此数视为资金不足，拒绝布单）。
+        self.grid_min_grid_num: int = max(2, int(trading.get("grid_min_grid_num", 3) or 3))
+        # 网格停机线（USD）：净值低于此值且无持仓时，跳过整个网格周期（不拉行情、不调 LLM），
+        # 仅打一行日志。默认 0 = 关闭。线上账户 $7.71 熔断后仍每 5 分钟烧一次 LLM 调用即源于缺此闸。
+        self.grid_halt_below_usd: float = max(
+            0.0, float(trading.get("grid_halt_below_usd", 0) or 0)
+        )
+        # 每周期净值快照：把 equity/available/未实现盈亏写入 logs/equity/*.jsonl（观测净值曲线）。
+        # 默认关闭。线上 12.5 天亏 39% 无一处结构化记录可回答"钱去哪了"，即源于缺此项。
+        self.grid_equity_snapshot_enabled: bool = self._as_bool(
+            trading.get("grid_equity_snapshot_enabled"),
+            False,
+        )
+        # LLM 连续失败告警：连续 N 个网格周期 LLM 不可用（调用异常/空输出/输出不可解析）
+        # 就走通知渠道升级告警。默认 0 = 关闭（保持历史行为：只打日志）。
+        # 线上 DeepSeek 下线 deepseek-chat 后连续 13 小时决策全失败、网格零成交，
+        # 钉钉通道明明是开的却一条没发，全靠人工翻日志才发现。
+        self.grid_llm_failure_alert_cycles: int = max(
+            0, int(trading.get("grid_llm_failure_alert_cycles", 0) or 0)
+        )
+        # 空转自愈：连续 N 个周期处于「无层级 + 无持仓 + 拿不到 UPDATE_GRID」时，
+        # 用纯市场数据（不经 LLM）兜底重建一次中性网格。默认 0 = 关闭。
+        # 这是 LLM 故障期的恢复死锁解药：层级被清空后只有 UPDATE_GRID 能重建，
+        # 而故障期每轮只产出 ERROR 或兜底 KEEP_GRID，网格永远躺平。
+        self.grid_llm_fallback_rebuild_cycles: int = max(
+            0, int(trading.get("grid_llm_fallback_rebuild_cycles", 0) or 0)
+        )
+        # 净额对冲平仓归因：以链上成交为准补齐层级状态机漏掉的平仓盈亏，喂连亏熔断
+        # 并把 pnl/reason 写进 trades 日志。默认关闭（保持历史行为）。
+        # 线上三周实测归因覆盖率仅 2.3%，连亏熔断在中性网格下形同虚设。
+        self.grid_netting_attribution_enabled: bool = self._as_bool(
+            trading.get("grid_netting_attribution_enabled"),
+            False,
+        )
 
         # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
         # 向后兼容：支持旧字段名 default_leverage
@@ -200,6 +315,23 @@ class Config:
         )
         # 保留旧字段名用于兼容性
         self.default_leverage: int = self.max_leverage
+
+        # Agent 启动开关配置
+        # 优先级：环境变量 PERP_ENABLED/GRID_ENABLED（由 Docker RUN_MODE 映射）
+        # > config.yaml 的 trading.perp_enabled/grid_enabled > 内置默认值。
+        # 容器部署时 RUN_MODE 据此在不改配置文件的前提下切换运行模式。
+        self.perp_enabled: bool = self._as_bool(
+            os.getenv("PERP_ENABLED")
+            if os.getenv("PERP_ENABLED") is not None
+            else trading.get("perp_enabled"),
+            True,
+        )
+        self.grid_enabled: bool = self._as_bool(
+            os.getenv("GRID_ENABLED")
+            if os.getenv("GRID_ENABLED") is not None
+            else trading.get("grid_enabled"),
+            False,
+        )
 
     def _init_scheduler_config(self):
         """初始化调度器配置"""

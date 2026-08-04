@@ -29,8 +29,7 @@ description: 核心模块说明和代码入口
 | `order_manager.py` | 订单管理（限价单 TP/SL 开关） |
 | `grid_manager.py` | 网格交易管理器（布单/同步/安全机制） |
 | `decision_validator.py` | 决策多维度验证 |
-| `position_sizer.py` | 凯利公式仓位计算 |
-| `risk_manager.py` | ATR 动态止盈止损 |
+| `risk_manager.py` | ATR 动态止盈止损与仓位计算（含固定金额、固定风险、凯利公式） |
 | `enhanced_engine.py` | 增强引擎（Regime 参数覆盖） |
 
 ## src/plugins/protections/ — 插件化风控

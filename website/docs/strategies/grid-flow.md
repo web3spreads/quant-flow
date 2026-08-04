@@ -6,7 +6,7 @@ description: How the AI-driven grid market-making strategy works
 
 # Grid Flow Strategy
 
-Grid Flow (`grid_main.py`) is an AI-driven grid market-making strategy. Instead of static grid levels, the AI dynamically adjusts the grid direction and width based on market conditions.
+Grid Flow is an AI-driven grid market-making strategy. Instead of static grid levels, the AI dynamically adjusts the grid direction and width based on market conditions. In the unified architecture, this strategy is run by enabling `trading.grid_enabled` in `config.yaml` and launching `main.py`.
 
 ## How Grid Trading Works
 
@@ -109,10 +109,11 @@ State is saved to `grid_state.json` after every operation using atomic writes (t
 ## Configuration
 
 ```yaml
-# config.grid.yaml
+# config.yaml
 trading:
+  grid_enabled: true
   symbols: [ETH]
-  max_total_investment: 500
+  max_trade_amount: 500
   max_leverage: 5
   grid_limit_order_take_profit_enabled: true
   grid_limit_order_stop_loss_enabled: true
@@ -133,15 +134,16 @@ See [Grid Config Reference](../configuration/grid-config.md) for all options.
 
 ## Running Grid Flow
 
+Run the unified bot entry point with `grid_enabled` set to `true`:
+
 ```bash
-uv run python grid_main.py --config config.grid.yaml --env-file .env
+uv run python main.py
 ```
 
 Or with Docker:
 ```bash
 # docker-compose.yml
-environment:
-  - RUN_MODE=grid
+# Make sure perp_enabled: false / grid_enabled: true is configured in config.yaml
 ```
 
 ## Backtest Before Live

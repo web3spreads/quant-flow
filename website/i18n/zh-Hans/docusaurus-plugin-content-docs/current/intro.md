@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: 简介
-description: Quant Flow — 基于 LangChain/LangGraph 的 AI 加密货币永续合约交易机器人
+description: Quant Flow — 基于 Pydantic AI 的 AI 加密货币永续合约与网格交易机器人
 ---
 
 # Quant Flow
 
-**Quant Flow** 是一个基于 [LangChain](https://langchain.com/) / [LangGraph](https://langchain-ai.github.io/langgraph/) 构建的 AI 加密货币交易系统，专为 [Hyperliquid DEX](https://hyperliquid.xyz/) 永续合约市场设计。它将大语言模型与量化交易逻辑相结合，在永续合约市场上自主执行交易决策。
+**Quant Flow** 是一个基于 [Pydantic AI](https://ai.pydantic.dev) 构建的 AI 加密货币交易系统，专为 [Hyperliquid DEX](https://hyperliquid.xyz/) 设计。它将大语言模型与量化交易逻辑相结合，自主执行永续合约交易与网格做市策略。
 
 ## Quant Flow 是什么？
 
@@ -19,14 +19,14 @@ Quant Flow **不是**简单的规则型机器人。它使用 LLM 作为决策引
 - 市场 Regime 检测（趋势 / 震荡 / 高波动）
 - 持久化复盘与反思系统，从历史交易中持续学习
 
-## 两种独立策略
+## 整合的两种交易策略
 
-| 策略 | 入口文件 | 描述 |
+两种交易策略已合并到单一运行器程序（`main.py`），可通过 `config.yaml` 配置文件中的独立开关开启或关闭。
+
+| 策略 | 配置参数 | 描述 |
 |---|---|---|
-| **永续合约 Agent** | `main.py` | 多智能体架构，每个交易对独立运行，支持上下文压缩 |
-| **网格交易 Grid Flow** | `grid_main.py` | AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数 |
-
-两种策略完全解耦，可通过 Docker `RUN_MODE` 独立或同时运行。
+| **永续合约 Agent** | `trading.perp_enabled` | 多智能体架构，每个交易对独立运行，支持上下文压缩 |
+| **网格交易 Grid Flow** | `trading.grid_enabled` | AI 驱动的网格做市策略，LLM 判断方向和宽度，数学引擎计算参数 |
 
 ## 核心特性
 
@@ -45,7 +45,7 @@ Quant Flow **不是**简单的规则型机器人。它使用 LLM 作为决策引
 | 组件 | 技术 |
 |---|---|
 | 编程语言 | Python 3.11+ |
-| AI 框架 | LangChain、LangGraph |
+| AI 框架 | Pydantic AI |
 | 交易所 SDK | Hyperliquid Python SDK |
 | 数据验证 | Pydantic |
 | 包管理 | uv |
@@ -61,30 +61,23 @@ cd quant-flow
 # 2. 安装依赖
 uv sync
 
-# 3. 配置环境变量
+# 3. 配置环境
 cp .env.example .env
-# 编辑 .env，填入 API 密钥和 Hyperliquid 私钥
+# 填入 API 密钥和私钥
 
 # 4. 配置交易参数
 cp config.yaml.example config.yaml
-# 编辑 config.yaml
+# 开启或关闭 perp_enabled / grid_enabled
 
-# 5. 运行（推荐先在测试网验证）
+# 5. 运行主程序
 uv run python main.py
 ```
 
-:::warning 请先在测试网测试
-在使用真实资金交易前，务必先在 Hyperliquid **测试网**验证配置。在 `.env` 中设置 `HYPERLIQUID_TESTNET=true`。
+:::warning 优先在测试网验证
+在进入生产环境交易真实资金前，请务必先在 Hyperliquid **测试网**验证您的配置。在 `.env` 文件中设置 `HYPERLIQUID_TESTNET=true`。
 :::
 
-## 仓库地址
+## 外部链接
 
 - **GitHub**: [https://github.com/web3spreads/quant-flow](https://github.com/web3spreads/quant-flow)
-
-## 下一步
-
-- [Docker 部署](./getting-started/docker.md) — 推荐的生产环境部署方式
-- [本地部署](./getting-started/local.md) — 开发和测试环境
-- [配置参考](./configuration/config-yaml.md) — 所有配置项说明
-- [永续合约 Agent 策略](./strategies/perpetual-agent.md) — 主 Agent 工作原理
-- [网格交易策略](./strategies/grid-flow.md) — 网格交易工作原理
+- **Docusaurus 文档**: [https://web3spreads.github.io/quant-flow/](https://web3spreads.github.io/quant-flow/)

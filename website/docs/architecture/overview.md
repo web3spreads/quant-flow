@@ -6,7 +6,7 @@ description: Quant Flow system architecture and data flow
 
 # System Architecture
 
-Quant Flow is built as a modular, multi-agent system on LangChain/LangGraph. Two strategies share core infrastructure but operate independently.
+Quant Flow is built as a modular, multi-agent system on Pydantic AI. The perpetual futures agent and grid market-making strategies share core infrastructure but operate in a unified system.
 
 ## High-Level Overview
 
@@ -14,23 +14,25 @@ Quant Flow is built as a modular, multi-agent system on LangChain/LangGraph. Two
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Quant Flow                              │
 │                                                                 │
-│  ┌───────────────────────┐   ┌──────────────────────────────┐  │
-│  │   Perpetual Agent     │   │       Grid Flow              │  │
-│  │   (main.py)           │   │   (grid_main.py)             │  │
-│  │                       │   │                              │  │
-│  │  MultiAgent/LangGraph │   │  GridAgent + GridManager     │  │
-│  │  One agent per symbol │   │  AI direction + Math engine  │  │
-│  └──────────┬────────────┘   └─────────────┬────────────────┘  │
-│             │                              │                   │
-│             └──────────────┬───────────────┘                   │
-│                            ↓                                   │
-│              ┌─────────────────────────┐                       │
-│              │   Shared Infrastructure  │                       │
-│              │  HyperliquidClient       │                       │
-│              │  OrderManager            │                       │
-│              │  MarketData + Indicators │                       │
-│              │  LLMClientManager        │                       │
-│              └─────────────────────────┘                       │
+│              ┌───────────────────────────────────┐              │
+│              │            main.py                │              │
+│              │       (Unified Runner)            │              │
+│              │                                   │              │
+│              │  ┌───────────────┐ ┌────────────┐ │              │
+│              │  │  Perp Agent   │ │ Grid Flow  │ │              │
+│              │  │  (Multi-Agent)│ │ (Dynamic)  │ │              │
+│              │  └───────┬───────┘ └─────┬──────┘ │              │
+│              └──────────┼───────────────┼────────┘              │
+│                         │               │                       │
+│                         └───────┬───────┘                       │
+│                                 ↓                               │
+│                   ┌─────────────────────────┐                   │
+│                   │   Shared Infrastructure │                   │
+│                   │  HyperliquidClient      │                   │
+│                   │  OrderManager           │                   │
+│                   │  MarketData + Indicators│                   │
+│                   │  LLMClientManager       │                   │
+│                   └─────────────────────────┘                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -101,7 +103,7 @@ config.yaml ──────────────────────�
 ┌────────────────────────────────────────┐               │
 │  MarketMonitor (background thread)     │               │
 │  polls all_mids() every 30s            │               │
-│  → alerts → pending_queue              │               │
+│  │  alerts → pending_queue             │               │
 └───────────────────┬────────────────────┘               │
                     │ trigger                             │
                     ↓                                     ↓
@@ -115,7 +117,7 @@ config.yaml ──────────────────────�
      DebateAgent RegimeAd. DataEnricher
           └─────────┼─────────┘
                     ↓
-            ExecutionAgent
+             ExecutionAgent
                     │
             Validation Layer
                     │
@@ -127,24 +129,15 @@ config.yaml ──────────────────────�
             WeeklyReflector  (LLM, scheduled)
 ```
 
-## LangGraph State Machine
+## Pydantic AI Agent Workflow
 
-Each `EnhancedSingleSymbolAgent` is a LangGraph graph with these nodes:
+Each symbol is managed by an independent `SingleSymbolAgent` built on Pydantic AI:
 
-```
-START
-  → collect_market_data
-  → enrich_data (CEX, on-chain)
-  → [conditional] run_debate (if enabled)
-  → detect_regime (if enabled)
-  → make_decision (LLM with FinCoT)
-  → validate_decision
-  → execute_or_hold
-  → post_trade_review
-END
-```
-
-State is maintained per symbol across cycles, enabling context compression via `SummaryAgentV2`.
+1. **Context Collection**: The main loop gathers technical indicators, CEX funding rates, and on-chain sentiment.
+2. **Pydantic AI Run**: The agent is executed with the dynamic system prompt and structured input data, using `RunContext` to access dependency clients.
+3. **Tool Dispatching**: Pydantic AI calls the appropriate registered trading tool (`buy`, `sell`, `sell_short`, `buy_to_cover`, `do_nothing`) based on model reasoning.
+4. **Validation & Execution**: Order execution parameters are verified against the risk protection layer, and size is adjusted via the Kelly Criterion before placing orders.
+5. **State Summary**: `SummaryAgentV2` compresses the output to maintain a highly-condensed memory context.
 
 ## Design Principles
 

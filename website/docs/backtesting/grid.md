@@ -30,23 +30,25 @@ uv run python backtest.py \
 
 5. **P&L tracking**: Realized P&L from fills, unrealized P&L from open grid positions, and fees are all tracked.
 
-## Using a Grid-Specific Config
+## Grid Backtest Configuration
 
-Grid backtesting uses `config.grid.yaml` by default. Override with `--config`:
+Grid backtesting uses the same unified `config.yaml` — set `trading.grid_enabled: true` (and `trading.perp_enabled: false` to focus on grid). Override the config file with `--config`:
 
 ```bash
 uv run python backtest.py --symbol ETH --strategy grid \
   --start-date 2024-01-01 --end-date 2024-12-01 \
-  --config config.grid.yaml
+  --config config.yaml
 ```
 
-Sample `config.grid.yaml` for backtesting:
+Relevant `config.yaml` keys for grid backtesting:
 
 ```yaml
 trading:
+  perp_enabled: false
+  grid_enabled: true
   symbols: [ETH]
-  max_total_investment: 500
-  max_leverage: 3               # conservative for backtesting
+  max_trade_amount: 100          # per-layer investment cap (USD)
+  max_leverage: 3                # conservative for backtesting
   grid_limit_order_take_profit_enabled: true
   grid_limit_order_stop_loss_enabled: true
   grid_reduce_only_exit_orders_enabled: true

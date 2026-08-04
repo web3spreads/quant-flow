@@ -2,17 +2,17 @@
 执行 Agent 模块
 
 负责将单币种 Agent 的决策意图转换为实际的工具调用
-使用 LangChain 的 structured output 机制来确保正确的工具调用
+使用 Pydantic AI 的 structured output 机制来确保正确的工具调用
 """
 
-import json
 from enum import StrEnum
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
+from pydantic_ai import Agent
 
 from src.llm import LLMClientManager
+from src.llm.llm_client import wrap_llm_client
 
 # ExecutionPlan 字段名常量（避免硬编码字符串）
 FIELD_DECISION = "decision"
@@ -74,264 +74,67 @@ EXECUTION_AGENT_SYSTEM_PROMPT = """你是一个交易执行专家，负责解析
 - 如果文本中决策不明确，默认为 DO_NOTHING
 
 🚨 输出格式要求（极其重要）：
-- 你的输出必须是纯 JSON 对象
-- 直接以 { 开始，以 } 结束
-- 不要添加任何前缀或后缀文字
-- 不要使用 Markdown 代码块（```json```）
-
-JSON 输出格式示例：
-{
-  "decision": "BUY",
-  "symbol": "DOGE",
-  "amount": 100.0,
-  "leverage": 5,
-  "reason": "技术指标显示多头信号强烈"
-}
-
-或者（观望示例）：
-{
-  "decision": "DO_NOTHING",
-  "symbol": "DOGE",
-  "amount": null,
-  "leverage": null,
-  "reason": "市场趋势不明确，等待更好的入场点"
-}
+- 你的输出必须是纯 JSON 对象，符合指定的 JSON Schema
+- 决策类型必须映射为 BUY、SELL、SELL_SHORT、BUY_TO_COVER、DO_NOTHING、BUY_LIMIT、SELL_SHORT_LIMIT 或 CANCEL_LIMIT_ORDER 中的一个
 """
 
 
-def _extract_json_from_text(text: str) -> dict | None:
-    """
-    从文本中提取 JSON 对象（模块级辅助函数）
-
-    支持以下格式：
-    1. Markdown 代码块: ```json {...} ```
-    2. 纯 JSON: {...}
-    3. 带有文本的混合内容（即 JSON 对象嵌入在其他文本中）
-
-    Args:
-        text: 包含 JSON 对象的文本
-
-    Returns:
-        提取的 JSON 对象（字典），如果提取失败则返回 None
-
-    Examples:
-        >>> _extract_json_from_text('```json\\n{"key": "value"}\\n```')
-        {'key': 'value'}
-        >>> _extract_json_from_text('Some text {"key": "value"} more text')
-        {'key': 'value'}
-    """
-    # 方法 1: 尝试提取 markdown 代码块中的 JSON（使用字符串查找，不使用正则）
-    code_block_markers = [
-        ("```json", "```"),
-        ("```", "```"),
-    ]
-    for start_marker, end_marker in code_block_markers:
-        start_idx = text.find(start_marker)
-        if start_idx != -1:
-            start_idx += len(start_marker)
-            end_idx = text.find(end_marker, start_idx)
-            if end_idx != -1:
-                code_content = text[start_idx:end_idx].strip()
-                try:
-                    return json.loads(code_content)
-                except json.JSONDecodeError:
-                    continue
-
-    # 方法 2: 提取第一个平衡的 JSON 对象
-    start = text.find("{")
-    if start != -1:
-        stack = []
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                stack.append("{")
-            elif text[i] == "}":
-                if stack:
-                    stack.pop()
-                if not stack:
-                    json_str = text[start : i + 1]
-                    try:
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        break
-
-    return None
-
-
 class ExecutionAgent:
-    """执行 Agent - 负责将决策意图转换为工具调用"""
+    """执行 Agent - 负责将 LLM 决策文本解析为结构化的执行计划，并执行相应的工具调用"""
 
-    def __init__(self, llm_manager: LLMClientManager, temperature: float = 0.0):
+    def __init__(self, llm_manager: LLMClientManager, temperature: float = 0.1):
         """
         初始化执行 Agent
 
         Args:
             llm_manager: LLM 客户端管理器
-            temperature: 温度参数（建议使用 0 以确保确定性输出）
+            temperature: 温度参数。执行 Agent 仅将决策文本解析为结构化执行计划，
+                应使用低温（默认 0.1）以保证结构化输出的确定性与稳定性，避免高温
+                引入解析随机性导致执行计划抖动。
         """
         self.llm_manager = llm_manager
-        self.temperature = temperature
-
-        # 获取启用 JSON Mode 的 LLM 客户端
-        # JSON Mode 可以显著提高 structured output 的成功率
-        self.llm = self.llm_manager.get_client(json_mode=True, temperature=temperature)
-
-        # 使用 structured output
-        self.structured_llm = self.llm_manager.get_structured_client(
-            output_schema=ExecutionPlan, temperature=temperature
+        # 获取支持 structured output 的 LLM 客户端（Pydantic AI 兼容 Model）
+        self.llm = wrap_llm_client(
+            self.llm_manager.get_client(json_mode=True, temperature=temperature)
         )
 
     def parse_decision(self, decision_text: str, symbol: str, logger=None) -> ExecutionPlan:
         """
-        解析决策文本并生成执行计划
+        解析单币种 Agent 的决策分析文本，生成结构化的执行计划
 
         Args:
-            decision_text: Agent 的决策文本
-            symbol: 交易对
-            logger: 日志记录器（可选）
+            decision_text: 决策分析文本
+            symbol: 交易对符号
+            logger: 日志记录器
 
         Returns:
-            ExecutionPlan: 结构化的执行计划
+            ExecutionPlan 结构化对象
         """
         try:
-            # 预检查：确保决策文本不为空
-            if not decision_text or not decision_text.strip():
-                error_msg = "决策文本为空，无法解析"
-                if logger:
-                    logger.print_error(f"[ExecutionAgent] {error_msg}")
-                return ExecutionPlan(
-                    decision=DecisionType.DO_NOTHING, symbol=symbol, reason=error_msg
-                )
+            # 增强型清洗：去除可能包含的多余前缀/后缀，提取纯文本
+            cleaned_text = decision_text.strip()
+            prompt = (
+                f"以下是交易决策文本，请将其转换为结构化的执行计划：\n\n"
+                f"--- 决策文本开始 ---\n"
+                f"{cleaned_text}\n"
+                f"--- 决策文本结束 ---\n\n"
+                f"默认交易对: {symbol}\n"
+                f"注意提取可能出现的：\n"
+                f"1. 交易对符号\n"
+                f"2. 交易金额（如果提到，限价单也需要）\n"
+                f"3. 杠杆倍数（如果提到，限价单也需要）\n"
+                f"4. 限价价格（如果是限价单，必须提供 price 字段）\n"
+                f"5. 订单ID（如果是取消限价单，必须提供 order_id 字段）\n"
+                f"6. 决策理由摘要\n"
+            )
 
-            if logger:
-                logger.print_info(
-                    f"[ExecutionAgent] 开始解析决策文本（长度: {len(decision_text)} 字符）"
-                )
+            # 使用 Pydantic AI Agent 确保返回正确的 ExecutionPlan 架构
+            agent = Agent(
+                self.llm, system_prompt=EXECUTION_AGENT_SYSTEM_PROMPT, output_type=ExecutionPlan
+            )
 
-            prompt = f"""
-请分析以下交易决策文本，提取关键信息并生成执行计划。
-
-交易对: {symbol}
-
-决策文本:
-{decision_text}
-
-请识别：
-1. 决策类型（BUY/SELL/SELL_SHORT/BUY_TO_COVER/DO_NOTHING/BUY_LIMIT/SELL_SHORT_LIMIT/CANCEL_LIMIT_ORDER）
-2. 交易金额（如果提到，限价单也需要）
-3. 杠杆倍数（如果提到，限价单也需要）
-4. 限价价格（如果是限价单，必须提供 price 字段）
-5. 订单ID（如果是取消限价单，必须提供 order_id 字段）
-6. 决策理由摘要
-
-注意：
-- 仔细区分"开多/买入"(BUY)和"平空/买入平空/CLOSE"(BUY_TO_COVER)
-- 仔细区分"平多/卖出"(SELL)和"开空/卖空"(SELL_SHORT)
-- 如果文本中说"决策: CLOSE"或"平空"，应该是 BUY_TO_COVER
-- 限价单（BUY_LIMIT/SELL_SHORT_LIMIT）必须提供 price 字段
-- 取消限价单（CANCEL_LIMIT_ORDER）必须提供 order_id 字段
-- 如果金额、杠杆、价格或订单ID没有明确提到，设置为 null
-"""
-
-            messages = [
-                SystemMessage(content=EXECUTION_AGENT_SYSTEM_PROMPT),
-                HumanMessage(content=prompt),
-            ]
-
-            # 增强错误处理：捕获 structured output 调用并记录详细信息
-            try:
-                execution_plan = self.structured_llm.invoke(messages)
-            except Exception as structured_error:
-                # 使用 warning 级别，因为后备方案能处理
-                if logger:
-                    logger.print_warning(
-                        f"⚠️  [ExecutionAgent] Structured output 需要后备方案: {structured_error}"
-                    )
-                    logger.print_info(f"[ExecutionAgent] 决策文本长度: {len(decision_text)} 字符")
-
-                # 尝试使用普通 LLM 调用作为后备方案
-                if logger:
-                    logger.print_info("[ExecutionAgent] 使用兼容模式解析决策")
-
-                try:
-                    response = self.llm.invoke(messages)
-                    response_content = (
-                        response.content if hasattr(response, "content") else str(response)
-                    )
-
-                    if logger:
-                        max_log_len = 2000
-                        truncated = "..." if len(response_content) > max_log_len else ""
-                        logger.print_info(
-                            f"[ExecutionAgent] LLM 原始响应（完整）: {response_content[:max_log_len]}{truncated} (总长度: {len(response_content)} 字符)"
-                        )
-
-                    # 尝试提取并解析 JSON（使用模块级辅助函数）
-                    parsed_data = _extract_json_from_text(response_content)
-
-                    if parsed_data:
-                        # 验证并补全必需字段（使用字段名常量避免硬编码）
-                        if FIELD_DECISION not in parsed_data:
-                            if logger:
-                                logger.print_warning(
-                                    f"[ExecutionAgent] 响应中缺少 '{FIELD_DECISION}' 字段，使用默认值 DO_NOTHING"
-                                )
-                            parsed_data[FIELD_DECISION] = DecisionType.DO_NOTHING.value
-
-                        if FIELD_SYMBOL not in parsed_data:
-                            if logger:
-                                logger.print_warning(
-                                    f"[ExecutionAgent] 响应中缺少 '{FIELD_SYMBOL}' 字段，使用传入的 symbol: {symbol}"
-                                )
-                            parsed_data[FIELD_SYMBOL] = symbol
-
-                        if FIELD_REASON not in parsed_data:
-                            if logger:
-                                logger.print_warning(
-                                    f"[ExecutionAgent] 响应中缺少 '{FIELD_REASON}' 字段，使用默认值"
-                                )
-                            parsed_data[FIELD_REASON] = "AI 决策解析不完整"
-
-                        try:
-                            execution_plan = ExecutionPlan(**parsed_data)
-                            if logger:
-                                logger.print_info("[ExecutionAgent] 后备方案成功：手动解析 JSON")
-                        except Exception as validation_error:
-                            if logger:
-                                logger.print_warning(
-                                    f"[ExecutionAgent] JSON 解析后字段验证失败，返回默认决策: {validation_error}"
-                                )
-                            execution_plan = ExecutionPlan(
-                                decision=DecisionType.DO_NOTHING,
-                                symbol=symbol,
-                                reason="字段验证失败，无法解析 AI 响应格式",
-                            )
-                    else:
-                        # 无法提取 JSON，返回默认的 DO_NOTHING 决策
-                        if logger:
-                            logger.print_warning(
-                                "[ExecutionAgent] 无法从响应中提取有效的 JSON，返回默认决策"
-                            )
-                        execution_plan = ExecutionPlan(
-                            decision=DecisionType.DO_NOTHING,
-                            symbol=symbol,
-                            reason=f"无法解析 AI 响应格式 (响应长度: {len(response_content)}，预览: {response_content[:200]}{'...' if len(response_content) > 200 else ''})",
-                        )
-
-                except Exception as fallback_error:
-                    if logger:
-                        logger.print_error(f"[ExecutionAgent] 后备方案也失败: {fallback_error}")
-                        import traceback
-
-                        logger.print_error(
-                            f"[ExecutionAgent] 后备异常堆栈:\n{traceback.format_exc()}"
-                        )
-
-                    # 返回默认的 DO_NOTHING 决策，而不是重新抛出异常
-                    execution_plan = ExecutionPlan(
-                        decision=DecisionType.DO_NOTHING,
-                        symbol=symbol,
-                        reason=f"后备方案失败: {str(fallback_error)}",
-                    )
+            result = agent.run_sync(prompt)
+            execution_plan = result.output
 
             if logger:
                 amount_str = (
@@ -350,7 +153,6 @@ class ExecutionAgent:
         except Exception as e:
             if logger:
                 logger.print_error(f"[ExecutionAgent] 解析决策失败: {e}")
-                # 记录完整的异常堆栈
                 import traceback
 
                 logger.print_error(f"[ExecutionAgent] 异常堆栈:\n{traceback.format_exc()}")

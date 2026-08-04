@@ -153,6 +153,9 @@ def calculate_grid_config(
     width_pct: float = 0.05,
     grid_num: int = 6,
     leverage: int = 10,
+    adaptive_sizing: bool = False,
+    min_order_notional_usd: float = 11.0,
+    min_grid_num: int = 3,
 ) -> dict[str, Any]:
     """
     针对 Hyperliquid 保证金占用逻辑进行强力修正。
@@ -197,13 +200,45 @@ def calculate_grid_config(
     # 单格金额
     amount_per_grid = total_notional_cap / d_grid_num
 
-    # 强制兜底：如果算出来太大，强制压低到 25.5 USD
-    if amount_per_grid > Decimal("30"):
-        amount_per_grid = Decimal("25.5")
+    if adaptive_sizing:
+        # 自适应仓位：单格金额与真实净值挂钩。
+        # 历史行为的 $15.5 硬下限会在小账户上把总名义额抬到净值的十几倍
+        # （线上 $7.71 账户被抬成 $124 名义敞口 ≈ 16 倍杠杆），保守系数 0.4 被完全反转。
+        # 这里改为：单格不足最小名义额时【减少格数】而非抬高单格金额；
+        # 格数低于下限说明资金撑不起最小网格，直接拒绝布单。
+        d_min_order = to_decimal(min_order_notional_usd)
+        if amount_per_grid < d_min_order:
+            if d_min_order <= 0:
+                d_min_order = Decimal("11")
+            reduced_num = int(total_notional_cap / d_min_order)
+            if reduced_num < max(2, int(min_grid_num)):
+                required_balance = (
+                    d_min_order * Decimal(str(min_grid_num)) / (d_leverage * conservative_safety)
+                )
+                return {
+                    "action": "INSUFFICIENT_CAPITAL",
+                    "mode": mode,
+                    "reason": (
+                        f"资金不足以支撑最小网格: 可用 ${float(d_balance):.2f} × 杠杆 {leverage} × "
+                        f"安全系数 0.4 = 总额度 ${float(total_notional_cap):.2f}，"
+                        f"按单格最小 ${float(d_min_order):.2f} 只够 {reduced_num} 格 "
+                        f"(< 最少 {min_grid_num} 格)。需要余额 ≥ ${float(required_balance):.2f}"
+                    ),
+                    "required_balance": float(required_balance.quantize(Decimal("0.01"))),
+                }
+            grid_num = reduced_num
+            d_grid_num = Decimal(str(grid_num))
+            amount_per_grid = total_notional_cap / d_grid_num
+    else:
+        # 历史行为（默认）：硬编码钳制单格金额。仅对 ≳$100 的账户成立，
+        # 小账户上下限会反噬保守性——新部署建议启用 grid_adaptive_sizing_enabled。
+        # 强制兜底：如果算出来太大，强制压低到 25.5 USD
+        if amount_per_grid > Decimal("30"):
+            amount_per_grid = Decimal("25.5")
 
-    # Hyperliquid 最小限制
-    if amount_per_grid < Decimal("15.5"):
-        amount_per_grid = Decimal("15.5")
+        # Hyperliquid 最小限制
+        if amount_per_grid < Decimal("15.5"):
+            amount_per_grid = Decimal("15.5")
 
     # 3. 计算止盈止损
     # 止盈：每格宽度的 80%，确保覆盖双边手续费（Hyperliquid 约 0.035% Maker）

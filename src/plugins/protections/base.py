@@ -99,8 +99,32 @@ class IProtection(ABC):
         """开仓事件回调（子类按需覆盖）"""
         return  # noqa: B027 — 非抽象，子类按需覆盖
 
-    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
-        """平仓事件回调（子类按需覆盖）"""
+    def on_trade_close(
+        self,
+        symbol: str,
+        pnl: float,
+        timestamp: datetime | None = None,
+        forced: bool = False,
+    ) -> None:
+        """平仓事件回调（子类按需覆盖）。
+
+        Args:
+            forced: True 表示这是风控/保护机制的强制平仓（紧急平仓、趋势过滤减仓等），
+                而非策略主动止盈平仓。与 ``on_position_dropped`` 的区别：本回调携带
+                真实 pnl（强平亏损必须计入亏损类计数器，否则连亏熔断对网格最大的
+                亏损来源不可见）；插件可按 forced 区分语义——例如连亏熔断对
+                forced 且盈利的平仓不重置计数（强平的浮盈了结不代表策略健康）。
+        """
+        return  # noqa: B027 — 非抽象，子类按需覆盖
+
+    def on_position_dropped(self, symbol: str) -> None:
+        """
+        持仓被外部/风控强制平掉的事件回调（子类按需覆盖）。
+
+        与 on_trade_close 的区别：这是风控主动行为（如回撤强平、超时强平），
+        不携带 pnl 语义，仅用于让维护持仓状态的插件清理其内部记录，
+        不应影响基于盈亏的计数器（如连续亏损）。
+        """
         return  # noqa: B027 — 非抽象，子类按需覆盖
 
     def save_state(self) -> None:

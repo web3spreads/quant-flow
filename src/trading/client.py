@@ -3,6 +3,7 @@ Hyperliquid 永续合约客户端
 基于官方 hyperliquid-python-sdk
 """
 
+import time
 import traceback
 from decimal import ROUND_HALF_UP, Decimal
 from math import floor, log10
@@ -175,6 +176,22 @@ class HyperliquidClient:
             growth_mode=growth_mode,
         )
 
+    def _is_unified_account(self) -> bool | None:
+        """判定当前地址是否为保证金合一账户（unifiedAccount/portfolioMargin）。
+
+        经官方 userAbstraction 接口判定，结果缓存（账户模式极少变更），
+        经典账户后续调用零额外开销。查询失败返回 None（未知，交由调用方降级）。
+        """
+        cached = getattr(self, "_abstraction_mode", None)
+        if cached is None:
+            try:
+                cached = self._request_with_fallback("query_user_abstraction_state", self.address)
+            except Exception as e:
+                print(f"⚠️ 账户模式查询失败（userAbstraction）: {e}")
+                return None
+            self._abstraction_mode = cached
+        return cached in ("unifiedAccount", "portfolioMargin")
+
     def get_balance(self) -> dict[str, Any] | None:
         """
         获取账户余额信息
@@ -194,13 +211,38 @@ class HyperliquidClient:
             margin_summary = user_state.get("marginSummary", {})
             account_value = float(margin_summary.get("accountValue", 0))
             total_margin_used = float(margin_summary.get("totalMarginUsed", 0))
+            withdrawable = user_state.get("withdrawable", "0")
+
+            # 统一账户（unified account）兼容：新式账户 spot/perp 保证金合一，
+            # 总净值以 spot 视图为准（USDC total=总抵押，hold=持仓/挂单占用），
+            # perp marginSummary 无持仓时恒 0、有持仓时仅等于被占用的那部分抵押
+            # （实测：$11 账户开仓后 perp accountValue 只剩 $2.28 == spot hold），
+            # 两种形态都会严重低估净值。官方判定接口 userAbstraction 返回
+            # "unifiedAccount"/"portfolioMargin"（合一模式）或 "default"（经典），
+            # 结果缓存；判定失败时退回启发式（perp 视图无资产才尝试 spot）。
+            unified = self._is_unified_account()
+            if unified or (unified is None and account_value <= 0):
+                try:
+                    spot_state = self._request_with_fallback("spot_user_state", self.address)
+                    for balance in spot_state.get("balances", []) or []:
+                        if balance.get("coin") != "USDC":
+                            continue
+                        usdc_total = float(balance.get("total", 0))
+                        if usdc_total > 0:
+                            account_value = usdc_total
+                            total_margin_used = float(balance.get("hold", 0))
+                            withdrawable = str(account_value - total_margin_used)
+                        break
+                except Exception as spot_err:
+                    # spot 查询失败时维持 perp 视图结果，不因兼容路径引入新故障
+                    print(f"⚠️ 统一账户 spot 余额回退查询失败: {spot_err}")
 
             return {
                 "accountValue": account_value,
                 "totalMarginUsed": total_margin_used,
                 "totalRawUsd": float(margin_summary.get("totalRawUsd", 0)),
                 "available": account_value - total_margin_used,
-                "withdrawable": user_state.get("withdrawable", "0"),
+                "withdrawable": withdrawable,
             }
         except Exception as e:
             print(f"❌ 获取余额失败: {e}")
@@ -707,7 +749,7 @@ class HyperliquidClient:
                         error_msg += f"\n请求参数: {sl_result['request_params']}"
                     result["errors"].append(error_msg)
 
-                    # 【关键安全机制】止损单失败，立即平仓避免裸仓（带重试）
+                    # 【关键安全机制】止损单失败，立即平仓避免裸仓（带退避重试 + 全平兜底 + 失败告警）
                     if require_stop_loss:
                         print("⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
                         cloud = get_cloud_logger()
@@ -723,45 +765,18 @@ class HyperliquidClient:
                                 },
                                 level="error",
                             )
-                        max_rollback_retries = 3
-                        rollback_success = False
-                        rollback_error = None
-                        rollback_result = None
-
-                        for attempt in range(1, max_rollback_retries + 1):
-                            print(f"➡️ 安全平仓第 {attempt}/{max_rollback_retries} 次尝试")
-                            rollback_result = self.close_position(symbol, size)
-                            rollback_success, rollback_error = self.check_order_success(
-                                rollback_result
+                        rb_ok, rb_result = self._emergency_close_with_retry(
+                            symbol, size, reason="止损单失败"
+                        )
+                        result["rollback_executed"] = True
+                        result["rollback_result"] = rb_result
+                        result["rollback_final_success"] = rb_ok
+                        if rb_ok:
+                            result["errors"].append("已自动平仓，避免裸仓风险")
+                        else:
+                            result["errors"].append(
+                                "严重：自动平仓在重试+全平兜底后仍失败，请立即手动处理！"
                             )
-                            result["rollback_executed"] = True
-                            result["rollback_result"] = rollback_result
-
-                            if rollback_success:
-                                result["errors"].append("已自动平仓，避免裸仓风险")
-                                print(f"✅ 安全平仓成功（第 {attempt} 次尝试）")
-                                break
-                            else:
-                                print(f"⚠️ 安全平仓尝试失败（第 {attempt} 次）：{rollback_error}")
-
-                        if not rollback_success:
-                            critical_msg = f"警告：安全平仓在尝试 {max_rollback_retries} 次后仍然失败: {rollback_error}，请立即手动处理！"
-                            result["errors"].append(critical_msg)
-                            print(f"❌ 【严重】{critical_msg}")
-                            cloud = get_cloud_logger()
-                            if cloud:
-                                cloud.send_risk_event(
-                                    symbol=symbol,
-                                    risk_type="rollback_failed_critical",
-                                    details={
-                                        "is_buy": is_buy,
-                                        "size": size,
-                                        "retries": max_rollback_retries,
-                                        "last_error": str(rollback_error),
-                                        "message": critical_msg,
-                                    },
-                                    level="error",
-                                )
 
                         return result
 
@@ -793,25 +808,25 @@ class HyperliquidClient:
 
         except Exception as e:
             result["errors"].append(f"异常: {str(e)}")
-            # 发生异常时也尝试平仓（带重试）
+            # 发生异常时也尝试平仓（带退避重试 + 全平兜底 + 失败告警，与止损失败路径一致，
+            # 修复原异常路径“重试后不校验是否成功、无 critical 告警”导致的静默裸仓）
             if result["market_order"] and self.check_order_success(result["market_order"])[0]:
-                print("⚠️ 【安全机制】发生异常，尝试平仓")
-                max_rollback_retries = 3
-                for attempt in range(1, max_rollback_retries + 1):
-                    try:
-                        print(f"➡️ 异常平仓第 {attempt}/{max_rollback_retries} 次尝试")
-                        rollback_result = self.close_position(symbol, size)
-                        result["rollback_executed"] = True
-                        result["rollback_result"] = rollback_result
-                        rollback_success, rollback_error = self.check_order_success(rollback_result)
-                        if rollback_success:
-                            print(f"✅ 异常平仓成功（第 {attempt} 次尝试）")
-                            break
-                        else:
-                            print(f"⚠️ 异常平仓尝试失败（第 {attempt} 次）：{rollback_error}")
-                    except Exception as rollback_e:
-                        result["errors"].append(f"平仓异常: {rollback_e}")
-                        print(f"⚠️ 异常平仓尝试异常（第 {attempt} 次）：{rollback_e}")
+                print("⚠️ 【安全机制】发生异常，尝试平仓避免裸仓风险")
+                try:
+                    rb_ok, rb_result = self._emergency_close_with_retry(
+                        symbol, size, reason="下单异常"
+                    )
+                    result["rollback_executed"] = True
+                    result["rollback_result"] = rb_result
+                    result["rollback_final_success"] = rb_ok
+                    if not rb_ok:
+                        result["errors"].append(
+                            "严重：异常平仓在重试+全平兜底后仍失败，请立即手动处理！"
+                        )
+                except Exception as rollback_e:
+                    result["errors"].append(f"平仓异常: {rollback_e}")
+                    result["rollback_final_success"] = False
+                    print(f"⚠️ 异常平仓再异常：{rollback_e}")
             return result
 
     def place_tpsl_order(
@@ -1148,6 +1163,74 @@ class HyperliquidClient:
             print(f"❌ 检查授权失败: {e}")
 
         return result
+
+    def _emergency_close_with_retry(
+        self,
+        symbol: str,
+        size: float,
+        *,
+        reason: str,
+        max_retries: int = 3,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """紧急平仓（止损单失败/下单异常后避免裸仓的统一兜底）。
+
+        策略：
+        1. 按 size 重试部分平仓，尝试间指数退避（0.5s/1s/2s），避免无间隔连发
+           被交易所限流/判重，反而降低成功率；
+        2. 多次失败后退一步用 market_close 全平兜底——部分平仓依赖 get_positions
+           查询持仓方向，行情/网络抖动导致查询为空会一直失败，全平不依赖该查询；
+        3. 仍失败则发 critical 风控告警，由人工介入，绝不静默放过裸仓。
+
+        Args:
+            symbol: 交易对符号
+            size: 期望平掉的数量
+            reason: 触发原因（用于日志/告警）
+            max_retries: 部分平仓最大重试次数
+
+        Returns:
+            (是否最终平仓成功, 最后一次平仓结果)
+        """
+        last_result: dict[str, Any] | None = None
+        last_error: str | None = None
+
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
+                # 0.5s, 1s, 2s... 指数退避（上限 2s）
+                time.sleep(min(2.0, 0.5 * (2 ** (attempt - 2))))
+            print(f"➡️ 紧急平仓第 {attempt}/{max_retries} 次尝试（{reason}）")
+            last_result = self.close_position(symbol, size)
+            ok, last_error = self.check_order_success(last_result)
+            if ok:
+                print(f"✅ 紧急平仓成功（第 {attempt} 次，{reason}）")
+                return True, last_result
+            print(f"⚠️ 紧急平仓尝试失败（第 {attempt} 次）：{last_error}")
+
+        # 全平兜底：按 size 多次失败（常因 get_positions 查不到持仓），改用市价全平
+        print(f"➡️ 紧急平仓改用市价全平兜底（{reason}）")
+        last_result = self.close_position(symbol, None)
+        ok, last_error = self.check_order_success(last_result)
+        if ok:
+            print(f"✅ 市价全平兜底成功（{reason}）")
+            return True, last_result
+
+        critical_msg = (
+            f"紧急平仓在 {max_retries} 次重试+全平兜底后仍失败: {last_error}，请立即手动处理！"
+        )
+        print(f"❌ 【严重】{critical_msg}")
+        cloud = get_cloud_logger()
+        if cloud:
+            cloud.send_risk_event(
+                symbol=symbol,
+                risk_type="emergency_close_failed_critical",
+                details={
+                    "size": size,
+                    "reason": reason,
+                    "last_error": str(last_error),
+                    "message": critical_msg,
+                },
+                level="error",
+            )
+        return False, last_result
 
     def close_position(self, symbol: str, size: float | None = None) -> dict[str, Any]:
         """

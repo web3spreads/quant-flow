@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from src.llm.llm_client import wrap_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,9 @@ class WeeklyReflector:
         self.weekly_day = weekly_day
         self.weekly_hour = weekly_hour
 
-        self.llm = self.llm_manager.get_client(json_mode=True, temperature=temperature)
+        self.llm = wrap_llm_client(
+            self.llm_manager.get_client(json_mode=True, temperature=temperature)
+        )
 
     def should_run(self, last_run_time: datetime | None = None) -> bool:
         """
@@ -154,11 +156,11 @@ class WeeklyReflector:
             )
 
             system_prompt = self.prompt_manager.get_weekly_review_system_prompt()
-            messages = [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
-            response = self.llm.invoke(messages)
-            raw_text = (
-                response.content if isinstance(response.content, str) else str(response.content)
-            )
+            from pydantic_ai import Agent
+
+            agent = Agent(self.llm, system_prompt=system_prompt)
+            res = agent.run_sync(prompt)
+            raw_text = res.output if isinstance(res.output, str) else str(res.output)
 
             # 解析响应
             try:

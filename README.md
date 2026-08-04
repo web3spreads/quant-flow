@@ -2,10 +2,10 @@
 
 # Quant Flow
 
-**AI-powered crypto perpetual futures trading bot for Hyperliquid DEX**
+**AI-powered crypto perp & grid trading bot for Hyperliquid DEX, built on Pydantic AI**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
-[![LangChain](https://img.shields.io/badge/LangChain-latest-green.svg)](https://python.langchain.com/)
+[![Pydantic AI](https://img.shields.io/badge/Pydantic%20AI-latest-red.svg)](https://ai.pydantic.dev)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-blue)](https://web3spreads.github.io/quant-flow/)
 
@@ -19,20 +19,22 @@
 
 ## What is Quant Flow?
 
-Quant Flow is an AI-powered automated trading system for [Hyperliquid DEX](https://hyperliquid.xyz/), built on LangChain/LangGraph. It supports two independent trading strategies:
+Quant Flow is an AI-powered automated trading system for [Hyperliquid DEX](https://hyperliquid.xyz/). Originally built on LangChain/LangGraph, it has been **fully refactored onto Pydantic AI** for native type safety, structured outputs, and performance.
 
-| Strategy | Entry Point | Description |
-|----------|-------------|-------------|
-| **Perpetual Agent** | `main.py` | Multi-agent architecture with one independent decision context per trading pair |
-| **Grid Flow** | `grid_main.py` | AI-driven grid market making — LLM judges direction & width, math engine calculates params |
+Both perpetual futures trading and grid market-making strategies are unified into a single program (`main.py`), and can be toggled on/off independently via configuration switches.
+
+| Strategy | Config Key | Description |
+|----------|------------|-------------|
+| **Perpetual Agent** | `trading.perp_enabled` | Multi-agent architecture with one independent decision context per trading pair |
+| **Grid Flow** | `trading.grid_enabled` | AI-driven grid market making — LLM judges direction & width, math engine calculates params |
 
 ## Key Features
 
 ### Core Capabilities
 
-- 🤖 **Multi-Agent Architecture** — Independent decision-making per trading pair
+- 🤖 **Multi-Agent Architecture** — Independent Pydantic AI agents per trading pair
 - 🔌 **Multi-LLM Support** — OpenAI, NVIDIA, Google, Cloudflare, LiteLLM
-- 📊 **Grid Flow Strategy** — AI-driven dynamic grid market making
+- 📊 **Unified Runner** — Run perp trading and grid market making concurrently in a single process
 - 📐 **Kelly Formula Position Sizing** — Dynamic optimal position calculation
 - 🛡️ **ATR Dynamic Stop-Loss/Take-Profit** — Volatility-adaptive risk management
 - 🔒 **Account Protection** — Plugin-based: max drawdown / daily loss / consecutive loss / position timeout, each independently togglable
@@ -62,18 +64,11 @@ bash init-deployment.sh
 
 # 2. Configure
 cp config.yaml.example config.yaml
-cp config.grid.yaml.example config.grid.yaml  # optional, for grid mode
 vim .env           # API keys and private key
-vim config.yaml    # trading parameters
+vim config.yaml    # Enable/disable perp or grid, adjust trading parameters
 
-# 3. Start (main strategy by default)
+# 3. Start (Runs enabled strategies concurrently in a single process)
 docker compose up -d
-
-# Run grid strategy only
-RUN_MODE=grid docker compose up -d
-
-# Run both strategies simultaneously
-RUN_MODE=all docker compose up -d
 
 # View logs
 docker compose logs -f
@@ -92,11 +87,8 @@ uv sync
 cp .env.example .env
 cp config.yaml.example config.yaml
 
-# Run main strategy
+# Run the trading bot
 uv run python main.py
-
-# Run grid strategy
-uv run python grid_main.py --config config.grid.yaml --env-file .env
 ```
 
 ## Configuration
@@ -120,11 +112,15 @@ HYPERLIQUID_TESTNET=true        # true=testnet, false=mainnet
 
 ```yaml
 llm:
-  client_type: langchain_nvidia   # openai / cloudflare / google / litellm / nvidia
-  model: qwen/qwen3.5-122b-a10b   # pick any model your provider supports
+  client_type: langchain_openai   # openai / cloudflare / google / litellm / nvidia
+  model: qwen/qwen3-next-80b-a3b-instruct   # pick any model your provider supports
   temperature: 0.2
 
 trading:
+  # Strategy toggles
+  perp_enabled: true
+  grid_enabled: false
+
   symbols: [BTC, ETH]
   max_trade_amount: 100
   max_leverage: 10
@@ -141,9 +137,7 @@ debate:
 regime_adaptive:
   enabled: false       # requires enhanced_analysis: true
 
-# Plugin-based protection (new format). Empty list = no risk control.
-# The legacy `account_protection: { enabled: true, ... }` block is still
-# auto-migrated for backward compatibility.
+# Plugin-based protection. Empty list = no risk control.
 protections:
   - name: max_drawdown
     max_drawdown_pct: 0.10
@@ -186,10 +180,6 @@ uv run python backtest.py --symbol BTC --strategy single \
 uv run python backtest.py --symbol BTC --strategy single \
   --start-date 2024-01-01 --end-date 2024-03-01 \
   --replay-decisions decisions.jsonl   # skips LLM, runs in seconds
-
-# A/B comparison (test effect of specific features)
-uv run python backtest_comparison.py --symbol BTC --compare all
-uv run python backtest_comparison.py --symbol BTC --compare fincot
 ```
 
 See [`BACKTEST_README.md`](BACKTEST_README.md) for full backtest documentation.
@@ -206,12 +196,10 @@ uv run pytest tests/ --cov=src
 
 ```
 quant-flow/
-├── main.py                    # Main strategy entry
-├── grid_main.py               # Grid strategy entry
+├── main.py                    # bot entry point (runs perp & grid)
 ├── backtest.py                # Backtest runner
-├── backtest_comparison.py     # A/B comparison tool
 ├── src/
-│   ├── agent/                 # Agent implementations
+│   ├── agent/                 # Pydantic AI agent implementations
 │   ├── trading/               # Trading core (client, orders, grid manager)
 │   ├── plugins/protections/   # Plugin-based risk control (drawdown, daily loss, etc.)
 │   ├── data/                  # Market data, indicators, enricher, candle align
@@ -247,9 +235,9 @@ git pull && docker compose build && docker compose up -d
 ## Links
 
 - 📖 [Full Documentation](https://web3spreads.github.io/quant-flow/)
-- 🏦 [Hyperliquid](https://hyperliquid.xyz/)
+- 🏦 [Hyperliquid DEX](https://hyperliquid.xyz/)
 - 🚰 [Testnet Faucet](https://app.hyperliquid-testnet.xyz/faucet)
-- ⛓️ [LangChain](https://python.langchain.com/)
+- ⚙️ [Pydantic AI](https://ai.pydantic.dev)
 
 ---
 

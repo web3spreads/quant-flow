@@ -38,14 +38,27 @@ class DailyLossProtection(IProtection):
         pause_hours = self.config.get("pause_hours", 4.0)
 
         with self._lock:
+            # 净值非法守卫：equity<=0 会污染日初基准并算出错误日亏损率，跳过本次检查
+            if context.equity <= 0:
+                logger.warning("单日亏损保护跳过：净值非法 (%.4f)", context.equity)
+                return ProtectionReturn(triggered=False)
+
             today = context.timestamp.strftime("%Y-%m-%d")
 
-            # 新的一天，重置基准
+            # 判断当前暂停是否仍在 pause_hours 冷却期内：跨天也必须遵守该冷却，
+            # 不能因日期翻转（如 23:00 触发、00:00 跨天）提前解除暂停。
+            pause_still_active = False
+            if self._is_paused and self._last_protection_time:
+                elapsed_h = (context.timestamp - self._last_protection_time).total_seconds() / 3600
+                pause_still_active = elapsed_h < pause_hours
+
+            # 新的一天，重置日亏损基准；但暂停冷却未到期时保留暂停状态
             if today != self._daily_start_date:
                 self._daily_start_equity = context.equity
                 self._daily_start_date = today
-                self._is_paused = False
-                self._pause_reason = ""
+                if not pause_still_active:
+                    self._is_paused = False
+                    self._pause_reason = ""
 
             # 首次检查时设置基准
             if self._daily_start_equity <= 0:

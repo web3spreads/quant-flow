@@ -187,3 +187,38 @@ class TestEventDispatch:
         # consecutive_loss 应记录亏损
         loss_plugin = manager.plugins[1]
         assert loss_plugin._global_losses == 1
+
+    def test_position_dropped_clears_timeout_only(self, tmp_dir):
+        """on_position_dropped 仅清理超时记录，不影响连续亏损计数"""
+        config = [
+            {"name": "position_timeout", "max_position_hours": 48},
+            {"name": "consecutive_loss", "max_consecutive_losses": 5},
+        ]
+        manager = ProtectionManager(protections_config=config, data_dir=tmp_dir)
+        manager.on_trade_open("BTC", 50000, 0.1, True, 5)
+
+        manager.on_position_dropped("BTC")
+
+        timeout_plugin = manager.plugins[0]
+        loss_plugin = manager.plugins[1]
+        # 超时记录被清理
+        assert "BTC" not in timeout_plugin._position_records
+        # 连续亏损计数不受影响（强平不上报虚假 pnl）
+        assert loss_plugin._global_losses == 0
+
+    def test_position_dropped_empty_manager_is_safe(self, tmp_dir):
+        """空配置下 on_position_dropped 不报错"""
+        manager = ProtectionManager(protections_config=[], data_dir=tmp_dir)
+        manager.on_position_dropped("BTC")
+
+    def test_trade_open_forwards_timestamp(self, tmp_dir):
+        """on_trade_open 将时间戳透传给插件"""
+        from datetime import datetime
+
+        config = [{"name": "position_timeout", "max_position_hours": 48}]
+        manager = ProtectionManager(protections_config=config, data_dir=tmp_dir)
+        ts = datetime(2024, 1, 1, 12, 0, 0)
+        manager.on_trade_open("BTC", 50000, 0.1, True, 5, timestamp=ts)
+
+        timeout_plugin = manager.plugins[0]
+        assert timeout_plugin._position_records["BTC"]["entry_time"] == ts.isoformat()

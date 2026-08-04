@@ -53,6 +53,8 @@ class BacktestEngine:
         grid_state_file: str | None = None,
         record_file: str | None = None,
         replay_file: str | None = None,
+        use_enhanced_agent: bool = False,
+        enhanced_config: dict[str, Any] | None = None,
     ):
         """
         初始化回测引擎
@@ -147,23 +149,38 @@ class BacktestEngine:
                     grid_reduce_only_exit_orders_enabled=config.grid_reduce_only_exit_orders_enabled,
                 )
             else:
-                self.agent = SingleSymbolAgent(
-                    symbol=symbol,
-                    order_manager=self.order_manager,
-                    logger=self.logger,
-                    llm_manager=self._llm_manager,
-                    temperature=config.agent_temperature,
-                    max_iterations=config.agent_max_iterations,
-                    trade_amount=config.max_trade_amount,
-                    max_leverage=config.max_leverage,
-                    take_profit_ratio=config.take_profit_ratio,
-                    stop_loss_ratio=config.stop_loss_ratio,
-                    notifier=None,  # 回测不需要通知
-                    prompt_manager=prompt_manager,
-                    limit_order_enabled=config.limit_order_enabled
-                    if hasattr(config, "limit_order_enabled")
-                    else False,
-                )
+                if use_enhanced_agent:
+                    from src.agent.enhanced_single_symbol_agent import create_enhanced_agent
+
+                    fee_rates = {"maker": FEE_RATE_PER_SIDE, "taker": FEE_RATE_PER_SIDE}
+                    self.agent = create_enhanced_agent(
+                        symbol=symbol,
+                        order_manager=self.order_manager,
+                        logger=self.logger,
+                        llm_manager=self._llm_manager,
+                        config=enhanced_config,
+                        notifier=None,
+                        prompt_manager=prompt_manager,
+                        fee_rates=fee_rates,
+                    )
+                else:
+                    self.agent = SingleSymbolAgent(
+                        symbol=symbol,
+                        order_manager=self.order_manager,
+                        logger=self.logger,
+                        llm_manager=self._llm_manager,
+                        temperature=config.agent_temperature,
+                        max_iterations=config.agent_max_iterations,
+                        trade_amount=config.max_trade_amount,
+                        max_leverage=config.max_leverage,
+                        take_profit_ratio=config.take_profit_ratio,
+                        stop_loss_ratio=config.stop_loss_ratio,
+                        notifier=None,  # 回测不需要通知
+                        prompt_manager=prompt_manager,
+                        limit_order_enabled=config.limit_order_enabled
+                        if hasattr(config, "limit_order_enabled")
+                        else False,
+                    )
         else:
             self.agent = None
 
@@ -624,14 +641,32 @@ class BacktestEngine:
                     else:
                         decision, details = "DO_NOTHING", {}
                 else:
-                    decision, details = self.agent.make_decision(
-                        market_data=market_data,
-                        multi_timeframe_trends=multi_timeframe_trends,
-                        current_positions=current_positions,
-                        max_positions=self.config.max_positions if self.config else 2,
-                        historical_summary=historical_summary,
-                        enriched_data=enriched_data,
-                    )
+                    if hasattr(self.agent, "make_decision_with_enhanced_analysis"):
+                        df_sliced = df[df["timestamp"] <= timestamp].copy()
+                        account_balance = (
+                            balance_info.get("total", self.initial_balance)
+                            if balance_info
+                            else self.initial_balance
+                        )
+                        decision, details = self.agent.make_decision_with_enhanced_analysis(
+                            market_data=market_data,
+                            multi_timeframe_trends=multi_timeframe_trends,
+                            current_positions=current_positions,
+                            max_positions=self.config.max_positions if self.config else 2,
+                            historical_summary=historical_summary,
+                            enriched_data=enriched_data,
+                            df=df_sliced,
+                            account_balance=account_balance,
+                        )
+                    else:
+                        decision, details = self.agent.make_decision(
+                            market_data=market_data,
+                            multi_timeframe_trends=multi_timeframe_trends,
+                            current_positions=current_positions,
+                            max_positions=self.config.max_positions if self.config else 2,
+                            historical_summary=historical_summary,
+                            enriched_data=enriched_data,
+                        )
 
                 # 录制模式：记录决策到 JSONL
                 if self._decision_recorder:

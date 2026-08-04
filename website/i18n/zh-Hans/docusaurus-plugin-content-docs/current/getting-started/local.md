@@ -49,8 +49,6 @@ cp .env.example .env
 ```bash
 # LLM API 密钥（至少配置一个）
 OPENAI_API_KEY=sk-...
-CLOUDFLARE_ACCOUNT_ID=...       # 可选：Cloudflare Workers AI
-CLOUDFLARE_API_TOKEN=...        # 可选
 GOOGLE_API_KEY=...              # 可选：Gemini
 NVIDIA_API_KEY=nvapi-...        # 可选：NVIDIA NIM
 
@@ -65,7 +63,7 @@ HYPERLIQUID_TESTNET=true        # 强烈建议本地测试时使用测试网
 cp config.yaml.example config.yaml
 ```
 
-本地最小配置：
+最小本地配置示例：
 
 ```yaml
 llm:
@@ -74,50 +72,45 @@ llm:
   temperature: 0.2
 
 trading:
+  perp_enabled: true
+  grid_enabled: false
   symbols: [BTC]
-  max_trade_amount: 10    # 测试时保持较小金额
+  max_trade_amount: 10    # 本地测试建议设小一些
   max_leverage: 2
 
 scheduler:
   interval_minutes: 5
 ```
 
-## 运行策略
+## 运行机器人
 
-### 永续合约 Agent
+运行统一的交易机器人主程序：
 
 ```bash
 uv run python main.py
 ```
 
-指定配置文件和环境变量文件：
+指定特定的配置文件和环境文件：
 
 ```bash
-uv run python main.py --config config.yaml --env .env
+uv run python main.py --config config.yaml --env-file .env
 ```
 
-### 网格交易
-
-```bash
-cp config.grid.yaml.example config.grid.yaml
-# 编辑 config.grid.yaml
-
-uv run python grid_main.py --config config.grid.yaml --env-file .env
-```
+通过配置 `config.yaml` 文件中的 `perp_enabled` 和 `grid_enabled` 开关，主程序可以同时或单独运行永续合约 Agent 交易和网格做市策略。
 
 ## 运行测试
 
 ```bash
-# 运行所有测试
+# 运行全部测试
 uv run pytest tests/
 
 # 运行特定测试文件
-uv run pytest tests/test_agents_langgraph.py -v
+uv run pytest tests/test_decision_validator.py -v
 
-# 运行并生成覆盖率报告
+# 运行测试并生成覆盖率报告
 uv run pytest tests/ --cov=src
 
-# 运行回测（无实盘交易）
+# 运行历史回测（无实盘资金交互）
 uv run python backtest.py --symbol BTC --strategy single \
   --start-date 2024-01-01 --end-date 2024-12-01
 ```
@@ -125,14 +118,14 @@ uv run python backtest.py --symbol BTC --strategy single \
 ## 语法检查
 
 ```bash
-# 检查特定模块
+# 检查特定模块的语法错误
 uv run python -m py_compile src/trading/client.py
 
 # 检查所有源文件
 find src -name "*.py" | xargs uv run python -m py_compile
 ```
 
-## 添加依赖
+## 添加新依赖
 
 ```bash
 # 添加运行时依赖
@@ -144,35 +137,34 @@ uv add --group dev pytest-mock
 
 ## 日志输出
 
-本地运行时，日志同时输出到标准输出和 `logs/` 目录：
+本地运行时，日志会输出到终端（stdout）并同时写入 `logs/` 目录：
 
 ```bash
-tail -f logs/main.log    # 永续合约 Agent
-tail -f logs/grid.log    # 网格交易
+tail -f logs/main.log    # 永续合约/网格交易统一主日志
 ```
 
-## 测试网与主网
+## 测试网 vs 主网
 
-:::warning 务必先在测试网运行
-开发期间请在 `.env` 中设置 `HYPERLIQUID_TESTNET=true`。测试网与主网使用相同的接口，但不涉及真实资金。
+:::warning 强烈建议从测试网开始
+开发期间请在 `.env` 中设置 `HYPERLIQUID_TESTNET=true`。测试网接口和主网完全一致，但不涉及真实资金安全。
 
-确认配置无误后再切换到主网：
+当且仅当策略在测试网运行稳定并验证无误后，再切回主网：
 ```bash
 HYPERLIQUID_TESTNET=false
 ```
 :::
 
-## 常见问题排查
+## 常见问题诊断
 
-| 问题 | 解决方案 |
+| 问题现象 | 解决办法 |
 |---|---|
-| `ModuleNotFoundError` | 运行 `uv sync` 重新安装依赖 |
-| `logs/ 权限错误` | `mkdir -p logs && chmod 755 logs` |
-| 无法连接 Hyperliquid | 检查 `HYPERLIQUID_TESTNET` 配置和网络连接 |
-| API 钱包无法交易 | 在 Hyperliquid 主钱包网页上授权 API 钱包地址 |
+| `ModuleNotFoundError` | 重新运行 `uv sync` 安装依赖 |
+| `PermissionError on logs/` | `mkdir -p logs && chmod 755 logs` 修复权限 |
+| `Cannot connect to Hyperliquid` | 检查 `HYPERLIQUID_TESTNET` 连通性和网络 |
+| 代理钱包无法成交 | 确保已在 Hyperliquid 网页主钱包中授权了 API 代理钱包地址 |
 
 ## 下一步
 
-- [环境变量](../configuration/env.md)
-- [config.yaml 参考](../configuration/config-yaml.md)
-- [回测](../backtesting/single.md) — 无实盘交易的策略测试
+- [环境变量配置](../configuration/env.md)
+- [config.yaml 详细参考](../configuration/config-yaml.md)
+- [策略历史回测](../backtesting/single.md)

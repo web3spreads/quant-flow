@@ -4,6 +4,12 @@
 
 # 交易配置
 trading:
+  # 交易模式总开关
+  # 是否启用永续合约方向型交易 Agent
+  perp_enabled: true
+  # 是否启用网格交易 Agent
+  grid_enabled: false
+
   # 要交易的币种符号（Hyperliquid 永续合约，支持多个）
   # 注意：Hyperliquid 使用简单符号，如 'BTC', 'ETH' 而不是 'BTC/USDT'
   symbols:
@@ -42,6 +48,22 @@ trading:
   grid_limit_order_stop_loss_enabled: true
   # 仅 grid 模式：是否启用 reduce_only 分层减仓单（分批止盈）
   grid_reduce_only_exit_orders_enabled: true
+
+  # ── 网格的 LLM 故障韧性与盈亏归因（默认全部关闭 = 历史行为）─────────────
+  # 连续 N 个网格周期 LLM 不可用（调用异常/空输出/输出不可解析/action 非法）时，
+  # 经通知渠道升级告警；故障期间只发一次，恢复后复位。0 = 关闭（只打日志）。
+  # 线上教训：供应商下线模型名后连续 13 小时决策全失败、网格零成交却无一条告警。
+  grid_llm_failure_alert_cycles: 0
+  # 连续 N 个周期「无层级 + 无持仓 + 拿不到 UPDATE_GRID」时，用纯市场数据
+  # （不经 LLM）兜底重建一次中性网格。0 = 关闭。
+  # 这是 LLM 故障期的恢复死锁解药：层级被清空后只有 UPDATE_GRID 能重建，
+  # 而故障期每轮只产出 ERROR 或兜底 KEEP_GRID，网格永远躺平。
+  grid_llm_fallback_rebuild_cycles: 0
+  # 以链上成交为准，补齐被层级状态机漏掉的净额对冲平仓盈亏（喂连亏熔断 +
+  # 把 pnl/reason 写进 trades 日志）。默认 false。
+  # 中性网格的库存多由对侧格子净额对冲平掉，走不到层级的 CLOSE_PENDING→COMPLETED，
+  # 线上实测归因覆盖率仅 2.3%，连亏熔断形同虚设。
+  grid_netting_attribution_enabled: false
 
 # 调度配置
 scheduler:
@@ -121,8 +143,11 @@ llm:
   # - langchain_nvidia: NVIDIA AI Endpoints
   client_type: langchain_openai
 
-  # 模型名称
-  # model: deepseek-chat
+  # 模型名称（不填则用内置默认 deepseek-v4-flash）
+  # ⚠️ 供应商会下线旧型号：DeepSeek 已废弃 deepseek-chat / deepseek-reasoner，
+  #    现仅接受下列两个，用旧名会每次调用返回 400 导致决策全面失败。
+  # model: deepseek-v4-flash   # 推理开销低、便宜，适合 5 分钟一轮的网格决策
+  # model: deepseek-v4-pro     # 推理更深，适合低频的永续决策/复盘
 
   # 基础参数（可选，如不指定则使用默认值）
   # temperature: 0.1

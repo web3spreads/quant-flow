@@ -241,16 +241,3 @@ class MarketInfoStore:
             status["latest_modified"] = mtime.isoformat()
 
         return status
-
-
-def get_market_info_store(base_dir: str = "data/market_info") -> MarketInfoStore:
-    """
-    获取市场信息存储实例
-
-    Args:
-        base_dir: 存储的基础目录
-
-    Returns:
-        MarketInfoStore 实例
-    """
-    return MarketInfoStore(base_dir)

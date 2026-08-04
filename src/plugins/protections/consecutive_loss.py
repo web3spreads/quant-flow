@@ -82,21 +82,39 @@ class ConsecutiveLossProtection(IProtection):
             self.save_state()
             return ProtectionReturn(triggered=False)
 
-    def on_trade_close(self, symbol: str, pnl: float, timestamp: datetime | None = None) -> None:
-        """平仓事件：更新连续亏损计数"""
+    def on_trade_close(
+        self,
+        symbol: str,
+        pnl: float,
+        timestamp: datetime | None = None,
+        forced: bool = False,
+    ) -> None:
+        """平仓事件：更新连续亏损计数。
+
+        forced_close_no_reset 开启时，风控强制平仓（forced=True）的净盈利不重置计数、
+        也不递增——强平时恰好浮盈了结不代表策略健康，只有主动止盈的盈利才算「打破连亏」。
+        线上实证：12.5 天 145 次趋势过滤强平（正负盈亏交替）把计数反复清零，
+        连亏熔断全程 0 次触发，该保护形同虚设。默认关闭（保持历史行为）。
+        """
         max_losses = self.config.get("max_consecutive_losses", 5)
         per_symbol = self.config.get("per_symbol", False)
         pause_hours = self.config.get("pause_hours", 4.0)
+        forced_no_reset = self.config.get("forced_close_no_reset", False)
         now = timestamp or datetime.now()
 
         with self._lock:
+            if forced and forced_no_reset and pnl > 0:
+                # 强平净盈利：不重置也不递增，计数保持原状
+                return
             if pnl > 0:
                 # 盈利：重置计数
                 self._global_losses = 0
                 if symbol in self._symbol_losses:
                     self._symbol_losses[symbol] = 0
             else:
-                # 亏损：递增计数
+                # 非盈利（亏损或保本）：递增计数。
+                # 注意：pnl==0 也按"非盈利"递增是既定设计——main.py 的 size>0 守卫
+                # 已保证只有真实成交才会进入此分支（参见 test_protection_dataflow）。
                 self._global_losses += 1
                 self._symbol_losses[symbol] = self._symbol_losses.get(symbol, 0) + 1
 
