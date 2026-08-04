@@ -14,10 +14,10 @@
 
 import tempfile
 import unittest
-from unittest import mock
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 
 from src.data.indicators import TrendConfirmTracker, detect_strong_trend
 from src.plugins.protections.base import ProtectionContext
