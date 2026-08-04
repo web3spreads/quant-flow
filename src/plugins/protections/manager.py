@@ -64,7 +64,7 @@ class ProtectionManager:
             self._plugins.append(plugin)
             # 签名探测在注册时做一次即可：插件实例此后不变，而 inspect.signature
             # 约 46 微秒/次，放在每次事件分发里是白烧
-            self._accepts_forced[name] = accepts_parameter(plugin.on_trade_close, "forced")
+            self._accepts_forced[plugin.name] = accepts_parameter(plugin.on_trade_close, "forced")
             logger.info("已加载保护插件: %s", name)
 
     @property

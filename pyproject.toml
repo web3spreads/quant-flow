@@ -17,6 +17,10 @@ dependencies = [
     "pandas>=2.3.0",
     "numpy>=2.0.0",
 
+    # HTTP 客户端（external_info 的 Exa 搜索与 utils.hyperliquid 直接使用，
+    # 此前仅作为 apprise 的传递依赖存在，须显式声明）
+    "requests>=2.31.0",
+
     # 配置和环境
     "pyyaml>=6.0.0",
     "python-dotenv>=1.0.0",

@@ -21,7 +21,7 @@ def search_crypto_market_news(
     end_date: str | None = None,
 ) -> list[str]:
     """
-    搜索加密货币市场新闻 and 信息
+    搜索加密货币市场新闻和信息
 
     Args:
         query: 搜索查询字符串
