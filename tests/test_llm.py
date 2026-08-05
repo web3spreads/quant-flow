@@ -34,6 +34,25 @@ class TestExtractJson:
         with pytest.raises(ValueError):
             extract_json("纯文本，没有任何对象")
 
+    def test_json_array_raises_not_returns_list(self):
+        # 返回值必须恒为 dict：list 透传到策略层会 AttributeError，
+        # 绕过 llm_ok=False 的降级契约
+        with pytest.raises(ValueError):
+            extract_json('["BUY", "SELL"]')
+
+    def test_array_containing_object_extracts_object(self):
+        # 数组整体解析非 dict，但括号平衡扫描能提取内部首个对象
+        assert extract_json('[{"action": "HOLD"}]') == {"action": "HOLD"}
+
+    def test_fenced_array_falls_through_to_inner_object(self):
+        # 围栏内容是数组（非 dict）：跳过围栏结果，平衡扫描提取数组内首个对象
+        text = '```json\n[{"action": "HOLD"}]\n```'
+        assert extract_json(text) == {"action": "HOLD"}
+
+    def test_fenced_array_falls_through_to_object(self):
+        text = '```json\n[1, 2, 3]\n```\n补充 {"action": "KEEP_GRID"}'
+        assert extract_json(text) == {"action": "KEEP_GRID"}
+
 
 class _FakeResponse:
     def __init__(self, content: str | None, status_error: Exception | None = None):

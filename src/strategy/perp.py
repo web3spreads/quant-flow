@@ -65,6 +65,11 @@ class PerpStrategy:
         self._system_prompt = (prompts / "perp_system.md").read_text(encoding="utf-8")
         self._template = Template((prompts / "perp_decision.md").read_text(encoding="utf-8"))
 
+        # LLM 连续故障计数（llm_ok=False 的周期数），达阈值升级告警——
+        # 模型 ID 下线/密钥失效这类持续性故障若只有逐轮 WARNING，极易被淹没
+        self._llm_failure_streak = 0
+        self._llm_alert_sent = False
+
     # ── 主流程 ────────────────────────────────────────────────────────────
 
     def run_cycle(
@@ -92,6 +97,7 @@ class PerpStrategy:
             market_data, trends, positions, available_balance, open_allowed
         )
         decision = self._decide(prompt)
+        self._track_llm_health(decision)
         record = self._execute(decision, positions, open_allowed)
         record["prompt"] = prompt
         return record
@@ -119,17 +125,57 @@ class PerpStrategy:
             )
             return self._hold(f"非法 action={data.get('action')!r}", llm_ok=False, raw=reply)
 
-        amount = _safe_float(data.get("amount_usd"), self.trading.max_trade_amount)
-        leverage = int(_safe_float(data.get("leverage"), self.trading.max_leverage))
+        amount = _parse_positive(data.get("amount_usd"))
+        leverage = _parse_positive(data.get("leverage"))
+        if action in ("BUY", "SELL_SHORT") and (amount is None or leverage is None):
+            # 开仓类决策缺失/非法 amount_usd 或 leverage 时必须降级 HOLD：
+            # 历史行为是缺省取配置上限——把 LLM 的半格式故障放大成最激进开仓，
+            # 与「故障一律降级为保守动作」的原则背道而驰。
+            self.logger.print_warning(
+                f"[{self.symbol}] LLM 决策缺少有效 amount_usd/leverage"
+                f"（amount_usd={data.get('amount_usd')!r}, leverage={data.get('leverage')!r}），"
+                f"回退 HOLD"
+            )
+            return self._hold(
+                f"决策缺少有效 amount_usd/leverage（{data.get('amount_usd')!r}/"
+                f"{data.get('leverage')!r}），保守观望",
+                llm_ok=False,
+                raw=reply,
+            )
+
         return {
             "action": action,
             "confidence": min(max(_safe_float(data.get("confidence")), 0.0), 1.0),
-            "amount_usd": min(max(amount, 0.0), self.trading.max_trade_amount),
-            "leverage": min(max(leverage, 1), self.trading.max_leverage),
+            "amount_usd": min(max(amount or 0.0, 0.0), self.trading.max_trade_amount),
+            "leverage": min(max(int(leverage or 1), 1), self.trading.max_leverage),
             "reason": str(data.get("reason", "")),
             "llm_ok": True,
             "raw_response": reply,
         }
+
+    def _track_llm_health(self, decision: dict[str, Any]) -> None:
+        """跟踪 LLM 连续故障并在达阈值时升级告警（故障期间只告警一次）。"""
+        threshold = self.trading.llm_failure_alert_cycles
+        if threshold <= 0:
+            return
+        if decision.get("llm_ok", True):
+            if self._llm_failure_streak:
+                self.logger.print_info(
+                    f"[{self.symbol}] ✅ 永续 LLM 决策已恢复正常"
+                    f"（此前连续失败 {self._llm_failure_streak} 周期）"
+                )
+            self._llm_failure_streak = 0
+            self._llm_alert_sent = False
+            return
+        self._llm_failure_streak += 1
+        if self._llm_failure_streak < threshold or self._llm_alert_sent:
+            return
+        self.logger.print_error(
+            f"🚨 {self.symbol} 永续 LLM 决策连续 {self._llm_failure_streak} 个周期失败，"
+            f"策略已持续保守观望。最近一次原因: {str(decision.get('reason', ''))[:300]}。"
+            f"请检查 LLM 供应商模型名是否已下线、API 余额与网络连通性"
+        )
+        self._llm_alert_sent = True
 
     def _hold(self, reason: str, llm_ok: bool, raw: str = "") -> dict[str, Any]:
         """构造保守 HOLD 决策（llm_ok=False 表示 LLM 自身不可用，供健康跟踪）。"""
@@ -176,6 +222,11 @@ class PerpStrategy:
         if self._find_position(positions, is_long=is_long) is not None:
             record["reason"] += "（已持有同向仓位，已拦截）"
             return record
+        if self._find_position(positions, is_long=not is_long) is not None:
+            # Hyperliquid 净头寸制：持空时 BUY 不是开多而是净额抵消平空，
+            # 记账/TP-SL/风控上报会全部失真。反向意图必须先 CLOSE 再开仓。
+            record["reason"] += "（持有反向仓位，请先 CLOSE 平仓，已拦截）"
+            return record
         held_symbols = {p.get("coin") for p in positions}
         if self.symbol not in held_symbols and len(held_symbols) >= self.trading.max_positions:
             record["reason"] += f"（持仓数已达上限 {self.trading.max_positions}，已拦截）"
@@ -194,6 +245,27 @@ class PerpStrategy:
                 is_long=is_long,
                 size=_safe_float(result.get("quantity")),
                 entry_price=_safe_float(result.get("fill_price")),
+            )
+        elif (
+            result
+            and result.get("rollback_executed")
+            and not result.get("rollback_final_success", True)
+        ):
+            # 止损设置失败且回滚平仓也失败：持仓真实存在但没有交易所侧止损。
+            # 必须如实上报 executed=True，让账户级保护（超时/回撤）接管该仓位，
+            # 否则它对整个风控体系不可见。
+            record.update(
+                executed=True,
+                is_long=is_long,
+                size=_safe_float(result.get("quantity")),
+                entry_price=_safe_float(result.get("fill_price") or result.get("price")),
+            )
+            record["reason"] += (
+                "（严重：止损设置失败且回滚平仓失败，持仓无交易所侧止损，请立即人工处理）"
+            )
+            self.logger.print_error(
+                f"🚨 [{self.symbol}] 开仓后止损设置失败且自动回滚失败，"
+                f"持仓 {record['size']} 张无交易所侧止损保护，请立即人工处理！"
             )
         else:
             record["reason"] += "（下单未成功）"
@@ -301,3 +373,12 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_positive(value: Any) -> float | None:
+    """解析必填正数字段：缺失/非数值/非正数一律返回 None（供调用方拒绝决策）。"""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None

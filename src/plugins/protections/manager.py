@@ -107,8 +107,10 @@ class ProtectionManager:
                             result.reason,
                             result.action,
                         )
-                    if self._on_triggered:
-                        self._on_triggered(result.reason)
+                        # 触发回调与 WARNING 同步去重：暂停期内同一原因每周期
+                        # 重复回调只会刷屏（历史单次熔断 726 条重复告警）
+                        if self._on_triggered:
+                            self._on_triggered(result.reason)
                 else:
                     # 恢复正常后清除去重记录：下次再触发（哪怕同一原因）重新用 WARNING
                     self._last_trigger_reason.pop(plugin.name, None)

@@ -108,10 +108,36 @@ class TestDecisionParsing:
         assert amount == TradingConfig().max_trade_amount
         assert leverage == TradingConfig().max_leverage
 
+    def test_missing_amount_degrades_to_hold(self):
+        # 开仓决策缺 amount_usd/leverage 时必须降级 HOLD，
+        # 绝不能缺省取配置上限（把 LLM 半格式故障放大为最激进开仓）
+        llm = FakeLLM([decision_json(action="BUY", leverage=3)])
+        strategy, om = make_strategy(llm)
+        record = run(strategy)
+        assert record["action"] == "HOLD"
+        assert record["llm_ok"] is False
+        assert om.calls == []
+
+    def test_invalid_leverage_degrades_to_hold(self):
+        llm = FakeLLM([decision_json(action="SELL_SHORT", amount_usd=50, leverage="高杠杆")])
+        strategy, om = make_strategy(llm)
+        record = run(strategy)
+        assert record["action"] == "HOLD"
+        assert record["llm_ok"] is False
+        assert om.calls == []
+
+    def test_close_without_amount_still_valid(self):
+        # CLOSE/HOLD 不需要 amount_usd/leverage，缺失不应降级
+        llm = FakeLLM([decision_json(action="CLOSE")])
+        strategy, om = make_strategy(llm)
+        record = run(strategy, positions=[LONG_POSITION])
+        assert record["llm_ok"] is True
+        assert record["executed"] is True
+
 
 class TestOpenGuards:
     def test_low_confidence_blocked(self):
-        llm = FakeLLM([decision_json(action="BUY", confidence=0.3)])
+        llm = FakeLLM([decision_json(action="BUY", confidence=0.3, amount_usd=50, leverage=2)])
         strategy, om = make_strategy(llm)
         record = run(strategy)
         assert record["executed"] is False
@@ -119,28 +145,31 @@ class TestOpenGuards:
         assert om.calls == []
 
     def test_open_not_allowed_blocked(self):
-        llm = FakeLLM([decision_json(action="BUY")])
+        llm = FakeLLM([decision_json(action="BUY", amount_usd=50, leverage=2)])
         strategy, om = make_strategy(llm)
         record = run(strategy, open_allowed=False)
         assert record["executed"] is False
         assert om.calls == []
 
     def test_duplicate_long_blocked(self):
-        llm = FakeLLM([decision_json(action="BUY")])
+        llm = FakeLLM([decision_json(action="BUY", amount_usd=50, leverage=2)])
         strategy, om = make_strategy(llm)
         record = run(strategy, positions=[LONG_POSITION])
         assert record["executed"] is False
         assert "同向" in record["reason"]
 
-    def test_opposite_direction_not_blocked_as_duplicate(self):
-        # 持空仓时 BUY 不算重复开仓（可能是反向布局），只受其余校验约束
-        llm = FakeLLM([decision_json(action="BUY", amount_usd=50)])
+    def test_opposite_direction_blocked(self):
+        # Hyperliquid 净头寸制：持空仓时 BUY 会净额抵消而非开多，
+        # 记账/TP-SL 全部失真，必须拦截并要求先 CLOSE
+        llm = FakeLLM([decision_json(action="BUY", amount_usd=50, leverage=2)])
         strategy, om = make_strategy(llm)
         record = run(strategy, positions=[SHORT_POSITION])
-        assert record["executed"] is True
+        assert record["executed"] is False
+        assert "反向" in record["reason"]
+        assert om.calls == []
 
     def test_max_positions_blocked(self):
-        llm = FakeLLM([decision_json(action="BUY")])
+        llm = FakeLLM([decision_json(action="BUY", amount_usd=50, leverage=2)])
         strategy, om = make_strategy(llm, max_positions=2)
         others = [
             {"coin": "ETH", "szi": "1", "entryPx": "50"},
@@ -151,12 +180,27 @@ class TestOpenGuards:
         assert "上限" in record["reason"]
 
     def test_insufficient_balance_blocked(self):
-        llm = FakeLLM([decision_json(action="BUY", amount_usd=100)])
+        llm = FakeLLM([decision_json(action="BUY", amount_usd=100, leverage=2)])
         om = FakeOrderManager(available=10.0)
         strategy, om = make_strategy(llm, order_manager=om)
         record = run(strategy, balance=10.0)
         assert record["executed"] is False
         assert "余额" in record["reason"]
+
+    def test_rollback_failure_reported_as_naked_position(self):
+        # 止损失败且回滚失败：持仓真实存在，必须 executed=True 让风控看见
+        llm = FakeLLM([decision_json(action="BUY", amount_usd=50, leverage=2)])
+        strategy, om = make_strategy(llm)
+        om.execute_result = {
+            "success": False,
+            "quantity": 0.5,
+            "price": 100.0,
+            "rollback_executed": True,
+            "rollback_final_success": False,
+        }
+        record = run(strategy)
+        assert record["executed"] is True
+        assert "人工处理" in record["reason"]
 
 
 class TestClose:

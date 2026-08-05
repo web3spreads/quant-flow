@@ -42,6 +42,9 @@ class Engine:
         # 永续与网格共享的交易锁：冲突时后来者跳过本轮
         self._trading_lock = threading.Lock()
         self._grid_thread: threading.Thread | None = None
+        # 风控强平失败的交易对 → 触发原因：每个永续周期开头优先重试，
+        # 直到确认平掉才清理保护插件的持仓记录
+        self._pending_force_closes: dict[str, str] = {}
 
         self._build_components()
 
@@ -62,6 +65,7 @@ class Engine:
             take_profit_ratio=cfg.trading.take_profit_ratio,
             stop_loss_ratio=cfg.trading.stop_loss_ratio,
             default_leverage=cfg.trading.max_leverage,
+            trading_lock=self._trading_lock,
         )
         self.llm = LLMClient(
             base_url=cfg.llm.base_url,
@@ -85,10 +89,27 @@ class Engine:
         else:
             self.logger.print_warning("⚠️ protections 为空，账户风控已全部关闭")
 
-        # 永续策略：每个交易对一个实例
+        # 永续策略：每个交易对一个实例。
+        # 并行模式下网格独占 symbols[0]：Hyperliquid 是单向持仓（净头寸），
+        # 两策略共用同一交易对会互相净额强平、网格清理还会撤掉永续仓位的
+        # 止损触发单——同交易对并行没有安全的运行方式，直接拦截。
+        perp_symbols = list(cfg.trading.symbols)
+        if cfg.trading.perp_enabled and cfg.trading.grid_enabled:
+            grid_symbol = cfg.trading.symbols[0]
+            perp_symbols = [s for s in perp_symbols if s != grid_symbol]
+            self.logger.print_warning(
+                f"⚠️ 永续与网格并行：{grid_symbol} 由网格策略独占，永续策略跳过该交易对"
+                f"（单向持仓下两策略同交易对会互相强平）"
+            )
+            if not perp_symbols:
+                raise ValueError(
+                    "永续与网格并行时 trading.symbols 只有一个交易对："
+                    "网格独占后永续无交易对可跑。请增加交易对或关闭其中一个策略"
+                )
+
         self.perp_strategies: dict[str, PerpStrategy] = {}
         if cfg.trading.perp_enabled:
-            for symbol in cfg.trading.symbols:
+            for symbol in perp_symbols:
                 self.perp_strategies[symbol] = PerpStrategy(
                     symbol=symbol,
                     order_manager=self.order_manager,
@@ -200,14 +221,20 @@ class Engine:
             self.stop("收到停止信号或异常退出")
 
     def stop(self, reason: str = "手动停止") -> None:
-        """优雅停机：等待进行中的网格周期完成，避免腰斩撤单/布单序列留下裸仓。"""
+        """优雅停机：等待进行中的网格周期完成，避免腰斩撤单/布单序列留下裸仓。
+
+        等待上限必须覆盖周期内最长的单步阻塞（LLM 请求超时）：上限小于
+        LLM 超时时，daemon 网格线程可能正卡在 LLM 调用上，超时即被随进程
+        终止，撤单/布单序列被腰斩。
+        """
         if not self.is_running and self._grid_thread is None:
             return
         self.is_running = False
         self.logger.print_section(f"🛑 停止引擎: {reason}")
         if self._grid_thread and self._grid_thread.is_alive():
-            self.logger.print_info("等待进行中的网格周期完成（最多 30s）...")
-            self._grid_thread.join(timeout=30)
+            join_timeout = max(30.0, float(self.config.llm.timeout) + 30.0)
+            self.logger.print_info(f"等待进行中的网格周期完成（最多 {join_timeout:.0f}s）...")
+            self._grid_thread.join(timeout=join_timeout)
         self._grid_thread = None
         self.order_manager.shutdown()
         self.logger.print_info("引擎已停止")
@@ -246,6 +273,9 @@ class Engine:
         self.logger.print_header(f"🔄 永续交易周期开始 - {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         positions = self.order_manager.get_current_positions()
+        if positions is None:
+            self.logger.print_error("❌ 持仓查询失败，跳过本次交易周期")
+            return
         balance_info = self.order_manager.get_available_balance_info()
         if balance_info.get("status") != "ok":
             self.logger.print_error(f"❌ {balance_info.get('message')}，跳过本次交易周期")
@@ -267,7 +297,8 @@ class Engine:
         # 账户级风控
         open_allowed = self._enforce_protections(balance_info, positions) and open_allowed
 
-        for symbol in cfg.symbols:
+        # 只遍历实际装配的策略（并行模式下网格独占的交易对不在其中）
+        for symbol in self.perp_strategies:
             try:
                 self._run_symbol_cycle(symbol, positions, available, open_allowed)
             except Exception as e:
@@ -285,10 +316,15 @@ class Engine:
         - ``PAUSE_NEW_TRADES``：禁止开新仓，仅管理持仓；
         - ``position_timeout`` 命中的交易对：直接平仓。
 
-        风控强平不向连亏插件上报 pnl（避免虚假连亏计数），仅清理持仓记录。
+        风控强平不向连亏插件上报 pnl（避免虚假连亏计数），仅清理持仓记录；
+        且**只有确认平仓成功才清理**——失败时保留记录并登记待重试，否则
+        超时/回撤保护会永远失明于那个平不掉的仓位。
         """
         if not self.protection_manager:
             return True
+
+        # 上一轮失败的强平优先重试（无论本轮保护是否再次触发）
+        self._retry_pending_force_closes(positions)
 
         context = ProtectionContext(
             balance=balance_info.get("available", 0),
@@ -308,12 +344,7 @@ class Engine:
                 sym = pos.get("coin", "")
                 if not sym:
                     continue
-                try:
-                    self.order_manager.close_position(sym)
-                    self.protection_manager.on_position_dropped(sym)
-                    self.logger.print_info(f"[风控]已平仓: {sym}")
-                except Exception as e:
-                    self.logger.print_error(f"[风控]平仓失败 {sym}: {e}")
+                self._force_close_and_track(sym, reason="账户回撤熔断")
             return False
 
         # 超时持仓直接平仓（从 check_all 结果取，避免重复扫描）
@@ -321,16 +352,48 @@ class Engine:
             if r.plugin_name == "position_timeout" and r.affected_symbols:
                 for sym in r.affected_symbols:
                     self.logger.print_warning(f"[风控]持仓超时: {sym}，执行平仓")
-                    try:
-                        self.order_manager.close_position(sym)
-                        self.protection_manager.on_position_dropped(sym)
-                    except Exception as e:
-                        self.logger.print_error(f"[风控]超时平仓失败 {sym}: {e}")
+                    self._force_close_and_track(sym, reason="持仓超时强平")
 
         if action == ProtectionAction.PAUSE_NEW_TRADES:
             self.logger.print_warning("[风控]保护插件已暂停新开仓，仅管理现有持仓")
             return False
         return True
+
+    def _force_close_and_track(self, symbol: str, reason: str) -> bool:
+        """校验式风控强平：成功才清理保护插件持仓记录，失败登记待重试。"""
+        try:
+            ok = self.order_manager.force_close_position(symbol, reason=reason)
+        except Exception as e:
+            self.logger.print_error(f"[风控]平仓异常 {symbol}: {e}")
+            ok = False
+        if ok:
+            self._pending_force_closes.pop(symbol, None)
+            if self.protection_manager:
+                self.protection_manager.on_position_dropped(symbol)
+            self.logger.print_info(f"[风控]已确认平仓: {symbol}")
+        else:
+            self._pending_force_closes[symbol] = reason
+            self.logger.print_error(
+                f"[风控]平仓未成功 {symbol}（{reason}），已登记待重试；"
+                f"保护记录保留，交易所侧止损（若有）仍然有效"
+            )
+        return ok
+
+    def _retry_pending_force_closes(self, positions: list[dict[str, Any]] | None) -> None:
+        """重试上一轮失败的风控强平；确认持仓已消失时出队并清理保护记录。"""
+        if not self._pending_force_closes or positions is None:
+            return
+        held = {p.get("coin") for p in positions}
+        for sym, reason in list(self._pending_force_closes.items()):
+            if sym not in held:
+                # 持仓已消失（交易所侧止损触发/人工处理）：完成收尾
+                self._pending_force_closes.pop(sym, None)
+                if self.protection_manager:
+                    self.protection_manager.on_position_dropped(sym)
+                self.logger.print_info(f"[风控]{sym} 待重试强平已无持仓，出队")
+                continue
+            self.logger.print_warning(f"[风控]♻️ 重试强平 {sym}（{reason}）")
+            self._force_close_and_track(sym, reason=reason)
 
     def _run_symbol_cycle(
         self,
@@ -396,6 +459,18 @@ class Engine:
                     )
             except Exception as e:
                 self.logger.print_warning(f"[{symbol}] 保护插件记录失败: {e}")
+
+        # 同轮持仓视图刷新：positions 是整轮开始前的快照，后续交易对的
+        # max_positions/重复仓校验必须看到本轮已发生的开平仓，否则同一轮内
+        # 多交易对可以一起突破持仓上限。
+        if record.get("executed"):
+            if action in ("BUY", "SELL_SHORT"):
+                signed = record.get("size", 0) or 0
+                positions.append(
+                    {"coin": symbol, "szi": str(signed if record.get("is_long") else -signed)}
+                )
+            elif action == "CLOSE":
+                positions[:] = [p for p in positions if p.get("coin") != symbol]
 
         self.logger.log_decision(
             symbol=symbol,

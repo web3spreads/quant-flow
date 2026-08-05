@@ -3,6 +3,8 @@ Hyperliquid 订单管理器
 管理永续合约的订单创建、监控和执行，包括止盈止损逻辑
 """
 
+from __future__ import annotations
+
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -25,6 +27,7 @@ class LimitOrderMonitor:
         client: HyperliquidClient,
         check_interval: float = 5.0,
         max_check_duration: float = 3600.0,  # 最长监控1小时
+        trading_lock: threading.Lock | None = None,
     ):
         """
         初始化限价单监控器
@@ -33,10 +36,14 @@ class LimitOrderMonitor:
             client: Hyperliquid 客户端
             check_interval: 检查间隔（秒）
             max_check_duration: 最长监控时长（秒）
+            trading_lock: 引擎级共享交易锁。监控线程操作账户（挂 TPSL/紧急平仓）
+                前必须持有该锁，否则会与永续/网格周期并发踩乱持仓与挂单状态，
+                破坏引擎「同一时刻只有一条周期在动账户」的互斥承诺。
         """
         self.client = client
         self.check_interval = check_interval
         self.max_check_duration = max_check_duration
+        self.trading_lock = trading_lock
 
         # 待监控的限价单列表
         # {order_id: {symbol, is_buy, size, tp_price, sl_price, created_at, ...}}
@@ -111,29 +118,47 @@ class LimitOrderMonitor:
             print("🛑 限价单监控线程已停止")
 
     def _monitor_loop(self) -> None:
-        """监控循环"""
+        """监控循环。
+
+        队列空时不退出线程而是空转等待：历史的「空即退出」与 add_order 存在
+        TOCTOU 竞态——线程判定为空后、真正退出前注册的新订单会无人监控。
+        空转成本可忽略（_check_orders 对空队列直接返回，不发任何 API 请求）。
+        """
         while not self._stop_event.is_set():
             try:
                 self._check_orders()
             except Exception as e:
                 print(f"❌ 限价单监控异常: {e}")
 
-            # 如果没有待监控订单，退出循环
-            with self._lock:
-                if not self._pending_orders:
-                    print("📋 无待监控限价单，监控线程休眠")
-                    break
-
             # 等待下一次检查
             self._stop_event.wait(self.check_interval)
 
     def _check_orders(self) -> None:
-        """检查所有待监控的限价单"""
+        """检查所有待监控的限价单（操作账户前必须持有引擎交易锁）"""
         with self._lock:
+            if not self._pending_orders:
+                return
             orders_to_check = list(self._pending_orders.items())
 
-        # 获取当前挂单
+        # 与永续/网格周期互斥：拿不到锁说明周期正在动账户，本轮跳过（5s 后重试）
+        if self.trading_lock is not None:
+            if not self.trading_lock.acquire(timeout=10):
+                return
+        try:
+            self._check_orders_locked(orders_to_check)
+        finally:
+            if self.trading_lock is not None:
+                self.trading_lock.release()
+
+    def _check_orders_locked(self, orders_to_check: list[tuple[int, dict[str, Any]]]) -> None:
+        """实际检查逻辑（调用方已保证持有交易锁）。"""
+        # 获取当前挂单。查询失败（None）时整轮跳过——把「查不到」当「不在挂单中」
+        # 会把仍在挂着的订单误判为已成交/已取消，随后依据同样失败的持仓查询
+        # 把订单移出监控，成交后裸仓无人设置止盈止损。
         open_orders = self.client.get_open_orders()
+        if open_orders is None:
+            print("⚠️ 限价单监控：挂单查询失败，本轮跳过")
+            return
         open_order_ids = {o.get("oid") for o in open_orders}
 
         # 批量获取持仓，减少 API 调用；设置 TPSL 后置空以触发刷新
@@ -164,6 +189,10 @@ class LimitOrderMonitor:
             # 在循环内获取最新持仓，确保数据准确（持仓可能因前一个订单的 TPSL 设置而变化）
             if position_map is None:
                 positions = self.client.get_positions()
+                if positions is None:
+                    # 持仓查询失败：本轮不做任何移除/设置决策，等下轮数据恢复
+                    print("⚠️ 限价单监控：持仓查询失败，本轮跳过剩余订单")
+                    return
                 position_map = {p["coin"]: p for p in positions}
             position = position_map.get(symbol)
 
@@ -211,10 +240,12 @@ class LimitOrderMonitor:
                 if not sl_success:
                     print(f"❌ 限价单 {order_id} 止损设置失败: {sl_error}")
 
-                    # 重试或紧急平仓
+                    # 重试或紧急平仓（带校验+重试+全平兜底，失败落 critical 日志）
                     if order_info["tpsl_attempts"] >= max_attempts:
                         print("⚠️ 【安全机制】止损设置多次失败，紧急平仓")
-                        self.client.close_position(symbol)
+                        self.client.emergency_close_with_retry(
+                            symbol, actual_size, reason="限价单成交后止损设置失败"
+                        )
                         self.remove_order(order_id)
                         return
                     else:
@@ -256,7 +287,9 @@ class LimitOrderMonitor:
             if order_info["tpsl_attempts"] >= max_attempts:
                 print("⚠️ 【安全机制】异常次数过多，紧急平仓")
                 try:
-                    self.client.close_position(symbol)
+                    self.client.emergency_close_with_retry(
+                        symbol, actual_size, reason="限价单 TPSL 设置连续异常"
+                    )
                 except Exception as close_err:
                     print(f"⚠️ 紧急平仓失败: {close_err}")
                 self.remove_order(order_id)
@@ -273,6 +306,7 @@ class OrderManager:
         default_leverage: int = 10,
         min_risk_reward_ratio: float = 1.5,  # 最小风险回报比
         enable_limit_order_monitor: bool = True,
+        trading_lock: threading.Lock | None = None,
     ):
         """
         初始化订单管理器
@@ -284,6 +318,7 @@ class OrderManager:
             default_leverage: 默认杠杆倍数（默认 10倍）
             min_risk_reward_ratio: 最小风险回报比（默认 1.5）
             enable_limit_order_monitor: 是否启用限价单监控（默认 True）
+            trading_lock: 引擎级共享交易锁（透传给限价单监控线程做互斥）
         """
         self.client = client
         self.take_profit_ratio = take_profit_ratio
@@ -294,7 +329,7 @@ class OrderManager:
         # 初始化限价单监控器
         self.limit_order_monitor: LimitOrderMonitor | None = None
         if enable_limit_order_monitor:
-            self.limit_order_monitor = LimitOrderMonitor(client)
+            self.limit_order_monitor = LimitOrderMonitor(client, trading_lock=trading_lock)
 
         print("✅ 订单管理器初始化完成")
         print(f"   止盈比例: {take_profit_ratio * 100}%")
@@ -475,9 +510,9 @@ class OrderManager:
             # 可用余额 = 账户总价值 - 已占用保证金
             available = total - occupied
 
-            # 计算未实现盈亏（从所有持仓汇总）
+            # 计算未实现盈亏（从所有持仓汇总；查询失败时按 0 展示，不影响余额主数据）
             unrealized_pnl = 0
-            positions = self.client.get_positions()
+            positions = self.client.get_positions() or []
             for position in positions:
                 unrealized_pnl += float(position.get("unrealizedPnl", 0))
 
@@ -500,12 +535,13 @@ class OrderManager:
                 "unrealized_pnl": 0,
             }
 
-    def get_current_positions(self) -> list[dict[str, Any]]:
+    def get_current_positions(self) -> list[dict[str, Any]] | None:
         """
         获取当前持仓列表
 
         Returns:
-            持仓列表
+            持仓列表；查询失败返回 None（未知），调用方必须区分
+            「确认无持仓」与「查询失败」两种语义（见 client.get_positions）。
         """
         return self.client.get_positions()
 
@@ -623,7 +659,8 @@ class OrderManager:
             lev = leverage if leverage else self.default_leverage
 
             # 检查是否已有该币种的持仓
-            current_positions = self.get_current_positions()
+            # 持仓查询失败按「无持仓」处理：影响仅是多设一次杠杆，方向保守
+            current_positions = self.get_current_positions() or []
             has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
             if has_position:
@@ -680,9 +717,13 @@ class OrderManager:
                 result["quantity"] = size
                 result["price"] = current_price
                 result["leverage"] = lev
-                # 获取交易哈希：下单后查询最近的fills
+                # 获取交易哈希与实际成交价：优先从市价单回执提取，回退查询最近 fills
                 fill_info = self._get_latest_fill_info(symbol)
                 result["hash"] = fill_info["hash"] or ""
+                receipt = self.client.get_order_fill_info(result.get("market_order") or {})
+                result["fill_price"] = (
+                    receipt.get("fill_price") or fill_info.get("fill_price") or current_price
+                )
 
             return result
 
@@ -722,7 +763,8 @@ class OrderManager:
             lev = leverage if leverage else self.default_leverage
 
             # 检查是否已有该币种的持仓
-            current_positions = self.get_current_positions()
+            # 持仓查询失败按「无持仓」处理：影响仅是多设一次杠杆，方向保守
+            current_positions = self.get_current_positions() or []
             has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
             if has_position:
@@ -782,9 +824,13 @@ class OrderManager:
                 result["quantity"] = size
                 result["price"] = current_price
                 result["leverage"] = lev
-                # 获取交易哈希：下单后查询最近的fills
+                # 获取交易哈希与实际成交价：优先从市价单回执提取，回退查询最近 fills
                 fill_info = self._get_latest_fill_info(symbol)
                 result["hash"] = fill_info["hash"] or ""
+                receipt = self.client.get_order_fill_info(result.get("market_order") or {})
+                result["fill_price"] = (
+                    receipt.get("fill_price") or fill_info.get("fill_price") or current_price
+                )
 
             return result
 
@@ -817,6 +863,24 @@ class OrderManager:
         except Exception as e:
             print(f"❌ 平仓失败: {e}")
             return None
+
+    def force_close_position(self, symbol: str, reason: str) -> bool:
+        """风控强制平仓（带结果校验 + 指数退避重试 + 全平兜底）。
+
+        账户熔断 / 超时强平必须走本方法而非 close_position：后者吞异常返回
+        错误字典且不校验交易所内层 statuses，「平仓失败」会被误记成功，
+        随后风控状态被误清、失败仓位再无人接管。
+
+        Returns:
+            True 表示确认平仓成功；False 表示重试+兜底后仍失败（调用方
+            必须保留该持仓的风控记录并在下一周期重试）。
+        """
+        try:
+            ok, _result = self.client.emergency_close_with_retry(symbol, None, reason=reason)
+            return bool(ok)
+        except Exception as e:
+            print(f"❌ 强制平仓异常 {symbol}: {e}")
+            return False
 
     def calculate_suggested_trade_amount(
         self,
@@ -963,7 +1027,8 @@ class OrderManager:
             print(f"📈 限价开多 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
 
             # 2. 仅在无持仓时设置杠杆（避免逐仓模式下有持仓时修改杠杆导致保证金问题）
-            current_positions = self.get_current_positions()
+            # 持仓查询失败按「无持仓」处理：影响仅是多设一次杠杆，方向保守
+            current_positions = self.get_current_positions() or []
             has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
             if has_position:
@@ -1107,7 +1172,8 @@ class OrderManager:
             print(f"📉 限价开空 {symbol}: {size} 张合约 @ ${limit_price:.2f}")
 
             # 2. 仅在无持仓时设置杠杆（避免逐仓模式下有持仓时修改杠杆导致保证金问题）
-            current_positions = self.get_current_positions()
+            # 持仓查询失败按「无持仓」处理：影响仅是多设一次杠杆，方向保守
+            current_positions = self.get_current_positions() or []
             has_position = any(pos.get("coin") == symbol for pos in current_positions)
 
             if has_position:
@@ -1196,7 +1262,7 @@ class OrderManager:
             }]
         """
         try:
-            open_orders = self.client.get_open_orders()
+            open_orders = self.client.get_open_orders() or []
             current_price_map = {}
 
             # 格式化限价单

@@ -3,7 +3,7 @@ Hyperliquid 市场数据获取模块
 使用 Hyperliquid Info API 获取K线和市场数据
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 from hyperliquid.utils import constants
@@ -103,6 +103,19 @@ class MarketDataFetcher:
 
             # 只保留需要的列
             df = df[required_cols]
+
+            # 丢弃未收盘的当前 K 线：接口总会带上刚开盘的残根（只有几秒数据），
+            # 用它算 RSI/MACD 等指标会引入噪声（K 线节拍触发的本意就是用刚收盘
+            # 的完整 K 线决策）。K 线 t 为周期起点（UTC 毫秒）：起点+周期 > 当前
+            # 时刻即未收盘。留 2s 容差吸收本机与交易所的时钟偏差。
+            tf_delta = timedelta(minutes=self._parse_timeframe(timeframe))
+            now_utc = datetime.now(UTC).replace(tzinfo=None)
+            closed_mask = df["timestamp"] + tf_delta <= now_utc + timedelta(seconds=2)
+            if not closed_mask.all():
+                df = df[closed_mask].reset_index(drop=True)
+            if df.empty:
+                print(f"⚠️ {symbol} 无已收盘的K线数据")
+                return None
 
             print(f"✅ 获取 {symbol} K线数据: {len(df)} 条 ({timeframe})")
 

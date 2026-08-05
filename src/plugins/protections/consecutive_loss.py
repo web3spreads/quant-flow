@@ -46,7 +46,14 @@ class ConsecutiveLossProtection(IProtection):
                 if elapsed >= pause_hours:
                     self._is_paused = False
                     self._pause_reason = ""
-                    logger.info("连续亏损保护暂停期已过，恢复交易")
+                    # 暂停到期必须清零计数：否则空仓状态下没有任何平仓事件能
+                    # 重置计数，下一次 check 立即因「计数仍达阈值」重新触发，
+                    # 每个冷却期循环一次，账户被永久锁死（脚本实测可复现）。
+                    # 与 per_symbol 锁到期清零 _symbol_losses 的语义保持一致。
+                    self._global_losses = 0
+                    self._last_protection_time = None
+                    self.save_state()
+                    logger.info("连续亏损保护暂停期已过，恢复交易（连亏计数已重置）")
 
             # 清理已过期的 symbol 锁定
             self._cleanup_expired_locks(context.timestamp)

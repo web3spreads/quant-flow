@@ -132,7 +132,10 @@ class GridAgent:
             }
 
         except Exception as e:
-            return {"action": "ERROR", "reason": str(e), "llm_ok": False}
+            # 非 LLM 环节的内部异常也走保守兜底。reason 打上「内部异常」前缀：
+            # llm_ok=False 会计入 LLM 连续故障告警，归因文案必须能区分
+            # 「LLM 真挂了」与「我们自己的代码炸了」，否则排障方向会被带偏。
+            return {"action": "ERROR", "reason": f"内部异常(非 LLM 调用失败): {e}", "llm_ok": False}
 
     def _build_update_config(
         self, ai_decision: dict[str, Any], market_data: dict[str, Any], confidence: float

@@ -133,3 +133,61 @@ class TestManagerBehavior:
 def _isolate_cwd_data(monkeypatch, tmp_path):
     """防止插件把状态文件写进仓库的 data/ 目录。"""
     monkeypatch.chdir(tmp_path)
+
+
+class TestConsecutiveLossPauseExpiry:
+    def test_global_counter_resets_after_pause_expires(self, tmp_path):
+        # 历史缺陷：暂停到期只清 _is_paused 不清计数，空仓时下一次 check
+        # 立即因计数仍达阈值重新触发，每个冷却期循环一次=永久锁死
+        manager = make_manager(
+            [
+                {
+                    "name": "consecutive_loss",
+                    "max_consecutive_losses": 2,
+                    "per_symbol": False,
+                    "pause_hours": 1,
+                }
+            ],
+            tmp_path,
+        )
+        t0 = datetime(2026, 8, 5, 10, 0, 0)
+        manager.on_trade_close("BTC", pnl=-1.0, timestamp=t0)
+        manager.on_trade_close("BTC", pnl=-1.0, timestamp=t0)
+        results = manager.check_all(make_context(1000.0, timestamp=t0))
+        assert results and results[0].action == ProtectionAction.PAUSE_NEW_TRADES
+
+        # 暂停期后（无任何平仓事件）：必须恢复且不再重复触发
+        t1 = t0 + timedelta(hours=1, minutes=1)
+        assert manager.check_all(make_context(1000.0, timestamp=t1)) == []
+        t2 = t1 + timedelta(minutes=5)
+        assert manager.check_all(make_context(1000.0, timestamp=t2)) == []
+
+
+class TestDrawdownSuspectSample:
+    def test_single_collapse_sample_not_trusted(self, tmp_path):
+        # 单次骤降逾 50%（统一账户接口降级形态）：首个样本只告警不熔断
+        manager = make_manager([{"name": "max_drawdown", "max_drawdown_pct": 0.10}], tmp_path)
+        assert manager.check_all(make_context(1000.0)) == []  # 峰值 1000
+        results = manager.check_all(make_context(200.0))  # 骤降 80%
+        assert results == []  # 等待确认，不触发
+
+    def test_recovered_sample_clears_suspicion(self, tmp_path):
+        manager = make_manager([{"name": "max_drawdown", "max_drawdown_pct": 0.10}], tmp_path)
+        manager.check_all(make_context(1000.0))
+        manager.check_all(make_context(200.0))  # 坏采样
+        assert manager.check_all(make_context(995.0)) == []  # 恢复，虚惊一场
+
+    def test_persistent_collapse_confirmed_and_triggers(self, tmp_path):
+        # 连续两周期骤降=真实回撤，第二个样本必须正常触发 CLOSE_ALL
+        manager = make_manager([{"name": "max_drawdown", "max_drawdown_pct": 0.10}], tmp_path)
+        manager.check_all(make_context(1000.0))
+        manager.check_all(make_context(200.0))
+        results = manager.check_all(make_context(210.0))
+        assert results and results[0].action == ProtectionAction.CLOSE_ALL_POSITIONS
+
+    def test_normal_drawdown_unaffected_by_guard(self, tmp_path):
+        # 未过坏采样阈值的正常回撤照常即时触发
+        manager = make_manager([{"name": "max_drawdown", "max_drawdown_pct": 0.10}], tmp_path)
+        manager.check_all(make_context(1000.0))
+        results = manager.check_all(make_context(850.0))  # 回撤 15%，跌幅未过 50%
+        assert results and results[0].action == ProtectionAction.CLOSE_ALL_POSITIONS

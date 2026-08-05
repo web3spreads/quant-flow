@@ -97,10 +97,14 @@ class LLMClient:
 
 
 def extract_json(text: Any) -> dict[str, Any]:
-    """从 LLM 回复中提取首个 JSON 对象。
+    """从 LLM 回复中提取首个 JSON 对象（保证返回 dict，否则抛 ValueError）。
 
     依次尝试：```json 围栏 → 整体解析 → 括号平衡扫描提取首个对象。
     平衡扫描正确处理字符串内的花括号与转义，线上验证过 19 类畸形输出。
+
+    返回值恒为 dict：解析出 list/标量（如 LLM 输出 JSON 数组）时继续降级
+    尝试，最终仍无对象则抛 ValueError——调用方的兜底路径（HOLD/KEEP_GRID +
+    llm_ok=False）依赖这一契约，绝不能把非 dict 透传出去引发 AttributeError。
 
     Raises:
         ValueError: 文本中不存在可解析的 JSON 对象
@@ -114,14 +118,24 @@ def extract_json(text: Any) -> dict[str, Any]:
 
     fenced = re.search(r"```json\s*([\s\S]*?)```", raw, re.IGNORECASE)
     if fenced and fenced.group(1).strip():
-        return json.loads(fenced.group(1))
+        try:
+            parsed = json.loads(fenced.group(1))
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass  # 围栏内容损坏时继续尝试其余提取策略
 
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
     except (json.JSONDecodeError, ValueError):
         pass
 
-    return json.loads(_first_json_object(raw))
+    parsed = json.loads(_first_json_object(raw))
+    if not isinstance(parsed, dict):
+        raise ValueError(f"解析结果不是 JSON 对象（实际为 {type(parsed).__name__}）")
+    return parsed
 
 
 def _first_json_object(text: str) -> str:

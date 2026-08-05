@@ -3,9 +3,10 @@ Hyperliquid 永续合约客户端
 基于官方 hyperliquid-python-sdk
 """
 
+import logging
 import time
 import traceback
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from math import floor, log10
 from typing import Any
 
@@ -16,6 +17,14 @@ from hyperliquid.utils import constants
 
 from src.fees import FeeRates, calculate_fee_rates
 from src.utils.hyperliquid import create_info, safe_spot_meta
+
+# 与全局 TradingLogger 共用 "quantflow" 记录器：资金安全级失败必须进 main.log，
+# 不能只留在 stdout（容器重启即丢）
+logger = logging.getLogger("quantflow")
+
+# 交易对元数据缓存有效期（秒）：szDecimals 等精度信息几乎不变，
+# 逐单拉全量 meta 纯属浪费且在批量布单时放大限流风险
+_ASSET_INFO_CACHE_TTL = 600.0
 
 
 class HyperliquidClient:
@@ -78,6 +87,9 @@ class HyperliquidClient:
         else:
             print("👤 模式: 单钱包")
             print(f"📍 钱包地址: {self.address}")
+
+        # 交易对元数据缓存：symbol -> (缓存时间, 元数据)
+        self._asset_info_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
         # 预先获取安全的 spot_meta，Info 和 Exchange 共享，避免重复请求和越界崩溃
         self._spot_meta = safe_spot_meta(self.base_url)
@@ -247,12 +259,16 @@ class HyperliquidClient:
             print(f"❌ 获取余额失败: {e}")
             return None
 
-    def get_positions(self) -> list[dict[str, Any]]:
+    def get_positions(self) -> list[dict[str, Any]] | None:
         """
         获取当前持仓
 
         Returns:
-            List of positions:
+            持仓列表；**查询失败返回 None（未知），绝不降级为空列表**——
+            「查询失败」与「确认无持仓」是完全不同的风控语义：把 API 抖动当
+            空仓会让清理逻辑撤掉在保护真实持仓的 TP/SL 触发单、让监控线程把
+            成交订单误判为已取消。调用方必须显式处理 None（跳过本轮判断）。
+
             [{
                 'coin': str,  # 交易对名称（如 'ETH'）
                 'szi': str,  # 仓位大小（正数=多仓，负数=空仓）
@@ -273,9 +289,9 @@ class HyperliquidClient:
             return positions
         except Exception as e:
             print(f"❌ 获取持仓失败: {e}")
-            return []
+            return None
 
-    def get_open_orders(self, include_trigger: bool = False) -> list[dict[str, Any]]:
+    def get_open_orders(self, include_trigger: bool = False) -> list[dict[str, Any]] | None:
         """
         获取待处理的订单列表
 
@@ -283,7 +299,11 @@ class HyperliquidClient:
             include_trigger: 是否包含 trigger 触发单（TP/SL）
 
         Returns:
-            List of open orders:
+            挂单列表；**查询失败返回 None（未知），绝不降级为空列表**——
+            把「查不到」当「没挂单」会让网格增量同步把仍在挂着的订单判为
+            已成交/已撤销，成对复制挂单或把库存移出簿记。调用方必须显式
+            处理 None（跳过本轮同步/补单）。
+
             [{
                 'oid': int,  # 订单ID
                 'coin': str,  # 交易对符号
@@ -313,7 +333,7 @@ class HyperliquidClient:
             return [o for o in normalized_orders if not self._is_trigger_like_order(o)]
         except Exception as e:
             print(f"❌ 获取待处理订单失败: {e}")
-            return []
+            return None
 
     @staticmethod
     def _is_trigger_like_order(order: dict[str, Any]) -> bool:
@@ -353,7 +373,7 @@ class HyperliquidClient:
 
     def get_asset_info(self, symbol: str) -> dict[str, Any] | None:
         """
-        获取交易对的元数据信息
+        获取交易对的元数据信息（带 TTL 缓存）
 
         Args:
             symbol: 交易对符号（如 'ETH'）
@@ -361,17 +381,22 @@ class HyperliquidClient:
         Returns:
             交易对元数据，包括精度信息
         """
+        cached = self._asset_info_cache.get(symbol)
+        if cached and time.monotonic() - cached[0] < _ASSET_INFO_CACHE_TTL:
+            return cached[1]
         try:
             meta = self._request_with_fallback("meta")
             universe = meta.get("universe", [])
             for asset in universe:
                 if asset.get("name") == symbol:
+                    self._asset_info_cache[symbol] = (time.monotonic(), asset)
                     return asset
             print(f"⚠️ 找不到交易对 {symbol} 的元数据")
             return None
         except Exception as e:
             print(f"❌ 获取交易对信息失败: {e}")
-            return None
+            # 拉取失败时回退过期缓存：精度信息几乎不变，旧值远好于兜底猜测
+            return cached[1] if cached else None
 
     def get_current_price(self, symbol: str) -> float | None:
         """
@@ -399,10 +424,14 @@ class HyperliquidClient:
         """
         根据 Hyperliquid 的价格精度要求格式化价格
 
-        Hyperliquid 价格要求:
-        1. 最多5位有效数字
+        Hyperliquid 价格要求（二者同时满足，整数价格始终合法）:
+        1. 最多 5 位有效数字
         2. 最多 MAX_DECIMALS - szDecimals 位小数（永续合约 MAX_DECIMALS=6）
-        3. 必须是 tick size 的整数倍
+
+        历史缺陷：此处曾硬编码「0.1 的整数倍」步进——对 ETH/BTC 等高价合约
+        恰好无害，但低价合约（如 $0.12 档）的所有价格会被整体拍扁到 0.1，
+        网格塌缩成同一价位、做多止损可被抬到入场价当场触发。HL 并无全局
+        0.1 tick 规则，按官方两条精度规则格式化即可。
 
         参考: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 
@@ -414,17 +443,13 @@ class HyperliquidClient:
             格式化后的价格
         """
         try:
-            # 1. 首先限制到5位有效数字
-            # 例如: 94283.7 -> 94284 (5位有效数字)
+            # 1. 限制到 5 位有效数字（例如 94283.7 -> 94284）
             if price > 0:
-                # 计算数量级
                 magnitude = floor(log10(abs(price)))
-                # 保留5位有效数字
                 sig_figs = 5
-                # 计算需要保留的小数位数
                 decimal_places = sig_figs - magnitude - 1
                 if decimal_places < 0:
-                    # 价格很大，需要四舍五入到整数位
+                    # 价格很大，四舍五入到对应整数位
                     factor = 10 ** (-decimal_places)
                     formatted = round(price / factor) * factor
                 else:
@@ -432,22 +457,11 @@ class HyperliquidClient:
             else:
                 formatted = price
 
-            # 2. 确保是 tick size (0.1) 的整数倍
-            # 使用 Decimal 避免浮点数精度问题
-            tick_size = Decimal("0.1")
-            price_decimal = Decimal(str(formatted))
-
-            # 转换为 tick 单位，四舍五入，再转回价格
-            ticks = (price_decimal / tick_size).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-            formatted = float(ticks * tick_size)
-
-            # 3. 获取 szDecimals，计算最大小数位数
-            # 永续合约: max_decimals = 6 - szDecimals
+            # 2. 按 szDecimals 限制最大小数位数（永续: 6 - szDecimals）
             asset_info = self.get_asset_info(symbol)
             if asset_info:
                 sz_decimals = asset_info.get("szDecimals", 0)
                 max_price_decimals = 6 - sz_decimals
-                # 限制小数位数（使用 Decimal 确保精度）
                 formatted_decimal = Decimal(str(formatted))
                 quantize_str = (
                     "0." + "0" * max(0, max_price_decimals) if max_price_decimals > 0 else "1"
@@ -463,6 +477,23 @@ class HyperliquidClient:
             traceback.print_exc()
             # 回退：四舍五入到整数（最安全）
             return float(round(price))
+
+    def round_size(self, symbol: str, size: float) -> float:
+        """按交易对 szDecimals 向下取整下单数量。
+
+        用内建 round() 是银行家舍入、可向上进位——开仓量被悄悄放大意味着
+        实际敞口超出策略预算。资金方向的取整必须只朝保守方向（ROUND_DOWN）。
+        """
+        asset_info = self.get_asset_info(symbol)
+        decimals = 3
+        if asset_info and "szDecimals" in asset_info:
+            try:
+                decimals = max(0, int(asset_info["szDecimals"]))
+            except (TypeError, ValueError):
+                decimals = 3
+        step = Decimal(1).scaleb(-decimals)  # 10^-decimals
+        quantized = (Decimal(str(size)) / step).quantize(Decimal("1"), rounding=ROUND_DOWN) * step
+        return float(quantized)
 
     @staticmethod
     def check_order_success(order_result: dict[str, Any]) -> tuple[bool, str | None]:
@@ -605,13 +636,8 @@ class HyperliquidClient:
             订单结果
         """
         try:
-            # 格式化数量，根据交易对的 szDecimals 精度要求
-            asset_info = self.get_asset_info(symbol)
-            if asset_info and "szDecimals" in asset_info:
-                decimals = asset_info["szDecimals"]
-                size = round(size, decimals)
-            else:
-                size = round(size, 3)
+            # 格式化数量：按交易对精度向下取整（不放大敞口）
+            size = self.round_size(symbol, size)
 
             # 使用官方的 market_open 方法
             # 注意：market_open 不直接支持 reduce_only 参数
@@ -649,13 +675,8 @@ class HyperliquidClient:
             订单结果
         """
         try:
-            # 格式化数量，根据交易对的 szDecimals 精度要求
-            asset_info = self.get_asset_info(symbol)
-            if asset_info and "szDecimals" in asset_info:
-                decimals = asset_info["szDecimals"]
-                size = round(size, decimals)
-            else:
-                size = round(size, 3)
+            # 格式化数量：按交易对精度向下取整（不放大敞口）
+            size = self.round_size(symbol, size)
 
             # 格式化价格
             price = self.format_price(symbol, price)
@@ -751,7 +772,7 @@ class HyperliquidClient:
                     # 【关键安全机制】止损单失败，立即平仓避免裸仓（带退避重试 + 全平兜底 + 失败告警）
                     if require_stop_loss:
                         print("⚠️ 【安全机制】止损单设置失败，立即平仓避免裸仓风险")
-                        rb_ok, rb_result = self._emergency_close_with_retry(
+                        rb_ok, rb_result = self.emergency_close_with_retry(
                             symbol, size, reason="止损单失败"
                         )
                         result["rollback_executed"] = True
@@ -799,7 +820,7 @@ class HyperliquidClient:
             if result["market_order"] and self.check_order_success(result["market_order"])[0]:
                 print("⚠️ 【安全机制】发生异常，尝试平仓避免裸仓风险")
                 try:
-                    rb_ok, rb_result = self._emergency_close_with_retry(
+                    rb_ok, rb_result = self.emergency_close_with_retry(
                         symbol, size, reason="下单异常"
                     )
                     result["rollback_executed"] = True
@@ -849,13 +870,8 @@ class HyperliquidClient:
             # 格式化触发价格，避免精度问题
             trigger_price = self.format_price(symbol, trigger_price)
 
-            # 格式化数量，根据交易对的 szDecimals 精度要求
-            asset_info = self.get_asset_info(symbol)
-            if asset_info and "szDecimals" in asset_info:
-                decimals = asset_info["szDecimals"]
-                size = float(round(size, decimals))
-            else:
-                size = float(round(size, 3))
+            # 格式化数量：按交易对精度向下取整，与开仓量的取整方向保持一致
+            size = self.round_size(symbol, size)
 
             # 确保 trigger_price 是 float 类型
             trigger_price_float = float(trigger_price)
@@ -990,9 +1006,9 @@ class HyperliquidClient:
                     print(f"❌ {error_msg}")
                     return {"status": "error", "message": error_msg}
 
-            # 如果是逐仓模式，检查当前持仓的杠杆
+            # 如果是逐仓模式，检查当前持仓的杠杆（查询失败按无持仓处理，直接设杠杆）
             if not is_cross:
-                positions = self.get_positions()
+                positions = self.get_positions() or []
                 for position in positions:
                     if position.get("coin") == symbol:
                         # 获取当前持仓的杠杆
@@ -1150,28 +1166,32 @@ class HyperliquidClient:
 
         return result
 
-    def _emergency_close_with_retry(
+    def emergency_close_with_retry(
         self,
         symbol: str,
-        size: float,
+        size: float | None = None,
         *,
         reason: str,
         max_retries: int = 3,
     ) -> tuple[bool, dict[str, Any] | None]:
-        """紧急平仓（止损单失败/下单异常后避免裸仓的统一兜底）。
+        """紧急平仓（止损失败回滚 / 风控熔断强平 / Triple Barrier 的统一兜底）。
 
         策略：
-        1. 按 size 重试部分平仓，尝试间指数退避（0.5s/1s/2s），避免无间隔连发
-           被交易所限流/判重，反而降低成功率；
+        1. 按 size 重试部分平仓（size=None 直接全平），尝试间指数退避
+           （0.5s/1s/2s），避免无间隔连发被交易所限流/判重，反而降低成功率；
         2. 多次失败后退一步用 market_close 全平兜底——部分平仓依赖 get_positions
            查询持仓方向，行情/网络抖动导致查询为空会一直失败，全平不依赖该查询；
-        3. 仍失败则发 critical 风控告警，由人工介入，绝不静默放过裸仓。
+        3. 仍失败则打 critical 日志由人工介入，绝不静默放过裸仓。
+
+        这是全仓库唯一合法的「风控平仓」入口：所有平仓必须经 check_order_success
+        校验内层 statuses——close_position 吞异常返回的 {"status":"error"} 是真值
+        字典，只判 `if result:` 会把失败记成成功。
 
         Args:
             symbol: 交易对符号
-            size: 期望平掉的数量
+            size: 期望平掉的数量（None=市价全平）
             reason: 触发原因（用于日志/告警）
-            max_retries: 部分平仓最大重试次数
+            max_retries: 平仓最大重试次数
 
         Returns:
             (是否最终平仓成功, 最后一次平仓结果)
@@ -1199,11 +1219,18 @@ class HyperliquidClient:
             print(f"✅ 市价全平兜底成功（{reason}）")
             return True, last_result
 
-        critical_msg = (
-            f"紧急平仓在 {max_retries} 次重试+全平兜底后仍失败: {last_error}，请立即手动处理！"
+        # critical 进 main.log：容器 stdout 会随重启丢失，资金安全告警必须落盘
+        logger.critical(
+            "【严重】紧急平仓在 %d 次重试+全平兜底后仍失败（%s，%s）: %s，请立即手动处理！",
+            max_retries,
+            symbol,
+            reason,
+            last_error,
         )
-        print(f"❌ 【严重】{critical_msg}")
         return False, last_result
+
+    # 兼容旧内部命名（历史调用方/测试可能仍引用私名）
+    _emergency_close_with_retry = emergency_close_with_retry
 
     def close_position(self, symbol: str, size: float | None = None) -> dict[str, Any]:
         """
@@ -1223,8 +1250,12 @@ class HyperliquidClient:
                 result = self._request_with_fallback("market_close", symbol, is_exchange=True)
                 return result
             else:
-                # 部分平仓 - 需要判断持仓方向
+                # 部分平仓：查持仓仅为把平仓量钳制到实际持仓——历史实现用
+                # market_open 反向开市价单且不钳制数量，簿记漂移（层级记录量
+                # 大于真实持仓）时会把仓位反向翻转成一笔无止损的新仓。
                 positions = self.get_positions()
+                if positions is None:
+                    return {"status": "error", "message": f"持仓查询失败，无法部分平仓 {symbol}"}
                 position = next((p for p in positions if p["coin"] == symbol), None)
 
                 if not position:
@@ -1235,20 +1266,22 @@ class HyperliquidClient:
                 if position_size == 0:
                     return {"status": "error", "message": f"{symbol} 仓位为 0"}
 
-                # 判断平仓方向：持仓为正(多仓)则卖出平仓，持仓为负(空仓)则买入平仓
-                is_buy = position_size < 0
-                close_size = abs(float(size))
+                # 平仓量钳制到实际持仓，绝不反向开仓
+                close_size = min(abs(float(size)), abs(position_size))
+                close_size = self.round_size(symbol, close_size)
+                if close_size <= 0:
+                    return {"status": "error", "message": f"{symbol} 平仓量取整后为 0"}
 
-                print(f"🔴 市价部分平仓 {symbol}: {'买入' if is_buy else '卖出'} {close_size}")
+                print(f"🔴 市价部分平仓 {symbol}: {close_size}（持仓 {position_size}）")
 
-                # 使用官方 market_open 方法，配合 1% 滑点
+                # 使用官方 market_close 按量平仓（reduce-only 语义：只减仓不反向），
+                # 配合 1% 滑点（官方推荐）
                 result = self._request_with_fallback(
-                    "market_open",
+                    "market_close",
                     symbol,
-                    is_buy,
                     close_size,
                     None,  # px=None 使用市价
-                    0.01,  # 1% 滑点（官方推荐，比原来的5%更合理）
+                    0.01,
                     is_exchange=True,
                 )
 

@@ -1,0 +1,305 @@
+"""GridManager 资金安全路径测试：紧急平仓校验、增量同步防误判、手术式减仓。
+
+全部离线：交易所行为由 FakeGridClient 模拟，check_order_success 复用真实实现
+保证内层 statuses 校验语义与线上一致。
+"""
+
+from decimal import Decimal
+
+from conftest import QUIET_LOGGER
+
+from src.trading.client import HyperliquidClient
+from src.trading.grid_manager import GridManager
+from src.utils.grid_math import GridLevel, GridLevelState
+from src.utils.precision import to_decimal
+
+OK_ORDER = {
+    "status": "ok",
+    "response": {"type": "order", "data": {"statuses": [{"resting": {"oid": 900}}]}},
+}
+FILLED_ORDER = {
+    "status": "ok",
+    "response": {
+        "type": "order",
+        "data": {"statuses": [{"filled": {"avgPx": "100.0", "totalSz": "0.5", "oid": 901}}]},
+    },
+}
+REJECTED_ORDER = {
+    "status": "ok",
+    "response": {"type": "order", "data": {"statuses": [{"error": "Insufficient margin"}]}},
+}
+
+
+class FakeGridClient:
+    """HyperliquidClient 桩：行为可配置，校验逻辑复用真实实现。"""
+
+    check_order_success = staticmethod(HyperliquidClient.check_order_success)
+    get_order_fill_info = staticmethod(HyperliquidClient.get_order_fill_info)
+
+    def __init__(self):
+        self.address = "0xtest"
+        self.open_orders: list[dict] | None = []
+        self.positions: list[dict] | None = []
+        self.price = 100.0
+        self.fills: list[dict] = []
+        self.close_results: list[dict] = []
+        self.close_calls: list[tuple] = []
+        self.emergency_results: list[tuple[bool, dict | None]] = []
+        self.emergency_calls: list[tuple] = []
+        self.cancel_calls: list[int] = []
+        self.limit_orders: list[dict] = []
+        self.info = self
+
+    # ── Info 接口 ──
+    def user_fills(self, address):
+        if self.fills is None:
+            raise RuntimeError("fills 接口故障")
+        return list(self.fills)
+
+    # ── 行情/元数据 ──
+    def get_current_price(self, symbol):
+        return self.price
+
+    def get_asset_info(self, symbol):
+        return {"szDecimals": 3}
+
+    def format_price(self, symbol, price):
+        return round(float(price), 3)
+
+    # ── 账户查询 ──
+    def get_open_orders(self, include_trigger=False):
+        return None if self.open_orders is None else list(self.open_orders)
+
+    def get_positions(self):
+        return None if self.positions is None else list(self.positions)
+
+    # ── 交易 ──
+    def cancel_order(self, symbol, oid):
+        self.cancel_calls.append(oid)
+        return {"status": "ok"}
+
+    def close_position(self, symbol, size=None):
+        self.close_calls.append((symbol, size))
+        return self.close_results.pop(0) if self.close_results else REJECTED_ORDER
+
+    def emergency_close_with_retry(self, symbol, size=None, *, reason, max_retries=3):
+        self.emergency_calls.append((symbol, size, reason))
+        if self.emergency_results:
+            return self.emergency_results.pop(0)
+        return False, {"status": "error", "message": "桩默认失败"}
+
+    def place_limit_order(self, symbol, is_buy, size, price, reduce_only=False):
+        self.limit_orders.append(
+            {"symbol": symbol, "is_buy": is_buy, "size": size, "price": price, "ro": reduce_only}
+        )
+        return OK_ORDER
+
+
+class FakeGridOrderManager:
+    def __init__(self, client):
+        self.client = client
+        self.long_limits: list[tuple] = []
+        self.short_limits: list[tuple] = []
+
+    def get_current_positions(self):
+        return self.client.get_positions()
+
+    def execute_long_limit(self, symbol, amount, price, **kwargs):
+        self.long_limits.append((symbol, amount, price))
+        return {"success": True, "limit_order": OK_ORDER}
+
+    def execute_short_limit(self, symbol, amount, price, **kwargs):
+        self.short_limits.append((symbol, amount, price))
+        return {"success": True, "limit_order": OK_ORDER}
+
+
+def make_manager(tmp_path, client=None):
+    client = client or FakeGridClient()
+    om = FakeGridOrderManager(client)
+    manager = GridManager(
+        om,
+        QUIET_LOGGER,
+        state_file=str(tmp_path / "grid_state.json"),
+        netting_attribution_enabled=True,
+    )
+    return manager, client, om
+
+
+def make_filled_level(level_id="L0", side="LONG", price="100", amount="0.5") -> GridLevel:
+    level = GridLevel(
+        id=level_id,
+        price=to_decimal(price),
+        amount=to_decimal("50"),
+        side=side,
+        state=GridLevelState.OPEN_FILLED,
+    )
+    level.open_fill_price = to_decimal(price)
+    level.open_fill_amount = to_decimal(amount)
+    level.open_fill_time = 1000.0
+    return level
+
+
+class TestEmergencyCloseVerification:
+    def test_failure_keeps_risk_state_and_marks_pending(self, tmp_path):
+        # 平仓失败：层级/屏障/PnL 必须保留，待重试标记落盘，绝不谎报成功
+        manager, client, _ = make_manager(tmp_path)
+        manager.grid_levels["ETH"] = [make_filled_level()]
+        manager.pnl_trackers["ETH"] = (
+            manager.pnl_trackers.get("ETH")
+            or __import__("src.trading.grid_pnl", fromlist=["GridPnLTracker"]).GridPnLTracker()
+        )
+        client.positions = [{"coin": "ETH", "szi": "0.5"}]
+        client.emergency_results = [(False, {"status": "error", "message": "限流"})]
+
+        ok = manager._emergency_close_all("ETH", reason="STOP_LOSS 测试")
+        assert ok is False
+        assert "ETH" in manager.grid_levels  # 风控状态保留
+        assert manager.state["pending_emergency_close"]["ETH"] == "STOP_LOSS 测试"
+
+    def test_success_clears_state(self, tmp_path):
+        manager, client, _ = make_manager(tmp_path)
+        manager.grid_levels["ETH"] = [make_filled_level()]
+        client.positions = [{"coin": "ETH", "szi": "0.5"}]
+        client.emergency_results = [(True, FILLED_ORDER)]
+
+        ok = manager._emergency_close_all("ETH", reason="STOP_LOSS 测试")
+        assert ok is True
+        assert "ETH" not in manager.grid_levels
+        assert "ETH" not in (manager.state.get("pending_emergency_close") or {})
+
+    def test_retry_clears_when_position_gone(self, tmp_path):
+        # 待重试期间持仓消失（交易所侧成交/人工处理）：只做状态收尾，不再下单
+        manager, client, _ = make_manager(tmp_path)
+        manager.grid_levels["ETH"] = [make_filled_level()]
+        manager.state["pending_emergency_close"] = {"ETH": "上轮失败"}
+        client.positions = []
+
+        manager.retry_pending_emergency_close("ETH")
+        assert "ETH" not in manager.grid_levels
+        assert "ETH" not in (manager.state.get("pending_emergency_close") or {})
+        assert client.emergency_calls == []
+
+    def test_retry_recloses_when_position_remains(self, tmp_path):
+        manager, client, _ = make_manager(tmp_path)
+        manager.state["pending_emergency_close"] = {"ETH": "上轮失败"}
+        client.positions = [{"coin": "ETH", "szi": "0.5"}]
+        client.emergency_results = [(True, FILLED_ORDER)]
+
+        manager.retry_pending_emergency_close("ETH")
+        assert len(client.emergency_calls) == 1
+        assert "ETH" not in (manager.state.get("pending_emergency_close") or {})
+
+
+class TestIncrementalSyncGuards:
+    def _pending_level(self) -> GridLevel:
+        level = GridLevel(
+            id="L0",
+            price=to_decimal("99"),
+            amount=to_decimal("50"),
+            side="LONG",
+            state=GridLevelState.OPEN_PENDING,
+        )
+        level.open_order_id = 12345
+        return level
+
+    def test_orders_query_failure_skips_sync(self, tmp_path):
+        # 挂单查询失败（None）：整轮跳过，层级状态不得变化、不得重新挂单
+        manager, client, om = make_manager(tmp_path)
+        level = self._pending_level()
+        manager.grid_levels["ETH"] = [level]
+        client.open_orders = None
+
+        manager.sync_grid_incremental("ETH")
+        assert level.state == GridLevelState.OPEN_PENDING
+        assert om.long_limits == []
+
+    def test_fills_query_failure_skips_sync(self, tmp_path):
+        # 成交记录查询失败：不得把「已成交」误判为「被撤销」打回 IDLE 重挂
+        manager, client, om = make_manager(tmp_path)
+        level = self._pending_level()
+        manager.grid_levels["ETH"] = [level]
+        client.open_orders = []  # 订单已不在挂单列表（实际已成交）
+        client.fills = None  # 但 fills 接口故障
+
+        manager.sync_grid_incremental("ETH")
+        assert level.state == GridLevelState.OPEN_PENDING
+        assert om.long_limits == []
+
+    def test_passive_sync_confirms_fill_without_new_opens(self, tmp_path):
+        # 被动同步（KEEP_GRID）：确认成交、挂平仓单，但 IDLE 层不挂新开仓单
+        manager, client, om = make_manager(tmp_path)
+        pending = self._pending_level()
+        idle = GridLevel(
+            id="L1",
+            price=to_decimal("98"),
+            amount=to_decimal("50"),
+            side="LONG",
+            state=GridLevelState.IDLE,
+        )
+        manager.grid_levels["ETH"] = [pending, idle]
+        client.open_orders = []
+        client.fills = [{"oid": 12345, "px": "99.0", "sz": "0.505", "time": 1000}]
+
+        manager.sync_grid_incremental("ETH", allow_open=False)
+        assert pending.state == GridLevelState.OPEN_FILLED
+        assert pending.open_fill_amount == Decimal("0.505")
+        assert idle.state == GridLevelState.IDLE  # 未挂新开仓单
+        assert om.long_limits == []
+
+    def test_partial_fills_aggregated(self, tmp_path):
+        # 同一 oid 多笔部分成交必须聚合（量求和、价加权），只取首笔会低记库存
+        manager, client, _ = make_manager(tmp_path)
+        level = self._pending_level()
+        fills = [
+            {"oid": 12345, "px": "99.0", "sz": "0.3", "time": 1000},
+            {"oid": 12345, "px": "98.0", "sz": "0.2", "time": 1001},
+        ]
+        assert manager._confirm_fill("ETH", level, "open", fills) is True
+        assert level.open_fill_amount == Decimal("0.5")
+        expected_px = (
+            Decimal("99.0") * Decimal("0.3") + Decimal("98.0") * Decimal("0.2")
+        ) / Decimal("0.5")
+        assert level.open_fill_price == expected_px
+
+
+class TestSurgicalReduce:
+    def test_inner_rejection_not_recorded_as_closed(self, tmp_path):
+        # HL 拒单外层仍是 status=ok：内层 error 必须让层级保持原状（不得假关闭）
+        manager, client, _ = make_manager(tmp_path)
+        level = make_filled_level(amount="1.0")
+        manager.grid_levels["ETH"] = [level]
+        manager.max_position_notional_usd = 10.0  # 逆势名义额 100 > 上限 10 → 触发削减
+        client.positions = [{"coin": "ETH", "szi": "1.0"}]
+        client.close_results = [REJECTED_ORDER]
+
+        reduced = manager._surgical_reduce_adverse("ETH", trend_dir=-1, position_size=1.0)
+        assert reduced is False
+        assert level.state == GridLevelState.OPEN_FILLED  # 未被 reset
+
+    def test_successful_reduce_records_round_trip(self, tmp_path):
+        manager, client, _ = make_manager(tmp_path)
+        level = make_filled_level(amount="1.0")
+        manager.grid_levels["ETH"] = [level]
+        manager.max_position_notional_usd = 10.0
+        client.positions = [{"coin": "ETH", "szi": "1.0"}]
+        client.close_results = [FILLED_ORDER]
+
+        reduced = manager._surgical_reduce_adverse("ETH", trend_dir=-1, position_size=1.0)
+        assert reduced is True
+        assert level.state == GridLevelState.IDLE  # reset 回收复用
+
+
+class TestGridPriceFormatting:
+    def test_low_price_symbol_not_collapsed(self, tmp_path):
+        # 低价交易对：历史 0.1 tick 硬编码会把所有格子拍扁到同一价位
+        manager, _, _ = make_manager(tmp_path)
+        prices = manager._calculate_grid_prices(0.10, 0.14, 5, "ARITHMETIC")
+        formatted = manager._format_grid_prices("DOGE", prices)
+        assert len(formatted) == 5
+        assert formatted == sorted(set(formatted))
+
+    def test_duplicate_prices_deduped(self, tmp_path):
+        manager, client, _ = make_manager(tmp_path)
+        client.format_price = lambda symbol, price: round(float(price), 0)  # 粗精度
+        formatted = manager._format_grid_prices("ETH", [100.1, 100.2, 101.4])
+        assert formatted == [100.0, 101.0]

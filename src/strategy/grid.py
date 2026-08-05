@@ -70,6 +70,9 @@ class GridStrategy:
         self._llm_failure_streak = 0
         self._idle_streak = 0
         self._llm_alert_sent = False
+        # 账户熔断强平失败的非网格交易对（网格交易对的重试由 GridManager 的
+        # pending_emergency_close 承担），每周期开头重试直到确认平掉
+        self._pending_force_closes: dict[str, str] = {}
 
     # ── 主流程 ────────────────────────────────────────────────────────────
 
@@ -92,21 +95,42 @@ class GridStrategy:
         except Exception as e:
             self.logger.print_warning(f"[Grid] 净额归因异常（不影响主流程）: {e}")
 
-        # 2. 账户级风控熔断（回撤/单日亏损，按权益判定）
-        if self._account_protection_triggered():
-            return
+        # 2. 上一轮失败的强平重试：紧急平仓/熔断平仓失败的仓位绝不能脱管，
+        #    每周期开头优先重试直到确认平掉。
+        try:
+            self.grid_manager.retry_pending_emergency_close(symbol)
+        except Exception as e:
+            self.logger.print_warning(f"[Grid] 紧急平仓重试异常: {e}")
+        self._retry_pending_force_closes()
 
-        # 3. 净值快照 + 停机线短路
+        # 3. 账户级风控熔断（回撤/单日亏损，按权益判定）。
+        #    CLOSE_ALL：平仓撤单后结束本轮；PAUSE：只记标记，风控维护继续——
+        #    历史缺陷是 PAUSE 直接 return 连带跳过 Triple Barrier 与保护单维护，
+        #    暂停 4 小时期间持仓亏损不封底。
+        protection_action = self._check_account_protection()
+        if protection_action == ProtectionAction.CLOSE_ALL_POSITIONS:
+            return
+        paused = protection_action == ProtectionAction.PAUSE_NEW_TRADES
+
+        # 4. 净值快照 + 停机线短路（停机线只在无持仓时生效，先于屏障无风险）
         if self._snapshot_and_halted():
             return
 
-        # 4. Triple Barrier 每轮必查：独立于 AI action 分支，KEEP_GRID/ERROR
-        #    周期也兜底止损。触发即已紧急平仓，本轮跳过布单。
+        # 5. Triple Barrier 每轮必查：独立于 AI action 分支与暂停状态，
+        #    KEEP_GRID/ERROR/暂停周期也兜底止损。触发即已紧急平仓，本轮跳过布单。
         if self.grid_manager.check_barrier(symbol):
             self.logger.print_warning("[网格风控] Triple Barrier 触发，已紧急平仓，跳过本轮布单")
             return
 
-        # 5. 行情与指标
+        # 6. 暂停期：不调 LLM、不布新单，但持仓的风控维护照常
+        if paused:
+            self.logger.print_warning(
+                "[网格风控]账户风控暂停新开仓：本轮跳过 AI 决策与布单，仅维护持仓保护单"
+            )
+            self.grid_manager.maintain_protective_orders(symbol)
+            return
+
+        # 7. 行情与指标
         df = self.market_fetcher.fetch_ohlcv(symbol=symbol, timeframe=self.timeframe, limit=100)
         if df is None or df.empty:
             self.logger.print_error("无法获取市场数据，跳过本轮网格周期")
@@ -118,12 +142,29 @@ class GridStrategy:
             self.market_fetcher, symbol, cached_ohlcv={self.timeframe: df}
         )
 
-        # 6. 趋势过滤 → AI 决策 → 健康跟踪 → 空转自愈
+        # 8. 趋势过滤 → AI 决策 → 健康跟踪 → 空转自愈
         ai_decision = self._decide(market_data, trends)
         self._track_llm_health(ai_decision)
         ai_decision = self._maybe_fallback_rebuild(ai_decision, market_data)
 
-        # 7. 记录决策并同步网格
+        # 9. 连亏 per-symbol 锁定：锁定期内不允许重建/扩建网格（UPDATE_GRID 降级
+        #    为 KEEP_GRID，保护单维护照常）。历史缺陷：该锁只有永续路径消费，
+        #    对网格策略完全无效。
+        if ai_decision.get("action") == "UPDATE_GRID" and self.protection_manager:
+            locked, lock_reason = self.protection_manager.is_symbol_locked(symbol)
+            if locked:
+                self.logger.print_warning(
+                    f"[网格风控]{symbol} 连亏锁定中（{lock_reason}），UPDATE_GRID 降级为 KEEP_GRID"
+                )
+                ai_decision = {
+                    "action": "KEEP_GRID",
+                    "mode": "NEUTRAL",
+                    "confidence": float(ai_decision.get("confidence", 0.0)),
+                    "reason": f"连亏锁定中：{lock_reason}",
+                    "llm_ok": ai_decision.get("llm_ok", True),
+                }
+
+        # 10. 记录决策并同步网格
         action = ai_decision.get("action", "UNKNOWN")
         reason = ai_decision.get("reason", "")
         decision_ok = action in ("UPDATE_GRID", "KEEP_GRID")
@@ -187,33 +228,38 @@ class GridStrategy:
 
     # ── 账户级熔断 ────────────────────────────────────────────────────────
 
-    def _account_protection_triggered(self) -> bool:
-        """账户级熔断检查（回撤/单日亏损）。
+    def _check_account_protection(self) -> ProtectionAction:
+        """账户级熔断检查（回撤/单日亏损），返回本轮生效的保护动作。
 
-        - ``CLOSE_ALL_POSITIONS``：平全部持仓 + 撤本交易对网格挂单，跳过本轮；
-        - ``PAUSE_NEW_TRADES``：仅跳过本轮布单。
+        - ``CLOSE_ALL_POSITIONS``：经校验的强平（网格交易对走 GridManager 紧急
+          平仓流程：撤单+重试+强平 oid 登记+确认后清状态；其他交易对走
+          ``force_close_position``），失败的仓位登记待重试、保护记录不清理；
+        - ``PAUSE_NEW_TRADES``：只返回动作，调用方继续做风控维护；
+        - 余额/持仓查询失败时不误熔断（返回 NONE），避免网络抖动把网格误停。
 
-        余额/持仓查询失败时不误熔断（返回 False），避免网络抖动把网格误停。
         连亏熔断走另一条逐轮通路（GridManager 的 round-trip 回调），不在此处。
         """
         if not self.protection_manager:
-            return False
+            return ProtectionAction.NONE
 
         try:
             balance_info = self.order_manager.get_available_balance_info()
         except Exception as e:
             self.logger.print_warning(f"[网格风控] 获取余额失败，跳过风控检查: {e}")
-            return False
+            return ProtectionAction.NONE
         if balance_info.get("status") != "ok":
             self.logger.print_warning(
                 f"[网格风控] 余额查询异常({balance_info.get('message')})，跳过风控检查"
             )
-            return False
+            return ProtectionAction.NONE
         try:
             positions = self.order_manager.get_current_positions()
         except Exception as e:
             self.logger.print_warning(f"[网格风控] 获取持仓失败，跳过风控检查: {e}")
-            return False
+            return ProtectionAction.NONE
+        if positions is None:
+            self.logger.print_warning("[网格风控] 持仓查询失败，跳过风控检查")
+            return ProtectionAction.NONE
 
         context = ProtectionContext(
             balance=balance_info.get("available", 0),
@@ -233,24 +279,67 @@ class GridStrategy:
                 sym = pos.get("coin", "")
                 if not sym:
                     continue
-                try:
-                    self.order_manager.close_position(sym)
-                    # 强平属风控主动行为：清理持仓记录，不向连亏插件上报虚假 pnl
+                if sym == self.symbol:
+                    # 网格交易对：走完整紧急平仓流程（撤单+校验+重试+状态时序）
+                    try:
+                        ok = self.grid_manager.emergency_close_symbol(sym, reason="账户熔断强平")
+                    except Exception as e:
+                        self.logger.print_error(f"[网格风控]平仓异常 {sym}: {e}")
+                        ok = False
+                    # 失败重试由 GridManager 的 pending_emergency_close 承担
+                else:
+                    ok = self._force_close_verified(sym, reason="账户熔断强平")
+                # 只有确认平掉才清理保护插件的持仓记录：失败时保留记录，
+                # 超时强平等保护对该仓位继续有效
+                if ok:
                     self.protection_manager.on_position_dropped(sym)
-                except Exception as e:
-                    self.logger.print_error(f"[网格风控]平仓失败 {sym}: {e}")
-            # 撤销全部网格挂单（含 trigger）并清理本地状态，避免熔断期间挂单成交新增敞口
+            # 网格交易对若无持仓，上面的循环不会触发撤单：仍需撤掉全部网格挂单，
+            # 避免熔断暂停期间挂单成交重建敞口（emergency_close_symbol 内已含撤单，
+            # cancel_all_orders 幂等）
             try:
                 self.grid_manager.cancel_all_orders(self.symbol)
                 self.logger.print_info(f"[网格风控]已撤销 {self.symbol} 的全部网格挂单")
             except Exception as e:
                 self.logger.print_error(f"[网格风控]撤销网格挂单失败: {e}")
-            return True
 
-        if action == ProtectionAction.PAUSE_NEW_TRADES:
-            self.logger.print_warning("[网格风控]账户风控暂停新开仓，本轮跳过网格布单")
-            return True
-        return False
+        return action
+
+    def _force_close_verified(self, symbol: str, reason: str) -> bool:
+        """非网格交易对的校验式强平；失败登记待重试。"""
+        try:
+            ok = self.order_manager.force_close_position(symbol, reason=reason)
+        except Exception as e:
+            self.logger.print_error(f"[网格风控]平仓异常 {symbol}: {e}")
+            ok = False
+        if ok:
+            self._pending_force_closes.pop(symbol, None)
+            self.logger.print_info(f"[网格风控]已确认平仓: {symbol}")
+        else:
+            self._pending_force_closes[symbol] = reason
+            self.logger.print_error(f"[网格风控]平仓未成功 {symbol}，已登记待重试")
+        return ok
+
+    def _retry_pending_force_closes(self) -> None:
+        """重试上一轮失败的非网格交易对强平（确认已无持仓时出队）。"""
+        if not self._pending_force_closes:
+            return
+        try:
+            positions = self.order_manager.get_current_positions()
+        except Exception:
+            positions = None
+        if positions is None:
+            return  # 查询失败：无法确认，留待下一轮
+        held = {p.get("coin") for p in positions}
+        for sym, reason in list(self._pending_force_closes.items()):
+            if sym not in held:
+                self._pending_force_closes.pop(sym, None)
+                if self.protection_manager:
+                    self.protection_manager.on_position_dropped(sym)
+                self.logger.print_info(f"[网格风控]{sym} 待重试强平已无持仓，出队")
+                continue
+            self.logger.print_warning(f"[网格风控]♻️ 重试强平 {sym}（{reason}）")
+            if self._force_close_verified(sym, reason=reason) and self.protection_manager:
+                self.protection_manager.on_position_dropped(sym)
 
     # ── 净值快照与停机线 ──────────────────────────────────────────────────
 
@@ -268,11 +357,15 @@ class GridStrategy:
         position_notional = 0.0
         has_position = False
         try:
-            for pos in self.order_manager.get_current_positions() or []:
-                if pos.get("coin") == self.symbol:
-                    has_position = True
-                    position_notional = abs(float(pos.get("positionValue", 0) or 0))
-                    break
+            positions = self.order_manager.get_current_positions()
+            if positions is None:
+                has_position = True  # 查询失败按有持仓处理，不敢停机
+            else:
+                for pos in positions:
+                    if pos.get("coin") == self.symbol:
+                        has_position = True
+                        position_notional = abs(float(pos.get("positionValue", 0) or 0))
+                        break
         except Exception as e:
             self.logger.print_warning(f"[Grid] 快照取持仓失败: {e}")
             has_position = True  # 查询失败按有持仓处理，不敢停机
@@ -304,6 +397,12 @@ class GridStrategy:
         """
         threshold = self.config.llm_failure_alert_cycles
         if threshold <= 0:
+            return
+
+        # 趋势暂停周期压根没调 LLM，既不能算故障、也不能算「恢复正常」——
+        # 按恢复处理会重置故障计数并打虚假恢复日志，间歇性趋势暂停可让
+        # 真实的 LLM 长期故障永远攒不够告警阈值。
+        if ai_decision.get("trend_paused"):
             return
 
         if ai_decision.get("llm_ok", True):
@@ -341,8 +440,12 @@ class GridStrategy:
         if cycles <= 0:
             return ai_decision
 
+        # 只救 LLM 故障（llm_ok=False）：LLM 健康时的连续 KEEP_GRID 是 AI 的
+        # 明确决策，兜底重建去覆盖它等于凭空替 AI 下单，且日志会失真地宣称
+        # 「LLM 持续不可用」。
         if (
-            ai_decision.get("action") == "UPDATE_GRID"
+            ai_decision.get("llm_ok", True)
+            or ai_decision.get("action") == "UPDATE_GRID"
             or ai_decision.get("trend_paused")
             or not self.grid_manager.is_grid_idle(self.symbol)
         ):

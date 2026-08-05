@@ -4,7 +4,7 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from src.plugins.protections.base import (
@@ -43,7 +43,11 @@ class DailyLossProtection(IProtection):
                 logger.warning("单日亏损保护跳过：净值非法 (%.4f)", context.equity)
                 return ProtectionReturn(triggered=False)
 
-            today = context.timestamp.strftime("%Y-%m-%d")
+            # 「日」边界统一取 UTC：系统其余节拍（K 线对齐、交易所结算）都是 UTC，
+            # 用宿主机本地时区会让日亏损基准在错误的时刻重置
+            today = datetime.fromtimestamp(context.timestamp.timestamp(), tz=UTC).strftime(
+                "%Y-%m-%d"
+            )
 
             # 判断当前暂停是否仍在 pause_hours 冷却期内：跨天也必须遵守该冷却，
             # 不能因日期翻转（如 23:00 触发、00:00 跨天）提前解除暂停。

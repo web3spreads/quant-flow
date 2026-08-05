@@ -3,6 +3,7 @@
 from conftest import FakeOrderManager, make_ohlcv
 
 from src.config import GridConfig
+from src.plugins.protections import ProtectionAction
 from src.strategy.grid import GridStrategy
 
 
@@ -14,11 +15,20 @@ class StubGridManager:
         self.flatten_calls: list[int] = []
         self.barrier_triggered = False
         self.idle = True
+        self.barrier_checks = 0
+        self.maintain_calls = 0
+        self.emergency_close_calls: list[str] = []
+        self.emergency_close_ok = True
+        self.retry_pending_calls = 0
 
     def reconcile_netting_closes(self, symbol):
         pass
 
+    def retry_pending_emergency_close(self, symbol):
+        self.retry_pending_calls += 1
+
     def check_barrier(self, symbol):
+        self.barrier_checks += 1
         return self.barrier_triggered
 
     def get_grid_summary(self, symbol):
@@ -32,6 +42,13 @@ class StubGridManager:
 
     def cancel_all_orders(self, symbol):
         pass
+
+    def emergency_close_symbol(self, symbol, reason):
+        self.emergency_close_calls.append(reason)
+        return self.emergency_close_ok
+
+    def maintain_protective_orders(self, symbol):
+        self.maintain_calls += 1
 
     def is_grid_idle(self, symbol):
         return self.idle
@@ -210,3 +227,133 @@ class TestHaltLine:
         # FakeOrderManager 净值 500 < 停机线 1000 且无持仓 → 整轮短路
         strategy.run_cycle()
         assert manager.synced == []
+
+
+class StubProtectionManager:
+    """保护链桩：动作可配置，记录 on_position_dropped 调用。"""
+
+    def __init__(self, action):
+        self.action = action
+        self.dropped: list[str] = []
+        self.locked_symbols: set[str] = set()
+
+    def check_all(self, context):
+        from src.plugins.protections import ProtectionReturn
+
+        if self.action == ProtectionAction.NONE:
+            return []
+        return [ProtectionReturn(triggered=True, action=self.action, reason="桩触发")]
+
+    def on_position_dropped(self, symbol):
+        self.dropped.append(symbol)
+
+    def is_symbol_locked(self, symbol, timestamp=None):
+        if symbol in self.locked_symbols:
+            return True, "连亏锁定桩"
+        return False, ""
+
+
+def make_protected_strategy(agent, pm, manager=None, positions=None, test_logger=None):
+    manager = manager or StubGridManager()
+    om = FakeOrderManager(available=500.0, positions=positions or [])
+    strategy = GridStrategy(
+        symbol="ETH",
+        grid_agent=agent,
+        grid_manager=manager,
+        order_manager=om,
+        market_fetcher=StubFetcher(),
+        logger=test_logger,
+        grid_config=GridConfig(trend_filter_enabled=False),
+        timeframe="1h",
+        protection_manager=pm,
+    )
+    return strategy, manager, om
+
+
+class TestAccountProtectionOrdering:
+    """账户级保护与 Triple Barrier / 保护单维护的先后关系（历史缺陷回归）。"""
+
+    def test_pause_still_checks_barrier_and_maintains(self, test_logger):
+        # PAUSE_NEW_TRADES 只暂停新开仓：Barrier 必须照查、保护单必须照维护，
+        # 且不得调用 LLM/布单
+        pm = StubProtectionManager(ProtectionAction.PAUSE_NEW_TRADES)
+        agent = StubGridAgent([{"action": "UPDATE_GRID", "llm_ok": True, "reason": "不该被调用"}])
+        strategy, manager, _ = make_protected_strategy(agent, pm, test_logger=test_logger)
+        strategy.run_cycle()
+        assert manager.barrier_checks == 1
+        assert manager.maintain_calls == 1
+        assert manager.synced == []
+
+    def test_pause_barrier_trigger_takes_priority(self, test_logger):
+        # 暂停期内屏障触发：紧急平仓优先，本轮不再做保护单维护
+        pm = StubProtectionManager(ProtectionAction.PAUSE_NEW_TRADES)
+        manager = StubGridManager()
+        manager.barrier_triggered = True
+        agent = StubGridAgent([DEGRADED_KEEP])
+        strategy, manager, _ = make_protected_strategy(
+            agent, pm, manager=manager, test_logger=test_logger
+        )
+        strategy.run_cycle()
+        assert manager.barrier_checks == 1
+        assert manager.maintain_calls == 0
+        assert manager.synced == []
+
+    def test_close_all_uses_verified_grid_close(self, test_logger):
+        # CLOSE_ALL：网格交易对走 emergency_close_symbol；成功才 on_position_dropped
+        pm = StubProtectionManager(ProtectionAction.CLOSE_ALL_POSITIONS)
+        agent = StubGridAgent([DEGRADED_KEEP])
+        eth_pos = {"coin": "ETH", "szi": "0.5", "entryPx": "100"}
+        strategy, manager, _ = make_protected_strategy(
+            agent, pm, positions=[eth_pos], test_logger=test_logger
+        )
+        strategy.run_cycle()
+        assert manager.emergency_close_calls == ["账户熔断强平"]
+        assert pm.dropped == ["ETH"]
+        assert manager.synced == []
+
+    def test_close_all_failure_keeps_protection_records(self, test_logger):
+        # 平仓失败：不得清理保护插件的持仓记录（超时强平等保护须继续有效）
+        pm = StubProtectionManager(ProtectionAction.CLOSE_ALL_POSITIONS)
+        manager = StubGridManager()
+        manager.emergency_close_ok = False
+        agent = StubGridAgent([DEGRADED_KEEP])
+        eth_pos = {"coin": "ETH", "szi": "0.5", "entryPx": "100"}
+        strategy, manager, _ = make_protected_strategy(
+            agent, pm, manager=manager, positions=[eth_pos], test_logger=test_logger
+        )
+        strategy.run_cycle()
+        assert manager.emergency_close_calls == ["账户熔断强平"]
+        assert pm.dropped == []
+
+    def test_pending_emergency_close_retried_each_cycle(self, test_logger):
+        pm = StubProtectionManager(ProtectionAction.NONE)
+        agent = StubGridAgent([DEGRADED_KEEP])
+        strategy, manager, _ = make_protected_strategy(agent, pm, test_logger=test_logger)
+        strategy.run_cycle()
+        strategy.run_cycle()
+        assert manager.retry_pending_calls == 2
+
+
+class TestSymbolLockDowngrade:
+    def test_update_grid_downgraded_when_locked(self, test_logger):
+        # 连亏 per-symbol 锁定期内 UPDATE_GRID 必须降级 KEEP_GRID（网格路径消费锁）
+        pm = StubProtectionManager(ProtectionAction.NONE)
+        pm.locked_symbols.add("ETH")
+        agent = StubGridAgent(
+            [{"action": "UPDATE_GRID", "llm_ok": True, "confidence": 0.9, "reason": "扩建"}]
+        )
+        strategy, manager, _ = make_protected_strategy(agent, pm, test_logger=test_logger)
+        strategy.run_cycle()
+        assert manager.synced[-1]["action"] == "KEEP_GRID"
+        assert "锁定" in manager.synced[-1]["reason"]
+
+
+class TestFallbackOnlyForLLMFailure:
+    def test_healthy_keep_grid_never_triggers_fallback(self, test_logger):
+        # LLM 健康时的连续 KEEP_GRID 是 AI 决策，兜底重建不得覆盖
+        agent = StubGridAgent([{"action": "KEEP_GRID", "llm_ok": True, "reason": "AI 主动维持"}])
+        config = GridConfig(trend_filter_enabled=False, llm_fallback_rebuild_cycles=1)
+        strategy, _ = make_strategy(agent, grid_config=config, test_logger=test_logger)
+        for _ in range(3):
+            strategy.run_cycle()
+        assert agent.fallback_calls == 0
