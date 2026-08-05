@@ -98,3 +98,52 @@ def test_openai_key_fallback(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     cfg = Config.load(config_path=str(tmp_path / "nonexistent.yaml"))
     assert cfg.llm.api_key == "sk-openai"
+
+
+def test_symbols_scalar_string_coerced(tmp_path):
+    # symbols 误写标量字符串时按单交易对纠偏，不得拆成 ("B","T","C")
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("trading:\n  symbols: eth\n", encoding="utf-8")
+    cfg = Config.load(config_path=str(config_file))
+    assert cfg.trading.symbols == ("ETH",)
+
+
+def test_trend_filter_timeframes_scalar_coerced(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("grid:\n  trend_filter_timeframes: 15m\n", encoding="utf-8")
+    cfg = Config.load(config_path=str(config_file))
+    assert cfg.grid.trend_filter_timeframes == ("15m",)
+
+
+def test_legacy_flat_grid_keys_warned(tmp_path, caplog):
+    # 旧扁平键 trading.grid_* 被忽略时必须告警（静默失效=安全阀悄悄消失）
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "trading:\n  grid_max_position_notional_usd: 250\n  grid_halt_below_usd: 100\n",
+        encoding="utf-8",
+    )
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="quantflow"):
+        Config.load(config_path=str(config_file))
+    text = caplog.text
+    assert "grid_max_position_notional_usd" in text
+    assert "grid:" in text  # 迁移指引
+
+
+def test_legacy_top_level_sections_warned(tmp_path, caplog):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("run_mode: grid\nnotification:\n  enabled: true\n", encoding="utf-8")
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="quantflow"):
+        Config.load(config_path=str(config_file))
+    assert "run_mode" in caplog.text
+    assert "notification" in caplog.text
+
+
+def test_perp_llm_alert_cycles_loaded(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("trading:\n  llm_failure_alert_cycles: 3\n", encoding="utf-8")
+    cfg = Config.load(config_path=str(config_file))
+    assert cfg.trading.llm_failure_alert_cycles == 3

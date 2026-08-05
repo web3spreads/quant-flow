@@ -16,11 +16,40 @@ from src.engine import Engine
 from src.utils.logger import get_logger
 
 
+def _check_writable_dirs() -> bool:
+    """启动前检查 logs/ 与 data/ 可写，给出可执行的中文修复指引。
+
+    Docker 场景高发：挂载卷属主是 root 而容器进程是 app（UID 1000）时，
+    直接启动会 PermissionError 崩溃循环且报错难懂。此处提前拦截并说清怎么修。
+    """
+    import uuid
+
+    ok = True
+    for d in ("logs", "data"):
+        try:
+            os.makedirs(d, exist_ok=True)
+            probe = os.path.join(d, f".write_probe_{uuid.uuid4().hex[:8]}")
+            with open(probe, "w", encoding="utf-8") as f:
+                f.write("ok")
+            os.unlink(probe)
+        except OSError as e:
+            ok = False
+            print(f"❌ 目录 {d}/ 不可写: {e}")
+            print(
+                f"   Docker 部署请在宿主机执行: sudo chown -R 1000:1000 ./{d}"
+                f"（容器内进程以 app 用户/UID 1000 运行）"
+            )
+    return ok
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Quant Flow - AI 加密货币自动交易系统")
     parser.add_argument("--config", default="config.yaml", help="配置文件路径")
     parser.add_argument("--env-file", default=None, help=".env 文件路径")
     args = parser.parse_args()
+
+    if not _check_writable_dirs():
+        return 1
 
     logger = get_logger(os.getenv("LOG_LEVEL", "INFO"))
     try:

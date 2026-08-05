@@ -95,3 +95,33 @@ protections:
   - name: position_timeout
     max_position_hours: 48      # 持仓超 48h → 强平
 ```
+
+## 旧版配置迁移对照表
+
+旧版（多智能体架构，PR #92 之前的部署）的 config.yaml 与新 schema 不兼容。
+**未知键会被忽略并在启动日志中告警**（`[配置迁移]` 前缀），迁移遗漏最典型的
+后果是库存上限/停机线等安全阀静默失效，务必逐条核对：
+
+| 旧键 | 新键 | 说明 |
+|------|------|------|
+| `run_mode: perp/grid/both` | `trading.perp_enabled` + `trading.grid_enabled` | 布尔开关，可并行 |
+| `trading.grid_interval_minutes` | `grid.interval_minutes` | 全部 `trading.grid_*` 扁平键迁入独立 `grid:` 段并去掉 `grid_` 前缀 |
+| `trading.grid_max_position_notional_usd` | `grid.max_position_notional_usd` | 网格库存硬上限 |
+| `trading.grid_halt_below_usd` | `grid.halt_below_usd` | 净值停机线 |
+| `trading.grid_trend_filter_*` | `grid.trend_filter_*` | 趋势过滤参数 |
+| `risk_management`（网格屏障部分） | `grid.barrier` | Triple Barrier 覆盖项 |
+| `risk_management`（账户级部分） | `protections` | 插件列表 |
+| `notification`（钉钉等） | 无 | 已移除；告警只落 `logs/main.log`，请自备日志监控 |
+| `cloud_logging` | 无 | 已移除 |
+| 环境变量 `OPENAI_API_KEY` | `LLM_API_KEY` | 仍向后兼容回退读取 `OPENAI_API_KEY` |
+| 环境变量 `OPENAI_API_BASE` | `llm.base_url`（YAML） | 端点地址改在 config.yaml 配置 |
+| 环境变量 `RUN_MODE` | 无 | 已废弃，检测到会告警 |
+
+## Docker 部署注意事项
+
+- 挂载卷属主：容器内进程以 `app` 用户（UID 1000）运行。宿主机上的 `logs/`、
+  `data/` 目录若属主不是 UID 1000，启动时会给出中文错误与修复指引：
+  `sudo chown -R 1000:1000 ./logs ./data`
+- `main.log` 默认按 50MB × 3 份轮转；docker 侧 json-file 日志另有 10MB × 3 上限
+- 永续与网格并行时，网格独占 `symbols[0]`，永续自动跳过该交易对
+  （Hyperliquid 单向持仓下两策略同交易对会互相强平）

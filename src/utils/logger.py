@@ -14,10 +14,15 @@ import json
 import logging
 from datetime import datetime
 from decimal import Decimal
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
 _LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(message)s"
+
+# main.log 轮转参数：单文件 50MB × 3 备份（线上曾累积 364MB 单文件无轮转）
+_LOG_MAX_BYTES = 50 * 1024 * 1024
+_LOG_BACKUP_COUNT = 3
 
 
 def _json_default(value: Any) -> Any:
@@ -51,7 +56,12 @@ class TradingLogger:
             formatter = logging.Formatter(_LOG_FORMAT)
             console = logging.StreamHandler()
             console.setFormatter(formatter)
-            file_handler = logging.FileHandler(self.log_dir / "main.log", encoding="utf-8")
+            file_handler = RotatingFileHandler(
+                self.log_dir / "main.log",
+                maxBytes=_LOG_MAX_BYTES,
+                backupCount=_LOG_BACKUP_COUNT,
+                encoding="utf-8",
+            )
             file_handler.setFormatter(formatter)
             self.logger.addHandler(console)
             self.logger.addHandler(file_handler)

@@ -13,13 +13,16 @@
     LLM_API_KEY                  LLM API 密钥（兼容 OPENAI_API_KEY）
 """
 
+import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+
+logger = logging.getLogger("quantflow")
 
 # 未配置 protections 段时的默认保护链（显式配置 protections: [] 可全部关闭）
 DEFAULT_PROTECTIONS: list[dict[str, Any]] = [
@@ -28,6 +31,16 @@ DEFAULT_PROTECTIONS: list[dict[str, Any]] = [
     {"name": "consecutive_loss", "max_consecutive_losses": 5, "per_symbol": True, "pause_hours": 4},
     {"name": "position_timeout", "max_position_hours": 48},
 ]
+
+# 旧版（多智能体架构）配置段：新架构已移除，出现即提示迁移，防止静默失效
+_LEGACY_TOP_LEVEL_KEYS = {
+    "run_mode": "已移除，改用 trading.perp_enabled / trading.grid_enabled 开关",
+    "notification": "通知功能已随重构移除，告警仅落日志（logs/main.log）",
+    "cloud_logging": "云日志功能已随重构移除",
+    "risk_management": "账户级风控改为 protections 插件段，网格屏障在 grid.barrier",
+    "agents": "多智能体架构已移除",
+    "llm_providers": "已简化为单一 llm 段（base_url/model/temperature/timeout）",
+}
 
 
 @dataclass(frozen=True)
@@ -68,6 +81,7 @@ class TradingConfig:
     timeframe_offset: float = 2.0  # K 线收盘后等待秒数（确保数据可取）
     min_throttle_secs: float = 30.0  # 两次决策最小间隔
     run_immediately: bool = True  # 启动时立即执行一轮
+    llm_failure_alert_cycles: int = 6  # 永续 LLM 连续失败 N 周期升级告警（0=关闭）
 
 
 @dataclass(frozen=True)
@@ -130,6 +144,7 @@ class Config:
         llm_data = data.get("llm") or {}
         trading_data = data.get("trading") or {}
         grid_data = data.get("grid") or {}
+        _warn_legacy_and_unknown_keys(data, trading_data, grid_data, llm_data)
 
         private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY", "").strip()
         if not private_key:
@@ -149,7 +164,12 @@ class Config:
             testnet=_env_bool("HYPERLIQUID_TESTNET", default=True),
         )
 
-        symbols = tuple(str(s).upper() for s in trading_data.get("symbols", ["BTC"]))
+        # symbols 误写成标量字符串（symbols: BTC）时按单交易对纠偏，
+        # 而非逐字符拆解成 ("B","T","C") 静默产生三个非法交易对
+        raw_symbols = trading_data.get("symbols", ["BTC"])
+        if isinstance(raw_symbols, str):
+            raw_symbols = [raw_symbols]
+        symbols = tuple(str(s).upper() for s in raw_symbols)
         if not symbols:
             raise ValueError("trading.symbols 不能为空")
 
@@ -180,6 +200,9 @@ class Config:
             run_immediately=bool(
                 trading_data.get("run_immediately", TradingConfig.run_immediately)
             ),
+            llm_failure_alert_cycles=int(
+                trading_data.get("llm_failure_alert_cycles", TradingConfig.llm_failure_alert_cycles)
+            ),
         )
 
         grid = GridConfig(
@@ -202,7 +225,7 @@ class Config:
             trend_filter_min_votes=int(
                 grid_data.get("trend_filter_min_votes", GridConfig.trend_filter_min_votes)
             ),
-            trend_filter_timeframes=tuple(
+            trend_filter_timeframes=_as_str_tuple(
                 grid_data.get("trend_filter_timeframes", GridConfig.trend_filter_timeframes)
             ),
             trend_confirm_cycles=int(
@@ -234,3 +257,61 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None or not raw.strip():
         return default
     return raw.strip().lower() in ("true", "1", "yes")
+
+
+def _as_str_tuple(value: Any) -> tuple[str, ...]:
+    """把 YAML 标量/列表归一为字符串元组：误写成标量（"15m"）时按单元素处理，
+    而非逐字符拆解成 ("1","5","m") 静默禁用趋势过滤。"""
+    if isinstance(value, str):
+        return (value,)
+    return tuple(str(v) for v in (value or ()))
+
+
+def _warn_legacy_and_unknown_keys(
+    data: dict[str, Any],
+    trading_data: dict[str, Any],
+    grid_data: dict[str, Any],
+    llm_data: dict[str, Any],
+) -> None:
+    """检测旧版配置残留与未知键，逐条告警——未知键会被静默忽略，
+    迁移遗漏（如旧的 trading.grid_* 扁平键）若不提示，库存上限/停机线等
+    安全阀会在新架构下悄悄失效。仅告警不报错：保持「配置能省则省」的兼容性。"""
+    for key, hint in _LEGACY_TOP_LEVEL_KEYS.items():
+        if key in data:
+            logger.warning("[配置迁移] 检测到旧版配置段 '%s'（已忽略）：%s", key, hint)
+
+    known_top = {"llm", "trading", "grid", "protections", *_LEGACY_TOP_LEVEL_KEYS}
+    for key in data:
+        if key not in known_top:
+            logger.warning("[配置] 未知的顶层配置段 '%s' 已被忽略，请核对拼写", key)
+
+    known_trading = {f.name for f in fields(TradingConfig)}
+    for key in trading_data:
+        if key in known_trading:
+            continue
+        if str(key).startswith("grid_"):
+            logger.warning(
+                "[配置迁移] trading.%s 已迁移到独立的 grid: 段（键名去掉 grid_ 前缀，"
+                "详见 docs/configuration.md 迁移对照表），当前值已被忽略！",
+                key,
+            )
+        else:
+            logger.warning("[配置] 未知的 trading.%s 已被忽略，请核对拼写", key)
+
+    known_grid = {f.name for f in fields(GridConfig)}
+    for key in grid_data:
+        if key not in known_grid:
+            logger.warning("[配置] 未知的 grid.%s 已被忽略，请核对拼写", key)
+
+    known_llm = {f.name for f in fields(LLMConfig)}
+    for key in llm_data:
+        if key == "api_key":
+            logger.warning("[配置] llm.api_key 不从 YAML 读取，请改用环境变量 LLM_API_KEY")
+        elif key not in known_llm:
+            logger.warning("[配置] 未知的 llm.%s 已被忽略，请核对拼写", key)
+
+    if os.getenv("RUN_MODE"):
+        logger.warning(
+            "[配置迁移] 环境变量 RUN_MODE 已废弃（当前值被忽略），"
+            "请改用 config.yaml 的 trading.perp_enabled / grid_enabled 开关"
+        )

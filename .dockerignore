@@ -14,10 +14,11 @@ logs/
 data/
 *.log
 
-# 敏感与本地配置
+# 敏感与本地配置（config.*.yaml 覆盖 config.testnet.yaml 等含真实密钥的本地变体）
 .env
 .env.*
 config.yaml
+config.*.yaml
 
 # 开发资料
 docs/

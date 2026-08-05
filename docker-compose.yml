@@ -4,7 +4,9 @@ services:
     container_name: quant-flow
     restart: unless-stopped
     environment:
-      - LLM_API_KEY=${LLM_API_KEY}
+      # LLM 密钥：优先 LLM_API_KEY，兼容旧部署沿用的 OPENAI_API_KEY（config.py 会回退）
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - HYPERLIQUID_PRIVATE_KEY=${HYPERLIQUID_PRIVATE_KEY}
       - HYPERLIQUID_ACCOUNT_ADDRESS=${HYPERLIQUID_ACCOUNT_ADDRESS:-}
       - HYPERLIQUID_TESTNET=${HYPERLIQUID_TESTNET:-true}
