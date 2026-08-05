@@ -20,6 +20,7 @@ from jinja2 import Template
 
 from src.config import TradingConfig
 from src.llm import LLMClient, LLMError, extract_json
+from src.trading.client import HyperliquidClient
 from src.trading.order_manager import OrderManager
 from src.utils.logger import TradingLogger
 
@@ -283,8 +284,11 @@ class PerpStrategy:
         szi = _safe_float(position.get("szi"))
         entry_price = _safe_float(position.get("entryPx"))
         result = self.order_manager.close_position(self.symbol)
-        if not result or result.get("status") != "ok":
-            record["reason"] += "（平仓未成功）"
+        # 校验交易所内层 statuses：HL 拒单时外层仍是 status=ok，只判外层会把
+        # 被拒的平仓记成已执行（持仓还在、pnl 记了假数）
+        close_ok, close_err = HyperliquidClient.check_order_success(result)
+        if not close_ok:
+            record["reason"] += f"（平仓未成功: {close_err}）"
             return record
 
         exit_price = _safe_float(result.get("fill_price"), entry_price)
