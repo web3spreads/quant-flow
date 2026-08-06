@@ -10,6 +10,7 @@ from conftest import QUIET_LOGGER
 
 from src.trading.client import HyperliquidClient
 from src.trading.grid_manager import GridManager
+from src.trading.grid_pnl import GridPnLTracker
 from src.utils.grid_math import GridLevel, GridLevelState
 from src.utils.precision import to_decimal
 
@@ -27,6 +28,14 @@ FILLED_ORDER = {
 REJECTED_ORDER = {
     "status": "ok",
     "response": {"type": "order", "data": {"statuses": [{"error": "Insufficient margin"}]}},
+}
+# Hyperliquid 对失去持仓支撑的 reduce_only 单的真实拒单文案（净额对冲后的幻影层级场景）
+RO_NETTED_REJECTED_ORDER = {
+    "status": "ok",
+    "response": {
+        "type": "order",
+        "data": {"statuses": [{"error": "Reduce only order would increase position. asset=4"}]},
+    },
 }
 
 
@@ -48,6 +57,7 @@ class FakeGridClient:
         self.emergency_calls: list[tuple] = []
         self.cancel_calls: list[int] = []
         self.limit_orders: list[dict] = []
+        self.limit_order_results: list[dict] = []
         self.info = self
 
     # ── Info 接口 ──
@@ -92,7 +102,7 @@ class FakeGridClient:
         self.limit_orders.append(
             {"symbol": symbol, "is_buy": is_buy, "size": size, "price": price, "ro": reduce_only}
         )
-        return OK_ORDER
+        return self.limit_order_results.pop(0) if self.limit_order_results else OK_ORDER
 
 
 class FakeGridOrderManager:
@@ -113,16 +123,29 @@ class FakeGridOrderManager:
         return {"success": True, "limit_order": OK_ORDER}
 
 
-def make_manager(tmp_path, client=None):
+def make_manager(tmp_path, client=None, netting_attribution_enabled=True):
     client = client or FakeGridClient()
     om = FakeGridOrderManager(client)
     manager = GridManager(
         om,
         QUIET_LOGGER,
         state_file=str(tmp_path / "grid_state.json"),
-        netting_attribution_enabled=True,
+        netting_attribution_enabled=netting_attribution_enabled,
     )
     return manager, client, om
+
+
+class RecordingLogger:
+    """只记录 log_trade 调用、其余日志方法静默的桩（断言 trades 落盘口径用）。"""
+
+    def __init__(self):
+        self.trades: list[dict] = []
+
+    def log_trade(self, **kwargs):
+        self.trades.append(kwargs)
+
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: None
 
 
 def make_filled_level(level_id="L0", side="LONG", price="100", amount="0.5") -> GridLevel:
@@ -303,3 +326,106 @@ class TestGridPriceFormatting:
         client.format_price = lambda symbol, price: round(float(price), 0)  # 粗精度
         formatted = manager._format_grid_prices("ETH", [100.1, 100.2, 101.4])
         assert formatted == [100.0, 101.0]
+
+
+class TestNettedLevelReconciliation:
+    """幻影层级收尾：库存被净额对冲后，平仓单被拒应关闭层级而非无限重试。
+
+    线上实测（测试网 32 小时）：中性网格空头库存被买开仓单净额平掉后，
+    层级停在 OPEN_FILLED，每周期挂 reduce_only 平仓单被拒 136 次。
+    """
+
+    def _closable_level(self, side="LONG"):
+        return make_filled_level(level_id="L4", side=side, price="100", amount="0.5")
+
+    def test_reduce_only_rejection_with_no_exposure_resets_level(self, tmp_path):
+        # LONG 层挂卖出减仓单被拒 + 实际持仓为 0：库存已被净额对冲，层级收尾复用
+        manager, client, _ = make_manager(tmp_path)
+        level = self._closable_level(side="LONG")
+        client.positions = []  # 无持仓
+        client.limit_order_results = [RO_NETTED_REJECTED_ORDER]
+
+        manager._place_close_order("ETH", level)
+        assert level.state == GridLevelState.IDLE
+        assert level.open_fill_price is None  # 幻影库存清空，不再污染未实现盈亏
+
+    def test_reduce_only_rejection_with_opposite_exposure_resets_level(self, tmp_path):
+        # SHORT 层挂买入减仓单被拒 + 实际净持仓为多头：空头敞口已消失，同样收尾
+        manager, client, _ = make_manager(tmp_path)
+        level = self._closable_level(side="SHORT")
+        client.positions = [{"coin": "ETH", "szi": "0.5"}]
+        client.limit_order_results = [RO_NETTED_REJECTED_ORDER]
+
+        manager._place_close_order("ETH", level)
+        assert level.state == GridLevelState.IDLE
+
+    def test_reduce_only_rejection_with_matching_exposure_keeps_level(self, tmp_path):
+        # 拒单文案匹配但同向持仓仍在：不满足双重确认，保留层级下轮重试
+        manager, client, _ = make_manager(tmp_path)
+        level = self._closable_level(side="LONG")
+        client.positions = [{"coin": "ETH", "szi": "0.5"}]
+        client.limit_order_results = [RO_NETTED_REJECTED_ORDER]
+
+        manager._place_close_order("ETH", level)
+        assert level.state == GridLevelState.OPEN_FILLED
+        assert level.open_fill_price is not None
+
+    def test_other_rejection_keeps_level(self, tmp_path):
+        # 其他拒因（保证金不足）：与净额对冲无关，必须保留重试
+        manager, client, _ = make_manager(tmp_path)
+        level = self._closable_level(side="LONG")
+        client.positions = []
+        client.limit_order_results = [REJECTED_ORDER]
+
+        manager._place_close_order("ETH", level)
+        assert level.state == GridLevelState.OPEN_FILLED
+
+    def test_position_query_failure_keeps_level(self, tmp_path):
+        # 持仓查询失败（None）：未知状态不收尾，保留层级下轮重试
+        manager, client, _ = make_manager(tmp_path)
+        level = self._closable_level(side="LONG")
+        client.positions = None
+        client.limit_order_results = [RO_NETTED_REJECTED_ORDER]
+
+        manager._place_close_order("ETH", level)
+        assert level.state == GridLevelState.OPEN_FILLED
+
+
+class TestEmergencyClosePnlLabeling:
+    """紧急平仓 trades 落盘口径：净额归因启用时预估盈亏只留痕不写 pnl 字段。
+
+    线上实测预估 -2.43 vs 链上实际 -0.30：预估把幻影层级的未实现盈亏也算进去，
+    与下一周期 GRID_NET_CLOSE 的实际盈亏并存会让下游统计双算且失真。
+    """
+
+    def _setup(self, tmp_path, netting_enabled):
+        manager, client, _ = make_manager(tmp_path, netting_attribution_enabled=netting_enabled)
+        recorder = RecordingLogger()
+        manager.logger = recorder
+        level = make_filled_level(price="100", amount="0.5")
+        manager.grid_levels["ETH"] = [level]
+        manager.pnl_trackers["ETH"] = GridPnLTracker()
+        client.price = 90.0  # 产生非零未实现盈亏预估
+        client.positions = [{"coin": "ETH", "szi": "0.5"}]
+        client.emergency_results = [(True, FILLED_ORDER)]
+        return manager, recorder
+
+    def test_netting_enabled_logs_estimate_in_reason_only(self, tmp_path):
+        manager, recorder = self._setup(tmp_path, netting_enabled=True)
+        assert manager._emergency_close_all("ETH", reason="TIME_LIMIT 测试") is True
+
+        records = [t for t in recorder.trades if t["action"] == "GRID_EMERGENCY_CLOSE"]
+        assert len(records) == 1
+        assert records[0]["pnl"] is None  # 实际盈亏由 GRID_NET_CLOSE 记录，不双算
+        assert "预估盈亏" in records[0]["reason"]
+        assert "TIME_LIMIT 测试" in records[0]["reason"]
+
+    def test_netting_disabled_keeps_estimate_pnl(self, tmp_path):
+        # 归因关闭时预估是唯一记录，保留原行为
+        manager, recorder = self._setup(tmp_path, netting_enabled=False)
+        assert manager._emergency_close_all("ETH", reason="TIME_LIMIT 测试") is True
+
+        records = [t for t in recorder.trades if t["action"] == "GRID_EMERGENCY_CLOSE"]
+        assert len(records) == 1
+        assert records[0]["pnl"] is not None
+        assert records[0]["reason"] == "TIME_LIMIT 测试"

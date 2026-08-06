@@ -1538,6 +1538,12 @@ class GridManager:
         # 4. 平仓确认成功：上报强平盈亏（forced=True，净盈利不得重置连亏计数）
         try:
             if closed_pnl is not None and abs(closed_pnl) > 0 and close_price:
+                # 净额归因启用时，实际盈亏由下一周期的 GRID_NET_CLOSE（链上
+                # closedPnl）记录——此处的估算（未实现盈亏近似，可能混入被净额
+                # 对冲的幻影层级）若也写进 pnl 字段，下游统计会把同一笔强平双算
+                # 且口径失真（线上实测预估 -2.43 vs 链上实际 -0.30），故仅在
+                # reason 中留痕。归因关闭时估算是唯一记录，保留原行为。
+                estimate_only = self.netting_attribution_enabled
                 self.logger.log_trade(
                     symbol=symbol,
                     action="GRID_EMERGENCY_CLOSE",
@@ -1545,8 +1551,13 @@ class GridManager:
                     price=close_price,
                     order_id="",
                     status="FILLED",
-                    pnl=float(closed_pnl),
-                    reason=reason,
+                    pnl=None if estimate_only else float(closed_pnl),
+                    reason=(
+                        f"{reason} | 预估盈亏 {float(closed_pnl):+.4f}"
+                        f"（实际以 GRID_NET_CLOSE 为准）"
+                        if estimate_only
+                        else reason
+                    ),
                 )
                 self._report_round_trip_close(symbol, float(closed_pnl), forced=True)
         except Exception as e:
@@ -1906,10 +1917,44 @@ class GridManager:
                     order_id=str(oid),
                     status="PLACED",
                 )
+        elif self._is_close_rejected_as_netted(symbol, level, order_err):
+            # 「reduce_only 会加仓」+ 实查持仓确认该方向敞口已消失：本层库存已被
+            # 对侧格子的普通开仓单净额对冲平掉（Hyperliquid 单向持仓），盈亏由
+            # 净额归因补记，层级直接收尾复用。不收尾则每轮重挂重拒永不收敛
+            # （线上 32 小时实测 136 次拒单），且幻影库存持续污染未实现盈亏口径。
+            self.logger.print_info(
+                f"   [Grid] {level.id} 库存已被净额对冲（平仓单被拒且无对应持仓），"
+                f"层级收尾复用（盈亏由净额归因补记）"
+            )
+            level.reset()
         else:
             self.logger.print_warning(
                 f"   [Grid] {level.id} 平仓单失败/被拒 @ ${formatted_price}: {order_err}"
             )
+
+    def _is_close_rejected_as_netted(
+        self, symbol: str, level: GridLevel, order_err: str | None
+    ) -> bool:
+        """判断平仓单被拒是否因为本层库存已被净额对冲。
+
+        中性网格在净头寸交易所上，对侧格子的普通开仓单成交会把本层库存净额
+        平掉（链上成交 dir=Close，盈亏走 ``reconcile_netting_closes`` 补记），
+        但层级状态机对此无感：本层的 reduce_only 平仓单失去持仓支撑，交易所以
+        「Reduce only order would increase position」拒单，层级停在 OPEN_FILLED。
+
+        双重确认防误判：①拒单文案确为 reduce_only 加仓语义；②实查净持仓，
+        本层方向的敞口确已不存在（LONG 层挂卖出减仓单需要多头持仓）。其他拒因
+        （保证金、价格带等）与持仓查询失败（None）一律不收尾，保留层级下轮重试。
+        """
+        err = (order_err or "").lower()
+        if "reduce only" not in err or "increase" not in err:
+            return False
+        position_size = self._get_symbol_position_size(symbol)
+        if position_size is None:
+            return False
+        if level.side == "LONG":
+            return position_size <= 0
+        return position_size >= 0
 
     def is_grid_idle(self, symbol: str) -> bool:
         """网格是否真的「空转」：无层级、无持仓，且交易所上也没有活跃网格挂单。
