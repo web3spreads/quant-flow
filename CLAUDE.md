@@ -42,24 +42,10 @@ Quant Flow 是一个 AI 驱动的加密货币自动交易系统，专为 Hyperli
 - **网格策略**（`src/strategy/grid.py`）：固定间隔触发，LLM 判断方向与宽度，
   数学引擎（`grid_math`）计算参数，GridManager 布单管理
 
-**技术栈**: Python 3.11+，Hyperliquid SDK，pandas/numpy，Jinja2；LLM 走任意 OpenAI 兼容端点。
-
 ## 常用命令
 
 ```bash
-uv sync                        # 安装依赖
-uv sync --group dev            # 含开发依赖
-
-uv run python main.py          # 运行（策略开关在 config.yaml）
-uv run python main.py --config config.yaml --env-file .env
-
-uv run pytest tests/           # 全部测试（无需网络与密钥）
-uv run pytest tests/test_perp_strategy.py -v   # 单个文件
-uv run ruff check src/ tests/  # 静态检查
-uv run ruff format src/ tests/ # 格式化
-
-docker compose up -d           # Docker 部署
-docker compose logs -f
+uv run python main.py --config config.yaml --env-file .env   # 运行（策略开关在 config.yaml）
 
 tail -f logs/main.log                            # 运行日志
 tail -f logs/trades/trades_$(date +%Y%m%d).jsonl # 成交记录（含 pnl/reason 归因）
@@ -68,59 +54,9 @@ tail -f logs/equity/equity_$(date +%Y%m%d).jsonl # 净值快照
 
 ## 架构
 
-### 数据流
-
-```
-                 ┌───────────────── Engine（src/engine.py）─────────────────┐
-                 │  K 线节拍主循环（永续） + 固定间隔线程（网格），共享交易锁   │
-                 └──────┬──────────────────────────────────┬────────────────┘
-                        ↓                                  ↓
-   ┌─── 永续周期 ────────────────────┐      ┌─── 网格周期 ─────────────────────┐
-   │ 行情+指标+多周期趋势              │      │ 净额归因 → 账户熔断 → 停机线      │
-   │   → PerpStrategy                │      │   → Triple Barrier → 趋势过滤    │
-   │     Prompt → LLM → JSON 决策    │      │   → GridAgent（LLM JSON 决策）   │
-   │     → 校验（置信度/重复仓/上限） │      │   → LLM 健康跟踪 → 空转自愈      │
-   │     → OrderManager 执行         │      │   → GridManager.sync_grid 布单   │
-   └────────────┬────────────────────┘      └────────────┬─────────────────────┘
-                ↓                                        ↓
-        ┌─────────────────────────────────────────────────────────┐
-        │ ProtectionManager 账户保护链（回撤/日亏/连亏/超时，插件化）│
-        └─────────────────────────────────────────────────────────┘
-                ↓
-        ┌─────────────────────────────────────────────────────────┐
-        │ 交易层：OrderManager + HyperliquidClient                 │
-        │ 【关键安全机制】止损单失败 → 立即回滚平仓（带重试）        │
-        └─────────────────────────────────────────────────────────┘
-```
-
-### 目录结构
-
-```
-main.py                    # 薄入口：参数解析 → Config → Engine
-src/
-├── engine.py              # 调度引擎：组件装配、主循环、风控接线
-├── config.py              # 配置（frozen dataclass，全默认值）
-├── llm.py                 # OpenAI 兼容客户端 + extract_json（容错 JSON 提取）
-├── fees.py                # Hyperliquid 费率计算
-├── strategy/
-│   ├── perp.py            # 永续策略：Prompt → JSON 决策 → 校验 → 执行
-│   ├── grid.py            # 网格策略编排（熔断/屏障/趋势过滤/自愈的检查顺序）
-│   └── grid_agent.py      # 网格 AI 决策引擎（AI 判方向，数学引擎定参数）
-├── trading/
-│   ├── client.py          # Hyperliquid SDK 封装（含止损失败回滚）
-│   ├── order_manager.py   # 订单管理（TP/SL 挂单、余额/持仓查询）
-│   ├── grid_manager.py    # 网格布单/同步/对账/紧急平仓
-│   ├── grid_barrier.py    # Triple Barrier 网格级风控
-│   └── grid_pnl.py        # 网格 PnL 追踪
-├── data/
-│   ├── market_data.py     # K 线与行情获取
-│   └── indicators.py      # 技术指标 + 强趋势检测 + 迟滞确认器
-├── plugins/protections/   # 保护插件链（IProtection 基类 + 4 个内置插件）
-└── utils/                 # logger / candle_align / precision / grid_math / introspect
-prompts/                   # perp_system.md + perp_decision.md（唯一一套 Prompt）
-tests/                     # pytest 测试（全部离线，桩件在 conftest.py）
-docs/                      # architecture.md + configuration.md
-```
+架构详解见 `docs/architecture.md`（数据流、组件职责与目录导览）。
+【关键安全机制】止损单失败 → 立即回滚平仓（带重试），实现于交易层
+（`src/trading/client.py` + `order_manager.py`）。
 
 ## 设计原则
 
