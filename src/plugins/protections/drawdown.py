@@ -29,6 +29,8 @@ class MaxDrawdownProtection(IProtection):
         self._is_paused: bool = False
         self._pause_reason: str = ""
         self._last_protection_time: datetime | None = None
+        # 疑似坏采样待确认标记（内存态即可：重启后重新确认一轮无碍）
+        self._suspect_pending: bool = False
         super().__init__(**kwargs)
 
     def check(self, context: ProtectionContext) -> ProtectionReturn:
@@ -43,6 +45,29 @@ class MaxDrawdownProtection(IProtection):
             if context.equity <= 0:
                 logger.warning("最大回撤保护跳过：净值非法 (%.4f)", context.equity)
                 return ProtectionReturn(triggered=False)
+
+            # 坏采样确认守卫：净值较峰值单次骤降超过 suspect_drop_ratio（默认 50%）
+            # 大概率是账户接口降级形态（历史事故：统一账户 marginSummary 只报
+            # 被占用抵押，净值被低估近 80%），而非真实亏损——真实回撤会跨周期
+            # 持续。首次出现只告警等待下一周期复核；连续两次仍骤降才放行进入
+            # 正常回撤判定。CLOSE_ALL 不可逆，宁可迟一个周期也不能被单次坏
+            # 采样触发（该场景平仓即实亏）。
+            suspect_ratio = float(self.config.get("suspect_drop_ratio", 0.5) or 0)
+            if 0 < suspect_ratio < 1 and self._peak_equity > 0:
+                collapsed = context.equity < self._peak_equity * (1 - suspect_ratio)
+                if collapsed and not self._suspect_pending:
+                    self._suspect_pending = True
+                    logger.critical(
+                        "最大回撤保护：净值 $%.2f 较峰值 $%.2f 骤降逾 %.0f%%，"
+                        "疑似账户接口坏采样，等待下一周期确认后再判定回撤",
+                        context.equity,
+                        self._peak_equity,
+                        suspect_ratio * 100,
+                    )
+                    return ProtectionReturn(triggered=False)
+                # 连续两周期骤降=确认为真实回撤，清掉标记进入正常判定；
+                # 净值恢复同样清掉标记（单次坏采样已被吸收）
+                self._suspect_pending = False
 
             # 更新峰值
             if context.equity > self._peak_equity:
@@ -103,8 +128,6 @@ class MaxDrawdownProtection(IProtection):
                 self._last_protection_time = context.timestamp
                 self.save_state()
 
-                self._send_cloud_event(drawdown_pct, max_drawdown_pct)
-
                 return ProtectionReturn(
                     triggered=True,
                     action=ProtectionAction.CLOSE_ALL_POSITIONS,
@@ -119,26 +142,6 @@ class MaxDrawdownProtection(IProtection):
 
             self.save_state()
             return ProtectionReturn(triggered=False)
-
-    def _send_cloud_event(self, drawdown_pct: float, threshold: float) -> None:
-        """上报风控事件到云端"""
-        try:
-            from src.utils.cloud_logger import get_cloud_logger
-
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_risk_event(
-                    symbol="ALL",
-                    risk_type="max_drawdown",
-                    details={
-                        "drawdown_pct": drawdown_pct,
-                        "threshold": threshold,
-                        "peak_equity": self._peak_equity,
-                    },
-                    level="error",
-                )
-        except Exception as e:
-            logger.warning("上报回撤风控事件失败: %s", e)
 
     def _reset_state(self) -> None:
         self._peak_equity = 0.0

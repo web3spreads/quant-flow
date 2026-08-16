@@ -1,99 +1,28 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+build/
+dist/
+.venv/
+.pytest_cache/
+.coverage
 
-# Virtual Environment
-venv/
-env/
-ENV/
-
-# UV
-.uv/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Environment variables
+# 环境与配置（模板文件除外）
 .env
 .env.*
 !.env.example
-
-# Logs
-logs/runtime/
-logs/*.json
-logs/*.csv
-logs/decisions/*
-logs/trades/*
-logs/review_daily/*
-!logs/.gitkeep
-!logs/decisions/.gitkeep
-!logs/trades/.gitkeep
-!logs/review_daily/.gitkeep
-*.log
-
-# Config (保留模板文件)
 config.yaml
 config.*.yaml
-# 回测派生配置（由 config.yaml 复制而来，含密钥，禁止提交）
-config_backtest.yaml
-config_backtest_fast.yaml
-config_backtest*.yaml
 
-# macOS
-.DS_Store
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# 运行时产物
+logs/
 /data/
-
-# Backup files
-*.bak
-*.backup
-.venv
-backtest_results/
-!.env.example
-.env.testnet
-.env.backtest
-.env.mainnet
-.env.grid
-
-# 模型签名密钥
-.signing_key
-
-# Local runtime artifacts
 grid_state*.json
-/src/trading/*.py.new
+*.log
 
-# One-off local scripts
-/test_*.py
-/debug_*.py
-/check_orders.py
-/clean_2000_orders.py
-/emergency_close_eth.py
-/grid_main_mainnet.py
-
-# Docusaurus（忽略规则由 website/.gitignore 管理）
+# IDE / 系统
+.vscode/
+.idea/
+.DS_Store
+*.swp

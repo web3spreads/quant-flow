@@ -4,7 +4,7 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from src.plugins.protections.base import (
@@ -43,7 +43,11 @@ class DailyLossProtection(IProtection):
                 logger.warning("单日亏损保护跳过：净值非法 (%.4f)", context.equity)
                 return ProtectionReturn(triggered=False)
 
-            today = context.timestamp.strftime("%Y-%m-%d")
+            # 「日」边界统一取 UTC：系统其余节拍（K 线对齐、交易所结算）都是 UTC，
+            # 用宿主机本地时区会让日亏损基准在错误的时刻重置
+            today = datetime.fromtimestamp(context.timestamp.timestamp(), tz=UTC).strftime(
+                "%Y-%m-%d"
+            )
 
             # 判断当前暂停是否仍在 pause_hours 冷却期内：跨天也必须遵守该冷却，
             # 不能因日期翻转（如 23:00 触发、00:00 跨天）提前解除暂停。
@@ -95,8 +99,6 @@ class DailyLossProtection(IProtection):
                 self._last_protection_time = context.timestamp
                 self.save_state()
 
-                self._send_cloud_event(daily_loss_pct, max_daily_loss_pct)
-
                 return ProtectionReturn(
                     triggered=True,
                     action=ProtectionAction.PAUSE_NEW_TRADES,
@@ -111,26 +113,6 @@ class DailyLossProtection(IProtection):
 
             self.save_state()
             return ProtectionReturn(triggered=False)
-
-    def _send_cloud_event(self, loss_pct: float, threshold: float) -> None:
-        """上报风控事件到云端"""
-        try:
-            from src.utils.cloud_logger import get_cloud_logger
-
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_risk_event(
-                    symbol="ALL",
-                    risk_type="daily_loss",
-                    details={
-                        "daily_loss_pct": loss_pct,
-                        "threshold": threshold,
-                        "daily_start_equity": self._daily_start_equity,
-                    },
-                    level="error",
-                )
-        except Exception as e:
-            logger.warning("上报日亏损风控事件失败: %s", e)
 
     def _reset_state(self) -> None:
         self._daily_start_equity = 0.0

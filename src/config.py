@@ -1,763 +1,317 @@
 """
-配置管理模块
-负责加载和管理配置文件（config.yaml）和环境变量（.env）
+配置模块：从 config.yaml 与环境变量加载运行配置。
+
+设计原则：
+- 配置能省则省——所有键都有安全默认值，最小可运行配置只需交易对与 LLM 端点；
+- 敏感信息（私钥、API Key）只从环境变量读取，绝不写入 YAML；
+- 配置对象为不可变 dataclass，加载后全程只读，避免运行期被意外篡改。
+
+环境变量：
+    HYPERLIQUID_PRIVATE_KEY      钱包私钥（必填）
+    HYPERLIQUID_ACCOUNT_ADDRESS  主钱包地址（API 钱包模式选填）
+    HYPERLIQUID_TESTNET          是否测试网（默认 true，主网需显式设 false）
+    LLM_API_KEY                  LLM API 密钥（兼容 OPENAI_API_KEY）
 """
 
+import logging
 import os
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import yaml
 from dotenv import load_dotenv
 
-from src.fees import default_perp_fee_rates
+logger = logging.getLogger("quantflow")
 
-# Trading fee constants (Hyperliquid, per doc Tier 0: taker 0.045% / maker 0.015%)
-DEFAULT_PERP_FEE_RATES = default_perp_fee_rates()
-FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.taker_rate
-MAKER_FEE_RATE_PER_SIDE = DEFAULT_PERP_FEE_RATES.maker_rate
+# 未配置 protections 段时的默认保护链（显式配置 protections: [] 可全部关闭）
+DEFAULT_PROTECTIONS: list[dict[str, Any]] = [
+    {"name": "max_drawdown", "max_drawdown_pct": 0.10, "pause_hours": 4},
+    {"name": "daily_loss", "max_daily_loss_pct": 0.05, "pause_hours": 4},
+    {"name": "consecutive_loss", "max_consecutive_losses": 5, "per_symbol": True, "pause_hours": 4},
+    {"name": "position_timeout", "max_position_hours": 48},
+]
 
-# 未显式配置模型时的兜底型号。DeepSeek 在售型号仅 deepseek-v4-flash / deepseek-v4-pro；
-# flash 推理开销约为 pro 的 43%，5 分钟一轮的网格决策用它足够且更省。
-DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+# 旧版（多智能体架构）配置段：新架构已移除，出现即提示迁移，防止静默失效
+_LEGACY_TOP_LEVEL_KEYS = {
+    "run_mode": "已移除，改用 trading.perp_enabled / trading.grid_enabled 开关",
+    "notification": "通知功能已随重构移除，告警仅落日志（logs/main.log）",
+    "cloud_logging": "云日志功能已随重构移除",
+    "risk_management": "账户级风控改为 protections 插件段，网格屏障在 grid.barrier",
+    "agents": "多智能体架构已移除",
+    "llm_providers": "已简化为单一 llm 段（base_url/model/temperature/timeout）",
+}
 
 
+@dataclass(frozen=True)
+class LLMConfig:
+    """LLM 配置：任意 OpenAI 兼容端点（DeepSeek/OpenAI/本地部署等）。"""
+
+    base_url: str = "https://api.deepseek.com/v1"
+    model: str = "deepseek-chat"
+    temperature: float = 0.2
+    timeout: float = 120.0
+    api_key: str = ""
+
+
+@dataclass(frozen=True)
+class ExchangeConfig:
+    """交易所配置：全部来自环境变量。"""
+
+    private_key: str = ""
+    account_address: str | None = None
+    testnet: bool = True
+
+
+@dataclass(frozen=True)
+class TradingConfig:
+    """交易配置：永续与网格共用的账户级参数。"""
+
+    symbols: tuple[str, ...] = ("BTC",)
+    perp_enabled: bool = True
+    grid_enabled: bool = False
+    max_trade_amount: float = 100.0  # 单笔投入上限（USD）
+    max_leverage: int = 5
+    max_positions: int = 3
+    take_profit_ratio: float = 0.05  # 止盈比例（开仓价 ±5%）
+    stop_loss_ratio: float = 0.02  # 止损比例（开仓价 ∓2%）
+    min_confidence: float = 0.6  # 永续开仓最低置信度
+    timeframe: str = "1h"  # 决策 K 线周期
+    candles_limit: int = 100  # 单次拉取 K 线数量
+    timeframe_offset: float = 2.0  # K 线收盘后等待秒数（确保数据可取）
+    min_throttle_secs: float = 30.0  # 两次决策最小间隔
+    run_immediately: bool = True  # 启动时立即执行一轮
+    llm_failure_alert_cycles: int = 6  # 永续 LLM 连续失败 N 周期升级告警（0=关闭）
+
+
+@dataclass(frozen=True)
+class GridConfig:
+    """网格配置：安全机制全部默认启用，仅暴露必要的数值旋钮。"""
+
+    interval_minutes: int = 5  # 网格决策周期（分钟）
+    width_min_pct: float = 0.02  # 网格宽度下限
+    width_max_pct: float = 0.15  # 网格宽度上限
+    width_fallback_pct: float = 0.05  # 数据异常时的回退宽度
+    ai_blend_weight: float = 0.35  # AI 宽度与市场数据的融合权重
+    force_neutral: bool = True  # 强制中性网格（忽略 AI 方向，消除反手亏损）
+    min_grid_num: int = 3  # 自适应仓位最少格数
+    max_position_notional_usd: float = 0.0  # 库存硬上限（USD 名义额，0=关闭）
+    halt_below_usd: float = 0.0  # 净值停机线（低于此值且无持仓跳过周期，0=关闭）
+    trend_filter_enabled: bool = True  # 多周期强势一致时暂停加仓
+    trend_filter_min_votes: int = 3  # 强势周期票数阈值
+    trend_filter_timeframes: tuple[str, ...] = ("15m", "1h", "4h", "1d")
+    trend_confirm_cycles: int = 2  # 连续 N 周期同向确认才暂停（迟滞去抖）
+    flatten_adverse: bool = True  # 强趋势中减掉逆势库存
+    flatten_min_cycles: int = 3  # 平逆势库存需更多连续确认（暂停先行、平仓靠后）
+    llm_failure_alert_cycles: int = 6  # LLM 连续失败 N 周期告警（0=关闭）
+    llm_fallback_rebuild_cycles: int = 12  # 空转 N 周期后纯市场数据兜底重建（0=关闭）
+    barrier: dict[str, Any] = field(default_factory=dict)  # Triple Barrier 覆盖项
+
+
+@dataclass(frozen=True)
 class Config:
-    """配置管理类"""
+    """聚合配置根对象。"""
 
-    @staticmethod
-    def _as_bool(value: Any, default: bool) -> bool:
-        """宽松解析布尔配置，兼容 YAML 布尔和字符串。"""
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(value)
+    llm: LLMConfig
+    exchange: ExchangeConfig
+    trading: TradingConfig
+    grid: GridConfig
+    protections: list[dict[str, Any]]
 
-    def __init__(
-        self,
-        config_path: str = "config.yaml",
-        require_api_credentials: bool = True,
-        env_file: str = None,
-    ):
+    @classmethod
+    def load(cls, config_path: str = "config.yaml", env_file: str | None = None) -> "Config":
         """
-        初始化配置
+        加载配置：.env → 环境变量 → config.yaml（可缺省，缺省即全默认值）。
 
         Args:
-            config_path: 配置文件路径
-            require_api_credentials: 是否强制要求 OpenAI/Hyperliquid 凭证
-            env_file: 环境变量文件路径（默认: .env）
-        """
-        # 加载环境变量
-        if env_file:
-            load_dotenv(dotenv_path=env_file)
-            self._env_file = env_file
-        else:
-            # 优先检查环境变量 DOTENV_PATH，否则使用默认 .env
-            env_path = os.getenv("DOTENV_PATH", ".env")
-            load_dotenv(dotenv_path=env_path)
-            self._env_file = env_path
-
-        # 加载 YAML 配置
-        self.config_path = Path(config_path)
-        self.require_api_credentials = require_api_credentials
-        self.config_data = self._load_yaml_config()
-
-        # 初始化各配置项
-        self._init_llm_config()
-        self._init_openai_config()
-        self._init_hyperliquid_config()
-        self._init_trading_config()
-        self._init_scheduler_config()
-        self._init_data_config()
-        self._init_indicators_config()
-        self._init_agent_config()
-        self._init_prompt_config()
-        self._init_review_agent_config()
-        self._init_external_info_agent_config()
-        self._init_risk_config()
-        self._init_enhanced_analysis_config()
-        self._init_logging_config()
-        self._init_notifications_config()
-        self._init_market_monitor_config()
-        self._init_cloud_logging_config()
-        self._init_account_protection_config()
-        self._init_protections_config()
-
-    def _load_yaml_config(self) -> dict[str, Any]:
-        """加载 YAML 配置文件"""
-        if not self.config_path.exists():
-            raise FileNotFoundError(
-                f"配置文件不存在: {self.config_path}\n"
-                f"请将 config.yaml.example 复制为 config.yaml 并根据需要修改配置"
-            )
-
-        with open(self.config_path, encoding="utf-8") as f:
-            return yaml.safe_load(f)
-
-    def _init_llm_config(self):
-        """初始化 LLM 客户端配置"""
-        llm_config = self.config_data.get("llm", {})
-
-        # 客户端类型：优先从 YAML 配置读取，如果没有则从环境变量读取
-        self.llm_client_type = llm_config.get("client_type") or os.getenv(
-            "LLM_CLIENT_TYPE", "langchain_openai"
-        )
-
-        # 模型名称：优先从 YAML 配置读取，如果没有则从环境变量读取。
-        # 默认值随供应商在售型号走：DeepSeek 已下线 deepseek-chat，现仅接受
-        # deepseek-v4-flash / deepseek-v4-pro，旧名一律 400 invalid_request_error。
-        # 线上因此静默停摆 13 小时（每轮决策失败 → 网格空转），故默认值必须是在售型号。
-        self.llm_model = llm_config.get("model") or os.getenv("OPENAI_MODEL", DEFAULT_LLM_MODEL)
-
-        # 基础参数（可选）
-        self.llm_temperature = llm_config.get("temperature")
-        self.llm_top_p = llm_config.get("top_p")
-        self.llm_max_tokens = llm_config.get("max_tokens")
-
-        # 额外参数（可选）
-        self.llm_extra_body = llm_config.get("extra_body")
-
-        # OpenAI / OpenAI-compatible 配置
-        self.llm_openai_api_base = os.getenv("OPENAI_API_BASE")
-        self.llm_openai_api_key = os.getenv("OPENAI_API_KEY")
-
-        # Cloudflare 配置
-        self.llm_cloudflare_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
-        self.llm_cloudflare_api_token = os.getenv("CLOUDFLARE_API_TOKEN")
-
-        # Google 配置
-        self.llm_google_api_key = os.getenv("GOOGLE_API_KEY")
-
-        # LiteLLM 配置
-        self.llm_litellm_api_base = os.getenv("LITELLM_API_BASE")
-        self.llm_litellm_api_key = os.getenv("LITELLM_API_KEY")
-
-        # NVIDIA 配置
-        self.llm_nvidia_api_key = os.getenv("NVIDIA_API_KEY")
-
-    def _init_openai_config(self):
-        """初始化 OpenAI API 配置"""
-        self.openai_api_base = os.getenv("OPENAI_API_BASE", "https://api.deepseek.com/v1")
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.openai_model = os.getenv("OPENAI_MODEL", DEFAULT_LLM_MODEL)
-
-        # LLM Fallback 配置
-        self.llm_fallback_api_base = os.getenv("LLM_FALLBACK_API_BASE", "")
-        self.llm_fallback_api_key = os.getenv("LLM_FALLBACK_API_KEY", "")
-        self.llm_fallback_model = os.getenv("LLM_FALLBACK_MODEL", "")
-
-        if not self.openai_api_key and self.require_api_credentials:
-            raise ValueError("未设置 OPENAI_API_KEY 环境变量！\n请在 .env 文件中设置或使用环境变量")
-
-    def _init_hyperliquid_config(self):
-        """初始化 Hyperliquid 配置"""
-        self.hyperliquid_private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY")
-        self.hyperliquid_account_address = os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", "")
-        self.hyperliquid_vault_address = os.getenv("HYPERLIQUID_VAULT_ADDRESS", "")
-        self.hyperliquid_testnet = os.getenv("HYPERLIQUID_TESTNET", "true").lower() == "true"
-
-        # API Fallback 配置
-        fallbacks = os.getenv("HYPERLIQUID_API_FALLBACKS", "")
-        self.hyperliquid_api_urls = [url.strip() for url in fallbacks.split(",") if url.strip()]
-
-        # 检查私钥配置
-        if not self.hyperliquid_private_key and self.require_api_credentials:
-            raise ValueError(
-                "未设置 HYPERLIQUID_PRIVATE_KEY 环境变量！\n请在 .env 文件中设置钱包私钥"
-            )
-
-    def _init_trading_config(self):
-        """初始化交易配置"""
-        trading = self.config_data.get("trading", {})
-        self.symbols: list[str] = trading.get("symbols", ["BTC", "ETH"])
-
-        # 单笔交易金额上限（AI可自主决定实际金额，但不超过此上限）
-        # 向后兼容：支持旧字段名 trade_amount
-        self.max_trade_amount: float = float(
-            trading.get("max_trade_amount", trading.get("trade_amount", 100))
-        )
-        # 保留旧字段名用于兼容性
-        self.trade_amount: float = self.max_trade_amount
-
-        self.take_profit_ratio: float = float(trading.get("take_profit_ratio", 0.05))
-        self.stop_loss_ratio: float = float(trading.get("stop_loss_ratio", 0.02))
-        self.max_positions: int = int(trading.get("max_positions", 2))
-        self.limit_order_enabled: bool = trading.get("limit_order_enabled", False)
-        # 网格限价单是否在成交后自动挂止盈/止损触发单（默认保持历史行为：都开启）
-        self.grid_limit_order_take_profit_enabled: bool = self._as_bool(
-            trading.get("grid_limit_order_take_profit_enabled"),
-            True,
-        )
-        self.grid_limit_order_stop_loss_enabled: bool = self._as_bool(
-            trading.get("grid_limit_order_stop_loss_enabled"),
-            True,
-        )
-        self.grid_reduce_only_exit_orders_enabled: bool = self._as_bool(
-            trading.get("grid_reduce_only_exit_orders_enabled"),
-            True,
-        )
-        # 强制网格走 NEUTRAL：忽略 AI 的 LONG/SHORT 方向输出，网格只做对称做市。
-        # 默认关闭（保持历史行为）。开启后可消除 LONG↔SHORT 方向翻转带来的 whipsaw 亏损
-        # 与 taker 反手手续费——线上验证 24h 亏损几乎全部来自方向反转。
-        self.grid_force_neutral_mode: bool = self._as_bool(
-            trading.get("grid_force_neutral_mode"),
-            False,
-        )
-        # 网格库存硬上限（USD 净持仓名义额）：净持仓名义额达到此值后，禁止再往「加剧当前
-        # 持仓方向」的方向挂开仓单（只放行减仓方向）。专治单边趋势中逆势库存无限累积——
-        # 这是线上最大亏损根因（中性网格在上涨里不断开空、空头库存无上限放大）。
-        # 默认 0 = 关闭（保持历史行为）。
-        self.grid_max_position_notional_usd: float = float(
-            trading.get("grid_max_position_notional_usd", 0) or 0
-        )
-        # 网格趋势过滤：多周期趋势一致强势（强势上涨/下跌票数达阈值）时，本轮暂停网格加仓
-        # （等价于一次 KEEP_GRID，仅维持 reduce_only 减仓保护单），避免逆势做市。默认关闭。
-        self.grid_trend_filter_enabled: bool = self._as_bool(
-            trading.get("grid_trend_filter_enabled"),
-            False,
-        )
-        # 触发趋势过滤所需的「强势」周期票数（多周期趋势里 强势上涨 或 强势下跌 的计数阈值）。
-        self.grid_trend_filter_min_votes: int = int(
-            trading.get("grid_trend_filter_min_votes", 3) or 3
-        )
-        # 趋势过滤触发时，是否市价平掉与趋势相反的逆势库存（强力止血，如上涨趋势里平掉空头）。
-        # 默认关闭（仅暂停加仓，不主动平仓）。
-        self.grid_trend_filter_flatten_adverse: bool = self._as_bool(
-            trading.get("grid_trend_filter_flatten_adverse"),
-            False,
-        )
-        # 趋势过滤参与计票的周期白名单（如 ["15m","1h","4h","1d"]，支持中文键"15分钟"等）。
-        # None/空 = 全部 5 个周期参与（保持历史行为）。线上验证 1m 周期噪声会把普通回调
-        # 误判成强趋势，触发不必要的平仓——建议生产排除 1m。
-        _tf_whitelist = trading.get("grid_trend_filter_timeframes")
-        self.grid_trend_filter_timeframes: list[str] | None = (
-            [str(tf) for tf in _tf_whitelist] if _tf_whitelist else None
-        )
-        # 趋势需连续确认的周期数：连续 N 个网格周期检测到同向强趋势才生效（迟滞去抖）。
-        # 默认 1 = 立即生效（保持历史行为）。线上 12.5 天 145 次强平大多来自单周期瞬时误判。
-        self.grid_trend_filter_confirm_cycles: int = max(
-            1, int(trading.get("grid_trend_filter_confirm_cycles", 1) or 1)
-        )
-        # 平逆势库存所需的连续确认周期数（≥ confirm_cycles）：暂停加仓先行、市价平仓靠后，
-        # 给均值回归留出空间。默认 1 = 确认即平（保持历史行为）。
-        self.grid_trend_filter_flatten_min_cycles: int = max(
-            self.grid_trend_filter_confirm_cycles,
-            int(trading.get("grid_trend_filter_flatten_min_cycles", 1) or 1),
-        )
-        # 手术式平逆势库存：只平「超出库存上限的逆势部分」，保留网格挂单与层级状态，
-        # 不触发重建冷却。默认关闭 = 沿用历史行为（全量拆网 _emergency_close_all，
-        # 线上验证该行为 12.5 天拆网 145 次、每次都在摆动极值实现亏损并重建）。
-        self.grid_trend_filter_surgical_flatten: bool = self._as_bool(
-            trading.get("grid_trend_filter_surgical_flatten"),
-            False,
-        )
-        # 库存上限严格模式：名义额计入同向未成交挂单（防一轮布单后同向全部成交导致超限数倍），
-        # 且取价/查单失败时 fail-closed（拦截加仓而非放行）。默认关闭（保持历史行为）。
-        self.grid_inventory_cap_strict: bool = self._as_bool(
-            trading.get("grid_inventory_cap_strict"),
-            False,
-        )
-        # KEEP_GRID 周期对账：撤掉交易所上与本地层级/状态无对应的非 reduce_only 残留挂单。
-        # 默认关闭（保持历史行为：残单靠成交后"无对应持仓"事后清理，线上单日出现 194 次）。
-        self.grid_keep_grid_reconcile: bool = self._as_bool(
-            trading.get("grid_keep_grid_reconcile"),
-            False,
-        )
-        # 自适应仓位：单格金额与真实净值挂钩——资金不足时减少格数而非抬高单格金额；
-        # 格数低于下限时返回 INSUFFICIENT_CAPITAL 拒绝布单。默认关闭（保持历史行为：
-        # 单格金额被硬编码钳制在 $15.5~$25.5，线上 $7.71 账户被放大成 16 倍名义敞口）。
-        self.grid_adaptive_sizing_enabled: bool = self._as_bool(
-            trading.get("grid_adaptive_sizing_enabled"),
-            False,
-        )
-        # 自适应仓位允许的最少格数（低于此数视为资金不足，拒绝布单）。
-        self.grid_min_grid_num: int = max(2, int(trading.get("grid_min_grid_num", 3) or 3))
-        # 网格停机线（USD）：净值低于此值且无持仓时，跳过整个网格周期（不拉行情、不调 LLM），
-        # 仅打一行日志。默认 0 = 关闭。线上账户 $7.71 熔断后仍每 5 分钟烧一次 LLM 调用即源于缺此闸。
-        self.grid_halt_below_usd: float = max(
-            0.0, float(trading.get("grid_halt_below_usd", 0) or 0)
-        )
-        # 每周期净值快照：把 equity/available/未实现盈亏写入 logs/equity/*.jsonl（观测净值曲线）。
-        # 默认关闭。线上 12.5 天亏 39% 无一处结构化记录可回答"钱去哪了"，即源于缺此项。
-        self.grid_equity_snapshot_enabled: bool = self._as_bool(
-            trading.get("grid_equity_snapshot_enabled"),
-            False,
-        )
-        # LLM 连续失败告警：连续 N 个网格周期 LLM 不可用（调用异常/空输出/输出不可解析）
-        # 就走通知渠道升级告警。默认 0 = 关闭（保持历史行为：只打日志）。
-        # 线上 DeepSeek 下线 deepseek-chat 后连续 13 小时决策全失败、网格零成交，
-        # 钉钉通道明明是开的却一条没发，全靠人工翻日志才发现。
-        self.grid_llm_failure_alert_cycles: int = max(
-            0, int(trading.get("grid_llm_failure_alert_cycles", 0) or 0)
-        )
-        # 空转自愈：连续 N 个周期处于「无层级 + 无持仓 + 拿不到 UPDATE_GRID」时，
-        # 用纯市场数据（不经 LLM）兜底重建一次中性网格。默认 0 = 关闭。
-        # 这是 LLM 故障期的恢复死锁解药：层级被清空后只有 UPDATE_GRID 能重建，
-        # 而故障期每轮只产出 ERROR 或兜底 KEEP_GRID，网格永远躺平。
-        self.grid_llm_fallback_rebuild_cycles: int = max(
-            0, int(trading.get("grid_llm_fallback_rebuild_cycles", 0) or 0)
-        )
-        # 净额对冲平仓归因：以链上成交为准补齐层级状态机漏掉的平仓盈亏，喂连亏熔断
-        # 并把 pnl/reason 写进 trades 日志。默认关闭（保持历史行为）。
-        # 线上三周实测归因覆盖率仅 2.3%，连亏熔断在中性网格下形同虚设。
-        self.grid_netting_attribution_enabled: bool = self._as_bool(
-            trading.get("grid_netting_attribution_enabled"),
-            False,
-        )
-
-        # 最大杠杆倍数（AI可自主选择1到此上限之间的任何杠杆）
-        # 向后兼容：支持旧字段名 default_leverage
-        self.max_leverage: int = int(
-            trading.get("max_leverage", trading.get("default_leverage", 10))
-        )
-        # 保留旧字段名用于兼容性
-        self.default_leverage: int = self.max_leverage
-
-        # Agent 启动开关配置
-        # 优先级：环境变量 PERP_ENABLED/GRID_ENABLED（由 Docker RUN_MODE 映射）
-        # > config.yaml 的 trading.perp_enabled/grid_enabled > 内置默认值。
-        # 容器部署时 RUN_MODE 据此在不改配置文件的前提下切换运行模式。
-        self.perp_enabled: bool = self._as_bool(
-            os.getenv("PERP_ENABLED")
-            if os.getenv("PERP_ENABLED") is not None
-            else trading.get("perp_enabled"),
-            True,
-        )
-        self.grid_enabled: bool = self._as_bool(
-            os.getenv("GRID_ENABLED")
-            if os.getenv("GRID_ENABLED") is not None
-            else trading.get("grid_enabled"),
-            False,
-        )
-
-    def _init_scheduler_config(self):
-        """初始化调度器配置"""
-        scheduler = self.config_data.get("scheduler", {})
-        self.interval_minutes: int = int(scheduler.get("interval_minutes", 3))
-        self.run_immediately: bool = scheduler.get("run_immediately", True)
-        # Q-03: K 线节拍对齐参数
-        self.timeframe_offset: float = float(scheduler.get("timeframe_offset", 2.0))
-        self.min_throttle_secs: float = float(scheduler.get("min_throttle_secs", 30.0))
-
-    def _init_data_config(self):
-        """初始化数据配置"""
-        data = self.config_data.get("data", {})
-        self.timeframe: str = data.get("timeframe", "15m")
-        self.candles_limit: int = int(data.get("candles_limit", 100))
-
-    def _init_indicators_config(self):
-        """初始化技术指标配置"""
-        indicators = self.config_data.get("indicators", {})
-        self.ma_periods: list[int] = indicators.get("ma_periods", [7, 25, 99])
-        self.rsi_period: int = int(indicators.get("rsi_period", 14))
-
-        macd_params = indicators.get("macd_params", {})
-        self.macd_fast: int = int(macd_params.get("fast", 12))
-        self.macd_slow: int = int(macd_params.get("slow", 26))
-        self.macd_signal: int = int(macd_params.get("signal", 9))
-
-        bollinger_params = indicators.get("bollinger_params", {})
-        self.bollinger_period: int = int(bollinger_params.get("period", 20))
-        self.bollinger_std: float = float(bollinger_params.get("std_dev", 2))
-
-    def _init_agent_config(self):
-        """初始化 Agent 配置"""
-        agent = self.config_data.get("agent", {})
-
-        memory = agent.get("memory", {})
-        self.memory_max_token_limit: int = int(memory.get("max_token_limit", 2000))
-        self.memory_max_messages: int = int(memory.get("max_messages", 10))
-
-        self.agent_temperature: float = float(agent.get("temperature", 0.1))
-        self.agent_max_iterations: int = int(agent.get("max_iterations", 5))
-        self.agent_timeout: int = int(agent.get("timeout", 60))
-
-        grid_width = agent.get("grid_width", {})
-        self.grid_width_min_pct: float = float(grid_width.get("min_pct", 0.02))
-        self.grid_width_max_pct: float = float(grid_width.get("max_pct", 0.15))
-        self.grid_width_fallback_pct: float = float(grid_width.get("fallback_pct", 0.05))
-        self.grid_ai_blend_weight: float = float(grid_width.get("ai_blend_weight", 0.35))
-
-    def _init_prompt_config(self):
-        """初始化 Prompt 配置"""
-        prompt = self.config_data.get("prompt", {})
-        self.prompt_set: str = prompt.get("set", "default")
-        self.prompt_config_file: str = prompt.get("config_file", "prompts/prompts.yaml")
-
-    def _init_review_agent_config(self):
-        """初始化复盘 Agent 配置"""
-        review = self.config_data.get("review_agent", {})
-        self.review_enabled: bool = review.get("enabled", False)
-        self.review_run_every_cycles: int = int(review.get("run_every_cycles", 3))
-        self.review_lookback_decisions: int = int(review.get("lookback_decisions", 12))
-        self.review_temperature: float = float(review.get("temperature", 0.05))
-        # 如果配置文件中指定了 model，使用它；否则使用默认的 openai_model
-        self.review_model: str = review.get("model", None)
-        self.review_memory_file: str = review.get("memory_file", "logs/review_memory.json")
-        # 每日日志目录（用于 LoRA 训练数据收集）
-        self.review_daily_log_dir: str = review.get("daily_log_dir", "logs/review_daily")
-        self.review_max_lessons: int = int(review.get("max_lessons", 30))
-        self.review_min_confidence: float = float(review.get("min_confidence", 0.35))
-        self.review_similarity_threshold: float = float(review.get("similarity_threshold", 0.5))
-        self.review_similarity_weights: dict[str, float] = review.get("similarity_weights", {})
-        self.review_confidence_decay_factor: float = float(
-            review.get("confidence_decay_factor", 0.6)
-        )
-        self.review_similarity_method: str = review.get("similarity_method", "cosine")
-
-        # 改进1: 双粒度反思
-        self.review_instant_reflection_enabled: bool = review.get(
-            "instant_reflection_enabled", False
-        )
-        self.review_weekly_reflection_enabled: bool = review.get("weekly_reflection_enabled", False)
-        self.review_weekly_reflection_day: int = int(review.get("weekly_reflection_day", 0))
-        self.review_weekly_reflection_hour: int = int(review.get("weekly_reflection_hour", 8))
-
-        # 改进2: Regime 感知记忆
-        self.review_regime_aware_enabled: bool = review.get("regime_aware_enabled", False)
-        self.review_regime_mismatch_factor: float = float(review.get("regime_mismatch_factor", 0.4))
-
-        # 改进3: 确认偏差防护
-        self.review_bias_protection_enabled: bool = review.get("bias_protection_enabled", False)
-        self.review_max_positive_ratio: float = float(review.get("max_positive_ratio", 0.7))
-        self.review_negative_confidence_boost: float = float(
-            review.get("negative_confidence_boost", 1.15)
-        )
-
-        # 改进4: 事实-主观分离
-        self.review_fact_subjective_split_enabled: bool = review.get(
-            "fact_subjective_split_enabled", False
-        )
-        self.review_trending_subjective_boost: float = float(
-            review.get("trending_subjective_boost", 1.3)
-        )
-        self.review_ranging_factual_boost: float = float(review.get("ranging_factual_boost", 1.3))
-
-        # 改进5: Prompt 自优化
-        self.review_prompt_meta_reflection_enabled: bool = review.get(
-            "prompt_meta_reflection_enabled", False
-        )
-        self.review_prompt_optimization_dir: str = review.get(
-            "prompt_optimization_dir", "logs/prompt_optimization"
-        )
-
-    def _init_external_info_agent_config(self):
-        """初始化外部信息收集 Agent 配置"""
-        external_info = self.config_data.get("external_info_agent", {})
-        self.external_info_enabled: bool = external_info.get("enabled", False)
-        self.external_info_interval_hours: float = float(external_info.get("interval_hours", 3.0))
-        self.external_info_store_dir: str = external_info.get("store_dir", "data/market_info")
-        # 从环境变量读取 Exa API 密钥
-        self.external_info_exa_api_key: str = os.getenv("EXA_API_KEY")
-
-        self.external_info_temperature: float = float(external_info.get("temperature", 0.1))
-        self.external_info_max_summary_length: int = int(
-            external_info.get("max_summary_length", 2000)
-        )
-        self.external_info_periods: list[str] = external_info.get(
-            "periods", ["daily", "weekly", "biweekly", "monthly"]
-        )
-        self.external_info_cleanup_days: int = int(external_info.get("cleanup_days", 30))
-
-    def _init_risk_config(self):
-        """初始化风控配置"""
-        risk = self.config_data.get("risk_management", {})
-        self.circuit_breaker_enabled: bool = risk.get("circuit_breaker_enabled", True)
-        self.circuit_breaker_threshold: float = float(risk.get("circuit_breaker_threshold", 0.1))
-        self.circuit_breaker_window: int = int(risk.get("circuit_breaker_window", 5))
-        self.circuit_breaker_pause: int = int(risk.get("circuit_breaker_pause", 30))
-
-    def _init_enhanced_analysis_config(self):
-        """初始化增强分析配置"""
-        enhanced = self.config_data.get("enhanced_analysis", {})
-
-        # 是否启用增强分析
-        self.enhanced_analysis_enabled: bool = enhanced.get("enabled", True)
-
-        # 信号过滤配置
-        self.enhanced_min_signal_quality: str = enhanced.get("min_signal_quality", "fair")
-        self.enhanced_min_confidence: float = float(enhanced.get("min_confidence", 0.4))
-        self.enhanced_enable_risk_filter: bool = enhanced.get("enable_risk_filter", True)
-        self.enhanced_enable_timing_filter: bool = enhanced.get("enable_timing_filter", True)
-
-        # 风险管理配置
-        risk_config = enhanced.get("risk", {})
-        self.enhanced_max_risk_per_trade: float = float(risk_config.get("max_risk_per_trade", 0.02))
-        self.enhanced_max_total_exposure: float = float(risk_config.get("max_total_exposure", 0.5))
-        self.enhanced_atr_sl_multiplier: float = float(risk_config.get("atr_sl_multiplier", 1.5))
-        self.enhanced_atr_tp_multiplier: float = float(risk_config.get("atr_tp_multiplier", 3.0))
-        self.enhanced_trailing_stop_enabled: bool = risk_config.get("trailing_stop_enabled", True)
-        self.enhanced_volatility_adjustment: bool = risk_config.get("volatility_adjustment", True)
-
-        # 信号权重配置
-        signal_config = enhanced.get("signal_weights", {})
-        self.enhanced_signal_weights: dict[str, float] = {
-            "trend": float(signal_config.get("trend", 0.25)),
-            "momentum": float(signal_config.get("momentum", 0.20)),
-            "volume": float(signal_config.get("volume", 0.15)),
-            "volatility": float(signal_config.get("volatility", 0.10)),
-            "price_action": float(signal_config.get("price_action", 0.15)),
-            "multi_timeframe": float(signal_config.get("multi_timeframe", 0.15)),
-        }
-
-    def _init_logging_config(self):
-        """初始化日志配置"""
-        logging_config = self.config_data.get("logging", {})
-        self.console_color: bool = logging_config.get("console_color", True)
-        self.show_full_prompt: bool = logging_config.get("show_full_prompt", True)
-        self.show_chain_of_thought: bool = logging_config.get("show_chain_of_thought", True)
-        self.decision_log_format: str = logging_config.get("decision_log_format", "json")
-
-        # 日志级别
-        self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
-
-    def _init_notifications_config(self):
-        """初始化通知配置"""
-        self.notifications = self.config_data.get("notifications", {"enabled": False})
-
-    def _init_cloud_logging_config(self):
-        """初始化云端日志配置（aepipe 服务，v2 支持 D1 payload）"""
-        cloud = self.config_data.get("cloud_logging", {})
-        self.cloud_logging_enabled: bool = cloud.get("enabled", False)
-        self.cloud_logging_base_url: str = cloud.get(
-            "base_url", os.getenv("CLOUD_LOGGING_BASE_URL", "")
-        )
-        self.cloud_logging_token: str = cloud.get("token", os.getenv("CLOUD_LOGGING_TOKEN", ""))
-        self.cloud_logging_project: str = cloud.get("project", "quant-flow")
-        self.cloud_logging_logstore: str = cloud.get("logstore", "trading")
-        self.cloud_logging_flush_interval: float = float(cloud.get("flush_interval", 5.0))
-        # D1 payload 过期时间（秒），默认 90 天，与 Analytics Engine 保留期一致
-        self.cloud_logging_payload_ttl: int = int(cloud.get("payload_ttl", 90 * 24 * 3600))
-
-    def _init_market_monitor_config(self):
-        """初始化市场主动监控配置"""
-        monitor = self.config_data.get("market_monitor", {})
-        self.market_monitor_enabled: bool = monitor.get("enabled", False)
-        self.market_monitor_check_interval_seconds: int = int(
-            monitor.get("check_interval_seconds", 30)
-        )
-        self.market_monitor_alert_threshold_pct: float = float(
-            monitor.get("alert_threshold_pct", 3.0)
-        )
-        self.market_monitor_elevated_threshold_pct: float = float(
-            monitor.get("elevated_threshold_pct", 1.5)
-        )
-        self.market_monitor_extreme_threshold_pct: float = float(
-            monitor.get("extreme_threshold_pct", 5.0)
-        )
-        self.market_monitor_cooldown_minutes: int = int(monitor.get("cooldown_minutes", 5))
-        self.market_monitor_reference_window_minutes: int = int(
-            monitor.get("reference_window_minutes", 10)
-        )
-
-    def _init_account_protection_config(self):
-        """初始化账户保护配置"""
-        ap = self.config_data.get("account_protection", {})
-        self.account_protection_enabled: bool = self._as_bool(ap.get("enabled"), False)
-        self.account_protection_max_drawdown_pct: float = float(ap.get("max_drawdown_pct", 0.10))
-        self.account_protection_max_daily_loss_pct: float = float(
-            ap.get("max_daily_loss_pct", 0.05)
-        )
-        self.account_protection_max_position_hours: float = float(ap.get("max_position_hours", 48))
-        self.account_protection_max_consecutive_losses: int = int(
-            ap.get("max_consecutive_losses", 5)
-        )
-        self.account_protection_pause_hours: float = float(
-            ap.get("pause_hours_after_protection", 4)
-        )
-
-    def _init_protections_config(self):
-        """初始化插件化保护配置（优先使用新 protections 格式，兼容旧 account_protection 格式）"""
-        raw = self.config_data.get("protections", None)
-        if raw is not None:
-            # 新格式：直接使用 protections 列表
-            self.protections_config: list[dict[str, Any]] = raw if isinstance(raw, list) else []
-        elif self.account_protection_enabled:
-            # 旧格式：自动迁移为新格式
-            self.protections_config = self._migrate_legacy_protection_config()
-        else:
-            self.protections_config = []
-
-    def _migrate_legacy_protection_config(self) -> list[dict[str, Any]]:
-        """将旧 account_protection 配置迁移为插件化格式"""
-        return [
-            {
-                "name": "max_drawdown",
-                "max_drawdown_pct": self.account_protection_max_drawdown_pct,
-                "pause_hours": self.account_protection_pause_hours,
-            },
-            {
-                "name": "daily_loss",
-                "max_daily_loss_pct": self.account_protection_max_daily_loss_pct,
-                "pause_hours": self.account_protection_pause_hours,
-            },
-            {
-                "name": "consecutive_loss",
-                "max_consecutive_losses": self.account_protection_max_consecutive_losses,
-                "per_symbol": False,
-                "pause_hours": self.account_protection_pause_hours,
-            },
-            {
-                "name": "position_timeout",
-                "max_position_hours": self.account_protection_max_position_hours,
-            },
-        ]
-
-    def validate(self):
-        """验证配置的有效性"""
-        errors = []
-
-        # 验证交易金额上限
-        if self.max_trade_amount <= 0:
-            errors.append("max_trade_amount 必须大于 0")
-
-        # 验证止盈止损比例
-        if self.take_profit_ratio <= 0:
-            errors.append("take_profit_ratio 必须大于 0")
-        if self.stop_loss_ratio <= 0:
-            errors.append("stop_loss_ratio 必须大于 0")
-
-        # 验证交易对
-        if not self.symbols:
-            errors.append("至少需要配置一个交易对")
-
-        # 验证时间周期
-        valid_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
-        if self.timeframe not in valid_timeframes:
-            errors.append(f"timeframe 必须是以下之一: {valid_timeframes}")
-
-        # 验证网格宽度参数
-        if self.grid_width_min_pct <= 0:
-            errors.append("agent.grid_width.min_pct 必须大于 0")
-        if self.grid_width_max_pct <= self.grid_width_min_pct:
-            errors.append("agent.grid_width.max_pct 必须大于 min_pct")
-        if not (self.grid_width_min_pct <= self.grid_width_fallback_pct <= self.grid_width_max_pct):
-            errors.append("agent.grid_width.fallback_pct 必须在 [min_pct, max_pct] 区间内")
-        if not (0.0 <= self.grid_ai_blend_weight <= 1.0):
-            errors.append("agent.grid_width.ai_blend_weight 必须在 [0,1] 区间内")
-
-        if errors:
-            raise ValueError("配置验证失败:\n" + "\n".join(f"- {err}" for err in errors))
-
-    def get_llm_client_config(self):
-        """
-        创建 LLM 客户端配置对象
+            config_path: YAML 配置文件路径，不存在时使用全部默认值
+            env_file: .env 文件路径，None 时按 dotenv 默认规则查找
 
         Returns:
-            LLMClientConfig: LLM 客户端配置
+            只读 Config 实例
 
         Raises:
-            ValueError: 如果 llm_client_type 配置无效
+            ValueError: 缺少必要环境变量（如 HYPERLIQUID_PRIVATE_KEY）
         """
-        from src.llm import LLMClientConfig, LLMClientType
+        load_dotenv(env_file, override=False)
 
-        # 验证 llm_client_type 以提供清晰的错误信息
-        try:
-            client_type_enum = LLMClientType(self.llm_client_type)
-        except ValueError as exc:
-            valid_values = [t.value for t in LLMClientType]
-            raise ValueError(
-                f"Invalid llm_client_type '{self.llm_client_type}' in configuration. "
-                f"Expected one of: {valid_values}"
-            ) from exc
+        data: dict[str, Any] = {}
+        path = Path(config_path)
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
 
-        return LLMClientConfig(
-            client_type=client_type_enum,
-            model=self.llm_model,
-            temperature=self.llm_temperature,
-            top_p=self.llm_top_p,
-            max_tokens=self.llm_max_tokens,
-            extra_body=self.llm_extra_body,
-            openai_api_base=self.llm_openai_api_base,
-            openai_api_key=self.llm_openai_api_key,
-            cloudflare_account_id=self.llm_cloudflare_account_id,
-            cloudflare_api_token=self.llm_cloudflare_api_token,
-            google_api_key=self.llm_google_api_key,
-            litellm_api_base=self.llm_litellm_api_base,
-            litellm_api_key=self.llm_litellm_api_key,
-            nvidia_api_key=self.llm_nvidia_api_key,
+        llm_data = data.get("llm") or {}
+        trading_data = data.get("trading") or {}
+        grid_data = data.get("grid") or {}
+        _warn_legacy_and_unknown_keys(data, trading_data, grid_data, llm_data)
+
+        private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY", "").strip()
+        if not private_key:
+            raise ValueError("缺少环境变量 HYPERLIQUID_PRIVATE_KEY，请在 .env 中配置")
+
+        llm = LLMConfig(
+            base_url=str(llm_data.get("base_url", LLMConfig.base_url)).rstrip("/"),
+            model=str(llm_data.get("model", LLMConfig.model)),
+            temperature=float(llm_data.get("temperature", LLMConfig.temperature)),
+            timeout=float(llm_data.get("timeout", LLMConfig.timeout)),
+            api_key=os.getenv("LLM_API_KEY", "") or os.getenv("OPENAI_API_KEY", ""),
         )
 
-    def __str__(self) -> str:
-        """返回配置摘要（不包含敏感信息）"""
-        # 确定运行模式
-        mode = "Hyperliquid 测试网 🧪" if self.hyperliquid_testnet else "Hyperliquid 主网 ⚠️"
-        vault_info = (
-            f"\n        Vault 地址: {self.hyperliquid_vault_address}"
-            if getattr(self, "hyperliquid_vault_address", "")
-            else ""
-        )
-        api_info = (
-            f"\n        API 列表: {', '.join(self.hyperliquid_api_urls)}"
-            if getattr(self, "hyperliquid_api_urls", [])
-            else ""
+        exchange = ExchangeConfig(
+            private_key=private_key,
+            account_address=os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", "").strip() or None,
+            testnet=_env_bool("HYPERLIQUID_TESTNET", default=True),
         )
 
-        return f"""
-        === Quant Flow 配置摘要 ===
-        LLM 客户端: {self.llm_client_type}
-        模型: {self.llm_model}
-        交易平台: Hyperliquid（永续合约）
-        运行模式: {mode}{vault_info}{api_info}
-        交易对: {", ".join(self.symbols)}
-        单笔交易金额上限: {self.max_trade_amount} USD
-        最大杠杆倍数: {self.max_leverage}x
-        止盈比例: {self.take_profit_ratio * 100}%
-        止损比例: {self.stop_loss_ratio * 100}%
-        决策间隔: {self.interval_minutes} 分钟
-        K线周期: {self.timeframe}
-        市场监控: {"启用 (波动阈值 " + str(self.market_monitor_alert_threshold_pct) + "%)" if self.market_monitor_enabled else "未启用"}
-        """
+        # symbols 误写成标量字符串（symbols: BTC）时按单交易对纠偏，
+        # 而非逐字符拆解成 ("B","T","C") 静默产生三个非法交易对
+        raw_symbols = trading_data.get("symbols", ["BTC"])
+        if isinstance(raw_symbols, str):
+            raw_symbols = [raw_symbols]
+        symbols = tuple(str(s).upper() for s in raw_symbols)
+        if not symbols:
+            raise ValueError("trading.symbols 不能为空")
 
-
-# 全局配置实例
-_config: Config = None
-
-
-def get_config(
-    config_path: str = "config.yaml",
-    require_api_credentials: bool = True,
-    force_reload: bool = False,
-    env_file: str = None,
-) -> Config:
-    """
-    获取全局配置实例（单例模式）
-
-    Args:
-        config_path: 配置文件路径
-        require_api_credentials: 是否强制要求 API 凭证
-        force_reload: 是否强制重新加载配置
-        env_file: 环境变量文件路径（默认: .env）
-
-    Returns:
-        Config 实例
-    """
-    global _config
-    requested_path = Path(config_path)
-    requested_env_file = env_file or os.getenv("DOTENV_PATH", ".env")
-    if (
-        _config is None
-        or force_reload
-        or requested_path != _config.config_path
-        or _config.require_api_credentials != require_api_credentials
-        or _config._env_file != requested_env_file
-    ):
-        _config = Config(
-            config_path,
-            require_api_credentials=require_api_credentials,
-            env_file=env_file,
+        trading = TradingConfig(
+            symbols=symbols,
+            perp_enabled=bool(trading_data.get("perp_enabled", TradingConfig.perp_enabled)),
+            grid_enabled=bool(trading_data.get("grid_enabled", TradingConfig.grid_enabled)),
+            max_trade_amount=float(
+                trading_data.get("max_trade_amount", TradingConfig.max_trade_amount)
+            ),
+            max_leverage=int(trading_data.get("max_leverage", TradingConfig.max_leverage)),
+            max_positions=int(trading_data.get("max_positions", TradingConfig.max_positions)),
+            take_profit_ratio=float(
+                trading_data.get("take_profit_ratio", TradingConfig.take_profit_ratio)
+            ),
+            stop_loss_ratio=float(
+                trading_data.get("stop_loss_ratio", TradingConfig.stop_loss_ratio)
+            ),
+            min_confidence=float(trading_data.get("min_confidence", TradingConfig.min_confidence)),
+            timeframe=str(trading_data.get("timeframe", TradingConfig.timeframe)),
+            candles_limit=int(trading_data.get("candles_limit", TradingConfig.candles_limit)),
+            timeframe_offset=float(
+                trading_data.get("timeframe_offset", TradingConfig.timeframe_offset)
+            ),
+            min_throttle_secs=float(
+                trading_data.get("min_throttle_secs", TradingConfig.min_throttle_secs)
+            ),
+            run_immediately=bool(
+                trading_data.get("run_immediately", TradingConfig.run_immediately)
+            ),
+            llm_failure_alert_cycles=int(
+                trading_data.get("llm_failure_alert_cycles", TradingConfig.llm_failure_alert_cycles)
+            ),
         )
-        _config.validate()
-    return _config
+
+        grid = GridConfig(
+            interval_minutes=int(grid_data.get("interval_minutes", GridConfig.interval_minutes)),
+            width_min_pct=float(grid_data.get("width_min_pct", GridConfig.width_min_pct)),
+            width_max_pct=float(grid_data.get("width_max_pct", GridConfig.width_max_pct)),
+            width_fallback_pct=float(
+                grid_data.get("width_fallback_pct", GridConfig.width_fallback_pct)
+            ),
+            ai_blend_weight=float(grid_data.get("ai_blend_weight", GridConfig.ai_blend_weight)),
+            force_neutral=bool(grid_data.get("force_neutral", GridConfig.force_neutral)),
+            min_grid_num=int(grid_data.get("min_grid_num", GridConfig.min_grid_num)),
+            max_position_notional_usd=float(
+                grid_data.get("max_position_notional_usd", GridConfig.max_position_notional_usd)
+            ),
+            halt_below_usd=float(grid_data.get("halt_below_usd", GridConfig.halt_below_usd)),
+            trend_filter_enabled=bool(
+                grid_data.get("trend_filter_enabled", GridConfig.trend_filter_enabled)
+            ),
+            trend_filter_min_votes=int(
+                grid_data.get("trend_filter_min_votes", GridConfig.trend_filter_min_votes)
+            ),
+            trend_filter_timeframes=_as_str_tuple(
+                grid_data.get("trend_filter_timeframes", GridConfig.trend_filter_timeframes)
+            ),
+            trend_confirm_cycles=int(
+                grid_data.get("trend_confirm_cycles", GridConfig.trend_confirm_cycles)
+            ),
+            flatten_adverse=bool(grid_data.get("flatten_adverse", GridConfig.flatten_adverse)),
+            flatten_min_cycles=int(
+                grid_data.get("flatten_min_cycles", GridConfig.flatten_min_cycles)
+            ),
+            llm_failure_alert_cycles=int(
+                grid_data.get("llm_failure_alert_cycles", GridConfig.llm_failure_alert_cycles)
+            ),
+            llm_fallback_rebuild_cycles=int(
+                grid_data.get("llm_fallback_rebuild_cycles", GridConfig.llm_fallback_rebuild_cycles)
+            ),
+            barrier=dict(grid_data.get("barrier") or {}),
+        )
+
+        protections = data.get("protections")
+        if protections is None:
+            protections = [dict(p) for p in DEFAULT_PROTECTIONS]
+
+        return cls(llm=llm, exchange=exchange, trading=trading, grid=grid, protections=protections)
 
 
-if __name__ == "__main__":
-    # 测试配置加载
-    try:
-        config = get_config()
-        print(config)
-    except Exception as e:
-        print(f"配置加载失败: {e}")
+def _env_bool(name: str, default: bool) -> bool:
+    """解析布尔环境变量：true/1/yes 为真（大小写不敏感），未设置时用默认值。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("true", "1", "yes")
+
+
+def _as_str_tuple(value: Any) -> tuple[str, ...]:
+    """把 YAML 标量/列表归一为字符串元组：误写成标量（"15m"）时按单元素处理，
+    而非逐字符拆解成 ("1","5","m") 静默禁用趋势过滤。"""
+    if isinstance(value, str):
+        return (value,)
+    return tuple(str(v) for v in (value or ()))
+
+
+def _warn_legacy_and_unknown_keys(
+    data: dict[str, Any],
+    trading_data: dict[str, Any],
+    grid_data: dict[str, Any],
+    llm_data: dict[str, Any],
+) -> None:
+    """检测旧版配置残留与未知键，逐条告警——未知键会被静默忽略，
+    迁移遗漏（如旧的 trading.grid_* 扁平键）若不提示，库存上限/停机线等
+    安全阀会在新架构下悄悄失效。仅告警不报错：保持「配置能省则省」的兼容性。"""
+    for key, hint in _LEGACY_TOP_LEVEL_KEYS.items():
+        if key in data:
+            logger.warning("[配置迁移] 检测到旧版配置段 '%s'（已忽略）：%s", key, hint)
+
+    known_top = {"llm", "trading", "grid", "protections", *_LEGACY_TOP_LEVEL_KEYS}
+    for key in data:
+        if key not in known_top:
+            logger.warning("[配置] 未知的顶层配置段 '%s' 已被忽略，请核对拼写", key)
+
+    known_trading = {f.name for f in fields(TradingConfig)}
+    for key in trading_data:
+        if key in known_trading:
+            continue
+        if str(key).startswith("grid_"):
+            logger.warning(
+                "[配置迁移] trading.%s 已迁移到独立的 grid: 段（键名去掉 grid_ 前缀，"
+                "详见 docs/configuration.md 迁移对照表），当前值已被忽略！",
+                key,
+            )
+        else:
+            logger.warning("[配置] 未知的 trading.%s 已被忽略，请核对拼写", key)
+
+    known_grid = {f.name for f in fields(GridConfig)}
+    for key in grid_data:
+        if key not in known_grid:
+            logger.warning("[配置] 未知的 grid.%s 已被忽略，请核对拼写", key)
+
+    known_llm = {f.name for f in fields(LLMConfig)}
+    for key in llm_data:
+        if key == "api_key":
+            logger.warning("[配置] llm.api_key 不从 YAML 读取，请改用环境变量 LLM_API_KEY")
+        elif key not in known_llm:
+            logger.warning("[配置] 未知的 llm.%s 已被忽略，请核对拼写", key)
+
+    if os.getenv("RUN_MODE"):
+        logger.warning(
+            "[配置迁移] 环境变量 RUN_MODE 已废弃（当前值被忽略），"
+            "请改用 config.yaml 的 trading.perp_enabled / grid_enabled 开关"
+        )

@@ -46,7 +46,14 @@ class ConsecutiveLossProtection(IProtection):
                 if elapsed >= pause_hours:
                     self._is_paused = False
                     self._pause_reason = ""
-                    logger.info("连续亏损保护暂停期已过，恢复交易")
+                    # 暂停到期必须清零计数：否则空仓状态下没有任何平仓事件能
+                    # 重置计数，下一次 check 立即因「计数仍达阈值」重新触发，
+                    # 每个冷却期循环一次，账户被永久锁死（脚本实测可复现）。
+                    # 与 per_symbol 锁到期清零 _symbol_losses 的语义保持一致。
+                    self._global_losses = 0
+                    self._last_protection_time = None
+                    self.save_state()
+                    logger.info("连续亏损保护暂停期已过，恢复交易（连亏计数已重置）")
 
             # 清理已过期的 symbol 锁定
             self._cleanup_expired_locks(context.timestamp)
@@ -68,8 +75,6 @@ class ConsecutiveLossProtection(IProtection):
                 self._pause_reason = reason
                 self._last_protection_time = context.timestamp
                 self.save_state()
-
-                self._send_cloud_event("global", self._global_losses, max_losses)
 
                 return ProtectionReturn(
                     triggered=True,
@@ -128,7 +133,6 @@ class ConsecutiveLossProtection(IProtection):
                         self._symbol_losses[symbol],
                         lock_until.strftime("%H:%M"),
                     )
-                    self._send_cloud_event(symbol, self._symbol_losses[symbol], max_losses)
 
             self.save_state()
 
@@ -169,26 +173,6 @@ class ConsecutiveLossProtection(IProtection):
         for sym in expired:
             del self._locked_symbols[sym]
             self._symbol_losses[sym] = 0
-
-    def _send_cloud_event(self, scope: str, losses: int, threshold: int) -> None:
-        """上报风控事件到云端"""
-        try:
-            from src.utils.cloud_logger import get_cloud_logger
-
-            cloud = get_cloud_logger()
-            if cloud:
-                cloud.send_risk_event(
-                    symbol=scope,
-                    risk_type="consecutive_loss",
-                    details={
-                        "consecutive_losses": losses,
-                        "threshold": threshold,
-                        "per_symbol": self.config.get("per_symbol", False),
-                    },
-                    level="warning",
-                )
-        except Exception as e:
-            logger.warning("上报连续亏损风控事件失败: %s", e)
 
     def _reset_state(self) -> None:
         self._global_losses = 0

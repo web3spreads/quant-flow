@@ -1,335 +1,105 @@
 """
-日志和监控模块
-提供结构化日志记录和美化的控制台输出
+日志工具：控制台 + 文件日志与结构化 JSONL 记录。
+
+三类输出，各司其职：
+- ``logs/main.log``            运行日志（人读，含控制台同步输出）
+- ``logs/decisions/*.jsonl``   决策记录（含 prompt/回复/执行细节，事后审计）
+- ``logs/trades/*.jsonl``      成交记录（含 pnl/reason 归因，用 jq/pandas 直接分析）
+- ``logs/equity/*.jsonl``      净值快照（画净值曲线）
+
+JSONL 写入失败只告警不抛出——日志永远不能拖垮交易主流程。
 """
 
-import csv
 import json
 import logging
 from datetime import datetime
+from decimal import Decimal
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pandas as pd
-from rich import box
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.table import Table
+_LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(message)s"
+
+# main.log 轮转参数：单文件 50MB × 3 备份（线上曾累积 364MB 单文件无轮转）
+_LOG_MAX_BYTES = 50 * 1024 * 1024
+_LOG_BACKUP_COUNT = 3
 
 
-class CustomJSONEncoder(json.JSONEncoder):
-    """自定义 JSON 编码器，处理 pandas、numpy 和 LangChain 类型"""
-
-    def default(self, obj):
-        """
-        转换特殊类型为可 JSON 序列化的格式
-
-        Args:
-            obj: 待序列化的对象
-
-        Returns:
-            可序列化的 Python 对象
-        """
-        # 处理 pandas Timestamp
-        if isinstance(obj, pd.Timestamp):
-            return obj.isoformat()
-
-        # 处理 pandas NaT (Not a Time)
-        if pd.isna(obj):
-            return None
-
-        # 处理 numpy 整数类型
-        if isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
-            return int(obj)
-
-        # 处理 numpy 浮点类型
-        if isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
-            return float(obj)
-
-        # 处理 numpy 布尔类型
-        if isinstance(obj, np.bool_):
-            return bool(obj)
-
-        # 处理 numpy 数组
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-
-        # 处理 datetime
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-
-        # 处理 LangChain 消息对象 (SystemMessage, HumanMessage, AIMessage, ToolMessage, 等)
-        if hasattr(obj, "content") and hasattr(obj, "type"):
-            return {
-                "type": obj.type if hasattr(obj, "type") else obj.__class__.__name__,
-                "content": str(obj.content)[:500] if obj.content else "",  # 限制内容长度
-            }
-
-        # 其他情况调用父类方法
-        return super().default(obj)
+def _json_default(value: Any) -> Any:
+    """JSONL 序列化兜底：Decimal/日期/numpy 标量安全降级。"""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "item"):  # numpy 标量
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return str(value)
 
 
 class TradingLogger:
-    """交易日志记录器"""
+    """交易日志器：运行日志 + 决策/成交/净值三路结构化记录。"""
 
-    def __init__(
-        self, log_level: str = "INFO", console_color: bool = True, decision_log_format: str = "json"
-    ):
-        """
-        初始化日志记录器
-
-        Args:
-            log_level: 日志级别
-            console_color: 是否启用彩色控制台输出
-            decision_log_format: 决策日志格式 (json 或 csv)
-        """
-        self.console = Console() if console_color else Console(color_system=None)
-        self.decision_log_format = decision_log_format
-
-        # 设置标准日志
-        self.logger = logging.getLogger("QuantFlow")
-        self.logger.setLevel(getattr(logging, log_level.upper()))
-
-        # 日志目录
-        self.log_dir = Path("logs")
+    def __init__(self, log_level: str = "INFO", log_dir: str = "logs"):
+        self.log_dir = Path(log_dir)
         self.decisions_dir = self.log_dir / "decisions"
         self.trades_dir = self.log_dir / "trades"
+        self.equity_dir = self.log_dir / "equity"
+        for d in (self.decisions_dir, self.trades_dir, self.equity_dir):
+            d.mkdir(parents=True, exist_ok=True)
 
-        # 确保目录存在
-        self.decisions_dir.mkdir(parents=True, exist_ok=True)
-        self.trades_dir.mkdir(parents=True, exist_ok=True)
+        self.logger = logging.getLogger("quantflow")
+        self.logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+        if not self.logger.handlers:
+            formatter = logging.Formatter(_LOG_FORMAT)
+            console = logging.StreamHandler()
+            console.setFormatter(formatter)
+            file_handler = RotatingFileHandler(
+                self.log_dir / "main.log",
+                maxBytes=_LOG_MAX_BYTES,
+                backupCount=_LOG_BACKUP_COUNT,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(console)
+            self.logger.addHandler(file_handler)
 
-        # 设置文件处理器
-        self._setup_file_handlers()
+    # ── 运行日志 ──────────────────────────────────────────────────────────
 
-        # 云端日志（延迟获取，避免循环导入）
-        self._cloud_logger = None
-        self._cloud_logger_checked = False
+    def print_header(self, text: str) -> None:
+        """周期级标题。"""
+        self.logger.info("═" * 8 + " " + text)
 
-    @property
-    def _cloud(self):
-        """延迟获取云端日志实例"""
-        if not self._cloud_logger_checked:
-            self._cloud_logger_checked = True
-            try:
-                from src.utils.cloud_logger import get_cloud_logger
-
-                self._cloud_logger = get_cloud_logger()
-            except Exception as e:
-                self.logger.warning(f"无法延迟加载云端日志模块: {e}")
-                self._cloud_logger = None
-        return self._cloud_logger
-
-    def _setup_file_handlers(self):
-        """设置文件日志处理器"""
-        # 主日志文件
-        main_log_file = self.log_dir / f"trading_{datetime.now().strftime('%Y%m%d')}.log"
-        file_handler = logging.FileHandler(main_log_file, encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
-
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-        )
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
-
-    def print_header(self, text: str):
-        """打印标题"""
-        self.console.print()  # 空行
-        self.console.rule(text, style="bold cyan")
-        self.console.print()  # 空行
-
-    def print_section(self, title: str, content: str = None, style: str = "bold yellow"):
-        """打印章节"""
-        self.console.print()  # 空行
-        self.console.rule(title, style=style, align="left")
+    def print_section(self, title: str, content: str | None = None, style: str = "") -> None:
+        """小节标题（style 参数仅为兼容旧调用，无渲染含义）。"""
+        self.logger.info("── " + title)
         if content:
-            self.console.print(content)
+            self.logger.info(content)
 
-    def print_market_data(self, symbol: str, data: dict[str, Any]):
-        """
-        打印市场数据
+    def print_info(self, message: str) -> None:
+        self.logger.info(message)
 
-        Args:
-            symbol: 交易对
-            data: 市场数据字典
-        """
-        table = Table(title=f"📊 市场数据 - {symbol}", box=box.ROUNDED)
-        table.add_column("指标", style="cyan", justify="left")
-        table.add_column("值", style="green", justify="right")
+    def print_warning(self, message: str) -> None:
+        self.logger.warning(message)
 
-        # 添加数据行
-        for key, value in data.items():
-            if isinstance(value, float):
-                table.add_row(key, f"{value:.4f}")
-            else:
-                table.add_row(key, str(value))
+    def print_error(self, message: str) -> None:
+        self.logger.error(message)
 
-        self.console.print(table)
-
-    def print_prompt(self, prompt: str):
-        """
-        打印 AI Prompt
-
-        Args:
-            prompt: Prompt 内容
-        """
-        self.console.print(
-            Panel(
-                prompt,
-                title="🤖 AI Agent Prompt",
-                border_style="blue",
-                padding=(1, 2),
-                box=box.ROUNDED,
+    def print_market_data(self, symbol: str, data: dict[str, Any]) -> None:
+        """行情摘要一行输出。"""
+        try:
+            self.logger.info(
+                f"[{symbol}] 价格 {float(data.get('current_price', 0)):.4f} | "
+                f"RSI {float(data.get('rsi', 0)):.1f} | "
+                f"MACD {float(data.get('macd_hist', 0)):.5f} | "
+                f"量变 {float(data.get('volume_change', 0)):.1f}%"
             )
-        )
+        except (TypeError, ValueError):
+            self.logger.info(f"[{symbol}] 行情: {data}")
 
-    def print_agent_thought(self, thought: str):
-        """
-        打印 Agent 思考过程
-
-        Args:
-            thought: 思考内容
-        """
-        self.console.print(
-            Panel(
-                thought,
-                title="💭 Agent 思考链",
-                border_style="magenta",
-                padding=(1, 2),
-                box=box.ROUNDED,
-            )
-        )
-
-    def print_ai_response(self, response: str, title: str = "🤖 AI 回复"):
-        """
-        打印 AI 响应内容（支持 Markdown 渲染）
-
-        Args:
-            response: AI 响应内容（Markdown 格式）
-            title: 面板标题
-        """
-        # 如果响应内容看起来像 Markdown，则渲染为 Markdown
-        # 否则作为普通文本显示
-        if self._is_likely_markdown(response):
-            content = Markdown(response)
-        else:
-            content = response
-
-        self.console.print(
-            Panel(content, title=title, border_style="cyan", padding=(1, 2), box=box.DOUBLE)
-        )
-
-    def _is_likely_markdown(self, text: str) -> bool:
-        """
-        检测文本是否可能是 Markdown 格式
-
-        Args:
-            text: 待检测文本
-
-        Returns:
-            是否可能是 Markdown
-        """
-        # 简单检测：包含常见 Markdown 标记
-        markdown_indicators = [
-            "# ",
-            "## ",
-            "### ",  # 标题
-            "- ",
-            "* ",
-            "+ ",  # 列表
-            "```",
-            "`",  # 代码
-            "**",
-            "__",  # 粗体
-            "*",
-            "_",  # 斜体
-            "[",
-            "](",
-            "![",  # 链接和图片
-            ">",
-            "|",  # 引用和表格
-        ]
-        return any(indicator in text for indicator in markdown_indicators)
-
-    def print_decision(self, decision: str, details: dict[str, Any] = None):
-        """
-        打印决策结果
-
-        Args:
-            decision: 决策类型 (BUY, SELL, DO_NOTHING)
-            details: 决策详情
-        """
-        # 决策颜色映射
-        color_map = {"BUY": "green", "SELL": "red", "DO_NOTHING": "yellow"}
-        color = color_map.get(decision, "white")
-
-        # 创建决策面板
-        content = f"[bold {color}]决策: {decision}[/bold {color}]\n"
-
-        if details:
-            content += "\n详情:\n"
-            for key, value in details.items():
-                content += f"  • {key}: {value}\n"
-
-        self.console.print(
-            Panel(content, title="⚡ 决策结果", border_style=color, padding=(1, 2), box=box.HEAVY)
-        )
-
-    def print_execution_result(self, success: bool, message: str, order_id: str = None):
-        """
-        打印执行结果
-
-        Args:
-            success: 是否成功
-            message: 结果消息
-            order_id: 订单ID（如果有）
-        """
-        style = "green" if success else "red"
-        icon = "✅" if success else "❌"
-
-        content = f"{icon} {message}"
-        if order_id:
-            content += f"\n订单ID: {order_id}"
-
-        self.console.print(
-            Panel(content, title="📋 执行结果", border_style=style, padding=(1, 2), box=box.HEAVY)
-        )
-
-    def print_error(self, error: str):
-        """
-        打印错误信息
-
-        Args:
-            error: 错误内容
-        """
-        self.console.print(f"[bold red]❌ 错误: {error}[/bold red]")
-        if self._cloud:
-            self._cloud.send_log(error, level="error")
-
-    def print_info(self, message: str):
-        """
-        打印信息
-
-        Args:
-            message: 信息内容
-        """
-        self.console.print(f"[cyan]ℹ️  {message}[/cyan]")
-        if self._cloud:
-            self._cloud.send_log(message, level="info")
-
-    def print_warning(self, message: str):
-        """
-        打印警告
-
-        Args:
-            message: 警告内容
-        """
-        self.console.print(f"[yellow]⚠️  {message}[/yellow]")
-        if self._cloud:
-            self._cloud.send_log(message, level="warn")
+    # ── 结构化记录 ────────────────────────────────────────────────────────
 
     def log_decision(
         self,
@@ -338,101 +108,27 @@ class TradingLogger:
         prompt: str,
         ai_response: str,
         decision: str,
-        action_details: dict[str, Any] = None,
+        action_details: dict[str, Any] | None = None,
         status: str = "SUCCESS",
-        error_message: str = None,
+        error_message: str | None = None,
         confidence: float = 0.0,
-    ):
-        """
-        记录决策日志到文件
-
-        Args:
-            symbol: 交易对
-            market_data: 市场数据
-            prompt: 发送给AI的Prompt
-            ai_response: AI的原始回复
-            decision: 决策类型
-            action_details: 执行细节
-            status: 执行状态
-            error_message: 错误信息（如果有）
-        """
-        timestamp = datetime.now()
-        log_entry = {
-            "timestamp": timestamp.isoformat(),
-            "symbol": symbol,
-            "market_data": market_data,
-            "prompt": prompt,
-            "ai_response": ai_response,
-            "decision": decision,
-            "action_details": action_details or {},
-            "status": status,
-            "error_message": error_message,
-        }
-
-        # 根据格式保存（日志写入失败不应影响主流程）
-        try:
-            if self.decision_log_format == "json":
-                self._save_decision_json(timestamp, log_entry)
-            else:
-                self._save_decision_csv(timestamp, log_entry)
-        except OSError as e:
-            self.logger.warning(f"决策日志写入失败: {e}")
-
-        # 同步到云端（完整数据，通过 D1 payload 存储，不截断）
-        if self._cloud:
-            self._cloud.send_decision(
-                symbol=symbol,
-                decision=decision,
-                status=status,
-                ai_response=ai_response or "",
-                confidence=confidence,
-                current_price=float(market_data.get("current_price", 0)),
-                error_message=error_message or "",
-                prompt=prompt or "",
-                market_data=market_data,
-                action_details=action_details,
-            )
-
-    def _save_decision_json(self, timestamp: datetime, log_entry: dict[str, Any]):
-        """保存决策日志为 JSON 格式"""
-        filename = self.decisions_dir / f"decisions_{timestamp.strftime('%Y%m%d')}.jsonl"
-
-        with open(filename, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False, cls=CustomJSONEncoder) + "\n")
-
-    def _save_decision_csv(self, timestamp: datetime, log_entry: dict[str, Any]):
-        """保存决策日志为 CSV 格式"""
-        filename = self.decisions_dir / f"decisions_{timestamp.strftime('%Y%m%d')}.csv"
-
-        file_exists = filename.exists()
-
-        with open(filename, "a", newline="", encoding="utf-8") as f:
-            fieldnames = [
-                "timestamp",
-                "symbol",
-                "decision",
-                "status",
-                "current_price",
-                "rsi",
-                "error_message",
-            ]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-
-            if not file_exists:
-                writer.writeheader()
-
-            # 简化的 CSV 记录
-            writer.writerow(
-                {
-                    "timestamp": log_entry["timestamp"],
-                    "symbol": log_entry["symbol"],
-                    "decision": log_entry["decision"],
-                    "status": log_entry["status"],
-                    "current_price": log_entry["market_data"].get("current_price", ""),
-                    "rsi": log_entry["market_data"].get("rsi", ""),
-                    "error_message": log_entry.get("error_message", ""),
-                }
-            )
+    ) -> None:
+        """记录一次决策（含 prompt 与 AI 原始回复，供事后审计）。"""
+        self._append_jsonl(
+            self.decisions_dir / f"decisions_{datetime.now():%Y%m%d}.jsonl",
+            {
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "decision": decision,
+                "confidence": confidence,
+                "status": status,
+                "error_message": error_message,
+                "market_data": market_data,
+                "prompt": prompt,
+                "ai_response": ai_response,
+                "action_details": action_details or {},
+            },
+        )
 
     def log_trade(
         self,
@@ -441,64 +137,30 @@ class TradingLogger:
         amount: float,
         price: float,
         order_id: str,
-        take_profit_price: float = None,
-        stop_loss_price: float = None,
+        take_profit_price: float | None = None,
+        stop_loss_price: float | None = None,
         status: str = "FILLED",
-        pnl: float = None,
-        reason: str = None,
-    ):
-        """
-        记录交易日志
-
-        Args:
-            symbol: 交易对
-            action: 交易动作 (BUY/SELL)
-            amount: 交易数量
-            price: 交易价格
-            order_id: 订单ID
-            take_profit_price: 止盈价格
-            stop_loss_price: 止损价格
-            status: 订单状态
-            pnl: 盈亏（如果是平仓）
-            reason: 归因标签（如 GRID_TP / 趋势过滤手术式减仓 / Triple Barrier 文案），
-                用于事后按盈亏来源聚合分析
-        """
-        timestamp = datetime.now()
-        trade_entry = {
-            "timestamp": timestamp.isoformat(),
-            "symbol": symbol,
-            "action": action,
-            "amount": amount,
-            "price": price,
-            "order_id": order_id,
-            "take_profit_price": take_profit_price,
-            "stop_loss_price": stop_loss_price,
-            "status": status,
-            "pnl": pnl,
-            "reason": reason,
-        }
-
-        # 保存为 JSON 格式
-        filename = self.trades_dir / f"trades_{timestamp.strftime('%Y%m%d')}.jsonl"
-
-        with open(filename, "a", encoding="utf-8") as f:
-            f.write(json.dumps(trade_entry, ensure_ascii=False, cls=CustomJSONEncoder) + "\n")
-
+        pnl: float | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """记录一笔成交（reason 为盈亏归因标签，如 GRID_TP / Triple Barrier）。"""
+        self._append_jsonl(
+            self.trades_dir / f"trades_{datetime.now():%Y%m%d}.jsonl",
+            {
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "action": action,
+                "amount": amount,
+                "price": price,
+                "order_id": order_id,
+                "take_profit_price": take_profit_price,
+                "stop_loss_price": stop_loss_price,
+                "status": status,
+                "pnl": pnl,
+                "reason": reason,
+            },
+        )
         self.logger.info(f"交易记录: {action} {amount} {symbol} @ {price}")
-
-        # 同步到云端（完整交易数据）
-        if self._cloud:
-            self._cloud.send_trade(
-                symbol=symbol,
-                action=action,
-                amount=float(amount),
-                price=float(price),
-                order_id=order_id or "",
-                pnl=float(pnl) if pnl else 0.0,
-                status=status,
-                take_profit_price=float(take_profit_price) if take_profit_price else 0.0,
-                stop_loss_price=float(stop_loss_price) if stop_loss_price else 0.0,
-            )
 
     def log_equity_snapshot(
         self,
@@ -507,48 +169,34 @@ class TradingLogger:
         unrealized_pnl: float = 0.0,
         position_notional: float = 0.0,
         symbol: str = "",
-    ):
-        """记录净值快照到 logs/equity/equity_YYYYMMDD.jsonl（净值曲线观测）。
+    ) -> None:
+        """记录净值快照（每周期一行，每天一个文件）。"""
+        self._append_jsonl(
+            self.equity_dir / f"equity_{datetime.now():%Y%m%d}.jsonl",
+            {
+                "timestamp": datetime.now().isoformat(),
+                "equity": float(equity),
+                "available": float(available),
+                "unrealized_pnl": float(unrealized_pnl),
+                "position_notional": float(position_notional),
+                "symbol": symbol,
+            },
+        )
 
-        历史缺陷：账户净值只能从熔断告警文案里反推（峰值 $X → 当前 $Y），
-        12.5 天亏 39% 没有一条结构化记录。每周期一行、每天一个文件，
-        用 jq/pandas 即可直接画净值曲线。
-        """
-        timestamp = datetime.now()
-        entry = {
-            "timestamp": timestamp.isoformat(),
-            "equity": float(equity),
-            "available": float(available),
-            "unrealized_pnl": float(unrealized_pnl),
-            "position_notional": float(position_notional),
-            "symbol": symbol,
-        }
-        equity_dir = self.log_dir / "equity"
-        equity_dir.mkdir(parents=True, exist_ok=True)
-        filename = equity_dir / f"equity_{timestamp.strftime('%Y%m%d')}.jsonl"
-        with open(filename, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False, cls=CustomJSONEncoder) + "\n")
+    def _append_jsonl(self, path: Path, entry: dict[str, Any]) -> None:
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False, default=_json_default) + "\n")
+        except OSError as e:
+            self.logger.warning(f"结构化日志写入失败 {path.name}: {e}")
 
 
-# 全局日志实例
 _logger: TradingLogger | None = None
 
 
-def get_logger(
-    log_level: str = "INFO", console_color: bool = True, decision_log_format: str = "json"
-) -> TradingLogger:
-    """
-    获取全局日志实例（单例模式）
-
-    Args:
-        log_level: 日志级别
-        console_color: 是否启用彩色输出
-        decision_log_format: 决策日志格式
-
-    Returns:
-        TradingLogger 实例
-    """
+def get_logger(log_level: str = "INFO") -> TradingLogger:
+    """获取全局日志实例（单例）。"""
     global _logger
     if _logger is None:
-        _logger = TradingLogger(log_level, console_color, decision_log_format)
+        _logger = TradingLogger(log_level)
     return _logger
