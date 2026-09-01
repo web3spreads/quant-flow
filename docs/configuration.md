@@ -18,12 +18,13 @@
 - **trading**：`symbols`（简单符号格式，网格用第一个）、`perp_enabled` / `grid_enabled`、
   `max_trade_amount`、`max_leverage`、`take_profit_ratio` / `stop_loss_ratio`、
   `min_confidence`、`timeframe`
-- **grid**：安全机制全部默认启用。`interval_minutes`、`force_neutral`（默认 true，
-  消除方向反手亏损）、`max_position_notional_usd`（0=关）、`halt_below_usd`（0=关）、
+- **grid**：安全机制全部默认启用。`interval_minutes`、`width_min_pct` /
+  `width_max_pct`（网格宽度上下限）、`force_neutral`（默认 true，消除方向反手
+  亏损）、`max_position_notional_usd`（0=关）、`halt_below_usd`（0=关）、
   `trend_filter_enabled`、`rebuild_cooldown_seconds`（全量重建冷却，默认 3600s；
-  价格突破旧区间 0.5% 时自动提前解除）、`rebuild_min_change_pct`（区间变化低于
-  此比例不重建，默认 0.01）、`barrier` 覆盖项（默认：止损 -5% / 止盈 +10% /
-  时限 4h / 追踪止损 3% 激活 1% 回撤）
+  价格突破旧区间 0.5% 时自动提前解除，该比例固定不可配）、`rebuild_min_change_pct`
+  （区间变化低于此比例不重建，默认 0.01）、`barrier` 覆盖项（默认：止损 -5% /
+  止盈 +10% / 时限 4h / 追踪止损 3% 激活 1% 回撤）
 - **protections**：省略用默认链，`protections: []` 全关（不建议）。可配
   `max_drawdown`（回撤全平）/ `daily_loss`（暂停开仓）/ `consecutive_loss`
   （连亏锁定，`per_symbol`、`forced_close_no_reset`）/ `position_timeout`（超时强平）
