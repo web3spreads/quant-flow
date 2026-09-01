@@ -105,6 +105,8 @@ class GridConfig:
     flatten_min_cycles: int = 3  # 平逆势库存需更多连续确认（暂停先行、平仓靠后）
     llm_failure_alert_cycles: int = 6  # LLM 连续失败 N 周期告警（0=关闭）
     llm_fallback_rebuild_cycles: int = 12  # 空转 N 周期后纯市场数据兜底重建（0=关闭）
+    rebuild_cooldown_seconds: int = 3600  # 全量重建冷却（秒，0=关闭；真突破可提前解除）
+    rebuild_min_change_pct: float = 0.01  # 区间变化低于此比例不重建
     barrier: dict[str, Any] = field(default_factory=dict)  # Triple Barrier 覆盖项
 
 
@@ -240,6 +242,12 @@ class Config:
             ),
             llm_fallback_rebuild_cycles=int(
                 grid_data.get("llm_fallback_rebuild_cycles", GridConfig.llm_fallback_rebuild_cycles)
+            ),
+            rebuild_cooldown_seconds=int(
+                grid_data.get("rebuild_cooldown_seconds", GridConfig.rebuild_cooldown_seconds)
+            ),
+            rebuild_min_change_pct=float(
+                grid_data.get("rebuild_min_change_pct", GridConfig.rebuild_min_change_pct)
             ),
             barrier=dict(grid_data.get("barrier") or {}),
         )

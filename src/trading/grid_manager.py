@@ -26,9 +26,12 @@ DEFAULT_MIN_ORDERS = 4
 DEFAULT_AMOUNT_PER_ORDER = 10.0
 DEFAULT_GRID_NUM = 10
 DEFAULT_GRID_TYPE = "GEOMETRIC"
-DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS = 900
-DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO = 0.004
+DEFAULT_GRID_REBUILD_COOLDOWN_SECONDS = 3600
+DEFAULT_GRID_REBUILD_MIN_PRICE_CHANGE_RATIO = 0.01
 DEFAULT_GRID_REBUILD_MIN_OPEN_ORDERS = 2
+# 价格越出旧区间这个比例即视为「真突破」，提前解除重建冷却。冷却拉长到 1 小时
+# 的前提就是这个逃生口——否则行情走出区间后网格要干等一小时才能跟上。
+DEFAULT_GRID_REBUILD_BREAKOUT_RATIO = 0.005
 
 # 净额归因中保留的强平订单号上限：强平成交一般在下一轮就被归因消费，
 # 留存过多只会让状态文件无谓膨胀
@@ -203,12 +206,30 @@ class GridManager:
 
         action = ai_config.get("action")
 
+        # 先认领交易所成交，再判定是否重建。顺序不能反：刚成交但本地仍是
+        # OPEN_PENDING 的层级，在重建判定眼里就是「还挂着的开仓单」，会被
+        # 全撤全建连同持仓与 PnL 归因一起丢弃——线上表现为大量开仓成交、
+        # 几乎没有平仓成交、本地零个完成的 round-trip。
+        # allow_open=False：这一趟只认领现实（确认成交、挂平仓单、结算
+        # round-trip），绝不新增敞口——万一本轮要重建，刚挂出的开仓单会被
+        # 立刻撤掉，中间那段窗口成交就是计划外库存。
+        if self.grid_levels.get(symbol):
+            self.sync_grid_incremental(symbol, allow_open=False)
+            if not self.grid_levels.get(symbol):
+                # 同步过程中触发屏障强平并清空层级，本轮不再布单
+                return
+
         # 增量同步路由：如果已有层级数据且非重建场景，使用增量同步
+        rebuild_evaluation: tuple[bool, str] | None = None
         if action == "UPDATE_GRID" and symbol in self.grid_levels and self.grid_levels[symbol]:
-            should_rebuild, reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+            rebuild_evaluation = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+            should_rebuild, reason = rebuild_evaluation
             if not should_rebuild:
                 self.logger.print_info(f"   [Grid] 增量同步模式: {reason}")
-                self.sync_grid_incremental(symbol)
+                # 上面的认领已跑过整套状态机，这里只补挂 IDLE 层级的开仓单，
+                # 不再整轮重跑（省一次挂单+成交记录查询）。
+                self._place_idle_open_orders(symbol)
+                self._save_incremental_state(symbol)
                 return
 
         if action != "UPDATE_GRID":
@@ -236,12 +257,11 @@ class GridManager:
                     f"{symbol}: AI 返回未知 action={action}，按保守策略仅检查减仓保护单"
                 )
 
-            # 被动同步：即使不更新网格形态，层级状态机也必须跟上现实——确认成交、
-            # 为已成交层级挂平仓单、结算 round-trip。历史缺陷：KEEP_GRID 周期完全
-            # 冻结状态机，成交不确认、平仓单不挂，簿记与现实的脱节是结构性的。
-            # allow_open=False：本分支语义是「不新增敞口」，IDLE 层级不重新挂开仓单。
-            if self.grid_levels.get(symbol):
-                self.sync_grid_incremental(symbol, allow_open=False)
+            # 被动同步（确认成交、为已成交层级挂平仓单、结算 round-trip）已在
+            # 本方法入口以 allow_open=False 统一执行，此处不再重复整轮同步——
+            # 本分支语义是「不新增敞口」，正好与入口那一趟一致。历史缺陷：
+            # KEEP_GRID 周期完全冻结状态机，成交不确认、平仓单不挂，簿记与
+            # 现实的脱节是结构性的。
 
             # 对账：撤掉交易所上与本地层级/状态无对应的非 reduce_only 残单。
             # 历史缺陷：KEEP_GRID 分支从不清理残单，靠成交后「无对应持仓」事后移除
@@ -299,15 +319,39 @@ class GridManager:
             f"AI 新区间: ${new_lower} - ${new_upper} | TP: {tp_ratio} SL: {sl_ratio}"
         )
 
-        should_rebuild, skip_reason = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+        # 复用入口算过的判定：_should_rebuild_grid 会查挂单与最新价，一轮算两次
+        # 既浪费配额，也可能因两次取价不同得出自相矛盾的结论。
+        if rebuild_evaluation is None:
+            rebuild_evaluation = self._should_rebuild_grid(symbol=symbol, new_config=ai_config)
+        should_rebuild, skip_reason = rebuild_evaluation
         if not should_rebuild:
             self.logger.print_info(f"   [Grid] ⏸️ 跳过重建: {skip_reason}")
             if self.grid_reduce_only_exit_orders_enabled:
                 self._ensure_min_orders(symbol=symbol)
             return
 
-        # 1. 彻底清理旧订单；若未完全撤净，停止本轮重建，避免新旧订单叠加
-        cancel_all_ok = self._cancel_all_orders(symbol)
+        # 在途层级跨重建保留：已成交待平仓的层级，连同它的 reduce_only 平仓单
+        # 一起带进新一代网格。历史缺陷：全量重建撤掉平仓单、又把 grid_levels
+        # 整体覆盖，持仓就此变成无人认领的库存，这一轮开平仓的盈亏永远归因
+        # 不了——线上表现为几百笔开仓成交、只有个位数被识别的平仓成交。
+        carried_levels = [
+            level
+            for level in self.grid_levels.get(symbol, [])
+            if level.state in (GridLevelState.OPEN_FILLED, GridLevelState.CLOSE_PENDING)
+        ]
+        preserved_oids = {
+            level.close_order_id
+            for level in carried_levels
+            if level.state == GridLevelState.CLOSE_PENDING and level.close_order_id is not None
+        }
+        if carried_levels:
+            self.logger.print_info(
+                f"   [Grid] 🔒 {symbol} 保留 {len(carried_levels)} 个在途层级跨重建"
+                f"（其中 {len(preserved_oids)} 个平仓单免撤）"
+            )
+
+        # 1. 彻底清理旧订单（在途层级的平仓单免撤）；若未完全撤净，停止本轮重建，避免新旧订单叠加
+        cancel_all_ok = self._cancel_all_orders(symbol, keep_oids=preserved_oids)
         if not cancel_all_ok:
             self.logger.print_warning("   [Grid] ⚠️ 旧网格撤单未全部成功，跳过本轮重建")
             remaining_orders = self._get_symbol_open_orders(symbol=symbol)
@@ -316,7 +360,9 @@ class GridManager:
             return
 
         # 撤单后轮询确认挂单清空，若仍残留则停止本轮重建，避免新旧订单叠加
-        remaining_orders = self._drain_open_orders_before_rebuild(symbol=symbol)
+        remaining_orders = self._drain_open_orders_before_rebuild(
+            symbol=symbol, keep_oids=preserved_oids
+        )
         if remaining_orders is None:
             self.logger.print_warning("   [Grid] ⚠️ 挂单查询失败，无法确认旧单已撤净，跳过本轮重建")
             return
@@ -477,11 +523,21 @@ class GridManager:
             level.open_order_id = order_info["oid"]
             levels.append(level)
 
+        # 在途层级并入新一代：id 用 K 前缀（Kept）与新层级区分，线上日志能一眼
+        # 认出「这笔是上一代带过来的仓」。层级对象原样保留，开仓成交价、累计
+        # PnL、round_trip_count 都不丢，下一轮同步就能继续走完它的平仓闭环。
+        for i, level in enumerate(carried_levels):
+            level.id = f"K{i}"
+        levels.extend(carried_levels)
+
         self.grid_levels[symbol] = levels
 
         # 全量重建即开启新一代网格：PnL tracker 必须重置——跨代际保留 realized
         # 会用旧网格的盈亏除以新网格的投入，Triple Barrier 的 PnL% 判定随之失真
-        # （barrier monitor 在下方同样按新一代重置，两者口径必须一致）
+        # （barrier monitor 在下方同样按新一代重置，两者口径必须一致）。
+        # 代价：被保留的在途层级平仓后，盈亏记进新一代的 realized。这是有意
+        # 取舍——那笔盈亏确实发生在新一代的存续期内，且金额远小于「用旧网格
+        # 分母算新网格 PnL%」造成的屏障失真。
         self.pnl_trackers[symbol] = GridPnLTracker()
 
         # 初始化/重置 barrier monitor
@@ -560,7 +616,25 @@ class GridManager:
         if min(old_lower, old_upper, new_lower, new_upper) <= 0:
             return True, "网格参数异常，强制重建"
 
-        # 重建冷却：除上述安全性触发（首次/挂单不足/参数异常）外，距上次全量重建不足冷却期一律不重建。
+        # 真突破提前解除冷却：价格走出旧区间即说明这张网已经失效，再干等冷却
+        # 只是让网格空挂在够不着的价位上。取价失败按「未突破」处理（fail-safe
+        # 偏向不重建，宁可少跟一轮行情，也不因 API 抖动触发全量撤换单）。
+        try:
+            current_price = self._safe_float(
+                self.order_manager.client.get_current_price(symbol), 0.0
+            )
+        except Exception:
+            current_price = 0.0
+        if current_price > 0:
+            breakout_lower = old_lower * (1 - DEFAULT_GRID_REBUILD_BREAKOUT_RATIO)
+            breakout_upper = old_upper * (1 + DEFAULT_GRID_REBUILD_BREAKOUT_RATIO)
+            if not breakout_lower <= current_price <= breakout_upper:
+                return True, (
+                    f"价格 ${current_price:.4f} 已突破旧区间 "
+                    f"${old_lower:.4f}-${old_upper:.4f}，提前解除重建冷却"
+                )
+
+        # 重建冷却：除上述安全性触发（首次/挂单不足/参数异常/真突破）外，距上次全量重建不足冷却期一律不重建。
         # 这是抑制高频撤换单的主闸——历史上 84.6% 周期触发全量重建、挂单活不过 5 分钟即源于此处缺失。
         if self.grid_rebuild_cooldown_seconds > 0:
             last_rebuild = self._last_rebuild_ts.get(symbol, 0.0)
@@ -572,12 +646,15 @@ class GridManager:
                     f"重建冷却中（剩余 {remaining:.0f}s / 冷却 {self.grid_rebuild_cooldown_seconds}s），维持网格",
                 )
 
+        # 层数变化不单独触发：LLM 每轮给出的 grid_num 天然抖动（10↔12），而层数
+        # 本身不改变网格覆盖的价格区间，为它全撤全建纯属自伤。真正需要重建的
+        # 结构性变化只有「类型」（等差/等比）与「方向」。层数差异会随下一次
+        # 因区间/资金变化触发的重建自然生效。
         if (
-            old_params["grid_num"] != new_params["grid_num"]
-            or old_params["grid_type"] != new_params["grid_type"]
+            old_params["grid_type"] != new_params["grid_type"]
             or old_params["mode"] != new_params["mode"]
         ):
-            return True, "网格结构变化（层数/类型/方向），需要重建"
+            return True, "网格结构变化（类型/方向），需要重建"
 
         lower_change = abs(new_lower - old_lower) / max(abs(old_lower), 1e-9)
         upper_change = abs(new_upper - old_upper) / max(abs(old_upper), 1e-9)
@@ -588,9 +665,11 @@ class GridManager:
             amount_change = abs(new_amount - old_amount) / max(abs(old_amount), 1e-9)
 
         if price_change < self.grid_rebuild_min_price_change_ratio and amount_change < 0.20:
+            grid_num_changed = old_params["grid_num"] != new_params["grid_num"]
             return (
                 False,
-                f"区间变化 {price_change * 100:.3f}% / 单格资金变化 {amount_change * 100:.2f}% 低于阈值",
+                f"区间变化 {price_change * 100:.3f}% / 单格资金变化 {amount_change * 100:.2f}% "
+                f"低于阈值（层数变化={grid_num_changed} 不单独触发重建）",
             )
 
         return True, "满足重建条件"
@@ -670,16 +749,27 @@ class GridManager:
         max_rounds: int = 5,
         round_sleep_sec: float = 0.4,
         hard_timeout_sec: float = 20.0,
+        keep_oids: set[int] | None = None,
     ) -> list[dict[str, Any]] | None:
         """重建前尽量把残留限价单撤净；超时后返回剩余订单。
+
+        Args:
+            keep_oids: 白名单内的挂单既不撤也不计入「残留」——它们是在途层级
+                有意保留的平仓单，若计入残留会让每次重建都被自己挡下。
 
         Returns:
             []=已确认撤净；非空列表=仍有残留；None=挂单查询失败（无法确认，
             调用方必须跳过重建——在「不知道有没有残单」时布新网格会新旧叠加）。
         """
+        keep_oids = keep_oids or set()
+
+        def _pending(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [o for o in orders if o.get("oid") not in keep_oids]
+
         remaining_orders = self._get_symbol_open_orders(symbol=symbol)
         if remaining_orders is None:
             return None
+        remaining_orders = _pending(remaining_orders)
         if not remaining_orders:
             return []
 
@@ -702,6 +792,7 @@ class GridManager:
             remaining_orders = self._get_symbol_open_orders(symbol=symbol)
             if remaining_orders is None:
                 return None
+            remaining_orders = _pending(remaining_orders)
             if not remaining_orders:
                 if round_idx > 1:
                     self.logger.print_info(f"   [Grid] ✅ 残留挂单已清空（重试 {round_idx} 轮）")
@@ -1322,7 +1413,15 @@ class GridManager:
             )
         return formatted
 
-    def _cancel_all_orders(self, symbol: str) -> bool:
+    def _cancel_all_orders(self, symbol: str, keep_oids: set[int] | None = None) -> bool:
+        """撤销 symbol 的全部挂单并清理本地网格状态。
+
+        Args:
+            keep_oids: 白名单，这些 oid 不撤。仅用于全量重建时保住在途层级的
+                reduce_only 平仓单——撤了它们，持仓在重建到补保护单之间就是裸奔。
+                账户级熔断走公共入口 ``cancel_all_orders``，不传白名单，全撤。
+        """
+        keep_oids = keep_oids or set()
         # 优先用交易所真实挂单清理（含 trigger），避免本地 state 漂移导致漏撤单
         all_canceled = True
         canceled_oids = set()
@@ -1334,7 +1433,7 @@ class GridManager:
             open_orders = []
         for order in open_orders:
             oid = order.get("oid")
-            if oid is None:
+            if oid is None or oid in keep_oids:
                 continue
             try:
                 if self._cancel_order_with_retry(symbol, oid):
@@ -1352,7 +1451,7 @@ class GridManager:
                 o.get("oid") for o in grid.get("buy_orders", []) if isinstance(o, dict)
             ] + [o.get("oid") for o in grid.get("sell_orders", []) if isinstance(o, dict)]
             for oid in local_oids:
-                if oid is None or oid in canceled_oids:
+                if oid is None or oid in canceled_oids or oid in keep_oids:
                     continue
                 with suppress(Exception):
                     if self._cancel_order_with_retry(symbol, oid):
@@ -1713,6 +1812,11 @@ class GridManager:
                                 order_id=str(level.open_order_id or ""),
                                 status="FILLED",
                             )
+                            # 同轮立即挂平仓单：等下一轮意味着持仓在整个调度
+                            # 间隔（默认 5 分钟）里没有任何退出单保护，而这段
+                            # 时间恰好是刚成交、价格正在动的时候。挂平仓单是
+                            # reduce_only 减仓，被动同步模式同样必须做。
+                            self._place_close_order(symbol, level)
                         else:
                             # 被撤销/失败 -> 回到 IDLE 重新挂
                             level.state = GridLevelState.IDLE
@@ -1736,6 +1840,13 @@ class GridManager:
                                 order_id=str(level.close_order_id or ""),
                                 status="FILLED",
                             )
+                            # 同轮完成 PnL 归因并复位：COMPLETED 只是过渡态，
+                            # 让它跨轮存活既拖慢层级复用（每完成一轮白等一个
+                            # 周期才重新挂单），也让重建判定多一类要处理的
+                            # 在途状态。下方 COMPLETED 分支保留，用于兜底从
+                            # 状态文件恢复出来的历史 COMPLETED 层级。
+                            self._record_round_trip(symbol, level)
+                            level.reset()
                         else:
                             # 平仓单被撤 -> 回到 OPEN_FILLED 重挂
                             level.state = GridLevelState.OPEN_FILLED
@@ -1750,6 +1861,20 @@ class GridManager:
                 self.logger.print_error(f"   [Grid] {level.id} 同步异常: {e}")
 
         self._save_incremental_state(symbol)
+
+    def _place_idle_open_orders(self, symbol: str):
+        """只为 IDLE 层级补挂开仓单，不重跑整套状态机。
+
+        入口的被动同步（allow_open=False）已确认成交、挂平仓单、结算 round-trip，
+        确认「本轮不重建」后再补这一步即可，省掉一次挂单查询与成交记录查询。
+        """
+        for level in self.grid_levels.get(symbol, []):
+            if level.state != GridLevelState.IDLE:
+                continue
+            try:
+                self._place_open_order(symbol, level)
+            except Exception as e:
+                self.logger.print_error(f"   [Grid] {level.id} 补挂开仓单异常: {e}")
 
     def _place_open_order(self, symbol: str, level: GridLevel):
         """为层级挂开仓单。"""

@@ -130,6 +130,8 @@ class Engine:
                 barrier_config=TripleBarrierConfig.from_config(cfg.grid.barrier),
                 on_round_trip_close=self._on_grid_round_trip_close,
                 max_position_notional_usd=cfg.grid.max_position_notional_usd,
+                grid_rebuild_cooldown_seconds=cfg.grid.rebuild_cooldown_seconds,
+                grid_rebuild_min_price_change_ratio=cfg.grid.rebuild_min_change_pct,
                 trend_flatten_surgical=True,
                 inventory_cap_strict=True,
                 keep_grid_reconcile=True,

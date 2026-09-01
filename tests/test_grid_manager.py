@@ -1,9 +1,11 @@
-"""GridManager 资金安全路径测试：紧急平仓校验、增量同步防误判、手术式减仓。
+"""GridManager 资金安全路径测试：紧急平仓校验、增量同步防误判、手术式减仓、
+重建闸门与开平仓闭环保全。
 
 全部离线：交易所行为由 FakeGridClient 模拟，check_order_success 复用真实实现
 保证内层 statuses 校验语义与线上一致。
 """
 
+import time
 from decimal import Decimal
 
 from conftest import QUIET_LOGGER
@@ -264,8 +266,10 @@ class TestIncrementalSyncGuards:
         client.fills = [{"oid": 12345, "px": "99.0", "sz": "0.505", "time": 1000}]
 
         manager.sync_grid_incremental("ETH", allow_open=False)
-        assert pending.state == GridLevelState.OPEN_FILLED
+        # 同轮确认成交并立即挂平仓单：不让持仓在整个调度间隔里没有退出单保护
+        assert pending.state == GridLevelState.CLOSE_PENDING
         assert pending.open_fill_amount == Decimal("0.505")
+        assert client.limit_orders and client.limit_orders[-1]["ro"] is True
         assert idle.state == GridLevelState.IDLE  # 未挂新开仓单
         assert om.long_limits == []
 
@@ -429,3 +433,241 @@ class TestEmergencyClosePnlLabeling:
         assert len(records) == 1
         assert records[0]["pnl"] is not None
         assert records[0]["reason"] == "TIME_LIMIT 测试"
+
+
+class TestRebuildGating:
+    """重建闸门：冷却、真突破逃生口、层数抖动不触发全量撤换单。
+
+    线上根因：重建判定过松导致 84.6% 周期全量重建，挂单活不过 5 分钟，
+    网格永远走不完一轮开平仓闭环。
+    """
+
+    def _seed(self, manager, *, lower=95.0, upper=105.0, grid_num=6, mode="NEUTRAL"):
+        manager.state["active_grids"]["ETH"] = {
+            "config": {
+                "action": "UPDATE_GRID",
+                "lower_price": lower,
+                "upper_price": upper,
+                "grid_num": grid_num,
+                "amount_per_grid": 10.0,
+                "mode": mode,
+            },
+            "buy_orders": [{"oid": 801, "px": 98.0}],
+            "sell_orders": [{"oid": 802, "px": 102.0}],
+        }
+
+    def _new_config(self, **overrides):
+        cfg = {
+            "action": "UPDATE_GRID",
+            "lower_price": 95.0,
+            "upper_price": 105.0,
+            "grid_num": 6,
+            "amount_per_grid": 10.0,
+            "mode": "NEUTRAL",
+        }
+        cfg.update(overrides)
+        return cfg
+
+    def _manager(self, tmp_path, price=100.0):
+        client = FakeGridClient()
+        client.price = price
+        client.open_orders = [
+            {"oid": 801, "coin": "ETH", "side": "B", "sz": "0.1", "limitPx": "98.0"},
+            {"oid": 802, "coin": "ETH", "side": "A", "sz": "0.1", "limitPx": "102.0"},
+        ]
+        manager, client, _ = make_manager(tmp_path, client=client)
+        self._seed(manager)
+        return manager, client
+
+    def test_cooldown_blocks_rebuild(self, tmp_path):
+        # 冷却期内即便区间大改也不重建——这是抑制高频撤换单的主闸
+        manager, _ = self._manager(tmp_path)
+        manager._last_rebuild_ts["ETH"] = time.time()
+
+        should, reason = manager._should_rebuild_grid("ETH", self._new_config(lower=80.0))
+        assert should is False
+        assert "冷却" in reason
+
+    def test_breakout_bypasses_cooldown(self, tmp_path):
+        # 价格走出旧区间即说明这张网失效，不能干等冷却把网格空挂在够不着的价位
+        manager, _ = self._manager(tmp_path, price=106.0)
+        manager._last_rebuild_ts["ETH"] = time.time()
+
+        should, reason = manager._should_rebuild_grid("ETH", self._new_config(upper=110.0))
+        assert should is True
+        assert "提前解除重建冷却" in reason
+
+    def test_inside_band_does_not_count_as_breakout(self, tmp_path):
+        # 仅贴近边界（<0.5%）不算突破，避免边界抖动把冷却形同虚设
+        manager, _ = self._manager(tmp_path, price=105.4)
+        manager._last_rebuild_ts["ETH"] = time.time()
+
+        should, reason = manager._should_rebuild_grid("ETH", self._new_config(upper=110.0))
+        assert should is False
+        assert "冷却" in reason
+
+    def test_price_query_failure_does_not_bypass_cooldown(self, tmp_path):
+        # 取价失败 fail-safe 偏向不重建：绝不因 API 抖动触发全量撤换单
+        manager, client = self._manager(tmp_path)
+        manager._last_rebuild_ts["ETH"] = time.time()
+        client.price = None
+
+        should, reason = manager._should_rebuild_grid("ETH", self._new_config(lower=80.0))
+        assert should is False
+        assert "冷却" in reason
+
+    def test_grid_num_change_alone_does_not_rebuild(self, tmp_path):
+        # LLM 每轮抖动的层数不改变覆盖区间，为它全撤全建纯属自伤
+        manager, _ = self._manager(tmp_path)
+        manager._last_rebuild_ts["ETH"] = time.time() - 7200  # 冷却已过
+
+        should, reason = manager._should_rebuild_grid("ETH", self._new_config(grid_num=12))
+        assert should is False
+        assert "层数变化=True" in reason
+
+    def test_mode_change_rebuilds_after_cooldown(self, tmp_path):
+        # 方向变化仍是结构性变化，冷却过后照常重建
+        manager, _ = self._manager(tmp_path)
+        manager._last_rebuild_ts["ETH"] = time.time() - 7200
+
+        should, reason = manager._should_rebuild_grid("ETH", self._new_config(mode="LONG"))
+        assert should is True
+        assert "类型/方向" in reason
+
+
+class TestRebuildPreservesLifecycle:
+    """全量重建必须保住在途层级的开平仓闭环。
+
+    线上根因：重建撤掉 reduce_only 平仓单又整体覆盖 grid_levels，持仓变成
+    无人认领的库存——几百笔开仓成交只对应个位数被识别的平仓成交。
+    """
+
+    def _close_pending_level(self, level_id="L0", close_oid=901):
+        level = make_filled_level(level_id=level_id, price="100", amount="0.5")
+        level.state = GridLevelState.CLOSE_PENDING
+        level.close_order_id = close_oid
+        return level
+
+    def test_carried_level_and_its_close_order_survive_rebuild(self, tmp_path):
+        client = FakeGridClient()
+        client.price = 100.0
+        # 901 是在途层级的 reduce_only 平仓单，802 是普通网格单
+        client.open_orders = [
+            {"oid": 802, "coin": "ETH", "side": "A", "sz": "0.1", "limitPx": "102.0"},
+            {"oid": 901, "coin": "ETH", "side": "A", "sz": "0.5", "limitPx": "100.5"},
+        ]
+        manager, client, _ = make_manager(tmp_path, client=client)
+
+        carried = self._close_pending_level()
+        manager.grid_levels["ETH"] = [carried]
+        manager.state["active_grids"]["ETH"] = {
+            "config": {"lower_price": 95.0, "upper_price": 105.0, "grid_num": 2},
+            "buy_orders": [],
+            "sell_orders": [{"oid": 802, "px": 102.0}],
+        }
+
+        # 撤单后交易所只剩被保留的平仓单
+        def _get_open_orders(include_trigger=False):
+            return [o for o in client.open_orders if o["oid"] == 901]
+
+        client.cancel_calls = []
+        original = client.get_open_orders
+        client.get_open_orders = _get_open_orders
+
+        manager.sync_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 90.0,
+                "upper_price": 110.0,
+                "grid_num": 2,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+        )
+        client.get_open_orders = original
+
+        # 平仓单没被撤，且没被当成「撤单未净」挡下重建
+        assert 901 not in client.cancel_calls
+        levels = manager.grid_levels["ETH"]
+        assert carried in levels, "在途层级必须并入新一代，不能被整体覆盖丢弃"
+        assert carried.state == GridLevelState.CLOSE_PENDING
+        assert carried.close_order_id == 901
+        assert carried.id.startswith("K"), "带过来的层级用 K 前缀标识"
+        assert carried.open_fill_price == to_decimal("100")
+
+    def test_public_cancel_all_still_cancels_everything(self, tmp_path):
+        # 账户级熔断走公共入口，绝不能因为在途层级白名单漏撤单
+        client = FakeGridClient()
+        client.open_orders = [
+            {"oid": 901, "coin": "ETH", "side": "A", "sz": "0.5", "limitPx": "100.5"},
+        ]
+        manager, client, _ = make_manager(tmp_path, client=client)
+        manager.grid_levels["ETH"] = [self._close_pending_level()]
+
+        assert manager.cancel_all_orders("ETH") is True
+        assert 901 in client.cancel_calls
+
+
+class TestSyncGridClaimsFillsFirst:
+    """重建判定之前必须先认领成交，否则刚成交的层级会被当成挂单撤掉。"""
+
+    def test_fill_claimed_before_rebuild_decision(self, tmp_path):
+        client = FakeGridClient()
+        client.price = 100.0
+        client.open_orders = []  # 开仓单已不在挂单列表 = 已成交
+        client.fills = [{"oid": 12345, "px": "99.0", "sz": "0.505", "time": 1000}]
+        manager, client, _ = make_manager(tmp_path, client=client)
+
+        level = GridLevel(
+            id="L0",
+            price=to_decimal("99"),
+            amount=to_decimal("50"),
+            side="LONG",
+            state=GridLevelState.OPEN_PENDING,
+        )
+        level.open_order_id = 12345
+        manager.grid_levels["ETH"] = [level]
+        manager.state["active_grids"]["ETH"] = {
+            "config": {"lower_price": 95.0, "upper_price": 105.0, "grid_num": 2},
+            "buy_orders": [{"oid": 12345, "px": 99.0}],
+            "sell_orders": [],
+        }
+        manager._last_rebuild_ts["ETH"] = time.time()  # 冷却中，本轮不重建
+
+        manager.sync_grid(
+            "ETH",
+            {
+                "action": "UPDATE_GRID",
+                "lower_price": 95.0,
+                "upper_price": 105.0,
+                "grid_num": 2,
+                "amount_per_grid": 10.0,
+                "mode": "NEUTRAL",
+            },
+        )
+
+        # 成交被认领，并同轮挂上了 reduce_only 平仓单
+        assert level.state == GridLevelState.CLOSE_PENDING
+        assert level.open_fill_amount == Decimal("0.505")
+        assert client.limit_orders and client.limit_orders[-1]["ro"] is True
+
+    def test_keep_grid_does_not_double_sync(self, tmp_path):
+        # 入口已统一被动同步，KEEP_GRID 分支不得再整轮重跑一次
+        client = FakeGridClient()
+        client.price = 100.0
+        client.open_orders = []
+        manager, client, _ = make_manager(tmp_path, client=client)
+        manager.grid_levels["ETH"] = [make_filled_level()]
+
+        calls: list[bool] = []
+        original = manager.sync_grid_incremental
+
+        def _spy(symbol, allow_open=True):
+            calls.append(allow_open)
+            return original(symbol, allow_open=allow_open)
+
+        manager.sync_grid_incremental = _spy
+        manager.sync_grid("ETH", {"action": "KEEP_GRID"})
+
+        assert calls == [False], f"KEEP_GRID 周期应只被动同步一次，实际 {calls}"

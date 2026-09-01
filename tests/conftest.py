@@ -7,9 +7,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-# 保证从任意工作目录运行 pytest 时都能导入 src 包
+# 保证从任意工作目录运行 pytest 时都能导入 src 包。
+# 必须无条件插到 sys.path 最前：pytest 会把 rootdir 追加在 sys.path 末尾，
+# 旧写法的「不存在才插入」守卫因此恒为假而跳过，import src 转而命中
+# .venv/lib/*/site-packages/src（本项目为非 editable 安装，uv run 不会
+# 每次改动都重新同步）——测试跑的是陈旧副本，改动验证全部失真且无声。
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
+if sys.path[:1] != [str(REPO_ROOT)]:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.llm import LLMError  # noqa: E402
