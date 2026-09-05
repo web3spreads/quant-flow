@@ -13,8 +13,15 @@ Cordis 插件**（`dsh-plugin-quant-flow`，TypeScript/ESM）。铁律：**LLM �
 
 **策略只有网格一种**（`src/strategy/grid.ts`），由 `src/engine.ts` 编排；`src/fleet.ts`
 把多账户装配成并行引擎并提供大盘聚合，账户间零共享可变状态，同「地址×环境」双开拒绝启动。
-AI 能力默认走宿主 `ctx.llm`，可切 OpenAI 兼容端点。内置看板提供运行数据、决策记录与
-全部配置的网页设置（表单由 `src/config.ts` 的 Schema 自动生成，改 Schema 即改表单）。
+决策来源默认是**规则后端**（`llm.provider: rule`，与回测同源，LLM 不在交易回路）；可切宿主
+`ctx.llm`（dsh）或 OpenAI 兼容端点，此时启动即告警并受 `llm.daily_call_cap` 约束（按每次实际
+请求计数、持久化到 `data/llm-usage.json`，触顶当天降级 KEEP_GRID）。内置看板提供运行数据、
+决策记录与全部配置的网页设置（表单由 `src/config.ts` 的 Schema 自动生成，改 Schema 即改表单）。
+
+**主网双重闸**：`testnet=false` 的账户必须同时提供名义额硬上限（`QUANTFLOW_MAINNET_MAX_NOTIONAL_USD`，
+`src/trading/notionalGuard.ts` 在客户端层拦所有开仓单，reduce_only 不拦、查询失败 fail-closed）与
+生效配置指纹确认（`QUANTFLOW_MAINNET_ACK`），两者在 `resolveRuntimeConfig` 校验——启动与看板热重配
+走同一入口，改了影响下单的配置就必须重新确认。
 
 架构见 `docs/architecture.md`。
 
@@ -27,7 +34,8 @@ node scripts/fetch-history.mjs --coin BTC --interval 15m
 node scripts/backtest-grid.mjs --symbol BTC --interval 15m --compare   # 需先 build
 node scripts/backtest-suite.mjs           # 整批回测，结果进看板「回测」页
 node scripts/attribution.mjs --testnet    # 链上成交归因（只读）
-node scripts/record-book.mjs --coins BTC,ETH --out data/book           # 盘口录制
+node scripts/record-book.mjs --coins BTC,ETH --out data/book           # 盘口录制（日切写 manifest.json）
+node scripts/book-verify.mjs --dir data/book                           # 盘口数据完整性校验
 ```
 
 **改网格或执行层前先跑回测对照**（`--compare`、`--sweep`），用数字说话。

@@ -477,8 +477,8 @@ export class GridStrategy {
 
     // 趋势暂停周期压根没调 LLM，既不能算故障、也不能算「恢复正常」——
     // 按恢复处理会重置故障计数并打虚假恢复日志，间歇性趋势暂停可让
-    // 真实的 LLM 长期故障永远攒不够告警阈值。
-    if (aiDecision.trend_paused) return;
+    // 真实的 LLM 长期故障永远攒不够告警阈值。预算触顶（llm_capped）同理。
+    if (aiDecision.trend_paused || aiDecision.llm_capped) return;
 
     if (aiDecision.llm_ok !== false) {
       if (this.llmFailureStreak) {

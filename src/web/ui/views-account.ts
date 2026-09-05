@@ -12,6 +12,27 @@ window.setDecFilter=function(k,v){
   if(CACHE.decisions)$("#view").innerHTML=accountShell(CACHE.overview)+decisionsHtml(CACHE.decisions);
 };
 
+/* 主网名义额闸进度条：已用 / 上限。查询失败时闸门 fail-closed，必须如实显示而不是画 0% */
+function notionalGuardHtml(g){
+  if(!g)return "";
+  var cap=Number(g.cap_usd)||0;
+  if(g.query_failed||g.used_usd==null){
+    return '<div class="guard bad"><div class="k">主网名义额闸</div><div class="v">查询失败 · 闸门 fail-closed，不新增敞口</div></div>';
+  }
+  var used=Number(g.used_usd)||0,pct=cap>0?used/cap*100:0;
+  var cls=pct>=100?"bad":pct>=80?"warn":"";
+  return '<div class="guard '+cls+'"><div class="k">主网名义额闸 <b class="num">'+usd(used)+' / '+usd(cap)+'</b>'
+    +'<span class="num dim">'+fmt(pct,0)+'%</span></div>'
+    +'<div class="track"><div class="fill" style="width:'+Math.min(100,Math.max(0,pct)).toFixed(1)+'%"></div></div></div>';
+}
+function llmModeHtml(e){
+  if(!e)return "—";
+  if(e.llm_in_loop===false)return '<span class="badge ok">规则后端 · LLM 不在回路</span>';
+  var u=e.llm_usage;
+  if(!u)return '<span class="dim">'+esc(e.llm||"—")+"</span>";
+  var capped=u.calls>=u.cap;
+  return '<span class="badge '+(capped?"bad":"warn")+'">LLM 在回路 · 今日 '+esc(u.calls)+" / "+esc(u.cap)+(capped?" 已触顶":"")+"</span>";
+}
 function accountScopeHeader(o){
   var a=accountOf(STATE.account)||{};
   var e=(o&&o.engine)||{};
@@ -19,13 +40,15 @@ function accountScopeHeader(o){
   var b=(o&&o.balance)||{};
   var f=(CACHE.fleetAccounts||{})[STATE.account];
   return scopeHeader({
+    sub:notionalGuardHtml(o&&o.mainnet_guard),
     color:color,initials:initials(STATE.account),title:STATE.account,
     live:!(e.testnet==null?a.testnet:e.testnet),
     metas:[
       meta("地址",'<span class="mono">'+esc(short(a.address||e.account))+"</span>"),
       meta("策略",stratTags(a.strategies||{grid:e.grid_enabled,grid_symbol:(e.symbols||[])[0]})),
       meta("标的",esc((e.symbols||(a.strategies||{}).symbols||[]).join(" / ")||"—")),
-      meta("模型",'<span class="dim">'+esc(e.llm||a.llm||"—")+"</span>"),
+      meta("决策",llmModeHtml(o&&o.engine)),
+      meta("后端",'<span class="dim">'+esc(e.llm||a.llm||"—")+"</span>"),
       meta("数据目录",'<span class="mono dim2">'+esc(a.data_dir||"—")+"</span>")
     ],
     badges:[

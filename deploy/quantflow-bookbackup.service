@@ -1,0 +1,38 @@
+# 盘口数据异地备份：每日把已生成清单的历史日目录 rsync 到异地，并按保留期清理本地。
+#
+# 安装：
+#   cp deploy/quantflow-bookbackup.{service,timer} /etc/systemd/system/
+#   install -m 0600 -o ubuntu deploy/book-backup.env.example /etc/quantflow/book-backup.env   # 填 BOOK_BACKUP_DEST
+#   systemctl daemon-reload && systemctl enable --now quantflow-bookbackup.timer
+# 核验：
+#   sudo -u ubuntu env $(cat /etc/quantflow/book-backup.env | xargs) \
+#     /home/ubuntu/quantflow/node_modules/dsh-plugin-quant-flow/scripts/book-backup.sh --check
+[Unit]
+Description=Quant Flow 盘口数据异地备份
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/quantflow
+EnvironmentFile=/etc/quantflow/book-backup.env
+Environment=PATH=/usr/bin:/bin
+ExecStart=/bin/bash /home/ubuntu/quantflow/node_modules/dsh-plugin-quant-flow/scripts/book-backup.sh
+Nice=15
+CPUWeight=20
+IOSchedulingClass=idle
+TimeoutStartSec=3600
+
+# 只读 ssh 密钥（~/.ssh）+ 只写自己的 data 目录（.backed-up 标记与本地清理）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/quantflow/data
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

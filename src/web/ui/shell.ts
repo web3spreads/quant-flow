@@ -205,7 +205,9 @@ function scopeHeader(o){
     +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+(o.badges||[]).join("")+"</div>"
     +'<div class="kpi">'+(o.kpis||[]).map(function(k){
         return '<div><div class="k">'+esc(k[0])+'</div><div class="v num '+(k[2]||"")+'">'+k[1]+"</div></div>";
-      }).join("")+"</div></div>";
+      }).join("")+"</div>"
+    // sub：整行附加区（主网名义额闸进度条等），只在有内容时渲染
+    +(o.sub?'<div class="sub">'+o.sub+"</div>":"")+"</div>";
 }
 function meta(label,value){return "<span>"+esc(label)+" <b>"+value+"</b></span>"}
 function tabsBar(){

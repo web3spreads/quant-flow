@@ -15,18 +15,31 @@
 import path from "node:path";
 import { AsyncMutex, sleepAbortable } from "./utils/mutex.js";
 import { MarketDataFetcher } from "./data/marketData.js";
-import { LLMClient, OpenAICompatBackend, DshLlmBackend, type DshLlmLike, type LLMBackend } from "./llm.js";
+import {
+  LLMClient,
+  LlmUsageTracker,
+  OpenAICompatBackend,
+  DshLlmBackend,
+  RuleGridLlmBackend,
+  type DshLlmLike,
+  type LLMBackend,
+  type LlmUsageSnapshot,
+} from "./llm.js";
 import { ProtectionManager } from "./plugins/protections/index.js";
 import { GridStrategy } from "./strategy/grid.js";
 import { GridAgent } from "./strategy/gridAgent.js";
 import { HyperliquidClient, type ExchangeClientLike } from "./trading/client.js";
+import { MainnetNotionalGuard } from "./trading/notionalGuard.js";
 import { defaultPerpFeeRates, type FeeRates } from "./fees.js";
 import { TripleBarrierConfig } from "./trading/gridBarrier.js";
 import { GridManager } from "./trading/gridManager.js";
 import { OrderManager } from "./trading/orderManager.js";
 import type { TradingLogger } from "./logger.js";
-import type { EngineConfig } from "./config.js";
+import { configFingerprint, type EngineConfig } from "./config.js";
 import { clock } from "./utils/clock.js";
+
+/** LLM 预算计数文件名（账户 data 目录下） */
+export const LLM_USAGE_FILENAME = "llm-usage.json";
 
 /** 交易引擎：装配组件并驱动网格周期循环。 */
 export class Engine {
@@ -42,6 +55,8 @@ export class Engine {
   private loops: Promise<void>[] = [];
 
   client!: ExchangeClientLike;
+  /** 主网名义额闸（testnet=false 时套在客户端外；测试网为 null） */
+  notionalGuard: MainnetNotionalGuard | null = null;
   /** 注入的交易所客户端（回测用模拟客户端；缺省按账户配置创建真实客户端） */
   private readonly injectedClient?: ExchangeClientLike;
   private readonly injectedLlmBackend?: LLMBackend;
@@ -57,6 +72,16 @@ export class Engine {
   /** 账户名（多账户并行时的身份标识） */
   get name(): string {
     return this.config.name;
+  }
+
+  /** LLM 是否在交易回路中（provider=dsh/openai；rule 与注入的回测后端都不算） */
+  get llmInLoop(): boolean {
+    return !this.injectedLlmBackend && this.config.llm.provider !== "rule";
+  }
+
+  /** LLM 当日调用计数（不在回路时为 null） */
+  llmUsage(): LlmUsageSnapshot | null {
+    return this.llm?.usage?.snapshot() ?? null;
   }
 
   constructor(options: {
@@ -89,7 +114,7 @@ export class Engine {
     // 交易所客户端在热重配时保留（连接/缓存/nonce 状态不重建；交易所配置只来自
     // 环境变量，运行期不可变，保留是安全的）
     if (fresh) {
-      this.client =
+      const raw =
         this.injectedClient ??
         new HyperliquidClient({
           privateKey: cfg.exchange.private_key,
@@ -97,6 +122,22 @@ export class Engine {
           testnet: cfg.exchange.testnet,
           logger: this.logger,
         });
+      // 主网双重闸之一：名义额硬上限套在客户端外，所有新增敞口的路径都经过它。
+      // 注入的客户端同样套闸——闸门是否生效只由「是不是主网」决定
+      if (cfg.exchange.testnet) {
+        this.notionalGuard = null;
+        this.client = raw;
+      } else {
+        this.notionalGuard = new MainnetNotionalGuard(raw, { capUsd: cfg.exchange.mainnet_max_notional_usd, logger: this.logger });
+        this.client = this.notionalGuard;
+        this.logger.printWarning(`🛑 主网实盘：名义额硬上限 $${cfg.exchange.mainnet_max_notional_usd.toFixed(2)}（超限拒单，reduce_only 不受限）`);
+      }
+      // 指纹每台引擎都打印：主网靠它做二次确认，测试网打印便于事先核对确定性
+      try {
+        this.logger.printInfo(`🔏 配置指纹: ${configFingerprint(cfg)}`);
+      } catch (e) {
+        this.logger.printWarning(`⚠️ 配置指纹计算失败: ${e}`);
+      }
     }
     this.marketFetcher = new MarketDataFetcher(this.client, this.logger);
     this.orderManager = new OrderManager({
@@ -107,13 +148,37 @@ export class Engine {
       monitorAutoTick: !this.manualMonitorTick,
     });
 
-    const backend =
-      this.injectedLlmBackend ??
-      (cfg.llm.provider === "dsh"
-        ? new DshLlmBackend(this.getDshLlm, cfg.llm.dsh_provider, cfg.llm.model, cfg.llm.timeout)
-        : new OpenAICompatBackend(cfg.llm.base_url, cfg.llm.api_key, cfg.llm.model, cfg.llm.timeout));
-    this.llm = new LLMClient({ backend, model: cfg.llm.model, temperature: cfg.llm.temperature });
-    this.logger.printInfo(`✅ LLM: ${this.llm.describe()}`);
+    // 决策后端：默认规则后端（零外部请求）；dsh/openai 把 LLM 放进交易回路，
+    // 必须挂预算闸并在启动时明示——事故向量要看得见
+    let backend: LLMBackend;
+    let usage: LlmUsageTracker | null = null;
+    if (this.injectedLlmBackend) {
+      backend = this.injectedLlmBackend;
+    } else if (cfg.llm.provider === "rule") {
+      backend = new RuleGridLlmBackend();
+    } else {
+      backend =
+        cfg.llm.provider === "dsh"
+          ? new DshLlmBackend(this.getDshLlm, cfg.llm.dsh_provider, cfg.llm.model, cfg.llm.timeout)
+          : new OpenAICompatBackend(cfg.llm.base_url, cfg.llm.api_key, cfg.llm.model, cfg.llm.timeout);
+    }
+    if (this.llmInLoop) {
+      usage = new LlmUsageTracker({
+        file: path.join(cfg.paths.data_dir, LLM_USAGE_FILENAME),
+        cap: cfg.llm.daily_call_cap,
+        warn: (m) => this.logger.printWarning(m),
+      });
+    }
+    this.llm = new LLMClient({ backend, model: cfg.llm.model, temperature: cfg.llm.temperature, usage });
+    if (this.llmInLoop) {
+      const snap = usage!.snapshot();
+      this.logger.printWarning(
+        `⚠️ LLM 在交易回路中（provider=${cfg.llm.provider}，${this.llm.describe()}）：` +
+          `每日调用上限 ${snap.cap} 次（今日已用 ${snap.calls}），触顶后当天降级 KEEP_GRID`,
+      );
+    } else {
+      this.logger.printInfo(`✅ 决策后端: ${this.llm.describe()}（LLM 不在交易回路）`);
+    }
 
     this.protectionManager = null;
     if (cfg.protections.length) {

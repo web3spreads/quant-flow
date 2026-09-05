@@ -1,8 +1,9 @@
 /** 网格决策 Agent 测试：动作白名单、故障兜底与数学引擎衔接。 */
 import { describe, expect, it } from "vitest";
 import { GridAgent } from "../src/strategy/gridAgent.js";
-import { LLMError } from "../src/llm.js";
-import { FakeOrderManager, QUIET_LOGGER, makeFakeLLM } from "./support.js";
+import { LLMClient, LLMError, LlmUsageTracker } from "../src/llm.js";
+import path from "node:path";
+import { FakeLLMBackend, FakeOrderManager, QUIET_LOGGER, makeFakeLLM, makeTempDir } from "./support.js";
 import type { Dict } from "../src/trading/client.js";
 
 const MARKET_DATA = {
@@ -91,6 +92,26 @@ describe("UPDATE_GRID", () => {
     const decision = await decide(agent);
     expect(decision.action).toBe("INSUFFICIENT_CAPITAL");
     expect(decision.llm_ok).toBe(true);
+  });
+});
+
+describe("每日预算触顶", () => {
+  it("预算触顶 → KEEP_GRID、llm_ok=true（不算故障）、llm_capped=true，且只告警一次", async () => {
+    // llm_ok=false 会在 N 周期后触发兜底重建下单，与「当天降级 KEEP_GRID」相悖；
+    // 因此预算刹车必须是 llm_ok=true + llm_capped 的独立形态。
+    const dir = makeTempDir();
+    const usage = new LlmUsageTracker({ file: path.join(dir, "llm-usage.json"), cap: 1 });
+    const backend = new FakeLLMBackend([gridJson({ action: "UPDATE_GRID" })]);
+    const llm = new LLMClient({ backend, model: "fake", maxRetries: 1, backoffScale: 0, usage });
+    const agent = new GridAgent({
+      symbol: "ETH", orderManager: new FakeOrderManager(1000.0) as never, logger: QUIET_LOGGER, llm, tradeAmount: 100.0,
+    });
+    expect((await decide(agent)).action).toBe("UPDATE_GRID"); // 第 1 次：用掉唯一额度
+    const capped = await decide(agent);
+    expect(capped).toMatchObject({ action: "KEEP_GRID", llm_ok: true, llm_capped: true });
+    expect(backend.calls.length).toBe(1);
+    // 同日再触顶不再重复告警（markCappedWarned 已被消费）
+    expect(usage.markCappedWarned()).toBe(false);
   });
 });
 

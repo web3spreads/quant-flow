@@ -108,14 +108,20 @@ for (const symbol of symbols) {
   }
 }
 
-/** 按策略汇总：均值/中位数/胜率——单个样本没有意义，看的是分布。 */
+/**
+ * 按策略汇总：均值/中位数/胜率——单个样本没有意义，看的是分布。
+ * 两条基准同表：「不交易」恒为 0（t 值就是对它的检验），「买入持有」取同区间标的涨跌均值。
+ */
 function summarize(label) {
-  const xs = runs.filter((r) => r.strategy === label && r.error === undefined).map((r) => r.returnPct);
+  const ok = runs.filter((r) => r.strategy === label && r.error === undefined);
+  const xs = ok.map((r) => r.returnPct);
   if (!xs.length) return null;
   const sorted = [...xs].sort((a, b) => a - b);
   const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
   const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length);
-  const fees = runs.filter((r) => r.strategy === label && !r.error).map((r) => r.fees.pctOfInitial);
+  const fees = ok.map((r) => r.fees.pctOfInitial);
+  const bench = ok.map((r) => Number(r.benchmarkPct) || 0);
+  const meanBench = bench.reduce((a, b) => a + b, 0) / bench.length;
   return {
     n: xs.length,
     meanPct: mean,
@@ -127,6 +133,10 @@ function summarize(label) {
     meanFeePctOfEquity: fees.reduce((a, b) => a + b, 0) / (fees.length || 1),
     // 均值是否显著异于零：|t| < 2 就是「和不交易没区别」
     tStat: sd > 0 ? mean / (sd / Math.sqrt(xs.length)) : 0,
+    noTradePct: 0,
+    meanBenchmarkPct: meanBench,
+    vsBuyHoldPct: mean - meanBench,
+    beatBuyHoldRate: ok.filter((r) => r.returnPct > (Number(r.benchmarkPct) || 0)).length / ok.length,
   };
 }
 
@@ -167,7 +177,7 @@ for (const r of runs) {
     `${(r.fills.takerRatio * 100).toFixed(0) + "%"}`.padStart(7),
   );
 }
-console.log(`\n${"策略".padEnd(12)}${"样本数".padStart(7)}${"均值".padStart(9)}${"中位数".padStart(9)}${"标准差".padStart(9)}${"胜率".padStart(8)}${"t 值".padStart(8)}${"平均费用".padStart(10)}`);
+console.log(`\n${"策略".padEnd(12)}${"样本数".padStart(7)}${"均值".padStart(9)}${"中位数".padStart(9)}${"标准差".padStart(9)}${"胜率".padStart(8)}${"t 值".padStart(8)}${"平均费用".padStart(10)}${"买入持有".padStart(10)}${"相对持有".padStart(10)}`);
 for (const [label, s] of Object.entries(report.summary)) {
   console.log(
     label.padEnd(12) +
@@ -177,8 +187,10 @@ for (const [label, s] of Object.entries(report.summary)) {
     `${s.sdPct.toFixed(2) + "%"}`.padStart(9) +
     `${(s.winRate * 100).toFixed(0) + "%"}`.padStart(8) +
     `${s.tStat.toFixed(2)}`.padStart(8) +
-    `${s.meanFeePctOfEquity.toFixed(2) + "%"}`.padStart(10),
+    `${s.meanFeePctOfEquity.toFixed(2) + "%"}`.padStart(10) +
+    `${(s.meanBenchmarkPct >= 0 ? "+" : "") + s.meanBenchmarkPct.toFixed(2) + "%"}`.padStart(10) +
+    `${(s.vsBuyHoldPct >= 0 ? "+" : "") + s.vsBuyHoldPct.toFixed(2) + "%"}`.padStart(10),
   );
 }
-console.log(`\n|t| < 2 表示该策略的平均收益与零在统计上无法区分。`);
+console.log(`\n|t| < 2 表示该策略的平均收益与「不交易」（0）在统计上无法区分；「相对持有」= 均值 − 同期买入持有均值。`);
 console.log(`已写入 ${path.join(outDir, "latest.json")}`);

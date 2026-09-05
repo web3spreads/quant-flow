@@ -11,7 +11,7 @@
  * 失败却无任何告警）。余额接口故障标 llm_ok=true——那不是 LLM 的问题。
  */
 
-import { LLMClient, LLMError, extractJson } from "../llm.js";
+import { LLMBudgetError, LLMClient, LLMError, extractJson } from "../llm.js";
 import { calculateGridConfig } from "../utils/gridMath.js";
 import { defaultPerpFeeRates, type FeeRates } from "../fees.js";
 import type { OrderManager } from "../trading/orderManager.js";
@@ -181,6 +181,14 @@ export class GridAgent {
       try {
         content = await this.llm.chat(this.getDecisionSystemPrompt(), prompt, this.temperature);
       } catch (e) {
+        if (e instanceof LLMBudgetError) {
+          // 预算刹车不是故障：llm_ok=true 免得计入连败告警、触发兜底重建下单；
+          // llm_capped 让策略层把它当作「本轮没调 LLM」。告警一天只发一次。
+          if (this.llm.usage?.markCappedWarned()) {
+            this.logger.printError(`🚨 [GridAgent] ${e.message}；当天所有周期降级 KEEP_GRID，仅维护持仓保护单`);
+          }
+          return { ...this.degradedKeepGrid(e.message, 0, true), llm_capped: true };
+        }
         if (!(e instanceof LLMError)) throw e;
         // LLM 故障绝不放大成撤换单动作：保守维持网格（历史亏损来源之一）
         this.logger.printWarning(`[GridAgent] LLM 调用失败，回退 KEEP_GRID: ${e.message}`);

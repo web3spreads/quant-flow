@@ -1,6 +1,10 @@
-/** LLM 客户端测试：JSON 提取与重试语义。 */
-import { describe, expect, it } from "vitest";
-import { LLMClient, LLMError, extractJson, type LLMBackend } from "../src/llm.js";
+/** LLM 客户端测试：JSON 提取、重试语义、每日预算闸与规则后端。 */
+import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { LLMBudgetError, LLMClient, LLMError, LlmUsageTracker, RuleGridLlmBackend, extractJson, type LLMBackend } from "../src/llm.js";
+import { clock } from "../src/utils/clock.js";
+import { makeTempDir } from "./support.js";
 
 describe("extractJson", () => {
   it("各种回复形态恒定提取出对象，提不出则抛错（绝不返回数组/空值）", () => {
@@ -68,6 +72,17 @@ describe("LLMClient.chat", () => {
     expect(backend.calls.length).toBe(3);
   });
 
+  it("规则后端：零外部请求、输出合法 JSON、每次调用计数", async () => {
+    const backend = new RuleGridLlmBackend();
+    const client = new LLMClient({ backend, model: "rule", maxRetries: 1, backoffScale: 0 });
+    const parsed = extractJson(await client.chat("sys", "user"));
+    expect(parsed.action).toBe("UPDATE_GRID");
+    expect(parsed.mode).toBe("NEUTRAL");
+    expect(backend.calls).toBe(1);
+    expect(client.usage).toBeNull(); // 规则后端不接预算闸
+    expect(client.describe()).toMatch(/rule-grid/);
+  });
+
   it("重试耗尽抛 LLMError，且错误里带得出是哪个后端", async () => {
     // provider/model 名不被适配器识别时，流会正常结束但零分片，症状与限流、
     // 余额不足、网络抖动完全相同。错误信息不带后端标识就只能看到「空回复」，
@@ -77,5 +92,58 @@ describe("LLMClient.chat", () => {
     const attempt = makeClient([fail(), fail(), fail()]).client.chat("sys", "user");
     await expect(attempt).rejects.toThrowError(LLMError);
     await expect(attempt).rejects.toThrow(/持续故障/);
+  });
+});
+
+describe("每日预算闸（LlmUsageTracker）", () => {
+  // 2026-09 的事故：批处理靠重试放大把共享 key 打穿。预算必须按「每一次实际请求」计，
+  // 而且每次计数都落盘——进程重启不能把计数清零。
+  const restore: Array<() => void> = [];
+  afterEach(() => {
+    while (restore.length) restore.pop()!();
+  });
+  const freezeAt = (iso: string) => restore.push(clock.install(() => Date.parse(iso)));
+
+  it("重试每次都计数；触顶抛 LLMBudgetError（是 LLMError 子类）且不再打后端；跨日归零", async () => {
+    freezeAt("2026-09-05T10:00:00Z");
+    const file = path.join(makeTempDir(), "llm-usage.json");
+    const usage = new LlmUsageTracker({ file, cap: 3 });
+    const backend = new SeqBackend([new Error("抖动"), new Error("抖动"), "ok", "不该到这里"]);
+    const client = new LLMClient({ backend, model: "m", maxRetries: 3, backoffScale: 0, usage });
+
+    // 一次 chat 经两次失败重试成功：消耗 3 次额度
+    await expect(client.chat("s", "u")).resolves.toBe("ok");
+    expect(backend.calls.length).toBe(3);
+    expect(usage.snapshot()).toMatchObject({ date: "2026-09-05", calls: 3, cap: 3, capped: true });
+
+    // 触顶：不再调后端，抛预算错误
+    const attempt = client.chat("s", "u");
+    await expect(attempt).rejects.toBeInstanceOf(LLMBudgetError);
+    await expect(attempt).rejects.toBeInstanceOf(LLMError);
+    expect(backend.calls.length).toBe(3);
+    // 当天只告警一次
+    expect(usage.markCappedWarned()).toBe(true);
+    expect(usage.markCappedWarned()).toBe(false);
+
+    // 计数已落盘：新进程读回同一天的数字，仍然触顶
+    const reloaded = new LlmUsageTracker({ file, cap: 3 });
+    expect(reloaded.snapshot()).toMatchObject({ calls: 3, capped: true });
+    expect(reloaded.markCappedWarned()).toBe(false);
+
+    // 跨日归零
+    freezeAt("2026-09-06T00:00:01Z");
+    expect(reloaded.snapshot()).toMatchObject({ date: "2026-09-06", calls: 0, capped: false });
+    expect(reloaded.tryConsume()).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, "utf-8"))).toMatchObject({ date: "2026-09-06", calls: 1 });
+  });
+
+  it("计数文件损坏：当天从零起算并告警，不拖垮启动", () => {
+    freezeAt("2026-09-05T10:00:00Z");
+    const file = path.join(makeTempDir(), "llm-usage.json");
+    fs.writeFileSync(file, "{not json");
+    const warnings: string[] = [];
+    const usage = new LlmUsageTracker({ file, cap: 5, warn: (m) => warnings.push(m) });
+    expect(usage.snapshot().calls).toBe(0);
+    expect(warnings.join("\n")).toMatch(/llm-usage\.json/);
   });
 });

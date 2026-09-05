@@ -18,6 +18,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import { ConfigSchema, deepMerge, loadOverrides, saveOverrides, resolveRuntimeConfig, warnUnknownKeys, type EngineConfig, type QuantFlowConfigInput, type RuntimeConfig } from "../config.js";
 import { DASHBOARD_HTML } from "./page.js";
+import { usedNotionalUsd } from "../trading/notionalGuard.js";
 import type { Engine } from "../engine.js";
 import type { Fleet } from "../fleet.js";
 import type { TradingLogger } from "../logger.js";
@@ -213,11 +214,17 @@ export class WebConsole {
         return this.json(res, 200, { ok: true, effective: this.redact(runtime) });
       }
       case "POST /api/config/reset": {
-        saveOverrides(this.options.dataDir, {});
+        // 先校验/归一再清空覆盖文件：主网双重闸在归一阶段拒绝时，磁盘上的覆盖层不能已被抹掉
         const validated = new (ConfigSchema as never as new (v: unknown) => QuantFlowConfigInput)(
           this.options.baseConfig,
         );
-        const runtime = resolveRuntimeConfig(validated);
+        let runtime: RuntimeConfig;
+        try {
+          runtime = resolveRuntimeConfig(validated);
+        } catch (e) {
+          return this.json(res, 400, { error: `配置归一失败: ${e}` });
+        }
+        saveOverrides(this.options.dataDir, {});
         this.options.logger.printInfo("[看板] 配置覆盖已清空，回到基线配置…");
         await this.options.applyConfig(runtime);
         return this.json(res, 200, { ok: true, effective: this.redact(runtime) });
@@ -252,6 +259,17 @@ export class WebConsole {
       engine.orderManager.getCurrentPositions(),
       engine.client.getOpenOrders(true),
     ]);
+    // 主网名义额闸：用本次已取到的持仓/挂单算「已用 / 上限」，不额外打接口；
+    // 任一查询失败即如实标注——闸门在那种情况下是 fail-closed 的
+    const guard = engine.notionalGuard;
+    const queryFailed = positions === null || openOrders === null;
+    const mainnetGuard = guard
+      ? {
+          cap_usd: guard.capUsd,
+          used_usd: queryFailed ? null : usedNotionalUsd(positions, openOrders),
+          query_failed: queryFailed,
+        }
+      : null;
     return {
       plugin: { name: "dsh-plugin-quant-flow", version: this.options.pluginVersion },
       account: engine.name,
@@ -270,7 +288,11 @@ export class WebConsole {
         timeframe: cfg.trading.timeframe,
         grid_interval_minutes: cfg.grid.interval_minutes,
         llm: engine.llm.describe(),
+        llm_provider: cfg.llm.provider,
+        llm_in_loop: engine.llmInLoop,
+        llm_usage: engine.llmUsage(),
       },
+      mainnet_guard: mainnetGuard,
       balance: balanceInfo,
       positions: positions ?? [],
       positions_query_failed: positions === null,

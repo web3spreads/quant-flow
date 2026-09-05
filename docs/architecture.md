@@ -33,12 +33,13 @@ flowchart TB
     gm["GridManager<br/>层级状态机 · 簿记 · 屏障"]
     om["OrderManager + LimitOrderMonitor"]
     prot["ProtectionManager"]
-    llm["LLMClient（双后端 + 统一重试壳）"]
+    llm["LLMClient（规则/dsh/openai 三后端 + 统一重试壳 + 每日预算闸）"]
   end
 
   e1 --> engine
   grid --> gm --> om --> client["ExchangeClientLike"]
-  client --> real["HyperliquidClient（生产）"]
+  client --> guard["MainnetNotionalGuard（仅主网：名义额硬上限）"]
+  guard --> real["HyperliquidClient（生产）"]
   client --> sim["SimulatedClient（回测，同一套策略代码）"]
 ```
 
@@ -160,9 +161,33 @@ GridManager / MarketDataFetcher / Engine 只依赖它。`SimulatedClient` 用历
 「现在几点」统一走 `utils/clock.ts`，礼貌性等待走 `utils/sleep.ts`，模拟器接管两者。
 直接 `Date.now()` / `setTimeout` / `new HyperliquidClient` 会让代码在模拟器里失效。
 
-LLM 双后端（`src/llm.ts`）：`provider: dsh` 惰性取宿主服务，`openai` 直连兼容端点，
-回测用规则后端。三者共享同一重试壳，故障降级路径一致。`llm` 按可选依赖处理：
-服务缺失时降级并连续告警，插件不拒绝启动——风控与持仓维护必须持续运转。
+决策后端三种（`src/llm.ts`）：`provider: rule`（默认）是规则后端——每周期给出
+UPDATE_GRID，真正是否重建由 GridManager 的重建闸门决定，宽度由市场数据推导，零外部
+请求，回测与生产同一实现；`dsh` 惰性取宿主服务，`openai` 直连兼容端点。三者共享同一
+重试壳，故障降级路径一致。`llm` 按可选依赖处理：服务缺失时降级并连续告警，插件不拒绝
+启动——风控与持仓维护必须持续运转。
+
+LLM 在回路（dsh/openai）时挂**每日预算闸**（`LlmUsageTracker`）：按后端每一次实际请求
+计数（重试每次都算），每次计数原子落盘到 `data/llm-usage.json`，UTC 跨日归零；触顶抛
+`LLMBudgetError`，GridAgent 返回 `KEEP_GRID` 且 `llm_ok=true, llm_capped=true`——它是
+预算刹车不是故障，既不计入连败告警也不触发兜底重建，当天只告警一次。计数单位必须是
+「请求」而不是「决策」：批处理靠重试放大把共享 key 打穿、连带生产决策冻结的事故就是教训。
+
+## 八、主网双重闸
+
+测试网与主网只差 `HYPERLIQUID_TESTNET` 一个变量，`resolveRuntimeConfig`（启动与看板
+热重配的唯一共同入口）对每个 `testnet=false` 的账户强制两条：
+
+| 闸 | 机制 | 位置 |
+|---|---|---|
+| 名义额硬上限 | 环境变量给出上限；`MainnetNotionalGuard` 装饰交易所客户端，所有开仓单在 `placeLimitOrders` 前用「持仓 + 非 reduce_only 挂单 + 本批拟挂」对比上限，超限整批开仓单拒绝并打严重日志；reduce_only 永远放行；持仓/挂单查询失败 fail-closed | `src/trading/notionalGuard.ts`，`Engine.buildComponents` 接线 |
+| 配置指纹确认 | 对生效配置（交易/网格/保护链/决策来源/上限/钱包地址，不含密钥）算 SHA-256，要求确认变量完全相等；不等即拒绝启动并在错误信息里给出指纹 | `src/config.ts` `configFingerprint` / `applyMainnetGates` |
+
+闸门放在客户端层而不是策略层：开仓路径有整张批量提交和增量补挂两条，未来还可能再加，
+在最底层拦就没有绕行的口子。拒绝回执与交易所拒单同构（外层 ok、`statuses[].error`），
+下游 `checkOrderSuccess` 无需知道闸门存在。看板对主网账户的热重配会因指纹变化被拒
+（400、不落盘），这是刻意的：主网改配置 = 改环境变量 + 重启。多账户模式下每个主网账户
+独立满足（条目的 `mainnet_max_notional_env` / `mainnet_ack_env`）。
 
 ## 六、看板
 
@@ -184,3 +209,10 @@ LLM 双后端（`src/llm.ts`）：`provider: dsh` 惰性取宿主服务，`opena
 （决策审计 / 成交 pnl 归因 / 净值曲线）——JSONL 同时是看板 API 的数据源。
 `trades` 记录带 `fee` 与 `crossed`（maker/taker），`scripts/attribution.mjs` 据此把
 链上成交拆成 maker/taker 费用、已实现盈亏、强平与资金费。
+
+盘口录制器（`scripts/record-book.mjs`，纯逻辑在 `scripts/book-lib.mjs`）是独立进程，
+只读公开频道。按本机接收时间在 UTC 零点切日，零点后关旧日流、等文件真正关闭再流式
+校验（多成员 gzip 计行 + sha256）并写 `manifest.json`，其中带每频道的消息数、最大间隔、
+缺口数、丢弃数、覆盖秒数与收包延迟分位数——后者是研究阶段延迟模型的输入，覆盖秒数是
+样本纳入门槛的依据。频道静默超 60 秒告警一次；磁盘水位超限暂停最高频的 bbo 而不停
+trades / l2book；`scripts/book-verify.mjs` 逐日复核，`scripts/book-backup.sh` 每日异地 rsync。

@@ -110,6 +110,16 @@ main{padding:0 0 40px;min-width:0}
 .scope .kpi{display:flex;gap:18px;margin-left:auto;text-align:right}
 .scope .kpi .k{font-size:11px;color:var(--dim)}
 .scope .kpi .v{font-size:17px;font-weight:600}
+.scope .sub{flex-basis:100%;margin-top:4px}
+/* 主网名义额闸：已用 / 上限进度条（≥80% 橙、≥100% 红；查询失败整条红） */
+.guard{font-size:12px;color:var(--dim)}
+.guard .k{display:flex;gap:10px;align-items:baseline}
+.guard .k b{color:var(--text)}
+.guard .track{height:6px;border-radius:3px;background:rgba(255,255,255,.08);margin-top:5px;overflow:hidden}
+.guard .fill{height:100%;background:var(--up);transition:width .3s}
+.guard.warn .fill{background:#f0b90b}
+.guard.bad .fill{background:var(--live)}
+.guard.bad .v{color:var(--live);font-weight:600}
 .liverail{position:fixed;top:0;left:0;right:0;height:3px;z-index:40;
   background:repeating-linear-gradient(90deg,var(--live) 0 14px,#5c0f19 14px 28px)}
 body.livemode .topbar{border-bottom-color:rgba(246,70,93,.55)}

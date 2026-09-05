@@ -1,6 +1,9 @@
 /**
- * LLM 客户端：双后端。
+ * 决策后端：三种。
  *
+ * - "rule"：规则后端，不发任何外部请求。每周期给出 UPDATE_GRID，真正是否重建由
+ *   GridManager 的重建闸门（冷却/区间变化/突破）决定；宽度交给市场数据推导。
+ *   回测与生产共用同一实现——**默认后端**，LLM 不在交易回路。
  * - "openai"：任意 OpenAI 兼容端点（DeepSeek/OpenAI/本地部署/网关）。
  *   有界指数退避重试、空回复计入重试、重试耗尽抛 LLMError。
  * - "dsh"：寄生宿主 DeepSeek Harness 的 `llm` 服务（ctx.llm.stream()），由 dsh
@@ -9,8 +12,15 @@
  *
  * 空回复视为故障并计入重试——推理类模型偶发返回「仅含 reasoning、正文为空」
  * 的回复，重发即可绕开（线上实测有效）。
+ *
+ * 预算闸（LlmUsageTracker）：按**后端每一次实际请求**计数（重试每次都算），
+ * 每日上限触顶即抛 LLMBudgetError 且不再重试。曾有批处理靠重试放大把共享
+ * key 的余额打穿、连带生产决策冻结，计数单位必须是请求而不是「一次决策」。
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { clock } from "./utils/clock.js";
 import { sleep } from "./utils/sleep.js";
 
 /** 瞬时故障的重试等待上限（秒） */
@@ -24,11 +34,119 @@ export class LLMError extends Error {
   }
 }
 
+/** 每日调用上限已触顶（不重试；调用方按「预算刹车」而非「故障」处理）。 */
+export class LLMBudgetError extends LLMError {
+  constructor(message: string) {
+    super(message);
+    this.name = "LLMBudgetError";
+  }
+}
+
 export interface LLMBackend {
   /** 单次调用：返回助手回复文本；失败抛任意异常（由 LLMClient 统一重试）。 */
   chatOnce(system: string, user: string, temperature: number): Promise<string>;
   /** 展示用描述（看板/日志） */
   describe(): string;
+}
+
+/** 规则后端：稳定输出 UPDATE_GRID（宽度交给市场数据），格数固定；零外部请求。 */
+export class RuleGridLlmBackend implements LLMBackend {
+  calls = 0;
+  constructor(private readonly gridNum = 8, private readonly action: "UPDATE_GRID" | "KEEP_GRID" = "UPDATE_GRID") {}
+  describe(): string {
+    return `rule-grid(${this.action}, grid_num=${this.gridNum})`;
+  }
+  async chatOnce(): Promise<string> {
+    this.calls += 1;
+    return JSON.stringify({ action: this.action, mode: "NEUTRAL", grid_num: this.gridNum, confidence: 0.7, reason: "规则后端" });
+  }
+}
+
+export interface LlmUsageSnapshot {
+  /** UTC 日期 YYYY-MM-DD */
+  date: string;
+  calls: number;
+  cap: number;
+  capped: boolean;
+}
+
+/**
+ * 每日调用计数器：持久化到 data/llm-usage.json（原子写），每次计数都落盘——
+ * 进程崩溃/重启不能让计数归零。日期按 UTC（clock.date()），跨日自动归零。
+ */
+export class LlmUsageTracker {
+  readonly file: string;
+  readonly cap: number;
+  private state: { date: string; calls: number; capped_warned: boolean };
+  private readonly warn?: (message: string) => void;
+
+  constructor(options: { file: string; cap: number; warn?: (message: string) => void }) {
+    this.file = options.file;
+    this.cap = Math.max(1, Math.trunc(options.cap));
+    this.warn = options.warn;
+    this.state = { date: this.today(), calls: 0, capped_warned: false };
+    this.load();
+  }
+
+  private today(): string {
+    return clock.date().toISOString().slice(0, 10);
+  }
+
+  private load(): void {
+    try {
+      if (!fs.existsSync(this.file)) return;
+      const parsed = JSON.parse(fs.readFileSync(this.file, "utf-8")) as Partial<typeof this.state>;
+      if (typeof parsed?.date === "string" && parsed.date === this.today()) {
+        this.state = {
+          date: parsed.date,
+          calls: Math.max(0, Math.trunc(Number(parsed.calls) || 0)),
+          capped_warned: !!parsed.capped_warned,
+        };
+      }
+    } catch (e) {
+      // 损坏的计数文件只会让当天从零起算，不能拖垮启动；但要告警
+      this.warn?.(`[LLM 预算] 读取 ${path.basename(this.file)} 失败，当日计数从零起算: ${e}`);
+    }
+  }
+
+  private save(): void {
+    try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      const tmp = `${this.file}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(this.state), "utf-8");
+      fs.renameSync(tmp, this.file);
+    } catch (e) {
+      this.warn?.(`[LLM 预算] 写入 ${path.basename(this.file)} 失败: ${e}`);
+    }
+  }
+
+  private rollover(): void {
+    const today = this.today();
+    if (this.state.date !== today) this.state = { date: today, calls: 0, capped_warned: false };
+  }
+
+  /** 申请一次请求额度：未触顶则计数并落盘，返回 true；触顶返回 false（不计数）。 */
+  tryConsume(): boolean {
+    this.rollover();
+    if (this.state.calls >= this.cap) return false;
+    this.state.calls += 1;
+    this.save();
+    return true;
+  }
+
+  /** 首次调用返回 true（当天只告警一次），其后 false。 */
+  markCappedWarned(): boolean {
+    this.rollover();
+    if (this.state.capped_warned) return false;
+    this.state.capped_warned = true;
+    this.save();
+    return true;
+  }
+
+  snapshot(): LlmUsageSnapshot {
+    this.rollover();
+    return { date: this.state.date, calls: this.state.calls, cap: this.cap, capped: this.state.calls >= this.cap };
+  }
 }
 
 
@@ -147,6 +265,8 @@ export class LLMClient {
   private readonly backend: LLMBackend;
   /** 重试退避的时间缩放（测试注入 0 免等待；生产恒为 1） */
   private readonly backoffScale: number;
+  /** 每日预算闸（规则后端不接：它不产生外部请求） */
+  readonly usage: LlmUsageTracker | null;
 
   constructor(options: {
     backend: LLMBackend;
@@ -154,12 +274,14 @@ export class LLMClient {
     temperature?: number;
     maxRetries?: number;
     backoffScale?: number;
+    usage?: LlmUsageTracker | null;
   }) {
     this.backend = options.backend;
     this.model = options.model;
     this.temperature = options.temperature ?? 0.2;
     this.maxRetries = Math.max(1, Math.trunc(options.maxRetries ?? 3));
     this.backoffScale = options.backoffScale ?? 1;
+    this.usage = options.usage ?? null;
   }
 
   describe(): string {
@@ -169,12 +291,17 @@ export class LLMClient {
   /**
    * 发送一轮对话，返回助手回复文本。
    *
+   * @throws LLMBudgetError 每日调用上限已触顶（每一次尝试都先申请额度，触顶即停，不重试）
    * @throws LLMError 重试耗尽仍未获得非空回复
    */
   async chat(system: string, user: string, temperature?: number): Promise<string> {
     const temp = temperature ?? this.temperature;
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      if (this.usage && !this.usage.tryConsume()) {
+        const snap = this.usage.snapshot();
+        throw new LLMBudgetError(`LLM 日调用上限已触顶（${snap.date} 已用 ${snap.calls}/${snap.cap}），本日不再调用`);
+      }
       try {
         const content = await this.backend.chatOnce(system, user, temp);
         if (content && content.trim()) return content;

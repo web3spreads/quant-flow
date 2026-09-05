@@ -36,19 +36,26 @@ function backtestHtml(r){
       tip:'<div class="r"><span>样本</span><b>'+v.n+'</b></div><div class="r"><span>均值</span><b>'+pct(v.meanPct)
         +'</b></div><div class="r"><span>胜率</span><b>'+(v.winRate*100).toFixed(0)+"%</b></div>"};
   });
-  var retBars=runs.filter(function(x){return !x.error}).map(function(x){
-    return {label:x.symbol+" "+x.interval+" · "+x.strategy,value:x.returnPct,
-      tip:'<div class="r"><span>标的涨跌</span><b>'+pct(x.benchmarkPct)+'</b></div><div class="r"><span>最大回撤</span><b>'
-        +fmt(x.maxDrawdownPct,2)+"%</b></div>"};
+  // 每样本两根柱：策略（彩色）与买入持有（灰）；零轴本身就是「不交易」基准
+  var retBars=[];
+  runs.filter(function(x){return !x.error}).forEach(function(x){
+    var name=x.symbol+" "+x.interval;
+    retBars.push({label:name+" · "+x.strategy,value:x.returnPct,dotColor:"#a78bfa",
+      tip:'<div class="r"><span>最大回撤</span><b>'+fmt(x.maxDrawdownPct,2)+"%</b></div>"});
+    retBars.push({label:name+" · 买入持有",value:x.benchmarkPct,color:"#5f6d8c",dotColor:"#5f6d8c",
+      tip:'<div class="r"><span>不交易</span><b>0.00%</b></div>'});
   });
   var sumRows=keys.map(function(k){
     var v=sum[k];
+    var hasBench=typeof v.meanBenchmarkPct==="number";
     return "<tr><td><b>"+esc(k)+'</b></td><td class="r num">'+v.n
       +'</td><td class="r num '+cls(v.meanPct)+'">'+pct(v.meanPct)
       +'</td><td class="r num '+cls(v.medianPct)+'">'+pct(v.medianPct)
       +'</td><td class="r num">'+fmt(v.sdPct,2)+'%</td><td class="r num">'+(v.winRate*100).toFixed(0)
       +'%</td><td class="r num '+(Math.abs(v.tStat)>=2?cls(v.tStat):"dim")+'">'+fmt(v.tStat,2)
-      +'</td><td class="r num">'+fmt(v.meanFeePctOfEquity,2)+"%</td></tr>";
+      +'</td><td class="r num">'+fmt(v.meanFeePctOfEquity,2)+"%</td>"
+      +'<td class="r num dim">'+(hasBench?pct(v.meanBenchmarkPct):"-")+"</td>"
+      +'<td class="r num '+(hasBench?cls(v.vsBuyHoldPct):"dim")+'">'+(hasBench?pct(v.vsBuyHoldPct):"-")+"</td></tr>";
   }).join("");
   var runRows=runs.map(function(x){
     if(x.error){
@@ -68,10 +75,13 @@ function backtestHtml(r){
   return '<div class="g2">'
     +'<div class="panel"><h3>统计显著性 <span class="hint">|t| &lt; 2（灰色）表示平均收益与零在统计上无法区分</span></h3>'
       +chartBarsH(tbars,{name:"t 值",dec:2,labelWidth:200})+"</div>"
-    +'<div class="panel"><h3>逐样本收益</h3>'+chartBarsH(retBars,{name:"收益",dec:2,unit:"%",labelWidth:230})+"</div>"
+    +'<div class="panel"><h3>逐样本收益 <span class="hint">彩色=策略 · 灰=同期买入持有 · 零轴=不交易</span></h3>'
+      +chartBarsH(retBars,{name:"收益",dec:2,unit:"%",labelWidth:230,rowHeight:24})+"</div>"
     +"</div>"
-    +'<div class="panel"><h3>策略汇总</h3><div class="scroll"><table><tr><th>策略</th><th class="r">样本数</th><th class="r">均值</th>'
-      +'<th class="r">中位数</th><th class="r">标准差</th><th class="r">胜率</th><th class="r">t 值</th><th class="r">平均费用</th></tr>'
+    +'<div class="panel"><h3>策略汇总 <span class="hint">t 值检验的是「与不交易无异」；相对持有 = 均值 − 买入持有均值</span></h3>'
+      +'<div class="scroll"><table><tr><th>策略</th><th class="r">样本数</th><th class="r">均值</th>'
+      +'<th class="r">中位数</th><th class="r">标准差</th><th class="r">胜率</th><th class="r">t 值</th><th class="r">平均费用</th>'
+      +'<th class="r">买入持有</th><th class="r">相对持有</th></tr>'
       +sumRows+"</table></div></div>"
     +'<div class="panel"><h3>逐样本明细</h3><div class="scroll"><table><tr><th>样本</th><th>策略</th><th class="r">天数</th>'
       +'<th class="r">收益</th><th class="r">最大回撤</th><th class="r">标的涨跌</th><th class="r">费用</th><th class="r">taker</th>'

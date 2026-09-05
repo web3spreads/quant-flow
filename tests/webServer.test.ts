@@ -37,6 +37,9 @@ function makeFakeEngine(): { engine: Engine; applied: RuntimeConfig[] } {
       protections: [],
     },
     llm: { describe: () => "fake-llm" },
+    llmInLoop: false,
+    llmUsage: () => null,
+    notionalGuard: null,
     orderManager: {
       getAvailableBalanceInfo: async () => ({ status: "ok", total: 100, available: 90, unrealized_pnl: 0 }),
       getCurrentPositions: async () => [],
@@ -114,6 +117,36 @@ describe("看板配置 API", () => {
       expect(applied.length).toBe(1);
       const after = JSON.parse(fs.readFileSync(path.join(dataDir, OVERRIDES_FILENAME), "utf-8"));
       expect(after.grid.interval_minutes).toBe(15);
+    } finally {
+      await web.stop();
+    }
+  });
+
+  it("主网双重闸挡住看板：把账户切成主网而无 ACK 的覆盖 → 400，不落盘不热应用；reset 同样先校验再清空", async () => {
+    // 看板配置页是可写的，这是主网闸门唯一可能被「顺手」绕过的入口
+    const { base, web, dataDir, applied } = await startConsole();
+    try {
+      const put = await fetch(`${base}/api/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overrides: { accounts: [{ name: "live", private_key_env: "HYPERLIQUID_PRIVATE_KEY", testnet: false }] } }),
+      });
+      expect(put.status).toBe(400);
+      expect(((await put.json()) as Dict).error).toMatch(/主网账户 live/);
+      expect(applied.length).toBe(0);
+      expect(fs.existsSync(path.join(dataDir, OVERRIDES_FILENAME))).toBe(false);
+
+      // reset：基线本身就是主网且无 ACK 时，必须拒绝且不能先把覆盖文件抹掉
+      fs.writeFileSync(path.join(dataDir, OVERRIDES_FILENAME), JSON.stringify({ grid: { interval_minutes: 7 } }));
+      process.env.HYPERLIQUID_TESTNET = "false";
+      try {
+        const reset = await fetch(`${base}/api/config/reset`, { method: "POST" });
+        expect(reset.status).toBe(400);
+        expect(applied.length).toBe(0);
+        expect(JSON.parse(fs.readFileSync(path.join(dataDir, OVERRIDES_FILENAME), "utf-8")).grid.interval_minutes).toBe(7);
+      } finally {
+        delete process.env.HYPERLIQUID_TESTNET;
+      }
     } finally {
       await web.stop();
     }

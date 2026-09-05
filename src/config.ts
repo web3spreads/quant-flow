@@ -14,36 +14,53 @@
  *     HYPERLIQUID_PRIVATE_KEY      钱包私钥（必填）
  *     HYPERLIQUID_ACCOUNT_ADDRESS  主钱包地址（API 钱包模式选填）
  *     HYPERLIQUID_TESTNET          是否测试网（默认 true，主网需显式设 false）
- *     LLM_API_KEY                  LLM API 密钥（兼容 OPENAI_API_KEY；provider=dsh 时无需）
+ *     LLM_API_KEY                  LLM API 密钥（兼容 OPENAI_API_KEY；provider=dsh/rule 时无需）
  *     QUANTFLOW_WEB_TOKEN          看板访问令牌（可选；设置后 API 需携带）
+ *     QUANTFLOW_MAINNET_MAX_NOTIONAL_USD  主网名义额硬上限（testnet=false 时必填，>0）
+ *     QUANTFLOW_MAINNET_ACK        主网配置指纹确认（testnet=false 时必须等于启动日志打印的指纹）
+ *
+ * 主网双重闸：测试网与主网只差一个 HYPERLIQUID_TESTNET，因此主网账户额外要求
+ * ① 名义额硬上限（引擎下单前检查，超限拒单）；② 生效配置的 SHA-256 指纹确认——
+ * 任何影响下单的配置变动都会改变指纹，必须重新确认才能启动。两条缺一即拒绝启动。
  */
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import Schema from "@deepseek-ai/schemastery";
+import { privateKeyToAccount } from "viem/accounts";
 
 // ── 各分段 Schema ───────────────────────────────────────────────────────
 
 export interface LLMSection {
-  provider: "dsh" | "openai";
+  provider: "rule" | "dsh" | "openai";
   dsh_provider: string;
   base_url: string;
   model: string;
   temperature: number;
   timeout: number;
+  daily_call_cap: number;
 }
 
 export const LLMSchema: Schema<LLMSection> = Schema.object({
   provider: Schema.union([
-    Schema.const("dsh").description("dsh 宿主 llm 服务（由 DeepSeek Harness 统一管理供应商与密钥）"),
-    Schema.const("openai").description("自带 OpenAI 兼容客户端（base_url + LLM_API_KEY）"),
-  ]).default("dsh").description("AI 能力来源。寄生模式默认走宿主；独立联调时可切 openai 兼容端点"),
+    Schema.const("rule").description("规则后端：与回测同源，每周期给出 UPDATE_GRID 由重建闸门定夺，LLM 不在交易回路"),
+    Schema.const("dsh").description("dsh 宿主 llm 服务（由 DeepSeek Harness 统一管理供应商与密钥）；LLM 在交易回路中"),
+    Schema.const("openai").description("自带 OpenAI 兼容客户端（base_url + LLM_API_KEY）；LLM 在交易回路中"),
+  ]).default("rule").description(
+    "决策来源。默认 rule：规则后端不发任何外部请求、决策可复现；dsh/openai 把 LLM 放进交易回路，" +
+    "启动时告警并受 daily_call_cap 约束",
+  ),
   dsh_provider: Schema.string().default("deepseek-official").description("provider=dsh 时的适配器路由名（对应 ctx.llm.registerAdapter 的 provider）。dsh 官方 DeepSeek 适配器注册名为 deepseek-official，写错不会报错、只会返回空流"),
   base_url: Schema.string().default("https://api.deepseek.com/v1").description("provider=openai 时的 OpenAI 兼容端点根地址"),
   model: Schema.string().default("deepseek-v4-flash").description("模型名（两种 provider 通用）。provider=dsh 时必须是适配器识别的名字（deepseek-v4-flash / deepseek-v4-pro），别名如 deepseek-chat 只有直连端点认"),
   temperature: Schema.number().min(0).max(2).step(0.05).default(0).description("采样温度（默认 0：同一市场状态得到同一决策，决策可回放、可回测；>0 只会给交易决策加噪声）"),
   timeout: Schema.number().min(5).max(600).default(120).description("单次请求超时（秒）"),
-}).description("LLM 决策引擎");
+  daily_call_cap: Schema.number().min(1).max(100000).step(1).default(300).description(
+    "LLM 每日调用上限（按后端实际请求次数计，重试每次都算；UTC 日）。触顶后当天降级 KEEP_GRID 并告警一次；" +
+    "计数持久化在 data/llm-usage.json。provider=rule 时无意义。不可关闭——批量重试曾把共享 key 余额打穿",
+  ),
+}).description("决策引擎");
 
 export interface TradingSection {
   symbols: string[];
@@ -204,6 +221,8 @@ export interface AccountSection {
   private_key_env: string;
   account_address: string;
   testnet: boolean;
+  mainnet_max_notional_env: string;
+  mainnet_ack_env: string;
   llm: Record<string, unknown>;
   trading: Record<string, unknown>;
   grid: Record<string, unknown>;
@@ -222,7 +241,13 @@ export const AccountSchema: Schema<AccountSection> = Schema.object({
   name: Schema.string().required().description("账户名（看板标识与 data/logs 子目录名，需唯一）"),
   private_key_env: Schema.string().default("HYPERLIQUID_PRIVATE_KEY").description("私钥所在的环境变量名（密钥本身绝不入配置）"),
   account_address: Schema.string().default("").description("API 钱包模式的主钱包地址（公开信息；空=单钱包模式）"),
-  testnet: Schema.boolean().default(true).description("true=测试网（模拟盘）；false=主网（实盘）"),
+  testnet: Schema.boolean().default(true).description("true=测试网（模拟盘）；false=主网（实盘，需满足主网双重闸）"),
+  mainnet_max_notional_env: Schema.string().default("QUANTFLOW_MAINNET_MAX_NOTIONAL_USD").description(
+    "主网名义额硬上限所在的环境变量名（testnet=false 时必填且 >0；多个主网账户可共用）",
+  ),
+  mainnet_ack_env: Schema.string().default("QUANTFLOW_MAINNET_ACK").description(
+    "主网配置指纹确认所在的环境变量名（testnet=false 时必须等于本账户指纹；每个主网账户指纹不同，须各配一个变量）",
+  ),
   llm: Schema.dict(Schema.any()).default({}).description("对顶层 llm 段的局部覆盖（只写差异）"),
   trading: Schema.dict(Schema.any()).default({}).description("对顶层 trading 段的局部覆盖（如本账户换交易对：{symbols: [ETH]}）"),
   grid: Schema.dict(Schema.any()).default({}).description("对顶层 grid 段的局部覆盖"),
@@ -265,7 +290,13 @@ export interface ExchangeSection {
   private_key: string;
   account_address: string | null;
   testnet: boolean;
+  /** 主网名义额硬上限（USD）；测试网恒 0（不设闸） */
+  mainnet_max_notional_usd: number;
 }
+
+/** 单账户模式的主网闸环境变量名（多账户模式按条目的 *_env 字段指定）。 */
+export const MAINNET_MAX_NOTIONAL_ENV = "QUANTFLOW_MAINNET_MAX_NOTIONAL_USD";
+export const MAINNET_ACK_ENV = "QUANTFLOW_MAINNET_ACK";
 
 /** 解析布尔环境变量：true/1/yes 为真（大小写不敏感），未设置时用默认值。 */
 export function envBool(name: string, defaultValue: boolean): boolean {
@@ -284,7 +315,84 @@ export function loadExchangeFromEnv(): ExchangeSection {
     private_key: privateKey,
     account_address: (process.env.HYPERLIQUID_ACCOUNT_ADDRESS ?? "").trim() || null,
     testnet: envBool("HYPERLIQUID_TESTNET", true),
+    mainnet_max_notional_usd: 0,
   };
+}
+
+// ── 主网双重闸 ──────────────────────────────────────────────────────────
+
+/** 递归按键排序的规范化 JSON（指纹输入必须与对象构造顺序无关）。 */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.keys(value as Record<string, unknown>)
+      .sort()
+      .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * 账户生效配置的指纹（SHA-256 hex）。
+ *
+ * 覆盖所有影响下单的配置：交易对与杠杆、网格参数、保护链、决策来源、环境、
+ * 名义额上限，以及（主网）由私钥推导的钱包地址——换钥匙也必须重新确认。
+ * 不含私钥、API Key（密钥绝不进入任何可打印的材料）与路径/看板等运维项。
+ */
+export function configFingerprint(account: EngineConfig): string {
+  const { api_key: _apiKey, ...llm } = account.llm;
+  let wallet: string | null = null;
+  if (!account.exchange.testnet) {
+    let pk = account.exchange.private_key;
+    if (!pk.startsWith("0x")) pk = "0x" + pk;
+    try {
+      wallet = privateKeyToAccount(pk as `0x${string}`).address.toLowerCase();
+    } catch (e) {
+      throw new Error(`主网账户 ${account.name} 的私钥无法解析（${e}），拒绝启动`);
+    }
+  }
+  const payload = {
+    name: account.name,
+    exchange: {
+      testnet: account.exchange.testnet,
+      account_address: account.exchange.account_address,
+      mainnet_max_notional_usd: account.exchange.mainnet_max_notional_usd,
+      wallet,
+    },
+    llm,
+    trading: account.trading,
+    grid: account.grid,
+    protections: account.protections,
+  };
+  return crypto.createHash("sha256").update(canonicalJson(payload)).digest("hex");
+}
+
+/**
+ * 主网双重闸（testnet=false 的账户逐个执行）：
+ * ① 名义额硬上限环境变量必须存在且 >0，写入 exchange.mainnet_max_notional_usd；
+ * ② 生效配置指纹必须与确认环境变量完全相等。
+ * 任一不满足即抛错拒绝启动/拒绝热重配。指纹随错误信息打印，供运维核对后写入确认变量。
+ */
+function applyMainnetGates(account: EngineConfig, capEnv: string, ackEnv: string): void {
+  if (account.exchange.testnet) return;
+  const rawCap = (process.env[capEnv] ?? "").trim();
+  const cap = Number(rawCap);
+  if (!rawCap || !Number.isFinite(cap) || cap <= 0) {
+    throw new Error(
+      `主网账户 ${account.name} 缺少环境变量 ${capEnv}（>0 的美元名义额硬上限），拒绝启动——主网与测试网只差一个变量，硬上限是第一道闸`,
+    );
+  }
+  account.exchange.mainnet_max_notional_usd = cap;
+  const fingerprint = configFingerprint(account);
+  const ack = (process.env[ackEnv] ?? "").trim().toLowerCase();
+  if (ack !== fingerprint) {
+    throw new Error(
+      `主网账户 ${account.name} 配置指纹 ${fingerprint}，环境变量 ${ackEnv} ${ack ? "与之不匹配" : "未设置"}，拒绝启动——` +
+        "核对生效配置后把该指纹写入确认变量再启动；任何影响下单的配置变动都会改变指纹",
+    );
+  }
 }
 
 // ── 运行时配置（Schema 输出 + 归一化 + 环境段） ─────────────────────────
@@ -353,15 +461,17 @@ export function resolveRuntimeConfig(input: QuantFlowConfigInput, exchange?: Exc
   const accounts: EngineConfig[] = [];
   if (!input.accounts?.length) {
     // 单账户模式：路径不带 accounts/ 前缀
-    accounts.push({
+    const account: EngineConfig = {
       name: "default",
       llm: baseLlm,
-      exchange: exchange ?? loadExchangeFromEnv(),
+      exchange: { ...(exchange ?? loadExchangeFromEnv()) },
       trading: normalizeTrading(input.trading),
       grid: normalizeGrid(input.grid),
       paths: basePaths,
       protections: resolveProtections(input.protections),
-    });
+    };
+    applyMainnetGates(account, MAINNET_MAX_NOTIONAL_ENV, MAINNET_ACK_ENV);
+    accounts.push(account);
   } else {
     const seen = new Set<string>();
     for (const account of input.accounts) {
@@ -391,13 +501,14 @@ export function resolveRuntimeConfig(input: QuantFlowConfigInput, exchange?: Exc
         deepMerge({ ...input.grid } as Record<string, unknown>, account.grid),
       );
 
-      accounts.push({
+      const engineConfig: EngineConfig = {
         name,
         llm: { ...llmMerged, api_key: baseLlm.api_key },
         exchange: {
           private_key: privateKey,
           account_address: String(account.account_address ?? "").trim() || null,
           testnet: account.testnet !== false,
+          mainnet_max_notional_usd: 0,
         },
         trading: normalizeTrading(tradingMerged),
         grid: normalizeGrid(gridMerged),
@@ -406,7 +517,13 @@ export function resolveRuntimeConfig(input: QuantFlowConfigInput, exchange?: Exc
           log_dir: `${basePaths.log_dir}/accounts/${name}`,
         },
         protections: resolveProtections(account.protections ?? input.protections),
-      });
+      };
+      applyMainnetGates(
+        engineConfig,
+        String(account.mainnet_max_notional_env || MAINNET_MAX_NOTIONAL_ENV).trim(),
+        String(account.mainnet_ack_env || MAINNET_ACK_ENV).trim(),
+      );
+      accounts.push(engineConfig);
     }
   }
 

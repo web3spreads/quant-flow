@@ -20,22 +20,12 @@ import {
 import { Engine } from "../engine.js";
 import { TradingLogger } from "../logger.js";
 import { defaultPerpFeeRates, type FeeRates } from "../fees.js";
-import type { LLMBackend } from "../llm.js";
+import { RuleGridLlmBackend, type LLMBackend } from "../llm.js";
 import { SimulatedClient, type SimAsset, type SimStats } from "./simulatedClient.js";
 import type { Bar, FundingRow } from "./dataset.js";
 
-/** 规则 LLM 后端：稳定输出 UPDATE_GRID（宽度交给市场数据），格数固定。 */
-export class RuleGridLlmBackend implements LLMBackend {
-  calls = 0;
-  constructor(private readonly gridNum = 8, private readonly action: "UPDATE_GRID" | "KEEP_GRID" = "UPDATE_GRID") {}
-  describe(): string {
-    return `rule-grid(${this.action}, grid_num=${this.gridNum})`;
-  }
-  async chatOnce(): Promise<string> {
-    this.calls += 1;
-    return JSON.stringify({ action: this.action, mode: "NEUTRAL", grid_num: this.gridNum, confidence: 0.7, reason: "规则后端" });
-  }
-}
+// 规则后端现已是生产默认后端，实现搬到 src/llm.ts；这里保留导出以兼容既有引用
+export { RuleGridLlmBackend };
 
 interface BacktestOptions {
   symbol: string;
@@ -111,11 +101,13 @@ export function buildEngineConfig(
       grid_enabled: true,
       run_immediately: true,
     },
-    llm: { provider: "openai" },
+    llm: { provider: "rule" },
     web: { enabled: false },
   };
   const validated = new (ConfigSchema as never as new (v: unknown) => QuantFlowConfigInput)(deepMerge(base, overrides));
-  const runtime = resolveRuntimeConfig(validated, { private_key: "sim", account_address: null, testnet: true });
+  const runtime = resolveRuntimeConfig(validated, {
+    private_key: "sim", account_address: null, testnet: true, mainnet_max_notional_usd: 0,
+  });
   return { ...runtime.accounts[0], paths };
 }
 

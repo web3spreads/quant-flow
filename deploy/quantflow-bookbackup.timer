@@ -1,0 +1,11 @@
+# 每日 00:40 UTC：录制器在零点后关旧日流并生成清单，留 40 分钟余量再备份。
+[Unit]
+Description=每日备份 Quant Flow 盘口数据
+
+[Timer]
+OnCalendar=*-*-* 00:40:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

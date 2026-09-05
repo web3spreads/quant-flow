@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ConfigSchema,
   DEFAULT_PROTECTIONS,
+  MAINNET_ACK_ENV,
+  MAINNET_MAX_NOTIONAL_ENV,
+  configFingerprint,
   deepMerge,
   resolveRuntimeConfig,
   warnUnknownKeys,
@@ -51,7 +54,9 @@ describe("默认值", () => {
     expect(acct.trading.max_leverage).toBe(5);
     expect(acct.grid.force_neutral).toBe(true);
     expect(acct.exchange.testnet).toBe(true); // 默认测试网（安全取向）
-    expect(acct.llm.provider).toBe("dsh"); // 寄生模式默认走宿主 llm
+    expect(acct.exchange.mainnet_max_notional_usd).toBe(0); // 测试网不设名义额闸
+    expect(acct.llm.provider).toBe("rule"); // 默认规则后端：LLM 不在交易回路
+    expect(acct.llm.daily_call_cap).toBe(300); // LLM 进回路时的每日预算闸
     expect(acct.paths.data_dir).toBe("data"); // 单账户模式不带 accounts/ 前缀
     expect(cfg.web.enabled).toBe(true);
 
@@ -66,6 +71,92 @@ describe("默认值", () => {
   it("缺少私钥抛错", () => {
     process.env.HYPERLIQUID_PRIVATE_KEY = "";
     expect(() => resolveRuntimeConfig(validate({}))).toThrow(/HYPERLIQUID_PRIVATE_KEY/);
+  });
+
+  it("daily_call_cap 不可关闭（0 被 Schema 拒绝）", () => {
+    expect(() => validate({ llm: { daily_call_cap: 0 } })).toThrow();
+    expect(validate({ llm: { daily_call_cap: 50 } }).llm.daily_call_cap).toBe(50);
+  });
+});
+
+describe("主网双重闸（单账户）", () => {
+  // 主网与测试网只差一个环境变量，这两道闸是唯一的第二道确认。任何一条缺失都必须拒绝启动。
+  beforeEach(() => {
+    process.env.HYPERLIQUID_TESTNET = "false";
+    delete process.env[MAINNET_MAX_NOTIONAL_ENV];
+    delete process.env[MAINNET_ACK_ENV];
+  });
+  afterEach(() => {
+    delete process.env[MAINNET_MAX_NOTIONAL_ENV];
+    delete process.env[MAINNET_ACK_ENV];
+  });
+
+  /** 从「缺 ACK」的拒绝信息里取指纹（运维流程就是这么拿到它的）。 */
+  const fingerprintFromRefusal = (input: unknown): string => {
+    try {
+      resolveRuntimeConfig(validate(input));
+    } catch (e) {
+      const m = /指纹 ([0-9a-f]{64})/.exec(String(e));
+      if (m) return m[1];
+      throw e;
+    }
+    throw new Error("本应拒绝启动");
+  };
+
+  it("缺上限 → 拒绝；缺/错 ACK → 拒绝且信息含指纹；上限+ACK 齐 → 通过并填充上限", () => {
+    const cases: Array<[name: string, cap: string | undefined, ack: string | undefined, expected: RegExp]> = [
+      ["无上限", undefined, undefined, /QUANTFLOW_MAINNET_MAX_NOTIONAL_USD/],
+      ["上限为 0", "0", undefined, /QUANTFLOW_MAINNET_MAX_NOTIONAL_USD/],
+      ["上限非数", "abc", undefined, /QUANTFLOW_MAINNET_MAX_NOTIONAL_USD/],
+      ["有上限无 ACK", "500", undefined, /指纹 [0-9a-f]{64}.*QUANTFLOW_MAINNET_ACK 未设置/],
+      ["有上限错 ACK", "500", "deadbeef", /QUANTFLOW_MAINNET_ACK 与之不匹配/],
+    ];
+    for (const [name, cap, ack, expected] of cases) {
+      if (cap === undefined) delete process.env[MAINNET_MAX_NOTIONAL_ENV];
+      else process.env[MAINNET_MAX_NOTIONAL_ENV] = cap;
+      if (ack === undefined) delete process.env[MAINNET_ACK_ENV];
+      else process.env[MAINNET_ACK_ENV] = ack;
+      expect(() => resolveRuntimeConfig(validate({})), name).toThrow(expected);
+    }
+
+    process.env[MAINNET_MAX_NOTIONAL_ENV] = "500";
+    process.env[MAINNET_ACK_ENV] = fingerprintFromRefusal({});
+    const cfg = resolveRuntimeConfig(validate({}));
+    expect(cfg.accounts[0].exchange.testnet).toBe(false);
+    expect(cfg.accounts[0].exchange.mainnet_max_notional_usd).toBe(500);
+    // 大小写不敏感（复制粘贴不该成为拒绝理由），但多一个字符就是另一份配置
+    process.env[MAINNET_ACK_ENV] = process.env[MAINNET_ACK_ENV]!.toUpperCase();
+    expect(() => resolveRuntimeConfig(validate({}))).not.toThrow();
+  });
+
+  it("指纹：确定性；影响下单的键（网格/交易/保护链/上限/私钥）一变即变；路径与看板不影响", () => {
+    process.env[MAINNET_MAX_NOTIONAL_ENV] = "500";
+    const base = fingerprintFromRefusal({});
+    expect(base).toBe(fingerprintFromRefusal({}));
+    expect(base).toBe(fingerprintFromRefusal({ paths: { data_dir: "/elsewhere" }, web: { port: 9999 } }));
+    const changed: Array<[string, unknown]> = [
+      ["网格参数", { grid: { inventory_cap_ratio: 0.3 } }],
+      ["交易对", { trading: { symbols: ["ETH"] } }],
+      ["杠杆", { trading: { max_leverage: 2 } }],
+      ["保护链", { protections: [] }],
+      ["决策来源", { llm: { provider: "openai" } }],
+    ];
+    for (const [name, input] of changed) expect(fingerprintFromRefusal(input), name).not.toBe(base);
+    process.env[MAINNET_MAX_NOTIONAL_ENV] = "600";
+    expect(fingerprintFromRefusal({}), "上限").not.toBe(base);
+    process.env[MAINNET_MAX_NOTIONAL_ENV] = "500";
+    process.env.HYPERLIQUID_PRIVATE_KEY = "0x" + "2".repeat(64);
+    expect(fingerprintFromRefusal({}), "换钥匙").not.toBe(base);
+  });
+
+  it("configFingerprint 不把私钥或 API Key 写进指纹输入（改密钥值只在主网通过钱包地址体现）", () => {
+    process.env.HYPERLIQUID_TESTNET = "true";
+    process.env.LLM_API_KEY = "sk-a";
+    const a = configFingerprint(resolveRuntimeConfig(validate({})).accounts[0]);
+    process.env.LLM_API_KEY = "sk-b";
+    const b = configFingerprint(resolveRuntimeConfig(validate({})).accounts[0]);
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -122,14 +213,27 @@ describe("环境变量", () => {
     process.env.HYPERLIQUID_TESTNET = "false";
     process.env.HYPERLIQUID_ACCOUNT_ADDRESS = "0xABC";
     process.env.LLM_API_KEY = "sk-test";
-    const cfg = resolveRuntimeConfig(validate({}));
-    expect(cfg.accounts[0].exchange.testnet).toBe(false);
-    expect(cfg.accounts[0].exchange.account_address).toBe("0xABC");
-    expect(cfg.accounts[0].llm.api_key).toBe("sk-test");
+    // 主网必须过双重闸：上限 + 指纹确认（指纹从拒绝信息里取，与运维流程一致）
+    process.env[MAINNET_MAX_NOTIONAL_ENV] = "100";
+    try {
+      resolveRuntimeConfig(validate({}));
+    } catch (e) {
+      process.env[MAINNET_ACK_ENV] = /指纹 ([0-9a-f]{64})/.exec(String(e))![1];
+    }
+    try {
+      const cfg = resolveRuntimeConfig(validate({}));
+      expect(cfg.accounts[0].exchange.testnet).toBe(false);
+      expect(cfg.accounts[0].exchange.account_address).toBe("0xABC");
+      expect(cfg.accounts[0].llm.api_key).toBe("sk-test");
 
-    delete process.env.LLM_API_KEY;
-    process.env.OPENAI_API_KEY = "sk-openai";
-    expect(resolveRuntimeConfig(validate({})).accounts[0].llm.api_key).toBe("sk-openai");
+      // API Key 不进指纹：换 key 不需要重新确认
+      delete process.env.LLM_API_KEY;
+      process.env.OPENAI_API_KEY = "sk-openai";
+      expect(resolveRuntimeConfig(validate({})).accounts[0].llm.api_key).toBe("sk-openai");
+    } finally {
+      delete process.env[MAINNET_MAX_NOTIONAL_ENV];
+      delete process.env[MAINNET_ACK_ENV];
+    }
   });
 });
 
