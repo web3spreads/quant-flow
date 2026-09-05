@@ -16,6 +16,7 @@
   "files": [
     "lib",
     "scripts",
+    "deploy",
     "cordis.patch.yml",
     "README.md"
   ],
