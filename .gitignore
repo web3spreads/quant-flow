@@ -1,14 +1,9 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-build/
-dist/
-.venv/
-.pytest_cache/
-.coverage
+# Node
+node_modules/
+lib/
+*.tsbuildinfo
 
-# 环境与配置（模板文件除外）
+# 环境与配置（模板文件除外；cordis.patch.yml 是随包分发的组合包层，入库）
 .env
 .env.*
 !.env.example
@@ -26,3 +21,6 @@ grid_state*.json
 .idea/
 .DS_Store
 *.swp
+
+# npm pack 产物
+*.tgz

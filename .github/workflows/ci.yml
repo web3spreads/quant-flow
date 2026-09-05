@@ -11,42 +11,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint
+  check:
+    name: Typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
+          node-version: 22
+          cache: npm
 
-      - name: 安装开发依赖
-        run: uv sync --group dev
+      - name: 安装依赖
+        run: npm ci
 
-      - name: Ruff lint
-        run: uv run ruff check src/ tests/
+      - name: TypeScript 类型检查
+        run: npm run check
 
-      - name: Ruff format check
-        run: uv run ruff format --check src/ tests/
-
-  syntax-check:
-    name: Syntax Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: 编译检查所有 Python 文件
-        run: python -m compileall -q src/ tests/
+      - name: 构建
+        run: npm run build
 
   test:
     name: Test
@@ -54,16 +37,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
+          node-version: 22
+          cache: npm
 
       - name: 安装依赖
-        run: uv sync --group dev
+        run: npm ci
 
       - name: 运行测试
-        run: uv run pytest --tb=short -q
+        run: npm test

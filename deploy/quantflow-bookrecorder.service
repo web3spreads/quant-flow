@@ -1,0 +1,48 @@
+# 盘口录制器：持续订阅 Hyperliquid 主网 WebSocket，把 BTC/ETH/SOL/HYPE 的订单簿、成交、
+# 最优买卖、资产上下文落盘到 data/book/，为秒级做市研究攒数据。
+#
+# 只读公开频道、不碰私钥、不下单。长期运行，资源占用很小（单进程 ~60MB，
+# BTC 约 50MB/天压缩数据，四个标的一个月约 6GB）。
+#
+# 安装：
+#   cp deploy/quantflow-bookrecorder.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now quantflow-bookrecorder
+# 判活：
+#   cat /home/ubuntu/quantflow/data/book/status.json   # updatedAt 应在 20s 内
+[Unit]
+Description=Quant Flow 盘口录制器（Hyperliquid 主网 L2/成交/BBO/上下文）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/quantflow
+Environment=PATH=/home/ubuntu/.nvm/versions/node/v22.20.0/bin:/usr/bin:/bin
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.20.0/bin/node \
+  /home/ubuntu/quantflow/node_modules/dsh-plugin-quant-flow/scripts/record-book.mjs \
+  --coins BTC,ETH,SOL,HYPE --out /home/ubuntu/quantflow/data/book
+Restart=always
+RestartSec=10
+# 优雅停机：SIGTERM 后刷盘关流，最多等 15s
+KillSignal=SIGTERM
+TimeoutStopSec=15
+# 别和交易进程抢：低优先级 + 内存硬上限
+Nice=10
+CPUWeight=30
+MemoryMax=384M
+
+# 只读公开接口 + 只写自己的 data 目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/quantflow/data
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

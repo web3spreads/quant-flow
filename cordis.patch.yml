@@ -1,0 +1,11 @@
+# dsh 组合包层：`dsh plugin add dsh-plugin-quant-flow` 安装本包后，
+# 这一层被追加进 profile 的组合（见 package.json 的 dsh.bundle 声明）。
+#
+# 全部配置键都有内置默认值（权威清单：src/config.ts），此处不带 config——
+# 部署侧在 profile 自己的 cordis.patch.yml 里按 id 覆盖本行（每行以最后写入
+# 为准），或直接用看板（默认 http://127.0.0.1:3181/）在网页上设置。
+# 敏感信息（HYPERLIQUID_PRIVATE_KEY 等）只走环境变量。
+
+- insert:
+    - id: quant-flow
+      name: dsh-plugin-quant-flow

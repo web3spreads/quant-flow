@@ -1,0 +1,46 @@
+# 回测套件定时任务：拉最新历史 K 线 → 整批回测 → 结果落到 data/backtests/，看板「回测」页读取。
+#
+# 只读交易所公开 info 接口，不碰私钥、不下单。放低优先级并限内存，避免和同机的
+# 交易进程抢资源（这台机器上还跑着主网实盘）。
+#
+# 安装：
+#   cp deploy/quantflow-backtest.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now quantflow-backtest.timer
+[Unit]
+Description=Quant Flow 回测套件（定期刷新看板回测页）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/quantflow
+Environment=PATH=/home/ubuntu/.nvm/versions/node/v22.20.0/bin:/usr/bin:/bin
+# 别和交易进程抢：低 CPU 权重 + 低 IO 优先级 + 硬内存上限
+Nice=15
+CPUWeight=20
+IOSchedulingClass=idle
+MemoryMax=512M
+TimeoutStartSec=3600
+
+ExecStart=/bin/bash -lc 'set -euo pipefail; \
+  P=/home/ubuntu/quantflow/node_modules/dsh-plugin-quant-flow; \
+  for c in BTC ETH SOL BNB; do \
+    for i in 15m 1h; do node $P/scripts/fetch-history.mjs --coin $c --interval $i --days 210 --out /home/ubuntu/quantflow/data/history || true; \
+    done; \
+  done; \
+  node $P/scripts/fetch-history.mjs --meta --out /home/ubuntu/quantflow/data/history || true; \
+  node $P/scripts/backtest-suite.mjs --dir /home/ubuntu/quantflow/data/history --out /home/ubuntu/quantflow/data/backtests'
+
+# 只读公开接口 + 只写自己的 data 目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/quantflow/data
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

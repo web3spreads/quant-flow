@@ -1,0 +1,11 @@
+# 每天跑一次回测套件。RandomizedDelay 打散，避免和别的定时任务撞在同一分钟。
+[Unit]
+Description=每日刷新 Quant Flow 回测报告
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=timers.target

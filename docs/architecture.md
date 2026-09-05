@@ -1,66 +1,186 @@
 # 架构说明
 
-核心原则：**LLM 只产出 JSON 决策，执行永远在确定性代码里。**
-LLM 故障一律降级保守动作（HOLD / KEEP_GRID）并打 `llm_ok=False`；
-金额与杠杆按上限截断，置信度不足不开仓，重复开仓/无仓平仓执行前拦截。
+## 一、部署形态
 
-## 分层
+三层：**dsh 宿主**（`@deepseek-ai/cordis` 运行时，提供 `logger` / `llm` 等服务）→
+**profile**（一份配置组合，决定装哪些插件）→ **本插件**。没有 Docker 形态，
+「部署」就是把包装进某个 dsh profile：
 
-```
-Engine（engine.py）        K 线节拍主循环 + 网格周期线程，共享一把交易锁
-  → Strategy（strategy/）  perp / grid / grid_agent：决策、校验、自愈
-  → Trading（trading/）    order_manager · client【止损失败自动回滚】· grid_manager
-  → Protections（plugins/protections/）账户保护链
+```bash
+dsh plugin --profile trading add dsh-plugin-quant-flow
+dsh --profile trading
 ```
 
-## 永续周期
+包自带 `cordis.patch.yml`（`package.json` 的 `dsh.bundle` 声明），安装后被追加进
+profile 的组合层；部署侧在 profile 自己的 patch 里按 id 覆盖配置。
 
-K 线收盘后触发：查余额持仓 → 保护链检查 → 拉行情算指标 → LLM 输出
-`{"action","confidence","amount_usd","leverage","reason"}` → 校验执行。
-止盈止损不由 LLM 定价：按 `take_profit_ratio` / `stop_loss_ratio` 自动挂 trigger 单，
-止损挂失败立即回滚平仓（带重试），绝不留裸仓。
+## 二、插件内部装配
 
-## 网格周期（顺序有真实事故背书，勿调换）
+`src/index.ts` 导出 `name` / `Config` / `apply(ctx, config)`。dsh 校验配置后调用
+`apply`，插件装配大盘、启动看板，并把优雅停机注册为 `ctx.effect` disposer——
+插件卸载时等进行中的撤单/布单序列走完，绝不腰斩留下裸仓。
 
-1. **净额对冲归因**：Hyperliquid 单向持仓下平仓多走净额对冲、不经层级状态机，
-   须先以链上成交补记盈亏，本轮风控才看得见
-2. **强平重试**：上一轮紧急平仓/熔断平仓失败的仓位绝不脱管，先于熔断判定重试
-3. 账户级熔断：`CLOSE_ALL` 平仓撤单后结束本轮；`PAUSE` 只记标记**不 return**
-   ——暂停的是新开仓，持仓的风控维护照常，否则暂停期内亏损不封底
-4. 净值快照 + 停机线（只在无持仓时短路整轮，先于屏障无风险）
-5. **Triple Barrier**（止损/止盈/时限/追踪止损）：独立于 AI action 分支与暂停
-   状态，KEEP_GRID/ERROR 周期也照查
-6. 暂停期分支：不调 LLM、不布新单，但 `maintain_protective_orders` 照常
-7. 行情与指标
-8. 趋势过滤（迟滞确认去抖，「暂停加仓」先行「平逆势库存」靠后）→ AI 决策
-   （GridAgent 强制中性模式默认开，忽略 AI 方向以消除反手亏损）→ LLM 健康
-   跟踪 → 空转自愈
-9. **连亏 per-symbol 锁定**：锁定期内 `UPDATE_GRID` 降级为 `KEEP_GRID`，
-   只锁重建/扩建，保护单维护不受影响
-10. 记录决策 → `GridManager.sync_grid` 布单
+```mermaid
+flowchart TB
+  apply["index.ts · apply(ctx, config)"] --> fleet["Fleet · 多账户编排<br/>同「地址×环境」双开拒绝启动"]
+  apply --> web["WebConsole · 看板 + 配置页 + 热重配"]
+  fleet --> e1["Engine #1"]
+  fleet --> eN["Engine #N …<br/>账户间零共享可变状态"]
 
-### sync_grid 内部（顺序同样有事故背书）
+  subgraph engine["一个 Engine = 一个账户的全部运行时"]
+    lock(["交易锁 AsyncMutex"])
+    grid["GridStrategy（单交易对）"]
+    gm["GridManager<br/>层级状态机 · 簿记 · 屏障"]
+    om["OrderManager + LimitOrderMonitor"]
+    prot["ProtectionManager"]
+    llm["LLMClient（双后端 + 统一重试壳）"]
+  end
 
-孤儿 trigger 单清理 → **先认领交易所成交**（被动同步，不新增敞口）→ 判定是否
-重建 → 布单。认领必须先于判定：刚成交但本地仍是 `OPEN_PENDING` 的层级，在判定
-眼里就是「还挂着的开仓单」，会被全撤全建连同持仓与 PnL 归因一起丢弃。
+  e1 --> engine
+  grid --> gm --> om --> client["ExchangeClientLike"]
+  client --> real["HyperliquidClient（生产）"]
+  client --> sim["SimulatedClient（回测，同一套策略代码）"]
+```
 
-重建闸门：首次建网格 / 挂单不足 / 参数异常 / 价格真突破旧区间 → 重建；否则
-冷却期内一律不建（冷却是抑制高频撤换单的主闸）。重建时**在途层级（已成交待
-平仓）连同其 reduce_only 平仓单跨代保留**，不撤不弃，并入新一代层级集合——
-否则持仓变成无人认领的库存，这一轮开平仓的盈亏永远归因不了。
+一个账户只有**一条交易循环**（网格，固定间隔 `grid.interval_minutes`），外加 5 秒一次的
+成交监控器。两者共用一把交易锁：`tryAcquire()` 非阻塞，冲突时后来者跳过本轮而不排队；
+监控器是唯一会等锁的（10 秒超时）。单线程下这把锁保护的是「跨 await 的临界区」。
 
-GridManager 另有：层级状态机与 round-trip 盈亏归因、孤儿单清理与对账、
-reduce-only 分层减仓、撤单硬超时、状态原子写入、库存名义额硬上限、
-手术式减仓逆势库存、网格空转判定。
+网格用 `trading.symbols[0]`，一个账户一套。Hyperliquid 是**单向持仓（净头寸）**，
+同账户两套策略会互相净额强平、互撤保护单——需要多标的就配多账户，各自独立地址。
 
-## 保护插件链
+## 三、网格周期（顺序有真实事故背书，勿调换）
 
-`IProtection` + `PROTECTION_REGISTRY` 注册即插：`max_drawdown`（全平）、
-`daily_loss`（暂停开仓）、`consecutive_loss`（锁定交易对）、`position_timeout`（强平）。
-账户级按周期 `check_all`，逐笔级走 `on_trade_open/close`；风控强平不上报虚假 pnl。
+```mermaid
+flowchart TB
+  n1["1. 净额对冲归因<br/>以链上成交补记层级状态机漏掉的平仓盈亏"] --> n2["2. 强平重试<br/>上一轮失败的紧急平仓绝不脱管"]
+  n2 --> n3["3. 账户级熔断"]
+  n3 -- CLOSE_ALL --> stop1["平仓撤单，结束本轮"]
+  n3 -- "PAUSE（只记标记，不 return）" --> n4
+  n3 -- NONE --> n4["4. 净值快照 + 停机线"]
+  n4 --> n5["5. Triple Barrier<br/>独立于 AI 分支与暂停状态，每轮必查"]
+  n5 -- 触发 --> stop2["已紧急平仓，跳过布单"]
+  n5 -- 安全 --> n6{"6. 暂停中?"}
+  n6 -- 是 --> stop3["只维护 reduce_only 保护单<br/>不调 LLM、不布新单"]
+  n6 -- 否 --> n7["7. 行情与指标"]
+  n7 --> n8["8. 形态闸门 → 趋势过滤 → AI 决策<br/>→ LLM 健康跟踪 → 空转自愈"]
+  n8 --> n9["9. 连亏锁定：UPDATE_GRID 降级为 KEEP_GRID"]
+  n9 --> n10["10. 记录决策 → syncGrid 布单"]
+```
 
-## 可观测性
+第 3 步的 `PAUSE` **只记标记不 return**：暂停的是新开仓，持仓的风控维护照常。
+历史缺陷是直接 return，连带跳过屏障与保护单维护，暂停 4 小时期间亏损不封底。
 
-`logs/main.log`（人读）；`logs/decisions|trades|equity/*.jsonl`
-（决策审计 / 成交 pnl 归因 / 净值曲线）。
+第 8 步的三道闸门决定「这轮能往哪边开仓」，逐级短路：
+
+| 闸门 | 命中后果 | 默认 |
+|---|---|---|
+| 形态闸门（效率比 > `range_filter_er_max`） | `allowed_open_side = none`，撤全部未成交开仓单，退出通道照常 | 0 = 关 |
+| 趋势过滤（多周期强势一致 + 连续确认）+ `trend_side_only` | 仍调 LLM，但只挂顺势侧，逆势侧撤单复位 | 开 |
+| 同上但 `trend_side_only: false` | 全面暂停加仓，不调 LLM | — |
+
+`GridAgent` 的分工边界：**LLM 只回答「要不要更新形态、往哪个方向、多宽」**，
+价位与金额由 `calculateGridConfig`（纯数学）推导。强制中性默认开，忽略 AI 的方向；
+格数钳在 `[min_grid_num, max_grid_num]`（默认 3–10）。
+
+### syncGrid 内部（顺序同样有事故背书）
+
+```mermaid
+flowchart TB
+  y1["孤儿 trigger 单清理"] --> y2["设置本轮 allowed_open_side<br/>撤掉不允许方向的未成交开仓单"]
+  y2 --> y3["★ 先认领交易所成交（被动同步，不新增敞口）"]
+  y3 --> y4{"action == UPDATE_GRID?"}
+  y4 -- 否 --> y5["减仓保底模式：对账残单 + 补齐 reduce_only 保护单"]
+  y4 -- 是 --> y6{"重建闸门"}
+  y6 -- 不重建 --> y7["只给 IDLE 层级补挂开仓单"]
+  y6 -- 重建 --> y8["保留在途层级 → 撤旧单 → 轮询确认撤净"]
+  y8 --> y9["算价位 → 库存上限/守卫/顺势侧过滤"]
+  y9 --> y10["整张网格一次批量 post-only 提交"]
+  y10 --> y11["建层级 · 重置 PnL 与屏障 · 原子落盘"]
+```
+
+**认领必须先于重建判定**：刚成交但本地仍是 `OPEN_PENDING` 的层级，在判定眼里就是
+「还挂着的开仓单」，会被全撤全建，连同持仓与 PnL 归因一起丢弃。
+
+**重建闸门**：首次建网格 / 挂单不足 / 参数异常 / 价格真突破旧区间（>0.5%）→ 重建；
+**持有在途层级且价格仍在区间内 → 不重心化**；否则冷却期内一律不建。
+层数变化不算结构性变化（LLM 层数天然抖动），方向变化算。
+
+**布单三道过滤**（都只拦「新增敞口」，从不拦退出通道）：
+
+| 过滤 | 作用 | 默认 |
+|---|---|---|
+| 库存上限 | 方向化敞口达上限即拦同向加仓 | 单侧名义额 × 0.7 |
+| 库存守卫 | 绝不把开仓单挂进库存亏损区（多头均价之下不挂卖开仓单） | 恒开 |
+| 顺势侧 | 强趋势中只挂顺势侧 | 开 |
+
+post-only（Alo）：会立即成交的单被交易所拒绝而**不追价**，杜绝限价单穿价变 taker。
+
+### 层级状态机
+
+```mermaid
+stateDiagram-v2
+  [*] --> IDLE
+  IDLE --> OPEN_PENDING: 挂开仓单（post-only）
+  OPEN_PENDING --> OPEN_FILLED: 成交记录确认
+  OPEN_PENDING --> IDLE: 确认被撤销
+  OPEN_FILLED --> CLOSE_PENDING: 同轮立即挂 reduce_only 平仓单
+  CLOSE_PENDING --> COMPLETED: 平仓成交 → 记 round-trip 盈亏
+  CLOSE_PENDING --> OPEN_FILLED: 平仓单被撤 → 重挂
+  OPEN_FILLED --> IDLE: 库存已被净额对冲（平仓单被拒且无对应持仓）
+  COMPLETED --> IDLE: reset（保留累计统计）
+```
+
+单向持仓下，中性网格的库存**大多被对侧格子的普通开仓单净额平掉**，根本走不到
+`CLOSE_PENDING → COMPLETED`。因此风控上报以 `reconcileNettingCloses`（链上成交）为准，
+层级状态机只负责写日志——两条通路绝不重复上报。
+
+## 四、保护插件链
+
+`IProtection` + `PROTECTION_REGISTRY` 注册即插。账户级按周期 `checkAll`，逐笔级走
+`onTradeOpen` / `onTradeClose`；风控强平不上报虚假 pnl。
+
+| 插件 | 触发 | 动作 |
+|---|---|---|
+| `max_drawdown` | 净值自峰值回撤超阈值 | CLOSE_ALL + 暂停 |
+| `daily_loss` | 当日亏损超阈值 | 暂停开仓 |
+| `consecutive_loss` | 连续亏损次数达阈值 | 锁定交易对 |
+
+只有**确认平仓成功**才清理保护插件的持仓记录；失败则保留并登记待重试，否则
+回撤保护会永远失明于那个平不掉的仓位。
+
+## 五、交易所抽象与回测同源
+
+`ExchangeClientLike` 是 `HyperliquidClient` 公开方法面的结构化接口；OrderManager /
+GridManager / MarketDataFetcher / Engine 只依赖它。`SimulatedClient` 用历史 K 线实现
+同一接口（挂单严格穿过才成交、Alo 拒单、reduce_only 钳制、触发单、资金费、维持保证金
+强平），`sim/backtest.ts` 用生产同一套 Engine + GridStrategy 驱动它——**策略与簿记
+代码在回测与生产之间零分叉**。
+
+「现在几点」统一走 `utils/clock.ts`，礼貌性等待走 `utils/sleep.ts`，模拟器接管两者。
+直接 `Date.now()` / `setTimeout` / `new HyperliquidClient` 会让代码在模拟器里失效。
+
+LLM 双后端（`src/llm.ts`）：`provider: dsh` 惰性取宿主服务，`openai` 直连兼容端点，
+回测用规则后端。三者共享同一重试壳，故障降级路径一致。`llm` 按可选依赖处理：
+服务缺失时降级并连续告警，插件不拒绝启动——风控与持仓维护必须持续运转。
+
+## 六、看板
+
+`web/server.ts`（零依赖 `node:http`）+ `web/ui/` 拼装的单页应用，图表全是内联 SVG。
+导航两级：**大盘**（全部账户）/ **某个账户** / **全局**（回测、配置）。
+保存配置 → Schema 再校验 → 原子落盘 → `Fleet.applyConfig` 热重配（停循环 → 重建策略
+→ 重启；交易所客户端与状态文件全程保留）。默认只监听 `127.0.0.1`，
+设 `QUANTFLOW_WEB_TOKEN` 后全部 API 需 Bearer Token。
+
+看错账户比看不到数据更危险，因此账户身份表达三遍：身份色、环境徽标（主网一律走
+红色实盘警示态，优先级高于身份色）、浏览器标签名。盈亏色只表示数字正负，不参与身份。
+
+客户端 JS 以字符串内联、拿不到类型保护，因此补了两层测试：`webUi.test.ts` 在
+`node:vm` 里对纯渲染函数断言，`webUiFlow.test.ts` 用假 DOM + 假 fetch 真跑 `boot()`。
+
+## 七、可观测性
+
+`logs/main.log`（人读，50MB×3 轮转）；`logs/decisions|trades|equity/*.jsonl`
+（决策审计 / 成交 pnl 归因 / 净值曲线）——JSONL 同时是看板 API 的数据源。
+`trades` 记录带 `fee` 与 `crossed`（maker/taker），`scripts/attribution.mjs` 据此把
+链上成交拆成 maker/taker 费用、已实现盈亏、强平与资金费。

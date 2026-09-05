@@ -1,0 +1,62 @@
+{
+  "name": "dsh-plugin-quant-flow",
+  "version": "0.14.0",
+  "description": "Quant Flow —— AI 驱动的 Hyperliquid 自动交易系统（DeepSeek Harness 插件版）",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "cordis",
+    "hyperliquid",
+    "trading",
+    "grid"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "rm -rf lib && tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@nktkas/hyperliquid": "^0.33.3",
+    "decimal.js": "^10.6.0",
+    "viem": "^2.56.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/web3spreads/quant-flow.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
