@@ -73,13 +73,18 @@ export class DayStats {
   /**
    * @param day UTC 日 YYYY-MM-DD
    * @param options.gapThresholdMs 频道静默超过此值即视为缺口（默认 60s）
+   * @param options.keys 预注册的频道键：从未收到消息的频道也按「自统计开始起静默」计缺口——
+   *   否则日切或启动后连接死掉时没有任何频道会报缺口（2026-09-05 就是这样静默丢了 15 小时）
+   * @param options.now 统计起点毫秒（默认当前时间；测试用）
    */
   constructor(day, options = {}) {
     this.day = day;
     this.dayStart = dayStartMs(day);
     this.gapThresholdMs = options.gapThresholdMs ?? 60_000;
     this.reservoirSize = options.reservoirSize ?? 20_000;
+    this.createdAt = options.now ?? Date.now();
     this.channels = new Map();
+    for (const key of options.keys ?? []) this.channel(key);
   }
 
   channel(key) {
@@ -98,8 +103,9 @@ export class DayStats {
   observe(key, r, t) {
     const c = this.channel(key);
     let ended = null;
-    if (c.lastAt !== null) {
-      const gap = r - c.lastAt;
+    const since = c.lastAt ?? (c.inGap ? this.createdAt : null);
+    if (since !== null) {
+      const gap = r - since;
       if (gap > c.maxGapMs) c.maxGapMs = gap;
       if (c.inGap) {
         ended = { gapEndedMs: gap };
@@ -120,13 +126,14 @@ export class DayStats {
 
   /**
    * 定时扫描：返回本次**新进入**缺口状态的频道 [{key, silentMs}]（每个缺口只报一次）。
-   * 从未收到过消息的频道不算缺口（订阅尚未成功另有日志）。
+   * 预注册但从未收到消息的频道，以统计起点为静默起算点；未预注册且没来过消息的频道
+   * 不存在于表里，自然不报。
    */
   sweep(nowMs) {
     const started = [];
     for (const [key, c] of this.channels) {
-      if (c.lastAt === null || c.inGap) continue;
-      const silent = nowMs - c.lastAt;
+      if (c.inGap) continue;
+      const silent = nowMs - (c.lastAt ?? this.createdAt);
       if (silent > this.gapThresholdMs) {
         c.inGap = true;
         c.gaps += 1;
@@ -143,9 +150,9 @@ export class DayStats {
     for (const [key, c] of this.channels) {
       let seconds = 0;
       for (let i = 0; i < c.seconds.length; i++) seconds += c.seconds[i];
-      // 仍在缺口中的频道：把到 now 的静默计入最大间隔
+      // 仍在缺口中的频道：把到 now 的静默计入最大间隔（从未来过消息的按统计起点算）
       let maxGap = c.maxGapMs;
-      if (Number.isFinite(nowMs) && c.lastAt !== null) maxGap = Math.max(maxGap, nowMs - c.lastAt);
+      if (Number.isFinite(nowMs)) maxGap = Math.max(maxGap, nowMs - (c.lastAt ?? this.createdAt));
       out[key] = {
         count: c.count,
         max_gap_ms: Math.round(maxGap),
@@ -226,8 +233,8 @@ export async function verifyDayDir(dir) {
   return files;
 }
 
-/** 生成并原子写入清单。channels 为当日统计（补验时没有，传 null）。 */
-export async function writeManifest(dir, { coin, date, channels = null, source = "rotation" }) {
+/** 生成并原子写入清单。channels 为当日统计（补验时没有，传 null）；extra 为附加字段（如 rtt_ms）。 */
+export async function writeManifest(dir, { coin, date, channels = null, source = "rotation", extra = {} }) {
   const manifest = {
     version: MANIFEST_VERSION,
     coin,
@@ -236,6 +243,7 @@ export async function writeManifest(dir, { coin, date, channels = null, source =
     source,
     files: await verifyDayDir(dir),
     channels,
+    ...extra,
   };
   const target = path.join(dir, MANIFEST_NAME);
   const tmp = `${target}.tmp`;

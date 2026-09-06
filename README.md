@@ -54,7 +54,9 @@ dsh --profile trading                      # 看板在 http://127.0.0.1:3181/
 
 `scripts/record-book.mjs` 常驻录主网 BTC/ETH/SOL/HYPE 的 l2book（5 档 ~2Hz）/ l2full（20 档）/ trades / bbo / ctx，按本机接收时间在 UTC 零点切日：
 
-- 缺口：任一频道 60 秒无消息告警一次，恢复时再记一条；日切输出上一日每频道消息数、最大间隔、缺口数、丢弃数、覆盖秒数、收包延迟（`r − t`）分位数。
+- 缺口：任一频道 60 秒无消息告警一次（连接死掉、订阅失败、日切后一片安静都会报），恢复时再记一条；日切输出上一日每频道消息数、最大间隔、缺口数、丢弃数、覆盖秒数、收包延迟（`r − t`）分位数。
+- 重连：握手 20 秒超时；90 秒无消息强制丢弃旧连接重连；10 分钟仍无消息则优雅关流后以非零码退出，由 systemd 拉起。判活看 `status.json` 的 `last_message_age_s` / `stale`，不要看 `updatedAt`，心跳在连接死掉时照样新鲜。
+- 延迟：每分钟一次只读 RTT 探针，日切写进清单 `rtt_ms`，与收包延迟一起作为研究阶段延迟模型的输入。
 - 完整性：日切后对上一日每个文件流式解压计行、算 sha256，写 `<COIN>/<日>/manifest.json`（含上述频道统计）；启动时补做缺清单的历史日。`node scripts/book-verify.mjs --dir data/book` 逐日复核（多成员 gzip、截断、损坏都能识别）。
 - 磁盘水位：`data/book` 超过 20 GB 或磁盘可用低于 15% 即告警并暂停录 bbo（可从 l2book 近似重建），回落后自动恢复；trades / l2book 绝不丢。
 - 异地备份：`scripts/book-backup.sh` + `deploy/quantflow-bookbackup.{service,timer}` 每日 rsync 已有清单的日目录到 `BOOK_BACKUP_DEST`，本地保留 45 天（仅删除已备份的），远端保留 90 天；`--check` 只看计划。

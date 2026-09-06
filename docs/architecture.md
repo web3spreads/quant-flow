@@ -214,5 +214,7 @@ LLM 在回路（dsh/openai）时挂**每日预算闸**（`LlmUsageTracker`）：
 只读公开频道。按本机接收时间在 UTC 零点切日，零点后关旧日流、等文件真正关闭再流式
 校验（多成员 gzip 计行 + sha256）并写 `manifest.json`，其中带每频道的消息数、最大间隔、
 缺口数、丢弃数、覆盖秒数与收包延迟分位数——后者是研究阶段延迟模型的输入，覆盖秒数是
-样本纳入门槛的依据。频道静默超 60 秒告警一次；磁盘水位超限暂停最高频的 bbo 而不停
-trades / l2book；`scripts/book-verify.mjs` 逐日复核，`scripts/book-backup.sh` 每日异地 rsync。
+样本纳入门槛的依据。频道静默超 60 秒告警一次（预注册全部频道，连接死掉时不会一片安静）；重连以 error/close
+先到者为准并带握手超时，10 分钟无消息则自行退出交由 systemd 拉起——依赖套接字事件的
+看门狗曾在握手失败后卡死 15 小时；磁盘水位超限暂停最高频的 bbo 而不停 trades / l2book；
+`scripts/book-verify.mjs` 逐日复核，`scripts/book-backup.sh` 每日异地 rsync（远端密钥受 rrsync 限制）。

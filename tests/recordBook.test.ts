@@ -46,10 +46,16 @@ describe("DayStats 缺口 / 覆盖 / 延迟", () => {
     expect(sum).toMatchObject({ count: 4, gaps: 1, dropped: 1, max_gap_ms: 148_000, seconds_with_data: 4 });
     expect(sum.coverage).toBeCloseTo(4 / 86_400, 5);
     expect(sum.latency_ms.p50).toBe(50);
-    // 从未收到消息的频道不算缺口
-    const quiet = new DayStats(DAY);
-    quiet.channel("ETH/trades");
+    // 预注册却从未收到消息的频道：以统计起点计静默，超阈值同样报缺口（连接死掉时不能一片安静）；
+    // 消息终于到来时缺口结束、时长从统计起点算
+    const quiet = new DayStats(DAY, { keys: ["ETH/trades"], now: T0 });
+    expect(quiet.sweep(T0 + 30_000)).toEqual([]);
+    expect(quiet.sweep(T0 + 61_000)).toEqual([{ key: "ETH/trades", silentMs: 61_000 }]);
     expect(quiet.sweep(T0 + 3_600_000)).toEqual([]);
+    expect(quiet.observe("ETH/trades", T0 + 3_600_000)).toEqual({ gapEndedMs: 3_600_000 });
+    expect(quiet.summary(T0 + 3_600_000)["ETH/trades"]).toMatchObject({ count: 1, gaps: 1, max_gap_ms: 3_600_000 });
+    // 未预注册且没来过消息的频道不存在于表里，不报
+    expect(new DayStats(DAY, { now: T0 }).sweep(T0 + 3_600_000)).toEqual([]);
     // 按 coin 归到文件名键
     expect(channelsForCoin(s.summary(), "BTC")).toHaveProperty("l2book");
     expect(channelsForCoin(s.summary(), "ETH")).toBeNull();

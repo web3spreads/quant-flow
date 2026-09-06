@@ -8,7 +8,9 @@
 #   BOOK_BACKUP_DEST       rsync 目标，如 user@host:/srv/quantflow-book 或 /mnt/backup/book
 #   BOOK_BACKUP_SSH_OPTS   传给 rsync -e ssh 的参数（默认 -o BatchMode=yes -o StrictHostKeyChecking=yes）
 #   BOOK_LOCAL_KEEP_DAYS   本地保留天数（默认 45）
-#   BOOK_REMOTE_KEEP_DAYS  远端保留天数（默认 90；0=不清理远端）
+#   BOOK_REMOTE_KEEP_DAYS  远端保留天数（默认 90；0=不清理远端；rrsync 模式下由远端自行清理）
+#   BOOK_BACKUP_RRSYNC     1=远端密钥被 rrsync 限制在备份目录内（推荐）：目标写成 user@host:（路径为空，
+#                          rrsync 自动落到限制目录），不做 ssh 探测与远端清理，rsync 加 --mkpath
 #
 # 用法：
 #   scripts/book-backup.sh            # 备份 + 本地清理 + 远端清理
@@ -20,6 +22,7 @@ DEST="${BOOK_BACKUP_DEST:-}"
 SSH_OPTS="${BOOK_BACKUP_SSH_OPTS:--o BatchMode=yes -o StrictHostKeyChecking=yes}"
 LOCAL_KEEP="${BOOK_LOCAL_KEEP_DAYS:-45}"
 REMOTE_KEEP="${BOOK_REMOTE_KEEP_DAYS:-90}"
+RRSYNC="${BOOK_BACKUP_RRSYNC:-0}"
 CHECK=0
 [[ "${1:-}" == "--check" ]] && CHECK=1
 
@@ -34,13 +37,20 @@ today="$(date -u +%F)"
 remote_host=""; remote_path="$DEST"
 if [[ "$DEST" == *:* ]]; then remote_host="${DEST%%:*}"; remote_path="${DEST#*:}"; fi
 
-# 远端可达性 / 目录就位
-if [[ -n "$remote_host" ]]; then
+# 远端可达性 / 目录就位（rrsync 模式下远端只接受 rsync 协议，用一次空目录 dry-run 探测）
+if [[ -n "$remote_host" && "$RRSYNC" == "1" ]]; then
+  probe="$(mktemp -d)"
+  # shellcheck disable=SC2086
+  rsync -a --dry-run -e "ssh $SSH_OPTS" "$probe/" "$DEST/" >/dev/null || die "远端不可达或 rrsync 拒绝: $DEST"
+  rmdir "$probe"
+elif [[ -n "$remote_host" ]]; then
   # shellcheck disable=SC2086
   ssh $SSH_OPTS "$remote_host" "mkdir -p '$remote_path'" || die "远端不可达或无法创建目录: $DEST"
 else
   mkdir -p "$remote_path"
 fi
+extra_opts=()
+[[ "$RRSYNC" == "1" ]] && extra_opts+=(--mkpath)
 
 planned=0; done_count=0; failed=0
 while IFS= read -r day_dir; do
@@ -55,7 +65,7 @@ while IFS= read -r day_dir; do
   # 幂等：rsync 按 checksum 比对，已备份目录只会传清单差异
   if [[ -n "$remote_host" ]]; then
     # shellcheck disable=SC2086
-    if rsync -az --partial --checksum -e "ssh $SSH_OPTS" --exclude '.backed-up' "$day_dir/" "$DEST/$coin/$day/"; then
+    if rsync -az --partial --checksum "${extra_opts[@]}" -e "ssh $SSH_OPTS" --exclude '.backed-up' "$day_dir/" "$DEST/$coin/$day/"; then
       date -u +%FT%TZ > "$day_dir/.backed-up"; done_count=$((done_count + 1))
     else
       failed=$((failed + 1)); log "❌ 备份失败 $coin/$day"
@@ -81,8 +91,8 @@ while IFS= read -r day_dir; do
   rm -rf "$day_dir"
 done < <(find "$BOOK_DIR" -mindepth 2 -maxdepth 2 -type d -regextype posix-extended -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort)
 
-# 远端清理（可选）
-if [[ "$REMOTE_KEEP" -gt 0 ]]; then
+# 远端清理（可选；rrsync 模式下远端不接受 shell，由远端自己的 cron 按保留期清理）
+if [[ "$REMOTE_KEEP" -gt 0 && "$RRSYNC" != "1" ]]; then
   cutoff_remote="$(date -u -d "-${REMOTE_KEEP} days" +%F)"
   prune="cd '$remote_path' && find . -mindepth 2 -maxdepth 2 -type d -regextype posix-extended -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}\$' | while read -r d; do [[ \"\$(basename \"\$d\")\" < '$cutoff_remote' ]] && rm -rf \"\$d\" && echo \"远端清理 \$d\"; done; true"
   if [[ -n "$remote_host" ]]; then

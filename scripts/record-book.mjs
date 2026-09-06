@@ -10,7 +10,9 @@
  * - 每个 (coin, 频道, UTC 日) 一个 gzip 流，按**本机接收时间**在 UTC 零点轮转，每 10s 同步刷盘。
  *   按接收时间而不是交易所时间切日，是为了零点一到就能确定旧日文件不再被写入，
  *   立刻关流、校验并生成清单（稀疏频道否则会拖住校验）；交易所时间 t 仍逐条记录
- * - 断线指数退避重连并重新订阅；90s 收不到任何消息视为死连接强制重连
+ * - 断线指数退避重连并重新订阅；握手 20s 超时；90s 收不到任何消息视为死连接强制重连；
+ *   10 分钟仍无消息则优雅关流后以非零码退出，交由 systemd 拉起（兜底任何套接字层的未知状态）
+ * - 每分钟一次只读 RTT 探针（info 接口），日切写入清单 rtt_ms，是研究阶段延迟模型的输入
  * - status.json 心跳（每频道最后收到时间与计数、磁盘水位、缺口），watchdog 据此判活
  * - 缺口检测：任一频道 60s 无消息即告警一次（恢复时再记一条）；日切时输出上一日每频道
  *   消息数 / 最大间隔 / 缺口数 / 丢弃数 / 覆盖秒数 / 收包延迟分位数
@@ -42,6 +44,7 @@ import zlib from "node:zlib";
 import {
   CHANNEL_FILE,
   DayStats,
+  Reservoir,
   channelsForCoin,
   dirBytes,
   diskDecision,
@@ -159,7 +162,8 @@ function flushAll() {
 // ── 日统计 / 缺口 / 清单 ────────────────────────────────────────────────
 
 let currentDay = utcDay(Date.now());
-let stats = new DayStats(currentDay, { gapThresholdMs: GAP_MS });
+const ALL_KEYS = [...COINS.flatMap((c) => STATUS_KEYS.map((ch) => `${c}/${ch}`))];
+let stats = new DayStats(currentDay, { gapThresholdMs: GAP_MS, keys: ALL_KEYS });
 let rotating = false;
 
 function bump(coin, ch, r, t) {
@@ -185,7 +189,9 @@ async function rotateDay(now) {
   const prevDay = currentDay;
   const prevStats = stats;
   currentDay = today;
-  stats = new DayStats(today, { gapThresholdMs: GAP_MS });
+  stats = new DayStats(today, { gapThresholdMs: GAP_MS, keys: ALL_KEYS });
+  const rttPrev = rttDay;
+  rttDay = new Reservoir(2_000);
   try {
     for (const [key, s] of [...streams]) if (s.day !== today) closeStream(key, s);
     await Promise.all(closingByDay.get(prevDay) ?? []);
@@ -202,7 +208,10 @@ async function rotateDay(now) {
       const dir = path.join(OUT, coin, prevDay);
       if (!fs.existsSync(dir)) continue;
       try {
-        const m = await writeManifest(dir, { coin, date: prevDay, channels: channelsForCoin(summary, coin), source: "rotation" });
+        const m = await writeManifest(dir, {
+          coin, date: prevDay, channels: channelsForCoin(summary, coin), source: "rotation",
+          extra: { rtt_ms: rttPrev.count ? { ...rttPrev.percentiles(), n: rttPrev.count } : null },
+        });
         const bad = Object.entries(m.files).filter(([, f]) => !f.gzip_ok).map(([n, f]) => `${n}:${f.error}`);
         log(`🧾 ${coin}/${prevDay} 清单已写入（${Object.keys(m.files).length} 个文件${bad.length ? `，⚠️ gzip 异常 ${bad.join(" ")}` : ""}）`);
       } catch (e) {
@@ -272,6 +281,8 @@ const status = {
   disk: null,
   suspended_drops: 0,
   last_manifest_day: null,
+  rtt_ms_last: null,
+  rtt_probe_error: null,
   channels: {},
 };
 for (const c of COINS) for (const ch of STATUS_KEYS) status.channels[`${c}/${ch}`] = { count: 0, lastAt: null };
@@ -281,9 +292,11 @@ function writeStatus() {
     fs.mkdirSync(OUT, { recursive: true });
     const tmp = path.join(OUT, ".status.tmp");
     const gapsOpen = [...stats.channels.entries()].filter(([, c]) => c.inGap).map(([k]) => k);
+    // 判活请看 last_message_age_s / stale，不要看 updatedAt：心跳在连接死掉时照样新鲜
+    const ageS = Math.round((Date.now() - (status.lastMessageAt ?? startedAtMs)) / 1000);
     fs.writeFileSync(
       tmp,
-      JSON.stringify({ ...status, day: currentDay, gaps_open: gapsOpen, updatedAt: new Date().toISOString() }, null, 1),
+      JSON.stringify({ ...status, day: currentDay, gaps_open: gapsOpen, last_message_age_s: ageS, stale: ageS * 1000 > STALE_MS, updatedAt: new Date().toISOString() }, null, 1),
     );
     fs.renameSync(tmp, path.join(OUT, "status.json"));
   } catch (e) {
@@ -292,11 +305,39 @@ function writeStatus() {
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────
+//
+// 重连的三条硬规则（2026-09-05 的事故：重连握手失败后 close 事件没来，看门狗对一个
+// 已死的套接字反复 close()，永远走不到 connect()，静默丢了 15 小时数据）：
+//   ① 每个套接字的 error / close 只取先到者安排重连（settled 标记），握手超时同样算；
+//   ② 看门狗发现无消息时不依赖旧套接字的事件——丢弃引用、直接安排重连；
+//   ③ 兜底：无论如何 10 分钟收不到任何消息就优雅关流后以非零码退出，交由 systemd 拉起。
+
+const INFO_URL = args.testnet === "true" ? "https://api.hyperliquid-testnet.xyz/info" : "https://api.hyperliquid.xyz/info";
+const HANDSHAKE_TIMEOUT_MS = 20_000;
+const SUBSCRIBE_GRACE_MS = 2_000;
+const SELF_EXIT_STALE_MS = 10 * 60_000;
+const RTT_PROBE_MS = 60_000;
+const startedAtMs = Date.now();
 
 let ws = null;
 let backoff = 1000;
 let pingTimer = null;
+let reconnectTimer = null;
 let stopping = false;
+/** 本连接 open 时刻：订阅后头 2 秒交易所会推历史快照（trades 等），其收包延迟不真实，不计入分位数 */
+let connectedAt = 0;
+
+function scheduleReconnect(reason) {
+  if (stopping || reconnectTimer) return;
+  status.connected = false;
+  status.reconnects += 1;
+  log(`${reason}，${backoff / 1000}s 后重连`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, backoff);
+  backoff = Math.min(backoff * 2, 30_000);
+}
 
 function subscribe(sock) {
   for (const coin of COINS) {
@@ -318,6 +359,8 @@ function handle(msg) {
   }
   const d = msg.data;
   if (!d) return;
+  // 订阅初期的快照不计延迟
+  const lat = (t) => (r - connectedAt > SUBSCRIBE_GRACE_MS ? t : undefined);
 
   if (ch === "l2Book") {
     const coin = d.coin;
@@ -326,17 +369,17 @@ function handle(msg) {
     const a = lv(1);
     // fast 订阅只回 5 档，默认订阅回 20 档，按档数分流（四个主流标的的完整簿永远 >5 档）
     const key = L2_FAST && (b.length > 5 || a.length > 5) ? "l2Full" : "l2Book";
-    bump(coin, key, r, d.time);
+    bump(coin, key, r, lat(d.time));
     write(coin, key, r, { t: d.time, r, b, a });
   } else if (ch === "trades") {
     for (const tr of d) {
-      bump(tr.coin, ch, r, tr.time);
+      bump(tr.coin, ch, r, lat(tr.time));
       // 不存 hash 与 users：研究用不上，且没必要落地址
       write(tr.coin, ch, r, { t: tr.time, r, side: tr.side, px: tr.px, sz: tr.sz, tid: tr.tid });
     }
   } else if (ch === "bbo") {
     const coin = d.coin;
-    bump(coin, ch, r, d.time);
+    bump(coin, ch, r, lat(d.time));
     const bid = d.bbo?.[0] ? [d.bbo[0].px, d.bbo[0].sz] : null;
     const ask = d.bbo?.[1] ? [d.bbo[1].px, d.bbo[1].sz] : null;
     write(coin, ch, r, { t: d.time, r, bid, ask }, true);
@@ -355,11 +398,38 @@ function handle(msg) {
 function connect() {
   if (stopping) return;
   log(`连接 ${URL}（${COINS.join(" ")}）`);
-  const sock = new WebSocket(URL);
+  let sock;
+  try {
+    sock = new WebSocket(URL);
+  } catch (e) {
+    scheduleReconnect(`创建连接失败: ${e}`);
+    return;
+  }
   ws = sock;
+  let settled = false;
+  const settle = (reason) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(handshake);
+    if (ws === sock) ws = null;
+    clearInterval(pingTimer);
+    scheduleReconnect(reason);
+  };
+  const handshake = setTimeout(() => {
+    if (sock.readyState === WebSocket.CONNECTING) {
+      try {
+        sock.close();
+      } catch {
+        /* 忽略 */
+      }
+      settle(`握手 ${HANDSHAKE_TIMEOUT_MS / 1000}s 未完成`);
+    }
+  }, HANDSHAKE_TIMEOUT_MS);
   sock.onopen = () => {
+    clearTimeout(handshake);
     status.connected = true;
     backoff = 1000;
+    connectedAt = Date.now();
     subscribe(sock);
     log("已订阅 " + COINS.length * STATUS_KEYS.length + " 个频道");
     clearInterval(pingTimer);
@@ -378,46 +448,88 @@ function connect() {
       log(`消息处理异常: ${err}`);
     }
   };
-  sock.onerror = (e) => log(`socket 错误: ${e?.message ?? e}`);
+  sock.onerror = (e) => {
+    log(`socket 错误: ${e?.message ?? e}`);
+    // 握手阶段或已关闭的套接字出错时未必再来 close 事件：这里就安排重连
+    if (sock.readyState !== WebSocket.OPEN) settle("连接失败");
+  };
   sock.onclose = (e) => {
-    status.connected = false;
-    clearInterval(pingTimer);
     if (stopping) return;
-    status.reconnects += 1;
-    log(`连接关闭（code ${e?.code}），${backoff / 1000}s 后重连`);
-    setTimeout(connect, backoff);
-    backoff = Math.min(backoff * 2, 30_000);
+    settle(`连接关闭（code ${e?.code}）`);
   };
 }
 
-// 死连接检测：90s 没有任何消息就主动断开触发重连；顺带做频道级缺口扫描
+/** 往返时延探针：只读 info 接口，量生产机到交易所的 RTT（研究阶段延迟模型的输入）。 */
+let rttDay = new Reservoir(2_000);
+async function probeRtt() {
+  if (stopping) return;
+  const t0 = performance.now();
+  try {
+    const resp = await fetch(INFO_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "allMids" }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    await resp.arrayBuffer();
+    if (resp.ok) {
+      const rtt = Math.round(performance.now() - t0);
+      rttDay.push(rtt);
+      status.rtt_ms_last = rtt;
+      status.rtt_probe_error = null;
+    } else {
+      status.rtt_probe_error = `HTTP ${resp.status}`;
+    }
+  } catch (e) {
+    status.rtt_probe_error = String(e?.message ?? e).slice(0, 80);
+  }
+}
+
+// 看门狗（15s）：频道缺口扫描 → 死连接处理 → 10 分钟无消息自杀兜底
 setInterval(() => {
   if (stopping) return;
   const now = Date.now();
   for (const { key, silentMs } of stats.sweep(now)) {
     log(`⚠️ ${key} ${(silentMs / 1000).toFixed(0)}s 无消息（缺口开始）${key.endsWith("/trades") ? "——成交稀疏可能属正常" : ""}`);
   }
-  if (!ws) return;
-  if (status.lastMessageAt && now - status.lastMessageAt > STALE_MS) {
-    log(`${STALE_MS / 1000}s 无消息，判定死连接，强制重连`);
-    try {
-      ws.close();
-    } catch {
-      connect();
-    }
+  const silent = now - (status.lastMessageAt ?? startedAtMs);
+  if (silent > SELF_EXIT_STALE_MS) {
+    log(`🛑 ${Math.round(silent / 60000)} 分钟没有收到任何消息且重连无效，退出交由 systemd 重新拉起`);
+    shutdown("stale", 2);
+    return;
   }
+  if (silent <= STALE_MS) return;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // 连接看似正常却没有数据：不等它的事件，直接丢弃并重连
+    log(`${STALE_MS / 1000}s 无消息，判定死连接，强制重连`);
+    const old = ws;
+    ws = null;
+    clearInterval(pingTimer);
+    scheduleReconnect("死连接");
+    try {
+      old.close();
+    } catch {
+      /* 忽略 */
+    }
+  } else if (!ws && !reconnectTimer) {
+    log("无连接且无重连计划，立即重连");
+    connect();
+  }
+  // CONNECTING 由握手超时处理；CLOSING 等它的 close 事件（settle 会安排重连）
 }, 15_000);
 
 setInterval(flushAll, FLUSH_MS);
 setInterval(writeStatus, STATUS_MS);
 setInterval(() => void rotateDay(Date.now()).catch((e) => log(`日切异常: ${e}`)), 5_000);
 setInterval(() => void checkDisk(), 60_000);
+setInterval(() => void probeRtt(), RTT_PROBE_MS);
 
-function shutdown(sig) {
+function shutdown(sig, code = 0) {
   if (stopping) return;
   stopping = true;
   log(`收到 ${sig}，刷盘并关闭`);
   clearInterval(pingTimer);
+  clearTimeout(reconnectTimer);
   try {
     ws?.close();
   } catch {
@@ -432,11 +544,11 @@ function shutdown(sig) {
   const t0 = Date.now();
   Promise.all(pending).then(() => {
     log(`已关闭 ${pending.length} 个流（${Date.now() - t0}ms）`);
-    process.exit(0);
+    process.exit(code);
   });
   setTimeout(() => {
     log("关流超时，强制退出（最后一段 gzip 可能缺尾部，数据本身已按 10s 同步刷盘）");
-    process.exit(0);
+    process.exit(code || 0);
   }, 12_000);
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -446,5 +558,6 @@ fs.mkdirSync(OUT, { recursive: true });
 writeStatus();
 connect();
 void checkDisk();
+void probeRtt();
 // 补验放在连接之后、低优先级：不与订阅握手抢 CPU
 setTimeout(() => void catchUpManifests().catch((e) => log(`补验异常: ${e}`)), 5_000);
