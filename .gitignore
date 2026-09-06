@@ -24,3 +24,10 @@ grid_state*.json
 
 # npm pack 产物
 *.tgz
+
+# 研究管线的本地产物与环境
+research/out/
+research/data/
+research/.venv/
+__pycache__/
+.pytest_cache/

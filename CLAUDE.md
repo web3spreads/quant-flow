@@ -36,6 +36,7 @@ node scripts/backtest-suite.mjs           # 整批回测，结果进看板「回
 node scripts/attribution.mjs --testnet    # 链上成交归因（只读）
 node scripts/record-book.mjs --coins BTC,ETH --out data/book           # 盘口录制（日切写 manifest.json）
 node scripts/book-verify.mjs --dir data/book                           # 盘口数据完整性校验
+RAW=… PARQUET=… ./research/run.sh                                     # 研究管线（Python，见 research/README.md）
 ```
 
 **改网格或执行层前先跑回测对照**（`--compare`、`--sweep`），用数字说话。

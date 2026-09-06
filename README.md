@@ -61,6 +61,10 @@ dsh --profile trading                      # 看板在 http://127.0.0.1:3181/
 - 磁盘水位：`data/book` 超过 20 GB 或磁盘可用低于 15% 即告警并暂停录 bbo（可从 l2book 近似重建），回落后自动恢复；trades / l2book 绝不丢。
 - 异地备份：`scripts/book-backup.sh` + `deploy/quantflow-bookbackup.{service,timer}` 每日 rsync 已有清单的日目录到 `BOOK_BACKUP_DEST`，本地保留 45 天（仅删除已备份的），远端保留 90 天；`--check` 只看计划。
 
+## 研究管线
+
+`research/` 是阶段 B 盘口微观结构研究的数据管线（Python + polars）：`jsonl.gz → parquet`、按清单生成数据质量表与纳入判定、跨日拼接读取。预注册的假设与门槛不放在仓库里。用法见 [research/README.md](research/README.md)。
+
 ## 开发
 
 ```bash

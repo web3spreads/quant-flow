@@ -47,3 +47,19 @@ jobs:
 
       - name: 运行测试
         run: npm test
+
+  research:
+    name: Research pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: pip install -r research/requirements.txt
+
+      - name: 管线测试
+        run: cd research && pytest -q
