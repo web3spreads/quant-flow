@@ -127,3 +127,52 @@ describe("磁盘水位判定（迟滞）", () => {
     expect(diskDecision(false, { bytes: 21e9, freeRatio: 0.5 }, limits).reason).toMatch(/GB/);
   });
 });
+
+describe("健康提醒（book-health）", () => {
+  it("判活只看消息年龄：心跳新鲜但断流要报；通道 URL 解析与 PolySnipe 语法一致", async () => {
+    // @ts-expect-error 脚本是 ESM JS
+    const h = await import("../scripts/book-health.mjs");
+    const now = Date.parse("2026-09-06T01:00:00Z");
+    const fresh = { updatedAt: "2026-09-06T00:59:55Z", last_message_age_s: 5, stale: false, disk: { bbo_suspended: false }, gaps_open: [] };
+    expect(h.assess(fresh, now).problems).toEqual([]);
+    const stale = { ...fresh, last_message_age_s: 4000, stale: true };
+    expect(h.assess(stale, now).problems[0]).toMatch(/断流 4000s/);
+    const dead = { ...fresh, updatedAt: "2026-09-06T00:30:00Z" };
+    expect(h.assess(dead, now).problems[0]).toMatch(/心跳停止/);
+    expect(h.assess(null, now).problems[0]).toMatch(/status\.json/);
+    expect(h.assess({ ...fresh, disk: { bbo_suspended: true, bytes: 21e9, free_pct: 10 }, gaps_open: ["BTC/bbo"] }, now).problems).toHaveLength(2);
+
+    const lark = h.parseChannel("larksuite://abc-123")("T", "B", "info");
+    expect(lark.url).toBe("https://open.larksuite.com/open-apis/bot/v2/hook/abc-123");
+    expect(JSON.parse(lark.init.body as string)).toEqual({ msg_type: "text", content: { text: "T\nB" } });
+    expect(h.parseChannel("tgram://bot/42")("T", "B", "info").url).toMatch(/api\.telegram\.org\/botbot\/sendMessage/);
+    expect(() => h.parseChannel("mailto://x")).toThrow(/不支持/);
+  });
+
+  it("日报按清单汇总昨日并统计合格日", async () => {
+    // @ts-expect-error 脚本是 ESM JS
+    const h = await import("../scripts/book-health.mjs");
+    const root = makeTempDir();
+    const mk = (coin: string, day: string, coverage: number, gzipOk = true, backed = true) => {
+      const d = path.join(root, coin, day);
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, "manifest.json"), JSON.stringify({
+        source: "rotation", files: { l2book: { gzip_ok: gzipOk } },
+        channels: { l2book: { coverage, gaps: 0, max_gap_ms: 500, latency_ms: { p50: 230 } } }, rtt_ms: { p50: 44 },
+      }));
+      if (backed) fs.writeFileSync(path.join(d, ".backed-up"), "x");
+    };
+    mk("BTC", "2026-09-05", 0.147, true, true);
+    mk("BTC", "2026-09-06", 0.999, true, false);
+    mk("ETH", "2026-09-06", 0.999, false, false);
+    const rows = h.summarizeDay(root, "2026-09-06", ["BTC", "ETH", "SOL"]);
+    expect(rows[0]).toMatchObject({ coin: "BTC", coverage: 0.999, backedUp: false, bad: [] });
+    expect(rows[1].bad).toEqual(["l2book"]);
+    expect(rows[2].missing).toBe(true);
+    expect(h.qualifiedDays(root, ["BTC", "ETH"])).toEqual({ BTC: 1, ETH: 0 }); // ETH 那天 gzip 异常不算
+    const text = h.formatDaily("2026-09-06", rows, { reconnects: 1, disk: { bytes: 2e8, free_pct: 78 } }, { problems: [], msgAge: 3 }, { BTC: 1, ETH: 0 });
+    expect(text).toContain("BTC: 覆盖 99.9%");
+    expect(text).toContain("SOL: 无清单");
+    expect(text).toContain("合格日累计：BTC 1 ETH 0");
+  });
+});

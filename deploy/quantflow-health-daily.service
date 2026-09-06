@@ -1,0 +1,32 @@
+# 盘口录制器日报：昨日各标的覆盖率/缺口/gzip/备份 + 当前状态 + 合格日累计，推到通知通道。
+# 通知 URL 由 scripts/book-health.sh 解析：优先 /etc/quantflow/health.env 的 QUANTFLOW_NOTIFY_URLS，
+# 缺省只从共享 .env 抽 POLYSNIPE_NOTIFY_URLS 一个变量。
+#
+# 安装：
+#   cp deploy/quantflow-health-{daily,check}.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now quantflow-health-daily.timer quantflow-health-check.timer
+[Unit]
+Description=Quant Flow 盘口录制器日报
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/quantflow
+EnvironmentFile=-/etc/quantflow/health.env
+Environment=PATH=/home/ubuntu/.nvm/versions/node/v22.20.0/bin:/usr/bin:/bin
+ExecStart=/bin/bash /home/ubuntu/quantflow/node_modules/dsh-plugin-quant-flow/scripts/book-health.sh --daily --book /home/ubuntu/quantflow/data/book
+Nice=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/quantflow/data
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

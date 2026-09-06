@@ -1,0 +1,11 @@
+# 每 15 分钟巡检一次；告警按状态文件去重，正常时不打扰。
+[Unit]
+Description=Quant Flow 盘口录制器巡检
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

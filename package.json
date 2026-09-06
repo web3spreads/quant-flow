@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-quant-flow",
-  "version": "0.15.1",
+  "version": "0.15.3",
   "description": "Quant Flow —— AI 驱动的 Hyperliquid 自动交易系统（DeepSeek Harness 插件版）",
   "type": "module",
   "main": "lib/index.js",
