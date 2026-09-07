@@ -190,6 +190,23 @@ export class GridStrategy {
     await this.gridManager.syncGrid(symbol, aiDecision);
   }
 
+  /**
+   * 成交事件触发的即时同步（周期之外的唯一入口）。
+   *
+   * 只做「认领现实」：确认成交、给已成交层级挂 reduce_only 平仓单、结算 round-trip。
+   * `allowOpen=false` 保证这条路径**永远不新增敞口**——周期之外能做的动作只能是降低风险，
+   * 否则一条 WebSocket 提示就能绕过形态闸门、趋势过滤与连亏锁定去开仓。
+   *
+   * 调用方负责持有交易锁；异常在此兜住，绝不外抛到事件回调里。
+   */
+  async syncOnFill(): Promise<void> {
+    try {
+      await this.gridManager.syncGridIncremental(this.symbol, false);
+    } catch (e) {
+      this.logger.printError(`[Grid] 成交事件即时同步异常: ${e}`);
+    }
+  }
+
   // ── 决策与趋势过滤 ────────────────────────────────────────────────────
 
   /**

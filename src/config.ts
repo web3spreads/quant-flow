@@ -116,6 +116,7 @@ export interface GridSection {
   llm_fallback_rebuild_cycles: number;
   rebuild_cooldown_seconds: number;
   rebuild_min_change_pct: number;
+  fill_stream_enabled: boolean;
   barrier: Record<string, unknown>;
 }
 
@@ -170,6 +171,11 @@ export const GridSchema: Schema<GridSection> = Schema.object({
   llm_fallback_rebuild_cycles: Schema.number().min(0).step(1).default(12).description("空转 N 周期后纯市场数据兜底重建（0=关闭）"),
   rebuild_cooldown_seconds: Schema.number().min(0).step(60).default(3600).description("全量重建冷却（秒，0=关闭；价格真突破旧区间 0.5% 时自动提前解除）"),
   rebuild_min_change_pct: Schema.number().min(0).max(0.5).step(0.001).default(0.01).description("区间变化低于此比例不重建"),
+  fill_stream_enabled: Schema.boolean().default(true).description(
+    "订阅本账户成交事件（WebSocket），成交一到就提前跑一次「只认领成交、只挂 reduce_only 平仓单」的同步，" +
+    "把平仓单挂出的延迟从一个网格周期压到亚秒级。这条通道只是加速器：成交与否仍由 REST 确认，" +
+    "掉线只会退回按周期确认，且**永远不会在周期之外新增敞口**。回测不接此通道",
+  ),
   barrier: Schema.dict(Schema.any()).default({}).description(
     "Triple Barrier 覆盖项（默认：止损 -5% / 止盈 +10%；时限与追踪止损默认关——两者都是按时间/回撤把整张网格的库存市价倒掉，与网格「持库存等回归」的盈利机制正面对抗）。" +
     "可用键：stop_loss_pct / take_profit_pct / time_limit_seconds / trailing_stop_activation_pct / trailing_stop_delta_pct / price_lower_limit / price_upper_limit（值 null=关闭）",

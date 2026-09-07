@@ -30,6 +30,7 @@ import { GridStrategy } from "./strategy/grid.js";
 import { GridAgent } from "./strategy/gridAgent.js";
 import { HyperliquidClient, type ExchangeClientLike } from "./trading/client.js";
 import { MainnetNotionalGuard } from "./trading/notionalGuard.js";
+import { UserFillStream, type FillStreamHealth, type FillSubscribe } from "./trading/fillStream.js";
 import { defaultPerpFeeRates, type FeeRates } from "./fees.js";
 import { TripleBarrierConfig } from "./trading/gridBarrier.js";
 import { GridManager } from "./trading/gridManager.js";
@@ -40,6 +41,15 @@ import { clock } from "./utils/clock.js";
 
 /** LLM 预算计数文件名（账户 data 目录下） */
 export const LLM_USAGE_FILENAME = "llm-usage.json";
+
+/**
+ * 成交事件去抖窗口（毫秒）：一次批量成交会连推多笔回报，合并成一次同步即可。
+ * 取值只需远小于网格周期、又足够合并一次撮合的多笔回报。
+ */
+const FILL_SYNC_DEBOUNCE_MS = 300;
+/** 交易锁被周期占用时的重试次数与间隔（拿不到锁就等周期自己做，故重试有界） */
+const FILL_SYNC_LOCK_RETRIES = 3;
+const FILL_SYNC_RETRY_MS = 2_000;
 
 /** 交易引擎：装配组件并驱动网格周期循环。 */
 export class Engine {
@@ -57,8 +67,15 @@ export class Engine {
   client!: ExchangeClientLike;
   /** 主网名义额闸（testnet=false 时套在客户端外；测试网为 null） */
   notionalGuard: MainnetNotionalGuard | null = null;
+  /** 成交事件流（加速平仓单挂出的提示通道；回测与注入客户端时为 null） */
+  fillStream: UserFillStream | null = null;
+  private fillSyncTimer: NodeJS.Timeout | null = null;
+  private fillSyncRetries = 0;
+  private fillSyncRuns = 0;
   /** 注入的交易所客户端（回测用模拟客户端；缺省按账户配置创建真实客户端） */
   private readonly injectedClient?: ExchangeClientLike;
+  /** 注入的成交订阅实现（测试用；缺省走 SDK 的 WebSocket 订阅） */
+  private readonly injectedFillSubscribe?: FillSubscribe;
   private readonly injectedLlmBackend?: LLMBackend;
   private readonly manualMonitorTick: boolean;
   /** 账户实际费率（start 时拉取；模拟客户端直接给出） */
@@ -95,11 +112,14 @@ export class Engine {
     llmBackend?: LLMBackend;
     /** true=限价单成交监控不自动定时，由外部驱动 runOnce（回测用） */
     manualMonitorTick?: boolean;
+    /** 注入成交订阅实现（测试用）；缺省在生产路径走 SDK 的 WebSocket 订阅 */
+    fillSubscribe?: FillSubscribe;
   }) {
     this.config = options.config;
     this.logger = options.logger;
     this.getDshLlm = options.getDshLlm ?? (() => undefined);
     this.injectedClient = options.client;
+    this.injectedFillSubscribe = options.fillSubscribe;
     this.injectedLlmBackend = options.llmBackend;
     this.manualMonitorTick = options.manualMonitorTick ?? false;
     this.buildComponents(true);
@@ -326,7 +346,84 @@ export class Engine {
         `网格循环已启动 | 间隔: ${this.config.grid.interval_minutes} 分钟` +
           (delayMs > 0 ? ` | 错峰: ${(delayMs / 1000).toFixed(1)}s` : ""),
       );
+      this.startFillStream();
     }
+  }
+
+  // ── 成交事件流（周期之外的加速通道） ──────────────────────────────────
+
+  /**
+   * 订阅本账户成交，成交一到就提前跑一次「只认领、不开仓」的同步。
+   *
+   * 只在有网格策略、配置开启、且不是注入客户端（回测/测试桩）时启动：回测必须
+   * 保持与生产同一条代码路径，多一条事件通道会让两边的时序不再可比。
+   */
+  private startFillStream(): void {
+    if (!this.config.grid.fill_stream_enabled) {
+      this.logger.printInfo("成交事件流已关闭（grid.fill_stream_enabled=false），成交按网格周期确认");
+      return;
+    }
+    if (this.injectedClient && !this.injectedFillSubscribe) return; // 回测/测试桩：不接事件流
+    this.fillStream = new UserFillStream({
+      address: this.client.address,
+      testnet: this.config.exchange.testnet,
+      logger: this.logger,
+      onFill: (coin) => this.onFillHint(coin),
+      subscribe: this.injectedFillSubscribe,
+    });
+    void this.fillStream.start();
+  }
+
+  /**
+   * 成交提示 → 去抖 → 抢交易锁 → 即时同步。
+   *
+   * 去抖把一次撮合的多笔回报合并成一次同步；抢不到锁说明周期正在动账户，
+   * 有界重试几次后放弃——周期自己会做同一件事，这条通道只是想更早做。
+   */
+  onFillHint(coin: string): void {
+    if (!this.isRunning || !this.gridStrategy) return;
+    if (coin !== this.gridStrategy.symbol) return; // 只关心本账户的网格交易对
+    if (this.fillSyncTimer) return; // 已有待执行的同步，合并进去
+    this.fillSyncRetries = 0;
+    this.armFillSync(FILL_SYNC_DEBOUNCE_MS);
+  }
+
+  private armFillSync(delayMs: number): void {
+    this.fillSyncTimer = setTimeout(() => {
+      this.fillSyncTimer = null;
+      void this.runFillSync();
+    }, delayMs);
+    this.fillSyncTimer.unref?.();
+  }
+
+  private async runFillSync(): Promise<void> {
+    if (!this.isRunning || !this.gridStrategy) return;
+    if (!this.tradingLock.tryAcquire()) {
+      if (this.fillSyncRetries >= FILL_SYNC_LOCK_RETRIES) {
+        this.logger.printInfo("   [Grid] 成交事件同步让位给进行中的周期（周期会完成同一件事）");
+        return;
+      }
+      this.fillSyncRetries += 1;
+      this.armFillSync(FILL_SYNC_RETRY_MS);
+      return;
+    }
+    try {
+      this.fillSyncRuns += 1;
+      this.logger.printInfo("   [Grid] ⚡ 成交事件触发即时同步（只认领成交与挂平仓单，不新增敞口）");
+      await this.gridStrategy.syncOnFill();
+    } catch (e) {
+      // 这是 fire-and-forget 的定时回调：任何漏出来的异常都会变成未捕获的 Promise
+      // 拒绝，进而可能整死进程。一条加速通道绝不能有搞崩引擎的能力。
+      this.logger.printError(`[Grid] 成交事件同步异常（已兜住，等周期重做）: ${e}`);
+    } finally {
+      this.tradingLock.release();
+    }
+  }
+
+  /** 成交事件流健康状态（看板用）；未启用为 null。 */
+  fillStreamHealth(): (FillStreamHealth & { syncs: number }) | null {
+    if (!this.fillStream) return null;
+    return { ...this.fillStream.health(), syncs: this.fillSyncRuns };
   }
 
   /**
@@ -340,6 +437,14 @@ export class Engine {
     this.isRunning = false;
     this.logger.printSection(`🛑 停止引擎: ${reason}`);
     this.abort.abort();
+    // 先摘掉事件通道：停机过程中再触发一次同步只会和拆卸序列抢锁
+    if (this.fillSyncTimer) {
+      clearTimeout(this.fillSyncTimer);
+      this.fillSyncTimer = null;
+    }
+    const stream = this.fillStream;
+    this.fillStream = null;
+    if (stream) await stream.stop();
     const joinTimeoutMs = Math.max(30, this.config.llm.timeout + 30) * 1000;
     if (this.loops.length) {
       this.logger.printInfo(`等待进行中的周期完成（最多 ${(joinTimeoutMs / 1000).toFixed(0)}s）...`);

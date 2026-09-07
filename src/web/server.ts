@@ -291,6 +291,7 @@ export class WebConsole {
         llm_provider: cfg.llm.provider,
         llm_in_loop: engine.llmInLoop,
         llm_usage: engine.llmUsage(),
+        fill_stream: engine.fillStreamHealth(),
       },
       mainnet_guard: mainnetGuard,
       balance: balanceInfo,

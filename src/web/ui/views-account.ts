@@ -25,6 +25,12 @@ function notionalGuardHtml(g){
     +'<span class="num dim">'+fmt(pct,0)+'%</span></div>'
     +'<div class="track"><div class="fill" style="width:'+Math.min(100,Math.max(0,pct)).toFixed(1)+'%"></div></div></div>';
 }
+/* 成交事件流：加速平仓单挂出的提示通道。断开只是退回按周期确认，不是故障，用 warn 而非 bad */
+function fillStreamHtml(s){
+  if(!s)return '<span class="dim2">按周期确认</span>';
+  if(!s.subscribed)return '<span class="badge warn">未连接 · 退回按周期确认</span>';
+  return '<span class="badge ok">已订阅</span><span class="dim2 num"> 成交 '+esc(s.fills)+' · 提前同步 '+esc(s.syncs)+"</span>";
+}
 function llmModeHtml(e){
   if(!e)return "—";
   if(e.llm_in_loop===false)return '<span class="badge ok">规则后端 · LLM 不在回路</span>';
@@ -48,6 +54,7 @@ function accountScopeHeader(o){
       meta("策略",stratTags(a.strategies||{grid:e.grid_enabled,grid_symbol:(e.symbols||[])[0]})),
       meta("标的",esc((e.symbols||(a.strategies||{}).symbols||[]).join(" / ")||"—")),
       meta("决策",llmModeHtml(o&&o.engine)),
+      meta("成交流",fillStreamHtml(o&&o.engine&&o.engine.fill_stream)),
       meta("后端",'<span class="dim">'+esc(e.llm||a.llm||"—")+"</span>"),
       meta("数据目录",'<span class="mono dim2">'+esc(a.data_dir||"—")+"</span>")
     ],

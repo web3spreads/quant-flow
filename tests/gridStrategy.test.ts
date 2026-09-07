@@ -51,6 +51,12 @@ class StubGridManager {
   async isGridIdle(_s: string): Promise<boolean> {
     return this.idle;
   }
+  incrementalCalls: Array<[string, boolean]> = [];
+  incrementalError: Error | null = null;
+  async syncGridIncremental(symbol: string, allowOpen: boolean): Promise<void> {
+    this.incrementalCalls.push([symbol, allowOpen]);
+    if (this.incrementalError) throw this.incrementalError;
+  }
 }
 
 /** GridAgent 桩：返回预置决策序列。 */
@@ -299,5 +305,20 @@ describe("账户级保护与顺序（历史缺陷回归）", () => {
     await strategy.runCycle();
     expect(manager.synced.at(-1)!.action).toBe("KEEP_GRID");
     expect(String(manager.synced.at(-1)!.reason)).toContain("锁定");
+  });
+});
+
+describe("成交事件触发的即时同步", () => {
+  it("周期之外只认领成交、绝不新增敞口（allowOpen=false），异常不外抛", async () => {
+    // 这条路径绕过了形态闸门、趋势过滤与连亏锁定。允许它开仓等于给了一条
+    // 「一条 WebSocket 消息就能下单」的旁路，因此 allowOpen 必须恒为 false。
+    const manager = new StubGridManager();
+    const { strategy } = makeStrategy({ agent: new StubGridAgent([DEGRADED_KEEP]), manager });
+    await strategy.syncOnFill();
+    expect(manager.incrementalCalls).toEqual([["ETH", false]]);
+
+    manager.incrementalError = new Error("交易所抖动");
+    await expect(strategy.syncOnFill()).resolves.toBeUndefined();
+    expect(manager.incrementalCalls.length).toBe(2);
   });
 });

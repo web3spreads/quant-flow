@@ -47,6 +47,8 @@ export { TradingLogger } from "./logger.js";
 export { LLMClient, LLMError, LLMBudgetError, LlmUsageTracker, RuleGridLlmBackend, extractJson, OpenAICompatBackend } from "./llm.js";
 export { HyperliquidClient } from "./trading/client.js";
 export { MainnetNotionalGuard, usedNotionalUsd } from "./trading/notionalGuard.js";
+export { UserFillStream, defaultFillSubscribe } from "./trading/fillStream.js";
+export type { FillEvent, FillEventRow, FillStreamHealth, FillSubscribe } from "./trading/fillStream.js";
 export { OrderManager, LimitOrderMonitor } from "./trading/orderManager.js";
 export { GridManager } from "./trading/gridManager.js";
 export { GridPnLTracker } from "./trading/gridPnl.js";

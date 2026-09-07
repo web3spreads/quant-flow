@@ -39,6 +39,7 @@ function makeFakeEngine(): { engine: Engine; applied: RuntimeConfig[] } {
     llm: { describe: () => "fake-llm" },
     llmInLoop: false,
     llmUsage: () => null,
+    fillStreamHealth: () => null,
     notionalGuard: null,
     orderManager: {
       getAvailableBalanceInfo: async () => ({ status: "ok", total: 100, available: 90, unrealized_pnl: 0 }),
