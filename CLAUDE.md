@@ -31,6 +31,7 @@ node scripts/backtest-suite.mjs           # 整批回测，结果进看板「回
 node scripts/attribution.mjs --testnet    # 链上成交归因（只读）
 node scripts/record-book.mjs --coins BTC,ETH --out data/book           # 盘口录制（日切写 manifest.json）
 node scripts/book-verify.mjs --dir data/book                           # 盘口数据完整性校验
+node scripts/book-verify.mjs --dir data/book --refresh                 # 就地补算清单覆盖率（sha256 不符拒绝改写）
 RAW=… PARQUET=… ./research/run.sh                                     # 研究管线（Python，见 research/README.md）
 ```
 

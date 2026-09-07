@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import { execFile } from "node:child_process";
 // @ts-expect-error 脚本库是 ESM JS，无类型声明
 import { DayStats, Reservoir, channelsForCoin, diskDecision, listUnverifiedDays, readManifest, verifyGzipFile, writeManifest } from "../scripts/book-lib.mjs";
 import { makeTempDir } from "./support.js";
@@ -212,5 +213,51 @@ describe("覆盖率必须从文件算（进程内计数器会低报）", () => {
     const m = await writeManifest(day, { coin: "BTC", date: DAY, channels: { l2book: { seconds_with_data: 1, coverage: 1 / 86400 } } });
     expect(m.files.l2book.seconds_with_data).toBe(2); // 文件里实实在在有两秒
     expect(m.channels.l2book.seconds_with_data).toBe(1); // 计数器原样保留，供排查
+  });
+});
+
+describe("book-verify --refresh（就地补算覆盖率）", () => {
+  const script = path.join(process.cwd(), "scripts", "book-verify.mjs");
+  const run = (args: string[]) =>
+    new Promise<{ code: number; out: string }>((resolve) => {
+      execFile(process.execPath, [script, ...args], (err, stdout, stderr) => {
+        resolve({ code: (err as { code?: number } | null)?.code ?? 0, out: stdout + stderr });
+      });
+    });
+
+  /** 造一个「有清单但清单里没有覆盖率」的历史日（0.16.1 之前生成的形态）。 */
+  async function makeDay(root: string, lines: string[]) {
+    const day = path.join(root, "BTC", DAY);
+    fs.mkdirSync(day, { recursive: true });
+    fs.writeFileSync(path.join(day, "l2book.jsonl.gz"), zlib.gzipSync(Buffer.from(lines.join("\n") + "\n")));
+    // @ts-expect-error 脚本库是 ESM JS
+    const { writeManifest } = await import("../scripts/book-lib.mjs");
+    const m = await writeManifest(day, { coin: "BTC", date: DAY, channels: { l2book: { seconds_with_data: 1 } } });
+    // 抹掉文件实测字段，模拟旧清单
+    delete m.files.l2book.seconds_with_data;
+    delete m.files.l2book.coverage;
+    fs.writeFileSync(path.join(day, "manifest.json"), JSON.stringify(m, null, 1));
+    return day;
+  }
+
+  it("清单一致时补上覆盖率；文件变过（sha256 不符）时报 FAIL 且绝不改写", async () => {
+    const root = makeTempDir();
+    const day = await makeDay(root, [`{"t":1,"r":${T0}}`, `{"t":2,"r":${T0 + 3000}}`]);
+
+    const ok = await run(["--dir", root, "--refresh"]);
+    expect(ok.code).toBe(0);
+    expect(ok.out).toContain("REFRESHED");
+    const refreshed = JSON.parse(fs.readFileSync(path.join(day, "manifest.json"), "utf-8"));
+    expect(refreshed.files.l2book.seconds_with_data).toBe(2); // 文件里确实有两秒
+    expect(refreshed.channels.l2book.seconds_with_data).toBe(1); // 进程内计数器原样保留
+    expect(refreshed.refreshed_at).toMatch(/^\d{4}-/);
+
+    // 文件在写清单之后变过：这正是清单要抓的事，此时改写会用坏摘要覆盖好摘要
+    const good = fs.readFileSync(path.join(day, "manifest.json"), "utf-8");
+    fs.writeFileSync(path.join(day, "l2book.jsonl.gz"), zlib.gzipSync(Buffer.from(`{"t":9,"r":${T0 + 9000}}\n`)));
+    const tampered = await run(["--dir", root, "--refresh"]);
+    expect(tampered.code).toBe(1);
+    expect(tampered.out).toMatch(/FAIL|sha256 与清单不一致/);
+    expect(fs.readFileSync(path.join(day, "manifest.json"), "utf-8")).toBe(good); // 一个字节都没动
   });
 });

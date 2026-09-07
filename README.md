@@ -59,7 +59,8 @@ dsh --profile trading                      # 看板在 http://127.0.0.1:3181/
 - 缺口：任一频道 60 秒无消息告警一次（连接死掉、订阅失败、日切后一片安静都会报），恢复时再记一条；日切输出上一日每频道消息数、最大间隔、缺口数、丢弃数、覆盖秒数、收包延迟（`r − t`）分位数。
 - 重连：握手 20 秒超时；90 秒无消息强制丢弃旧连接重连；10 分钟仍无消息则优雅关流后以非零码退出，由 systemd 拉起。判活看 `status.json` 的 `last_message_age_s` / `stale`，不要看 `updatedAt`，心跳在连接死掉时照样新鲜。
 - 延迟：每分钟一次只读 RTT 探针，日切写进清单 `rtt_ms`，与收包延迟一起作为研究阶段延迟模型的输入。
-- 完整性：日切后对上一日每个文件流式解压计行、算 sha256，写 `<COIN>/<日>/manifest.json`（含上述频道统计）；启动时补做缺清单的历史日。`node scripts/book-verify.mjs --dir data/book` 逐日复核（多成员 gzip、截断、损坏都能识别）。
+- 完整性：日切后对上一日每个文件流式解压计行、算 sha256，写 `<COIN>/<日>/manifest.json`；启动时补做缺清单的历史日。`node scripts/book-verify.mjs --dir data/book` 逐日复核（多成员 gzip、截断、损坏都能识别）。
+- 覆盖率口径：清单里 **`files.*` 描述文件本身**（字节、行数、sha256、有数据的秒数、覆盖率，在 gzip 校验那一遍顺带从文件算出），**`channels.*` 只描述录制进程这一段**（消息数、缺口、丢弃、延迟）。研究的样本纳入门槛只认前者——进程内计数器只覆盖本进程存活区间，当天重启过就会低报，会把完好的一天挤出样本；两者差距大本身就是「当天重启过」的信号。`--refresh` 可就地补算旧清单，sha256 不符时拒绝改写。
 - 磁盘水位：`data/book` 超过 20 GB 或磁盘可用低于 15% 即告警并暂停录 bbo（可从 l2book 近似重建），回落后自动恢复；trades / l2book 绝不丢。
 - 异地备份：`scripts/book-backup.sh` + `deploy/quantflow-bookbackup.{service,timer}` 每日 rsync 已有清单的日目录到 `BOOK_BACKUP_DEST`，本地保留 45 天（仅删除已备份的），远端保留 90 天；`--check` 只看计划。
 
@@ -78,6 +79,7 @@ node scripts/backtest-suite.mjs            # 整批回测（含不交易/买入�
 node scripts/attribution.mjs --testnet     # 链上成交归因（只读）
 node scripts/record-book.mjs --coins BTC,ETH --out data/book   # 盘口录制
 node scripts/book-verify.mjs --dir data/book                   # 盘口数据完整性校验
+node scripts/book-verify.mjs --dir data/book --refresh         # 就地补算清单里的覆盖率（sha256 不符则拒绝改写）
 ```
 
 **改网格或执行层之前先跑回测对照**，用数字说话；回测用的是生产同一套引擎，撮合偏保守，数字用于比较方案而非预测收益。发布前自测：`node scripts/boot-smoke.mjs`（单账户启动链路）、`node scripts/fleet-smoke.mjs`（四账户并行 + 大盘总控，需网络）。
