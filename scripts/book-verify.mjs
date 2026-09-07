@@ -7,12 +7,14 @@
  *   node scripts/book-verify.mjs --dir data/book                 # 全部历史日（不含今天）
  *   node scripts/book-verify.mjs --dir data/book --coin BTC --date 2026-09-04
  *   node scripts/book-verify.mjs --dir data/book --write         # 缺清单的目录补写清单（无频道统计）
+ *   node scripts/book-verify.mjs --dir data/book --refresh       # 就地补算清单里缺失的覆盖率（sha256 不符则拒绝改写）
  *   node scripts/book-verify.mjs --dir data/book --json          # 机器可读输出
  *
  * 退出码：0 全部一致；1 有损坏文件或与清单不一致；2 参数/目录错误。
  */
 import fs from "node:fs";
 import path from "node:path";
+import fsp from "node:fs/promises";
 import { MANIFEST_NAME, readManifest, utcDay, verifyDayDir, writeManifest } from "./book-lib.mjs";
 
 const argv = process.argv.slice(2);
@@ -31,6 +33,7 @@ const ROOT = String(args.dir ?? "data/book");
 const ONLY_COIN = args.coin ? String(args.coin).toUpperCase() : null;
 const ONLY_DATE = args.date ? String(args.date) : null;
 const WRITE = args.write === "true";
+const REFRESH = args.refresh === "true";
 const JSON_OUT = args.json === "true";
 const today = utcDay(Date.now());
 
@@ -54,10 +57,10 @@ let failures = 0;
 for (const { coin, date, dir } of targets) {
   const manifest = readManifest(dir);
   let files;
-  if (!manifest && WRITE) {
+  if (!manifest && (WRITE || REFRESH)) {
     files = (await writeManifest(dir, { coin, date, channels: null, source: "verify" })).files;
   } else {
-    files = await verifyDayDir(dir);
+    files = await verifyDayDir(dir, date);
   }
   const problems = [];
   for (const [name, f] of Object.entries(files)) {
@@ -71,17 +74,28 @@ for (const { coin, date, dir } of targets) {
   if (manifest) {
     for (const name of Object.keys(manifest.files ?? {})) if (!files[name]) problems.push(`${name}: 清单有、文件缺失`);
   }
-  const state = problems.length ? "FAIL" : manifest ? "OK" : WRITE ? "WRITTEN" : "NO-MANIFEST";
+  let state = problems.length ? "FAIL" : manifest ? "OK" : (WRITE || REFRESH) ? "WRITTEN" : "NO-MANIFEST";
+  // --refresh：只补算清单里缺失/过时的覆盖率，其余字段原样保留。
+  // sha256 对不上说明文件在写清单之后变过——那正是清单要抓的事，此时**绝不改写**，
+  // 否则会用坏文件的摘要覆盖掉好摘要，把损坏永久藏起来。
+  if (REFRESH && manifest && !problems.length) {
+    const merged = { ...manifest, files, refreshed_at: new Date().toISOString() };
+    const target = path.join(dir, MANIFEST_NAME);
+    await fsp.writeFile(`${target}.tmp`, JSON.stringify(merged, null, 1));
+    await fsp.rename(`${target}.tmp`, target);
+    state = "REFRESHED";
+  }
   if (problems.length) failures += 1;
   const totalLines = Object.values(files).reduce((a, f) => a + f.lines, 0);
   const totalBytes = Object.values(files).reduce((a, f) => a + f.bytes, 0);
-  rows.push({ coin, date, state, files: Object.keys(files).length, lines: totalLines, bytes: totalBytes, problems, coverage: coverageOf(manifest) });
+  rows.push({ coin, date, state, files: Object.keys(files).length, lines: totalLines, bytes: totalBytes, problems, coverage: coverageOf(manifest, files) });
 }
 
-function coverageOf(manifest) {
-  const ch = manifest?.channels;
-  if (!ch) return null;
-  const l2 = ch.l2book ?? ch.l2full;
+/** 覆盖率以文件实测为准（files.*），进程内计数器（channels.*）只作回退。 */
+function coverageOf(manifest, files) {
+  const fromFile = files?.l2book?.coverage ?? files?.l2full?.coverage;
+  if (fromFile != null) return fromFile;
+  const l2 = manifest?.channels?.l2book ?? manifest?.channels?.l2full;
   return l2 ? l2.coverage : null;
 }
 
@@ -95,6 +109,11 @@ if (JSON_OUT) {
         `${(r.bytes / 1e6).toFixed(1).padStart(8)}${(r.coverage == null ? "-" : (r.coverage * 100).toFixed(1) + "%").padStart(7)}  ${r.problems.join("; ")}\n`,
     );
   }
-  process.stdout.write(`\n共 ${rows.length} 个日目录，${failures} 个有问题${WRITE ? `（缺清单的已补写 ${MANIFEST_NAME}）` : ""}\n`);
+  const refreshed = rows.filter((r) => r.state === "REFRESHED").length;
+  process.stdout.write(
+    `\n共 ${rows.length} 个日目录，${failures} 个有问题` +
+      (WRITE ? `（缺清单的已补写 ${MANIFEST_NAME}）` : "") +
+      (REFRESH ? `（${refreshed} 份清单已按文件重算覆盖率；sha256 不符的一律未改写）` : "") + "\n",
+  );
 }
 process.exit(failures ? 1 : 0);

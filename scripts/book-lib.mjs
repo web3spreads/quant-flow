@@ -5,11 +5,18 @@
  *
  * 清单（manifest.json，每 <COIN>/<UTC 日> 一份）是数据资产的所有权凭证：
  * 备份端靠它核对 sha256 与行数，研究管线靠它的 coverage 决定哪些日子纳入样本。
+ *
+ * **覆盖率必须从文件算，不能用进程内计数器。** 计数器只覆盖当前进程的存活区间：
+ * 当天重启过一次，重启之前录进文件的那些秒就永远不会被计入，覆盖率随之低报——
+ * 而覆盖率是样本纳入门槛，低报会把完好的一天误判出局。因此 files.* 描述文件本身
+ * （字节/行数/sha256/有数据的秒数），channels.* 只描述本进程这一段的运行状况
+ * （消息数/缺口/丢弃/延迟）。两者口径不同，不可互相替代。
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import { StringDecoder } from "node:string_decoder";
 import { Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -174,7 +181,7 @@ export class DayStats {
  * 支持多成员拼接（进程重启后追加写入的形态）。尾部截断（强杀）报 Z_BUF_ERROR，
  * 数据损坏报 Z_DATA_ERROR；两种情况 lines 都是「损坏点之前」的行数。
  */
-export async function verifyGzipFile(file) {
+export async function verifyGzipFile(file, { date = null } = {}) {
   const hash = crypto.createHash("sha256");
   let bytes = 0;
   let lines = 0;
@@ -185,9 +192,27 @@ export async function verifyGzipFile(file) {
       cb(null, chunk);
     },
   });
+  // date 给定时顺带统计「落在该 UTC 日内、有数据的秒数」：解压这一趟本来就要做，
+  // 顺手扫一个整数远比事后再解压一遍便宜
+  const dayStart = date ? dayStartMs(date) : null;
+  const seconds = dayStart === null ? null : new Set();
+  const decoder = new StringDecoder("utf8");
+  let tail = "";
+  const takeLine = (line) => {
+    const r = parseReceiveMs(line);
+    if (r === null) return;
+    const idx = Math.floor((r - dayStart) / 1000);
+    if (idx >= 0 && idx < 86_400) seconds.add(idx);
+  };
   const counter = new Writable({
     write(chunk, _enc, cb) {
       for (let i = 0; i < chunk.length; i++) if (chunk[i] === 10) lines += 1;
+      if (seconds) {
+        const text = tail + decoder.write(chunk);
+        const parts = text.split("\n");
+        tail = parts.pop() ?? "";
+        for (const line of parts) takeLine(line);
+      }
       cb();
     },
   });
@@ -214,21 +239,50 @@ export async function verifyGzipFile(file) {
           },
         }),
       );
-      return { bytes, lines, sha256: raw.digest("hex"), gzip_ok: false, error };
+      return { bytes, lines, sha256: raw.digest("hex"), gzip_ok: false, error, ...coverageOf(seconds) };
     } catch (e2) {
-      return { bytes, lines, sha256: null, gzip_ok: false, error: e2?.code ?? String(e2) };
+      return { bytes, lines, sha256: null, gzip_ok: false, error: e2?.code ?? String(e2), ...coverageOf(seconds) };
     }
   }
-  return { bytes, lines, sha256: hash.digest("hex"), gzip_ok: true, error: null };
+  if (seconds && tail) takeLine(tail); // 末行可能没有换行符
+  return { bytes, lines, sha256: hash.digest("hex"), gzip_ok: true, error: null, ...coverageOf(seconds) };
 }
 
-/** 校验一个 <COIN>/<日> 目录下的全部数据文件。 */
-export async function verifyDayDir(dir) {
+/** 有数据的秒数 → 清单字段；未统计（没给 date）时不写这两个键。 */
+function coverageOf(seconds) {
+  if (!seconds) return {};
+  return { seconds_with_data: seconds.size, coverage: Number((seconds.size / 86_400).toFixed(6)) };
+}
+
+/**
+ * 从一行 JSON 里抽出本机接收时间 `r`。
+ * 不做完整 JSON 解析：每天十几万行，这里只需要一个整数，而我们自己写的每一行都形如
+ * `{"t":…,"r":…,…}`，没有别的键会产生 `"r":` 这个片段。
+ */
+export function parseReceiveMs(line) {
+  const at = line.indexOf('"r":');
+  if (at < 0) return null;
+  let i = at + 4;
+  while (i < line.length && line.charCodeAt(i) === 32) i += 1;
+  let value = 0;
+  let digits = 0;
+  while (i < line.length) {
+    const c = line.charCodeAt(i);
+    if (c < 48 || c > 57) break;
+    value = value * 10 + (c - 48);
+    digits += 1;
+    i += 1;
+  }
+  return digits ? value : null;
+}
+
+/** 校验一个 <COIN>/<日> 目录下的全部数据文件；给了 date 就顺带算每个文件的覆盖率。 */
+export async function verifyDayDir(dir, date = null) {
   const files = {};
   for (const name of FILE_NAMES) {
     const file = path.join(dir, `${name}.jsonl.gz`);
     if (!fs.existsSync(file)) continue;
-    files[name] = { file: path.basename(file), ...(await verifyGzipFile(file)) };
+    files[name] = { file: path.basename(file), ...(await verifyGzipFile(file, { date })) };
   }
   return files;
 }
@@ -241,7 +295,7 @@ export async function writeManifest(dir, { coin, date, channels = null, source =
     date,
     generated_at: new Date().toISOString(),
     source,
-    files: await verifyDayDir(dir),
+    files: await verifyDayDir(dir, date),
     channels,
     ...extra,
   };

@@ -2,8 +2,12 @@
 质量表：每个「标的 × 日」的覆盖率、缺口、延迟、RTT 与纳入判定。
 
 覆盖率口径 = l2book 有数据的秒数 / 86400（l2book 约 2 Hz，是最连续的主数据）。
-优先用录制器清单里的实时统计（`channels.l2book.seconds_with_data`）；清单没有频道统计
-（补验生成的）时按 parquet 的 `_ingest.json` 重算。未达 `--min-coverage` 的日子标为不纳入并给出原因。
+
+取值优先级（`coverage_source` 列记录实际来源）：清单里**按文件实测**的
+`files.l2book.seconds_with_data`（file）> 清单里的进程内计数器 `channels.*`（session）
+> 按 parquet 的 `_ingest.json` 重算（parquet）。计数器只覆盖录制进程的存活区间，
+当天重启过就会低报——而这是样本纳入门槛，低报会把完好的一天误判出局。
+未达 `--min-coverage` 的日子标为不纳入并给出原因。
 """
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ from pathlib import Path
 
 FIELDS = ["coin", "date", "include", "reason", "l2book_coverage", "l2book_rows", "trades_rows", "bbo_rows",
           "gaps", "max_gap_s", "dropped", "latency_p50_ms", "latency_p99_ms", "rtt_p50_ms", "rtt_p99_ms",
-          "gzip_ok", "manifest_source"]
+          "gzip_ok", "manifest_source", "coverage_source"]
 
 
 def day_quality(coin: str, date: str, raw_day: Path, parquet_day: Path, min_coverage: float) -> dict:
@@ -25,8 +29,13 @@ def day_quality(coin: str, date: str, raw_day: Path, parquet_day: Path, min_cove
     l2 = ch.get("l2book") or {}
     files = (manifest or {}).get("files") or {}
     gzip_ok = all(f.get("gzip_ok") for f in files.values()) if files else None
-    seconds = l2.get("seconds_with_data")
-    source = "manifest" if seconds is not None else ("parquet" if side.get("l2book") else "none")
+    # 覆盖率优先取文件实测（files.l2book）：清单里的 channels.* 是进程内计数器，
+    # 当天重启过就只覆盖最后一个进程的存活区间，会把完好的一天低报到门槛之下。
+    seconds = (files.get("l2book") or {}).get("seconds_with_data")
+    source = "file"
+    if seconds is None:
+        seconds = l2.get("seconds_with_data")
+        source = "session" if seconds is not None else ("parquet" if side.get("l2book") else "none")
     if seconds is None and side.get("l2book"):
         seconds = side["l2book"].get("seconds")
     coverage = (seconds / 86400) if seconds is not None else None
@@ -53,6 +62,7 @@ def day_quality(coin: str, date: str, raw_day: Path, parquet_day: Path, min_cove
         "latency_p50_ms": lat.get("p50"), "latency_p99_ms": lat.get("p99"),
         "rtt_p50_ms": rtt.get("p50"), "rtt_p99_ms": rtt.get("p99"),
         "gzip_ok": gzip_ok, "manifest_source": (manifest or {}).get("source") if manifest else None,
+        "coverage_source": source,
     }
 
 

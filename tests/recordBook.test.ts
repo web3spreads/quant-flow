@@ -176,3 +176,41 @@ describe("健康提醒（book-health）", () => {
     expect(text).toContain("合格日累计：BTC 1 ETH 0");
   });
 });
+
+describe("覆盖率必须从文件算（进程内计数器会低报）", () => {
+  const line = (r: number, extra = "") => `{"t":${r - 40},"r":${r}${extra}}`;
+
+  it("按 UTC 日窗口统计有数据的秒数：跨秒去重、窗口外不计、末行无换行也算", async () => {
+    // @ts-expect-error 脚本库是 ESM JS
+    const { verifyGzipFile, parseReceiveMs } = await import("../scripts/book-lib.mjs");
+    const dir = makeTempDir();
+    const body =
+      [line(T0), line(T0 + 400), line(T0 + 900)].join("\n") + "\n" + // 第 0 秒三条 → 算 1 秒
+      [line(T0 + 1500), line(T0 + 86_399_000)].join("\n") + "\n" +   // 第 1 秒、最后一秒
+      [line(T0 - 5_000), line(T0 + 86_400_000)].join("\n") + "\n" +  // 前一日 / 次日：不计
+      line(T0 + 2500); // 末行没有换行符
+    fs.writeFileSync(path.join(dir, "l2book.jsonl.gz"), zlib.gzipSync(Buffer.from(body)));
+    const r = await verifyGzipFile(path.join(dir, "l2book.jsonl.gz"), { date: DAY });
+    expect(r.gzip_ok).toBe(true);
+    expect(r.seconds_with_data).toBe(4); // 第 0、1、2 秒与最后一秒
+    expect(r.coverage).toBeCloseTo(4 / 86_400, 6);
+    // 不给 date 就不统计（备份端只想核对 sha256 时不必多花这一遍）
+    expect(await verifyGzipFile(path.join(dir, "l2book.jsonl.gz"))).not.toHaveProperty("seconds_with_data");
+    // 抽取器只认 "r": 这个片段，不做完整 JSON 解析
+    expect(parseReceiveMs('{"t":1,"r":1788480000123,"oracle":"9"}')).toBe(1788480000123);
+    expect(parseReceiveMs('{"t":1,"oracle":"9"}')).toBeNull();
+  });
+
+  it("清单里文件实测的覆盖率与进程内计数器各记各的，两者不互相覆盖", async () => {
+    // @ts-expect-error 脚本库是 ESM JS
+    const { writeManifest } = await import("../scripts/book-lib.mjs");
+    const dir = makeTempDir();
+    const day = path.join(dir, "BTC", DAY);
+    fs.mkdirSync(day, { recursive: true });
+    fs.writeFileSync(path.join(day, "l2book.jsonl.gz"), zlib.gzipSync(Buffer.from([line(T0), line(T0 + 3000)].join("\n") + "\n")));
+    // 进程内计数器只看到 1 秒（模拟当天重启过，早先那一秒没进这个进程的统计）
+    const m = await writeManifest(day, { coin: "BTC", date: DAY, channels: { l2book: { seconds_with_data: 1, coverage: 1 / 86400 } } });
+    expect(m.files.l2book.seconds_with_data).toBe(2); // 文件里实实在在有两秒
+    expect(m.channels.l2book.seconds_with_data).toBe(1); // 计数器原样保留，供排查
+  });
+});

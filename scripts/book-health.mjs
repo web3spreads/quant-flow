@@ -122,7 +122,8 @@ export function summarizeDay(book, day, coins) {
     const bad = Object.entries(m.files ?? {}).filter(([, f]) => !f.gzip_ok).map(([n]) => n);
     rows.push({
       coin,
-      coverage: l2.coverage ?? null,
+      // 覆盖率以文件实测为准：进程内计数器只覆盖本进程存活区间，当天重启过就会低报
+      coverage: m.files?.l2book?.coverage ?? l2.coverage ?? null,
       gaps: l2.gaps ?? null,
       maxGapS: l2.max_gap_ms != null ? Math.round(l2.max_gap_ms / 1000) : null,
       latencyP50: l2.latency_ms?.p50 ?? null,
@@ -148,7 +149,7 @@ export function qualifiedDays(book, coins, minCoverage = 0.95) {
     }
     for (const d of days) {
       const m = readJson(path.join(book, coin, d, "manifest.json"));
-      const cov = m?.channels?.l2book?.coverage;
+      const cov = m?.files?.l2book?.coverage ?? m?.channels?.l2book?.coverage;
       if (cov != null && cov >= minCoverage && Object.values(m.files ?? {}).every((f) => f.gzip_ok)) n += 1;
     }
     out[coin] = n;
