@@ -1,15 +1,5 @@
 # CLAUDE.md
 
-## 默认语言为中文
-
-文档、代码注释、commit、PR/Issue、日志输出与 AI 交互使用中文。
-例外：标识符与技术术语；commit message。
-
-## commit message
-
-**一行说清，不写正文，不带任何尾注**（不加 Co-Authored-By、不加会话链接）。
-写「这次改了什么」，不复述过程与理由——理由属于代码注释与 `docs/`。
-
 ## 项目
 
 Quant Flow：AI 驱动的 Hyperliquid 网格交易系统，形态为 **dsh（DeepSeek Harness）的
