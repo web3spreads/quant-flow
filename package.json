@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-quant-flow",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "Quant Flow —— AI 驱动的 Hyperliquid 自动交易系统（DeepSeek Harness 插件版）",
   "type": "module",
   "main": "lib/index.js",
@@ -40,12 +40,12 @@
     "@deepseek-ai/schemastery": "^3.18.2",
     "@nktkas/hyperliquid": "^0.33.3",
     "decimal.js": "^10.6.0",
-    "viem": "^2.56.1"
+    "viem": "^2.56.3"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
+    "@types/node": "^22.20.1",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   },
   "repository": {
